@@ -146,10 +146,6 @@ enum Stage {
     Invoke {
         source: Entity,
     },
-    #[cfg(feature = "workbench")]
-    Closed {
-        entity: Entity,
-    },
 }
 #[derive(Resource)]
 struct State {
@@ -519,9 +515,6 @@ fn complete(world: &mut World) {
                         .map(|m| m.result.clone().map(|_| json!({"applied":true})))
                 }),
             #[cfg(feature = "workbench")]
-            Stage::Closed { entity } if world.get_entity(*entity).is_err() => {
-                Some(Ok(json!({"closed":entity_id(*entity)})))
-            }
             _ => None,
         };
         if let Some(result) = result {

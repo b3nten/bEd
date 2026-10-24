@@ -18,7 +18,7 @@ pub(crate) fn snapshot(world: &mut World, state: &State, entities: bool) -> Valu
         result["viewports"] = json!(world.query::<(Entity,&bedtime_ui2::UiViewport)>().iter(world).map(|(e,v)| json!({"entity":entity_id(e),"visible":v.visible,"hovered":v.hovered,"rect":rect(v.rect),"physical_size":v.physical_size.to_array()})).collect::<Vec<_>>());
     }
     #[cfg(feature = "workbench")]
-    if world.contains_resource::<bedtime_workbench2::WorkspaceRequests>() {
+    if world.contains_resource::<bedtime_workbench2::WorkbenchRequests>() {
         result["workbench"] = crate::workbench::inspect(world);
     }
     if entities {

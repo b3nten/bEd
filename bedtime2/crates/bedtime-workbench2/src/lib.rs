@@ -9,14 +9,16 @@ pub use document_commands::*;
 pub use documents::*;
 mod geometry;
 mod layout;
+mod lifecycle;
 mod menus;
+#[cfg(feature = "persistence")]
+pub mod persistence;
 mod work;
-mod workspaces;
 pub use commands::*;
 pub use layout::*;
+pub use lifecycle::*;
 pub use menus::*;
 pub use work::*;
-pub use workspaces::*;
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "clipboard")]
@@ -45,7 +47,7 @@ use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
 pub use frontend::{
     PanelFactoryPayload, Titlebar, TitlebarOwnership, WorkbenchPresentation, WorkbenchShell,
-    WorkspaceUi, panel_drag_source, spawn_panel, spawn_panel_in_area,
+    WorkbenchUi, panel_drag_source, spawn_panel, spawn_panel_in_area,
 };
 #[cfg(feature = "ui")]
 pub use ui::{MenuPresentation, WorkbenchUiPlugin, draw_menu_bar, draw_popup_menu};
@@ -56,13 +58,15 @@ pub struct CloseRequested {
     pub window: Option<Entity>,
 }
 
-/// Workspace entities, marker synchronization, requests and shutdown in the main
+/// Session resources, layout selection, requests and orderly shutdown in the main
 /// application world. Empty workbenches are valid; applications compose or restore
-/// their workspace graphs. Installs no window or renderer.
+/// their layout/panel graphs. Installs no window or renderer.
 pub struct WorkbenchCorePlugin;
 impl Plugin for WorkbenchCorePlugin {
     fn build(&self, app: &mut App) {
-        workspaces::install(app);
+        lifecycle::install(app);
+        #[cfg(feature = "persistence")]
+        persistence::register(app);
     }
 }
 
@@ -83,29 +87,23 @@ impl PluginGroup for WorkbenchPlugin {
     }
 }
 
-/// Controlled operations for a selected workspace in the application world.
+/// Controlled operations in the application's single editing session.
 pub struct Workbench<'w> {
     pub(crate) world: &'w mut World,
-    pub(crate) workspace: WorkspaceId,
 }
 impl<'w> Workbench<'w> {
-    /// Access the active workspace. This legacy convenience panics when none is selected.
     pub fn new(world: &'w mut World) -> Self {
-        let workspace = workspaces::active(world);
-        Self::with_workspace(world, workspace).expect("Active workspace")
+        assert!(
+            world.contains_resource::<ManagedWork>(),
+            "Install WorkbenchCorePlugin"
+        );
+        Self { world }
     }
-    pub fn with_workspace(world: &'w mut World, workspace: WorkspaceId) -> Result<Self, String> {
-        workspaces::validate(world, workspace)?;
-        Ok(Self { world, workspace })
-    }
-    /// Select the owner of a panel, layout or other workspace member.
     pub fn for_entity(world: &'w mut World, entity: Entity) -> Result<Self, String> {
-        let workspace = if world.get::<Workspace>(entity).is_some() {
-            WorkspaceId(entity)
-        } else {
-            workspaces::owner(world, entity).ok_or("Entity has no workspace")?
-        };
-        Self::with_workspace(world, workspace)
+        world
+            .get_entity(entity)
+            .map_err(|_| "Entity is unavailable")?;
+        Ok(Self::new(world))
     }
     pub fn world(&self) -> &World {
         self.world
@@ -113,32 +111,20 @@ impl<'w> Workbench<'w> {
     pub fn world_mut(&mut self) -> &mut World {
         self.world
     }
-    pub fn workspace_id(&self) -> WorkspaceId {
-        self.workspace
-    }
-    pub fn workspace(&self) -> &Workspace {
-        self.world.get::<Workspace>(self.workspace.0).unwrap()
-    }
-    pub fn work(&mut self) -> Mut<'_, WorkspaceWork> {
-        self.world
-            .get_mut::<WorkspaceWork>(self.workspace.0)
-            .unwrap()
+    pub fn work(&mut self) -> Mut<'_, ManagedWork> {
+        self.world.resource_mut()
     }
     pub fn requests(&mut self) -> Mut<'_, WorkbenchRequests> {
-        self.world
-            .get_mut::<WorkbenchRequests>(self.workspace.0)
-            .unwrap()
+        self.world.resource_mut()
     }
     pub fn commands(&mut self) -> Mut<'_, ContextCommandRequests> {
-        self.world
-            .get_mut::<ContextCommandRequests>(self.workspace.0)
-            .unwrap()
+        self.world.resource_mut()
     }
     pub(crate) fn require_owned(&self, entity: Entity) -> Result<(), String> {
-        if workspaces::owner(self.world, entity) != Some(self.workspace) {
-            return Err("Entity belongs to another workspace or is unavailable".into());
-        }
-        Ok(())
+        self.world
+            .get_entity(entity)
+            .map(|_| ())
+            .map_err(|_| "Entity is unavailable".into())
     }
 }
 

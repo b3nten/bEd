@@ -1,4 +1,4 @@
-//! Disk-backed byte views. Workspace sources own bounded shared caches; panels
+//! Disk-backed byte views. World sources own bounded shared caches; panels
 //! own navigation and user jobs. All filesystem access runs on managed workers.
 use bedtime_hex2::{CopyFormat, HexView};
 use bedtime_ui2::{UiContext, egui};
@@ -117,7 +117,7 @@ fn error_text(error: ReadError) -> String {
 }
 struct PageJob {
     page: u64,
-    task: WorkspaceTask<Result<Vec<u8>, ReadError>>,
+    task: ManagedTask<Result<Vec<u8>, ReadError>>,
 }
 struct Source {
     stamp: Stamp,
@@ -140,11 +140,11 @@ impl Source {
             .copied()
     }
 }
-#[derive(Component, Default)]
+#[derive(Resource, Default)]
 struct Sources(BTreeMap<PathBuf, Source>);
 struct UserJob<T: Send + 'static> {
     stamp: Stamp,
-    task: WorkspaceTask<Result<T, ReadError>>,
+    task: ManagedTask<Result<T, ReadError>>,
 }
 #[derive(Component, Default)]
 pub(crate) struct HexPreview {
@@ -174,11 +174,10 @@ impl Drop for HexPreview {
     }
 }
 pub(crate) fn accept(world: &mut World, panel: Entity, path: &Path, initial: &Initial) {
-    let workspace = world.get::<InWorkspace>(panel).unwrap().0;
-    if world.get::<Sources>(workspace).is_none() {
-        world.entity_mut(workspace).insert(Sources::default());
+    if world.get_resource::<Sources>().is_none() {
+        world.init_resource::<Sources>();
     }
-    let mut sources = world.get_mut::<Sources>(workspace).unwrap();
+    let mut sources = world.resource_mut::<Sources>();
     if sources
         .0
         .get(path)
@@ -208,12 +207,11 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, _: &UiContext<'_>, pane
     let Some(path) = crate::files::panel_path(world, panel) else {
         return;
     };
-    let workspace = world.get::<InWorkspace>(panel).unwrap().0;
-    let dirty = crate::file_editor::disk_view_has_unsaved(world, workspace, &path);
+    let dirty = crate::file_editor::disk_view_has_unsaved(world, &path);
     let Some(mut state) = world.entity_mut(panel).take::<HexPreview>() else {
         return;
     };
-    let Some(source) = world.get::<Sources>(workspace).and_then(|s| s.0.get(&path)) else {
+    let Some(source) = world.get_resource::<Sources>().and_then(|s| s.0.get(&path)) else {
         world.entity_mut(panel).insert(state);
         return;
     };
@@ -447,16 +445,16 @@ fn start_search(world: &mut World, panel: Entity, path: PathBuf, stamp: Stamp, f
         state.view.selection(stamp.len).start
     };
     state.message = None;
-    let workspace = world.get::<InWorkspace>(panel).unwrap().0;
     let capture = stamp.clone();
-    let task = world
-        .get_mut::<WorkspaceWork>(workspace)
-        .unwrap()
-        .spawn_task(Some(panel), "Find bytes", move |cancel| {
+    let task = world.get_resource_mut::<ManagedWork>().unwrap().spawn_task(
+        Some(panel),
+        "Find bytes",
+        move |cancel| {
             search_file(&path, &capture, &pattern, start, forward, &|| {
                 cancel.is_cancelled()
             })
-        });
+        },
+    );
     let mut state = world.get_mut::<HexPreview>(panel).unwrap();
     match task {
         Ok(task) => state.find = Some(UserJob { stamp, task }),
@@ -541,11 +539,10 @@ fn start_copy(world: &mut World, panel: Entity, path: PathBuf, stamp: Stamp, for
         job.task.cancel();
     }
     let capture = stamp.clone();
-    let workspace = world.get::<InWorkspace>(panel).unwrap().0;
-    let task = world
-        .get_mut::<WorkspaceWork>(workspace)
-        .unwrap()
-        .spawn_task(Some(panel), "Copy bytes", move |cancel| {
+    let task = world.get_resource_mut::<ManagedWork>().unwrap().spawn_task(
+        Some(panel),
+        "Copy bytes",
+        move |cancel| {
             if cancel.is_cancelled() {
                 return Err(ReadError::Failed("Copy cancelled".into()));
             }
@@ -589,7 +586,8 @@ fn start_copy(world: &mut World, panel: Entity, path: PathBuf, stamp: Stamp, for
                 CopyFormat::Offset => unreachable!(),
             }
             Ok(text)
-        });
+        },
+    );
     let mut state = world.get_mut::<HexPreview>(panel).unwrap();
     match task {
         Ok(task) => state.copy = Some(UserJob { stamp, task }),
@@ -599,14 +597,14 @@ fn start_copy(world: &mut World, panel: Entity, path: PathBuf, stamp: Stamp, for
 
 pub(crate) fn update(world: &mut World) {
     let panels: Vec<_> = world
-        .query_filtered::<(Entity, &InWorkspace), With<HexPreview>>()
+        .query_filtered::<Entity, With<HexPreview>>()
         .iter(world)
-        .filter_map(|(p, w)| crate::files::panel_path(world, p).map(|path| (p, w.0, path)))
+        .filter_map(|p| crate::files::panel_path(world, p).map(|path| (p, path)))
         .collect();
-    let mut demand = BTreeMap::<Entity, BTreeMap<PathBuf, BTreeSet<u64>>>::new();
-    for (panel, workspace, path) in &panels {
+    let mut demand = BTreeMap::<PathBuf, BTreeSet<u64>>::new();
+    for (panel, path) in &panels {
         let Some(stamp) = world
-            .get::<Sources>(*workspace)
+            .get_resource::<Sources>()
             .and_then(|s| s.0.get(path))
             .map(|s| s.stamp.clone())
         else {
@@ -646,11 +644,7 @@ pub(crate) fn update(world: &mut World) {
         let visible = world
             .get::<PanelPresentation>(*panel)
             .is_some_and(|p| p.visible);
-        let wanted = demand
-            .entry(*workspace)
-            .or_default()
-            .entry(path.clone())
-            .or_default();
+        let wanted = demand.entry(path.clone()).or_default();
         if visible || state.view.rect.is_none() {
             let first = state.needed.start / PAGE_BYTES;
             let last = state.needed.end.saturating_sub(1) / PAGE_BYTES;
@@ -674,13 +668,8 @@ pub(crate) fn update(world: &mut World) {
         }
         world.entity_mut(*panel).insert(state);
     }
-    let owners: Vec<_> = world
-        .query_filtered::<Entity, With<Sources>>()
-        .iter(world)
-        .collect();
-    for workspace in owners {
-        let mut sources = world.entity_mut(workspace).take::<Sources>().unwrap();
-        let wanted = demand.remove(&workspace).unwrap_or_default();
+    if let Some(mut sources) = world.remove_resource::<Sources>() {
+        let wanted = demand;
         sources.0.retain(|path, _| wanted.contains_key(path));
         for (path, source) in &mut sources.0 {
             let pages = &wanted[path];
@@ -720,7 +709,7 @@ pub(crate) fn update(world: &mut World) {
             {
                 let capture = source.stamp.clone();
                 let path = path.clone();
-                if let Some(mut work) = world.get_mut::<WorkspaceWork>(workspace)
+                if let Some(mut work) = world.get_resource_mut::<ManagedWork>()
                     && !work.is_closing()
                 {
                     match work.spawn_task(None, "Read hex page", move |_| {
@@ -737,11 +726,11 @@ pub(crate) fn update(world: &mut World) {
                 }
             }
         }
-        world.entity_mut(workspace).insert(sources);
+        world.insert_resource(sources);
     }
 }
 fn poll<T: Send + 'static>(
-    task: &WorkspaceTask<Result<T, ReadError>>,
+    task: &ManagedTask<Result<T, ReadError>>,
 ) -> Option<Result<T, ReadError>> {
     match task.try_recv() {
         Ok(result) => Some(result),
@@ -756,8 +745,7 @@ fn poll<T: Send + 'static>(
 pub(crate) fn inspect(world: &World, panel: Entity) -> Option<serde_json::Value> {
     let state = world.get::<HexPreview>(panel)?;
     let path = crate::files::panel_path(world, panel)?;
-    let workspace = world.get::<InWorkspace>(panel)?.0;
-    let source = world.get::<Sources>(workspace)?.0.get(&path)?;
+    let source = world.get_resource::<Sources>()?.0.get(&path)?;
     Some(
         serde_json::json!({"len":source.stamp.len,"cursor":state.view.cursor(),"selection":[state.view.selection(source.stamp.len).start,state.view.selection(source.stamp.len).end],"top_row":state.view.top_row,"rendered_rows":state.view.rendered_rows,"cached_pages":source.pages.len(),"cached_bytes":source.pages.values().map(|p|p.len()).sum::<usize>(),"rect":state.view.rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})),"message":state.message,"error":source.error,"searching":state.find.is_some(),"query":state.query}),
     )

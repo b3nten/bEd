@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real +open helpers, cwd/workspace routing and shared file viewers."""
+"""Exercise real +open helpers, cwd/session routing and shared file viewers."""
 import argparse
 import json
 import os
@@ -10,7 +10,7 @@ import tempfile
 import time
 
 from automation import Application, AutomationError
-from smoke_bed2 import ready, workspace
+from smoke_bed2 import ready
 from smoke_terminal import bootstrap, command, inspection
 from smoke_workspace_policy import clean_quit
 
@@ -39,10 +39,9 @@ def run_helper(app, panel, source, output, label, expected=0):
     return stderr.read_text()
 
 
-def terminal_for(app, owner):
-    wait_for(app, lambda: any(p["workspace"] == owner and p["status"] == "Running"
-                             for p in inspection(app)["panels"]), "Workspace terminal startup")
-    return next(p["entity"] for p in inspection(app)["panels"] if p["workspace"] == owner)
+def terminal_for(app):
+    wait_for(app, lambda: any(p["status"] == "Running" for p in inspection(app)["panels"]), "Terminal startup")
+    return next(p["entity"] for p in inspection(app)["panels"] if p["status"] == "Running")
 
 
 def main():
@@ -75,32 +74,19 @@ def main():
             result = subprocess.run([str(helper)], env=outside, capture_output=True, text=True, timeout=10)
             assert result.returncode == 1 and "BEDTERM_SOCKET is not set" in result.stderr
             assert result.stdout == "" and "bevy_render" not in result.stderr
-            with Application([binary], output=output / "first", timeout=60) as app:
-                initial = workspace(ready(app))["entity"]
-                initial_terminal = terminal_for(app, initial)
-                bootstrap(app, initial_terminal, "OPEN_HELPER_READY")
-                run_helper(app, initial_terminal,
-                           "cd " + shlex.quote(str(project)) + " && +open", root, "cwd")
-                wait_for(app, lambda: workspace(app.inspect())["entity"] != initial,
-                         "No-argument +open activates a folder workspace")
-                folder = workspace(app.inspect())["entity"]
-                wait_for(app, lambda: any(w["workspace"] == folder and w["persistent"]
-                                         and w["root"] == str(project) and w["session_ready"]
-                                         and w["settings_ready"]
-                                         for w in app.request("app.inspect_filetree")["workspace_roots"]),
-                         "Folder workspace is restored")
-                app.request("workspace.activate", workspace=initial)
-                run_helper(app, initial_terminal, "+open", root, "reuse")
-                assert workspace(app.inspect())["entity"] == folder
-                assert len(app.inspect()["workbench"]["workspaces"]) == 2
-                panel = terminal_for(app, folder)
-                bootstrap(app, panel, "FOLDER_SHELL_READY")
+            with Application([binary, str(project)], output=output / "first", timeout=60) as app:
+                ready(app)
+                panel = terminal_for(app)
+                bootstrap(app, panel, "OPEN_HELPER_READY")
+                run_helper(app, panel, "cd " + shlex.quote(str(project)) + " && +open", root, "cwd")
+                assert app.request("app.inspect_filetree")["project"]["root"] == str(project)
+                run_helper(app, panel, "+open .", root, "reuse")
                 relative = "cd " + shlex.quote(str(project / "sub")) + " && +open '../file with spaces.rs' ../foo.png"
                 run_helper(app, panel, relative, root, "files")
                 previews = app.request("app.inspect_filetree")["previews"]
                 text = next(p for p in previews if p["path"] == str(source))
                 metadata = next(p for p in previews if p["path"] == str(image))
-                assert text["workspace"] == folder and text["pinned"]
+                assert text["pinned"]
                 assert text["content"] == source.read_text() and text["error"] is None
                 assert metadata["pinned"] and metadata["kind"] == "image" and metadata["error"] is None
                 assert not app.request("app.inspect_filetree")["panels"], "Opening files needs no tree"
@@ -115,12 +101,8 @@ def main():
                 captures.append(app.capture("opened-file.png"))
                 # Session persistence is exercised through the normal quit gate.
                 clean_quit(app)
-            with Application([binary], output=output / "restored", timeout=60) as app:
-                origin = workspace(ready(app))["entity"]
-                panel = terminal_for(app, origin)
-                bootstrap(app, panel, "RESTORE_SHELL_READY")
-                run_helper(app, panel, "cd " + shlex.quote(str(project)) + " && +open",
-                           root, "restore-cwd")
+            with Application([binary, str(project)], output=output / "restored", timeout=60) as app:
+                ready(app)
                 wait_for(app, lambda: len(app.request("app.inspect_filetree")["previews"]) == 2,
                          "Folder reopening restores helper-created tabs")
                 wait_for(app, lambda: all(not p["loading"] for p in app.request("app.inspect_filetree")["previews"]),
@@ -136,8 +118,8 @@ def main():
                 os.environ[key] = value
     assert all(c["nontransparent_pixels"] > 0 for c in captures)
     (output / "summary.json").write_text(json.dumps({
-        "passed": True, "captures": captures, "cwd_workspace": True,
-        "reuse_workspace": True, "relative_files": True, "alias": True,
+        "passed": True, "captures": captures, "cwd_project": True,
+        "reuse_project": True, "relative_files": True, "alias": True,
         "missing_file_exit_status": True, "session_restore": True,
     }, indent=2) + "\n")
 

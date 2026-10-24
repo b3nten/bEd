@@ -11,8 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Component, Clone, Debug, PartialEq)]
-pub struct LspWorkspace {
+#[derive(Resource, Clone, Debug, PartialEq)]
+pub struct LspProject {
     pub root: PathBuf,
     pub servers: BTreeMap<String, ServerConfig>,
 }
@@ -34,7 +34,7 @@ pub struct DocumentLsp {
 struct ManagedServer {
     launch: Launch,
     handle: ServerHandle,
-    task: WorkspaceTask<()>,
+    task: ManagedTask<()>,
     lifecycle: ServerLifecycle,
     bindings: HashSet<DocumentKey>,
 }
@@ -337,12 +337,11 @@ pub struct ServerObservation {
     pub retiring: bool,
     pub activity: Arc<ServerActivity>,
 }
-pub fn workspace_servers(world: &mut World, workspace: Entity) -> Vec<ServerObservation> {
+pub fn session_servers(world: &mut World) -> Vec<ServerObservation> {
     world
-        .query::<(Entity, &ManagedServer, &InWorkspace)>()
+        .query::<(Entity, &ManagedServer)>()
         .iter(world)
-        .filter(|(_, _, owner)| owner.0 == workspace)
-        .map(|(entity, server, _)| ServerObservation {
+        .map(|(entity, server)| ServerObservation {
             entity,
             program: server.launch.config.program.clone(),
             status: if server.lifecycle == ServerLifecycle::Stopped {
@@ -352,7 +351,7 @@ pub fn workspace_servers(world: &mut World, workspace: Entity) -> Vec<ServerObse
             },
             root: server.launch.root.clone(),
             languages: world
-                .get::<LspWorkspace>(workspace)
+                .get_resource::<LspProject>()
                 .map(|p| {
                     p.servers
                         .iter()
@@ -375,7 +374,7 @@ pub fn restart_instance(world: &mut World, entity: Entity) -> Result<(), String>
     Ok(())
 }
 
-/// Stop one launch configuration in this workspace until explicitly restarted
+/// Stop one launch configuration in this session until explicitly restarted
 /// or replaced by a different configuration. Shared-language bindings stop together.
 pub fn stop_instance(world: &mut World, entity: Entity) -> Result<(), String> {
     let mut managed = world
@@ -431,14 +430,10 @@ fn update(world: &mut World) {
                 server.bindings.remove(&key);
             }
         }
-        let workspace = world.get::<InWorkspace>(entity).map(|w| w.0);
         let server = world.get::<ManagedServer>(entity).unwrap();
-        let wanted = workspace
-            .and_then(|w| world.get::<LspWorkspace>(w))
-            .is_some_and(|p| {
-                p.root == server.launch.root
-                    && p.servers.values().any(|c| c == &server.launch.config)
-            });
+        let wanted = world.get_resource::<LspProject>().is_some_and(|p| {
+            p.root == server.launch.root && p.servers.values().any(|c| c == &server.launch.config)
+        });
         if !wanted {
             let mut s = world.get_mut::<ManagedServer>(entity).unwrap();
             s.lifecycle = ServerLifecycle::Restarting;
@@ -553,7 +548,7 @@ fn update(world: &mut World) {
             let state = world.get::<DocumentLsp>(doc)?;
             let source = world.get::<LspDocument>(doc)?;
             let info = inspect_document(world, DocumentId(doc)).ok()?;
-            let project = world.get::<LspWorkspace>(info.workspace)?;
+            let project = world.get_resource::<LspProject>()?;
             let server = world.get::<ManagedServer>(state.server)?;
             (source == &state.source
                 && project.servers.get(&source.language) == Some(&server.launch.config)
@@ -582,8 +577,8 @@ fn update(world: &mut World) {
             continue;
         }
         if world
-            .get::<WorkspaceWork>(info.workspace)
-            .is_some_and(WorkspaceWork::is_closing)
+            .get_resource::<ManagedWork>()
+            .is_some_and(ManagedWork::is_closing)
         {
             continue;
         }
@@ -593,19 +588,17 @@ fn update(world: &mut World) {
         }
         let source = world.get::<LspDocument>(doc).unwrap().clone();
         if world.get::<DocumentLsp>(doc).is_none() {
-            let Some(project) = world.get::<LspWorkspace>(info.workspace).cloned() else {
+            let Some(project) = world.get_resource::<LspProject>().cloned() else {
                 continue;
             };
             let Some(config) = project.servers.get(&source.language).cloned() else {
                 continue;
             };
             let existing = world
-                .query::<(Entity, &ManagedServer, &InWorkspace)>()
+                .query::<(Entity, &ManagedServer)>()
                 .iter(world)
-                .find_map(|(entity, s, w)| {
-                    (w.0 == info.workspace
-                        && s.launch.config == config
-                        && s.launch.root == project.root)
+                .find_map(|(entity, s)| {
+                    (s.launch.config == config && s.launch.root == project.root)
                         .then_some((entity, s.lifecycle != ServerLifecycle::Running))
                 });
             let server = match existing {
@@ -619,13 +612,14 @@ fn update(world: &mut World) {
                     let Ok((handle, worker)) = ServerHandle::prepare(launch.clone()) else {
                         continue;
                     };
-                    let entity = world.spawn(InWorkspace(info.workspace)).id();
-                    let task = Workbench::for_entity(world, info.workspace).and_then(|mut w| {
-                        w.work()
-                            .spawn_task(Some(entity), "Language server", move |cancel| {
-                                worker.run(|| cancel.is_cancelled())
-                            })
-                    });
+                    let entity = world.spawn_empty().id();
+                    let task = {
+                        world.resource_mut::<ManagedWork>().spawn_task(
+                            Some(entity),
+                            "Language server",
+                            move |cancel| worker.run(|| cancel.is_cancelled()),
+                        )
+                    };
                     let Ok(task) = task else {
                         world.despawn(entity);
                         continue;

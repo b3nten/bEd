@@ -1,4 +1,6 @@
 //! Application settings: explicit global values, per-value workspace overrides.
+use crate::persistence::ReflectGlobalPersist;
+use crate::persistence::ReflectProjectPersist;
 use bedtime_ui2::{UiContext, UsesTheme, egui, themes};
 use bedtime_workbench2::{Panel, PanelInstance, WindowBlur, WorkbenchSurface};
 use bevy::prelude::*;
@@ -166,25 +168,31 @@ impl SettingsOverrides {
 }
 
 /// Startup policy is global: no workspace exists yet when it is resolved.
-#[derive(Resource, Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Resource, Default, Clone, Debug, PartialEq, Serialize, Deserialize, Reflect)]
+#[reflect(opaque)]
+#[reflect(Resource, Serialize, Deserialize, GlobalPersist)]
 #[serde(default, deny_unknown_fields)]
 pub struct StartupPreferences {
     pub open_last_workspace: bool,
     pub last_workspace: Option<PathBuf>,
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[reflect(opaque)]
+#[reflect(Resource, Serialize, Deserialize, GlobalPersist)]
 pub struct GlobalPreferences(pub Settings);
-#[derive(Component, Default, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct WorkspacePreferences(pub SettingsOverrides);
+#[derive(Resource, Default, Clone, Debug, PartialEq, Serialize, Deserialize, Reflect)]
+#[reflect(opaque)]
+#[reflect(Resource, Serialize, Deserialize, ProjectPersist)]
+pub struct ProjectPreferences(pub SettingsOverrides);
 
-pub fn effective_settings(world: &World, workspace: Entity) -> Settings {
+pub fn effective_settings(world: &World) -> Settings {
     let global = world
         .get_resource::<GlobalPreferences>()
         .map(|p| p.0.clone())
         .unwrap_or_default();
     world
-        .get::<WorkspacePreferences>(workspace)
+        .get_resource::<ProjectPreferences>()
         .map(|p| p.0.resolve(&global))
         .unwrap_or(global)
 }
@@ -243,8 +251,8 @@ pub struct Preferences {
     pub terminal: Option<TerminalPreferences>,
 }
 
-pub fn effective_preferences(world: &World, workspace: Entity) -> Preferences {
-    let s = effective_settings(world, workspace);
+pub fn effective_preferences(world: &World) -> Preferences {
+    let s = effective_settings(world);
     Preferences {
         editor: Some(EditorPreferences {
             line_numbers: s.line_numbers,
@@ -275,7 +283,9 @@ struct AppliedAppearance(Option<Settings>);
 pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
+        register_menu(app);
         app.init_resource::<GlobalPreferences>()
+            .init_resource::<ProjectPreferences>()
             .init_resource::<AppliedAppearance>()
             .add_systems(
                 Update,
@@ -308,13 +318,7 @@ pub fn flush(world: &mut World) -> Result<bool, String> {
 }
 
 fn apply_appearance(world: &mut World) {
-    let active = world
-        .query_filtered::<Entity, With<bedtime_workbench2::ActiveWorkspace>>()
-        .iter(world)
-        .next();
-    let desired = active
-        .map(|w| effective_settings(world, w))
-        .unwrap_or_else(|| world.resource::<GlobalPreferences>().0.clone());
+    let desired = effective_settings(world);
     if world.resource::<AppliedAppearance>().0.as_ref() == Some(&desired) {
         return;
     }
@@ -346,16 +350,8 @@ fn apply_appearance(world: &mut World) {
 }
 
 pub fn configure_editor(world: &mut World, panel: Entity) {
-    let Some(workspace) = world
-        .get::<bedtime_workbench2::InWorkspace>(panel)
-        .map(|owner| owner.0)
-    else {
-        return;
-    };
-    let mut desired = effective_preferences(world, workspace)
-        .editor
-        .unwrap_or_default();
-    desired.read_only |= !crate::storage::ready(world, workspace);
+    let mut desired = effective_preferences(world).editor.unwrap_or_default();
+    desired.read_only |= !crate::storage::ready(world);
     let document = world
         .get::<bedtime_workbench2::DocumentView>(panel)
         .map(|view| view.document());
@@ -379,13 +375,12 @@ fn update_preferences(world: &mut World) {
     crate::storage::update(world);
     apply_appearance(world);
     let panels: Vec<_> = world
-        .query::<(Entity, &bedtime_workbench2::InWorkspace)>()
+        .query_filtered::<Entity, With<PanelInstance>>()
         .iter(world)
-        .map(|(entity, owner)| (entity, owner.0))
         .collect();
-    for (panel, workspace) in panels {
-        let preferences = effective_preferences(world, workspace);
-        let ready = crate::storage::ready(world, workspace);
+    for panel in panels {
+        let preferences = effective_preferences(world);
+        let ready = crate::storage::ready(world);
         if world
             .get::<bedtime_editor2::workbench::WorkbenchEditor>(panel)
             .is_some()
@@ -417,7 +412,7 @@ fn update_preferences(world: &mut World) {
         {
             let desired = preferences.terminal.unwrap_or_default();
             let directory = if desired.project_directory {
-                crate::files::workspace_directory(world, workspace)
+                crate::files::project_directory(world)
             } else {
                 None
             };
@@ -465,9 +460,6 @@ impl Panel for SettingsPanel {
                 .max(ui.text_style_height(&egui::TextStyle::Body))
                 + 2.0 * ui.spacing().button_padding.y)
                 .max(ui.spacing().interact_size.y);
-        let workspace = world
-            .get::<bedtime_workbench2::InWorkspace>(panel)
-            .map(|o| o.0);
         let scope_id = ui.id().with((panel, "settings-scope"));
         let section_id = ui.id().with((panel, "settings-section"));
         let mut local = ui.data_mut(|d| d.get_temp::<bool>(scope_id).unwrap_or(false));
@@ -478,13 +470,12 @@ impl Panel for SettingsPanel {
             // of this same row, so long filenames cannot push the switch out.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label("Workspace");
-                ui.add_enabled_ui(workspace.is_some(), |ui| {
+                ui.add_enabled_ui(true, |ui| {
                     toggle(ui, &mut local, "");
                 });
                 ui.label("Global");
                 let path = if local {
-                    workspace.filter(|w| world.get::<crate::files::FolderWorkspace>(*w).is_some())
-                        .and_then(|w| crate::files::workspace_directory(world, w))
+                    world.get_resource::<crate::files::ProjectFolder>().and_then(|_| crate::files::project_directory(world))
                         .and_then(|root| crate::storage::workspace_path(world, &root))
                 } else {
                     world.get_resource::<crate::storage::ConfigDirectory>()
@@ -501,13 +492,10 @@ impl Panel for SettingsPanel {
             });
         });
         crate::storage::draw_errors(ui, world);
-        if let Some(workspace) = workspace {
-            crate::session::draw_status(ui, world, workspace);
-        }
+        crate::session::draw_status(ui, world);
         ui.separator();
         let global = world.resource::<GlobalPreferences>().0.clone();
-        let mut overrides = workspace
-            .and_then(|w| world.get::<WorkspacePreferences>(w))
+        let mut overrides = world.get_resource::<ProjectPreferences>()
             .map(|p| p.0.clone())
             .unwrap_or_default();
         let mut values = if local {
@@ -836,11 +824,7 @@ impl Panel for SettingsPanel {
                 });
         });
         if local {
-            if let Some(workspace) = workspace {
-                world
-                    .entity_mut(workspace)
-                    .insert(WorkspacePreferences(overrides));
-            }
+            world.insert_resource(ProjectPreferences(overrides));
         } else if values != before {
             world.resource_mut::<GlobalPreferences>().0 = values;
         }
@@ -930,25 +914,21 @@ mod tests {
     fn workspace_overrides_are_per_value_and_reset_resumes_inheritance() {
         let mut world = World::new();
         world.insert_resource(GlobalPreferences::default());
-        let first = world
-            .spawn(WorkspacePreferences(SettingsOverrides {
-                line_numbers: Some(false),
-                ..default()
-            }))
-            .id();
-        let second = world.spawn(WorkspacePreferences::default()).id();
+        world.insert_resource(ProjectPreferences(SettingsOverrides {
+            line_numbers: Some(false),
+            ..default()
+        }));
         world.resource_mut::<GlobalPreferences>().0.smart_wrapping = false;
-        assert!(!effective_settings(&world, first).line_numbers);
-        assert!(!effective_settings(&world, first).smart_wrapping);
-        assert!(effective_settings(&world, second).line_numbers);
+        assert!(!effective_settings(&world).line_numbers);
+        assert!(!effective_settings(&world).smart_wrapping);
         world
-            .get_mut::<WorkspacePreferences>(first)
+            .get_resource_mut::<ProjectPreferences>()
             .unwrap()
             .0
             .line_numbers = None;
-        assert!(effective_settings(&world, first).line_numbers);
+        assert!(effective_settings(&world).line_numbers);
         world.resource_mut::<GlobalPreferences>().0.line_numbers = false;
-        assert!(!effective_settings(&world, first).line_numbers);
+        assert!(!effective_settings(&world).line_numbers);
     }
 
     #[test]
@@ -1078,49 +1058,21 @@ mod tests {
     }
 
     #[test]
-    fn workspace_switch_applies_appearance_without_changing_global_values() {
+    fn project_overrides_apply_appearance_without_changing_global_values() {
         let mut app = App::new();
         app.add_plugins(bedtime_workbench2::WorkbenchCorePlugin)
             .init_resource::<GlobalPreferences>()
             .init_resource::<AppliedAppearance>();
-        let first = bedtime_workbench2::Workspaces::new(app.world_mut()).open("First");
-        let second = bedtime_workbench2::Workspaces::new(app.world_mut()).open("Second");
-        app.world_mut()
-            .entity_mut(second.entity())
-            .insert(WorkspacePreferences(SettingsOverrides {
-                theme: Some(ThemeChoice::Light),
-                window_opacity: Some(0.5),
-                panel_gap: Some(12.0),
-                font_size: Some(22.0),
-                ..default()
-            }));
+        app.insert_resource(ProjectPreferences(SettingsOverrides {
+            font_size: Some(22.0),
+            panel_gap: Some(12.0),
+            ..default()
+        }));
         let theme = app.world_mut().spawn(themes::dark()).id();
         let surface = app
             .world_mut()
             .spawn((WorkbenchSurface::default(), UsesTheme(theme)))
             .id();
-        bedtime_workbench2::Workspaces::new(app.world_mut())
-            .activate(first)
-            .unwrap();
-        apply_appearance(app.world_mut());
-        assert_eq!(
-            app.world()
-                .get::<bedtime_ui2::Theme>(theme)
-                .unwrap()
-                .metrics
-                .font_size,
-            15.5
-        );
-        assert_eq!(
-            app.world()
-                .get::<WorkbenchSurface>(surface)
-                .unwrap()
-                .panel_gap,
-            5.0
-        );
-        bedtime_workbench2::Workspaces::new(app.world_mut())
-            .activate(second)
-            .unwrap();
         apply_appearance(app.world_mut());
         assert_eq!(
             app.world()
@@ -1138,28 +1090,21 @@ mod tests {
             12.0
         );
         assert_eq!(
-            app.world()
-                .get::<bedtime_ui2::Theme>(theme)
-                .unwrap()
-                .palette
-                .background[3],
-            0.5
+            app.world().resource::<GlobalPreferences>().0.font_size,
+            15.5
         );
-        assert_eq!(
-            app.world().resource::<GlobalPreferences>().0.theme,
-            ThemeChoice::Dark
-        );
-        bedtime_workbench2::Workspaces::new(app.world_mut())
-            .activate(first)
-            .unwrap();
+        app.world_mut()
+            .resource_mut::<ProjectPreferences>()
+            .0
+            .font_size = None;
         apply_appearance(app.world_mut());
         assert_eq!(
             app.world()
                 .get::<bedtime_ui2::Theme>(theme)
                 .unwrap()
-                .palette
-                .background[3],
-            1.0
+                .metrics
+                .font_size,
+            15.5
         );
     }
 }
@@ -1167,18 +1112,11 @@ mod tests {
 #[cfg(feature = "automation")]
 fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::AutomationResult {
     let fonts = crate::fonts::inspect(world);
-    let workspaces: Vec<_> = world
-        .query_filtered::<Entity, With<bedtime_workbench2::Workspace>>()
-        .iter(world)
-        .collect();
     Ok(
         serde_json::json!({ "global": world.resource::<GlobalPreferences>().0,
         "fonts": fonts,
         "startup": world.resource::<StartupPreferences>(),
-        "workspaces": workspaces.into_iter().map(|workspace| serde_json::json!({
-            "workspace": workspace.to_bits().to_string(), "effective": effective_settings(world, workspace),
-            "overrides": world.get::<WorkspacePreferences>(workspace).map(|p| &p.0),
-        })).collect::<Vec<_>>() }),
+        "project": {"effective": effective_settings(world), "overrides": world.get_resource::<ProjectPreferences>().map(|p| &p.0)} }),
     )
 }
 
@@ -1187,25 +1125,20 @@ fn set(world: &mut World, arguments: serde_json::Value) -> bedtime_automation2::
     if !crate::close::accepts_user_actions(world) {
         return Err("Cancel quit before editing settings".into());
     }
+    if arguments.get("workspace").is_some()
+        || arguments
+            .get("scope")
+            .is_some_and(|scope| scope != "global" && scope != "project")
+    {
+        return Err("Settings scope must be global or project".into());
+    }
     let values = arguments
         .get("values")
         .and_then(|v| v.as_object())
         .ok_or("values must be a settings object")?;
-    if let Some(workspace) = arguments.get("workspace") {
-        let bits = workspace
-            .as_str()
-            .ok_or("workspace must be an entity ID")?
-            .parse::<u64>()
-            .map_err(|e| e.to_string())?;
-        let workspace = Entity::try_from_bits(bits).ok_or("Invalid workspace ID")?;
-        if world
-            .get::<bedtime_workbench2::Workspace>(workspace)
-            .is_none()
-        {
-            return Err("Workspace is unavailable".into());
-        }
+    if arguments.get("scope").and_then(|s| s.as_str()) == Some("project") {
         let current = world
-            .get::<WorkspacePreferences>(workspace)
+            .get_resource::<ProjectPreferences>()
             .map(|p| p.0.clone())
             .unwrap_or_default();
         let mut merged = serde_json::to_value(current).map_err(|e| e.to_string())?;
@@ -1218,9 +1151,7 @@ fn set(world: &mut World, arguments: serde_json::Value) -> bedtime_automation2::
         let settings: SettingsOverrides =
             serde_json::from_value(merged).map_err(|e| e.to_string())?;
         settings.validate()?;
-        world
-            .entity_mut(workspace)
-            .insert(WorkspacePreferences(settings));
+        world.insert_resource(ProjectPreferences(settings));
     } else {
         let mut merged = serde_json::to_value(&world.resource::<GlobalPreferences>().0)
             .map_err(|e| e.to_string())?;
@@ -1235,4 +1166,45 @@ fn set(world: &mut World, arguments: serde_json::Value) -> bedtime_automation2::
         world.resource_mut::<GlobalPreferences>().0 = settings;
     }
     inspect(world, serde_json::Value::Null)
+}
+
+use bedtime_workbench2::persistence::ReflectWorkbenchPersist;
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, WorkbenchPersist)]
+#[require(SettingsPanel)]
+pub(crate) struct PersistedSettings;
+
+pub(crate) fn register_persistence(app: &mut App) {
+    app.register_type::<PersistedSettings>();
+}
+pub(crate) fn project_persistence(
+    world: &mut World,
+    captured: &mut bedtime_workbench2::persistence::CapturedWorld,
+) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<SettingsPanel>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        captured.insert_component(panel, PersistedSettings);
+    }
+}
+pub(crate) fn clear_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedSettings>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        world.entity_mut(panel).remove::<PersistedSettings>();
+    }
+}
+
+pub(crate) fn register_menu(app: &mut App) {
+    crate::menus::register_panel::<SettingsPanel>(
+        app,
+        Some(90),
+        bedtime_workbench2::PanelFactory::of::<SettingsPanel>(),
+        |_| true,
+    );
 }

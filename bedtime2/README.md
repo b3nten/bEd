@@ -28,11 +28,12 @@ The foundation and its optional panels live in these crates:
 - [`bedtime-treesitter2`](crates/bedtime-treesitter2): shared incremental trees,
   syntax spans, whole-line folds and code outlines in bounded workers.
 - [`bedtime-workbench2`](crates/bedtime-workbench2): headless ContextCommands, scoped handlers,
-  keybindings, menus, workspace entities, activation markers, shared typed/text
+  keybindings, menus, one world session, layouts, shared typed/text
   documents with history/save/reconciliation, and scoped tasks/processes, plus
   optional native services and egui workbench presentation. Concrete panel
   composition needs no type registry or initialization pass. Creation discovery,
-  session formats/restore, source I/O, project data and settings are application-owned.
+  storage envelopes/routing, source I/O, project data and settings are application-owned.
+  Optional reflected persistence handles durable graph capture/restoration.
 - [`bedtime-filetree2`](crates/bedtime-filetree2): lazy local filesystem panels,
   native watching, safe file operations and root-scoped hidden preferences.
   Applications explicitly supply each panel's root, handle buffered file-open
@@ -46,10 +47,10 @@ belongs to optional workbench plugins. After the application's Bevy setup,
 `WorkbenchPlugin` and `UiPlugin` supply the usual desktop foundation in either
 registration order. Applications can compose individual workbench plugins or
 customize the convenience group. Camera and renderer setup stays application-owned.
-Applications compose workspace/layout entities and concrete panel components;
-there is no panel registry, built-in type picker or core snapshot/restore format.
-Active markers select the workspace and its layout; empty workbenches and
-workspaces are valid. Required components supply missing defaults and panel
+Applications compose layout entities and concrete panel components;
+there is no panel registry or built-in type picker. Persistence is opt-in, separate
+from ordinary composition.
+One ActiveLayout selects the displayed layout; empty workbenches are valid. Required components supply missing defaults and panel
 metadata/drawing immediately, preserving explicit overrides. Relationship hooks
 maintain membership and selection/focus fallback; reconciliation validates rather
 than initializing panels. New panels select their destination tab without changing
@@ -60,26 +61,19 @@ Workbench's default features are `ui`, `native` and `clipboard`; disabling defau
 leaves a headless core. UI2 and workbench share the independent clipboard service,
 which release games can also use without either of them.
 
-`bed2` opens one workspace and a 3D Viewport panel in the application World.
+`bed2` opens one session with a Terminal layout in the application World.
 Its `cube.rs` module owns the shared scene and per-panel orbit cameras. Live
 Theme controls, a Tasks & Processes panel in `tasks.rs`, and the optional Terminal
 plugin remain available. Files opens real documents in code views, and `code.rs`
 installs syntax contributions and the application
 [Structure panel](../bed2/crates/bed-structure2/README.md). `close.rs` owns application quit decisions and waits for
-managed workers to finish cleanup. Memory-only Documents and Hello World remain
-removed. The titlebar opens Settings and Files; its application-owned View menu
-offers concrete panel creation, including Theme. Its File menu includes New
-(unsaved Untitled scratch content), Open Files, Save, Save All, Reload and Quit.
-Settings supports inherited global/workspace Editor/Files/Terminal preferences and
-application keybindings; Undo/Redo remains widget-owned. Appearance and preferences
-have application-owned storage, not session restoration. Save As, recovery and
-workspace-management policy remain pending.
-The application chooses cwd or an explicit project-directory argument as its
-default file-tree root, owns
-background text loading, checked saves and root-scoped visibility storage. The
-reusable filetree/editor crates retain their explicit host-policy boundaries.
-Its entry point contains plugin setup and workspace/panel creation. It has no
-demo flags or smoke-test modes.
+managed workers to finish cleanup. Memory-only Documents, Hello World and Theme
+demo panels remain removed. The titlebar opens tools and Settings; menus own
+concrete creation and File/Save/Open Folder/Quit policy. Settings applies per-value
+global/project inheritance and declared binding overrides. Files, image, hex and
+model viewers share checked opening/source routes. The default memory session uses
+home; an explicit folder opts into centralized metadata. Save As, New/Untitled and
+unsaved-content recovery remain deferred.
 The optional [automation plugin](crates/bedtime-automation2/README.md) provides
 stdin/stdout control; external Python scripts own scenarios and assertions.
 
@@ -101,3 +95,9 @@ See [stage 3](../MIGRATION/step-3.md) and the
 [Stage 4](../MIGRATION/step-4-egui.md) records the egui migration and input ownership model.
 
 [`bedtime-image2`](crates/bedtime-image2/README.md) supplies reusable static raster/SVG decoding and a cursor-anchored zoom/pan canvas, with optional Workbench integration. File associations remain application-owned.
+
+The [world/session migration](../MIGRATION/workbench-world-session-plan.md) removes
+Workbench workspace ownership. Commands/work/queues are world resources. Optional
+reflected persistence restores marked graph data without a panel registry; bEd2
+owns storage/admission/external loading. A different project opens a separate
+instance; the same canonical project cannot be edited by independent instances.

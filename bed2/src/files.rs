@@ -3,6 +3,7 @@
 #[cfg(any(test, feature = "automation"))]
 use crate::opening::open_folder;
 use crate::opening::{FolderOpens, poll_folder_opens};
+use crate::persistence::ReflectProjectPersist;
 #[cfg(test)]
 use bedtime_editor2::BufferEdit;
 use bedtime_editor2::TextBuffer;
@@ -19,7 +20,6 @@ use bedtime_filetree2::{FileTreePreferencesChanged, FileTreeVisibility};
 use bedtime_ui2::{UiContext, egui};
 use bedtime_workbench2::*;
 use bevy::{ecs::message::MessageCursor, prelude::*};
-#[cfg(any(test, feature = "automation"))]
 #[cfg(feature = "automation")]
 use std::collections::BTreeSet;
 use std::{
@@ -38,6 +38,9 @@ const PREVIEW_CHECK_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_PREVIEW_CHECKS: usize = 64;
 
 pub struct FilesPlugin;
+#[cfg(feature = "automation")]
+#[derive(Resource, Default)]
+struct FolderAutomation(Option<crate::opening::FolderOpenResult>);
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FilesSystems {
@@ -46,6 +49,7 @@ pub enum FilesSystems {
 
 impl Plugin for FilesPlugin {
     fn build(&self, app: &mut App) {
+        register_menu(app);
         app.add_plugins((FileTreePlugin, crate::file_editor::FileEditorPlugin))
             .insert_resource(FileTreePanelDrag(crate::opening::file_panel_factory))
             .insert_resource(bedtime_filetree2::FileTreeOpenWith(
@@ -61,18 +65,19 @@ impl Plugin for FilesPlugin {
                     .after(bedtime_filetree2::FileTreeSystems::Update)
                     .before(bedtime_editor2::workbench::update_document_analysis),
             )
-            // UI preference changes must be admitted BEFORE workspace.close can
+            // UI preference changes must be admitted before shutdown can
             // cancel storage. No filesystem work happens in this system.
             .add_systems(
                 PreUpdate,
                 admit_preferences
                     .after(bedtime_ui2::UiSystems::Draw)
                     .after(WorkbenchSystems::Apply)
-                    .before(WorkspaceSystems::Dispatch),
+                    .before(SessionSystems::Sync),
             );
         #[cfg(feature = "automation")]
         {
             use bedtime_automation2::AutomationAppExt;
+            app.init_resource::<FolderAutomation>();
             app.register_automation_command("app.open_file", crate::opening::automation_open)
                 .register_automation_command("app.inspect_filetree", inspect)
                 .register_automation_command("app.open_folder", |world, arguments| {
@@ -80,8 +85,26 @@ impl Plugin for FilesPlugin {
                         .get("path")
                         .and_then(|value| value.as_str())
                         .ok_or("path must be a string")?;
-                    open_folder(world, PathBuf::from(path))?;
+                    let result = open_folder(world, PathBuf::from(path))?;
+                    world.resource_mut::<FolderAutomation>().0 = Some(result);
                     Ok(serde_json::json!({"admitted": true}))
+                })
+                .register_automation_command("app.inspect_folder_open", |world, _| {
+                    let state = world.resource::<FolderAutomation>();
+                    let result = state
+                        .0
+                        .as_ref()
+                        .map(|reply| reply.lock().unwrap().try_recv());
+                    Ok(match result {
+                        Some(Ok(Ok(crate::opening::FolderOpened::Reused))) => {
+                            serde_json::json!({"reused":true})
+                        }
+                        Some(Ok(Ok(crate::opening::FolderOpened::Launched(pid)))) => {
+                            serde_json::json!({"pid":pid})
+                        }
+                        Some(Ok(Err(error))) => serde_json::json!({"error":error}),
+                        _ => serde_json::json!({"pending":true}),
+                    })
                 })
                 .register_automation_command("app.set_filetree_root", set_tree_root)
                 .register_automation_command("app.set_filetree_settings", set_tree_settings)
@@ -90,14 +113,14 @@ impl Plugin for FilesPlugin {
     }
 }
 
-/// Stable project identity belongs to its workspace, never to the active window.
-#[derive(Component, Clone, Debug, PartialEq, Eq)]
-pub struct WorkspaceRoot(pub PathBuf);
+/// The World owns its canonical project root for this session.
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct ProjectRoot(pub PathBuf);
 
 /// Explicit folder-backed identity. A browsing/cwd root alone never opts into
-/// workspace storage: the default home workspace remains entirely in memory.
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct FolderWorkspace;
+/// project storage: the default home session remains entirely in memory.
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct ProjectFolder;
 
 #[derive(Resource, Default)]
 struct StartupRoot {
@@ -107,11 +130,11 @@ struct StartupRoot {
     persistent: bool,
     policy_resolved: bool,
     restoring_last: bool,
-    loading: Option<(Entity, WorkspaceTask<Result<PathBuf, String>>)>,
+    loading: Option<ManagedTask<Result<(PathBuf, Option<crate::project::ProjectLock>), String>>>,
     root: Option<PathBuf>,
-    assigned: Option<Entity>,
     error: Option<String>,
     reported_error: Option<String>,
+    remembered: Option<PathBuf>,
 }
 
 /// Main calls this explicitly; adding FilesPlugin alone leaves roots unconfigured.
@@ -142,27 +165,19 @@ fn home_directory() -> Result<PathBuf, String> {
 
 /// No terminal may start in a launch-directory fallback while its application
 /// root is still resolving. Headless hosts that chose no startup policy remain
-/// valid; production's startup request targets exactly one workspace.
-pub fn root_ready(world: &World, workspace: Entity) -> bool {
-    if world.get::<WorkspaceRoot>(workspace).is_some() {
+/// valid; production's startup request targets exactly one session.
+pub fn root_ready(world: &World) -> bool {
+    if world.contains_resource::<ProjectRoot>() {
         return true;
     }
-    let Some(startup) = world.get_resource::<StartupRoot>() else {
-        return true;
-    };
-    if startup
-        .loading
-        .as_ref()
-        .is_some_and(|(owner, _)| *owner == workspace)
-    {
-        return false;
-    }
-    startup.requested.is_none() && startup.error.is_none()
+    world.get_resource::<StartupRoot>().is_none_or(|startup| {
+        startup.loading.is_none() && startup.requested.is_none() && startup.error.is_none()
+    })
 }
 
-pub fn workspace_directory(world: &World, workspace: Entity) -> Option<PathBuf> {
+pub fn project_directory(world: &World) -> Option<PathBuf> {
     world
-        .get::<WorkspaceRoot>(workspace)
+        .get_resource::<ProjectRoot>()
         .map(|root| root.0.clone())
         .or_else(|| home_directory().ok())
 }
@@ -259,10 +274,7 @@ fn update_files(world: &mut World) {
                 let tree = world
                     .get::<FileTreePanel>(request.panel)
                     .ok_or("Source Files panel closed")?;
-                if world.get::<InWorkspace>(request.panel).map(|owner| owner.0)
-                    != Some(request.workspace)
-                    || !request.path.starts_with(&tree.snapshot().root)
-                {
+                if !request.path.starts_with(&tree.snapshot().root) {
                     return Err("Opening source changed".into());
                 }
                 let layout =
@@ -332,7 +344,8 @@ fn update_startup_root(world: &mut World) {
                 return;
             }
             if startup.requested == Some(None)
-                && let Some(preferences) = world.get_resource::<crate::settings::StartupPreferences>()
+                && let Some(preferences) =
+                    world.get_resource::<crate::settings::StartupPreferences>()
                 && preferences.open_last_workspace
                 && let Some(root) = &preferences.last_workspace
             {
@@ -342,80 +355,73 @@ fn update_startup_root(world: &mut World) {
             }
             startup.policy_resolved = true;
         }
-        if let Some((workspace, task)) = &startup.loading {
-            match task.try_recv() {
-                Ok(Ok(root)) => {
-                    if world.get::<Workspace>(*workspace).is_some()
-                        && world.get::<WorkspaceRoot>(*workspace).is_none()
-                    {
-                        world
-                            .entity_mut(*workspace)
-                            .insert(WorkspaceRoot(root.clone()));
-                        if startup.persistent {
-                            world.entity_mut(*workspace).insert(FolderWorkspace);
-                            let name = root
-                                .file_name()
-                                .unwrap_or(root.as_os_str())
-                                .to_string_lossy()
-                                .into_owned();
-                            crate::session::initialize_folder_name(world, *workspace, name);
+        if let Some(task) = &startup.loading {
+            let result = match task.try_recv() {
+                Ok(result) => Some(result),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(_) => Some(Err("Project root resolution stopped".into())),
+            };
+            if let Some(result) = result {
+                startup.loading = None;
+                startup.requested = None;
+                match result {
+                    Ok((root, claim)) => {
+                        world.insert_resource(ProjectRoot(root.clone()));
+                        if let Some(claim) = claim {
+                            world.insert_resource(claim);
+                            world.insert_resource(ProjectFolder);
+                            crate::session::initialize_folder_name(
+                                world,
+                                root.file_name()
+                                    .unwrap_or(root.as_os_str())
+                                    .to_string_lossy()
+                                    .into_owned(),
+                            );
                         }
+                        startup.root = Some(root);
                     }
-                    // Even a retired target consumes this startup request; its
-                    // project must not silently migrate to another workspace.
-                    startup.assigned = Some(*workspace);
-                    startup.root = Some(root);
-                    startup.loading = None;
-                    startup.requested = None;
-                }
-                Ok(Err(error)) => {
-                    startup.loading = None;
-                    if startup.restoring_last {
+                    Err(error) if startup.restoring_last => {
                         startup.restoring_last = false;
                         startup.persistent = false;
                         startup.requested = Some(None);
-                        request_error_dialog(world, ErrorDialog {
-                            title: "Open last workspace".into(),
-                            message: "The last workspace couldn't be opened. Opening a terminal in your home directory.".into(),
-                            details: Some(error),
-                        });
-                    } else {
-                        startup.error = Some(error);
-                        startup.requested = None;
+                        request_error_dialog(
+                            world,
+                            ErrorDialog {
+                                title: "Open last workspace".into(),
+                                message:
+                                    "The last project couldn't be opened. Opening home instead."
+                                        .into(),
+                                details: Some(error),
+                            },
+                        );
                     }
+                    Err(error) => startup.error = Some(error),
                 }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    let closing = world
-                        .get::<WorkspaceWork>(*workspace)
-                        .is_none_or(|work| work.is_closing());
-                    if !closing {
-                        startup.error =
-                            Some(format!("Root resolution stopped: {:?}", task.status()));
-                    }
-                    startup.requested = None;
-                    startup.loading = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
             }
         }
         if startup.root.is_none()
             && startup.loading.is_none()
             && let Some(requested) = startup.requested.clone()
         {
-            let workspace = world
-                .query::<(Entity, &WorkspaceWork)>()
-                .iter(world)
-                .find_map(|(entity, work)| (!work.is_closing()).then_some(entity));
-            if let Some(workspace) = workspace {
-                let task = world
-                    .get_mut::<WorkspaceWork>(workspace)
-                    .unwrap()
-                    .spawn_task(None, "Resolve project root", move |_| {
-                        resolve_root(requested)
-                    });
-                match task {
-                    Ok(task) => startup.loading = Some((workspace, task)),
-                    Err(error) => startup.error = Some(error),
+            let persistent = startup.persistent;
+            let task = world.resource_mut::<ManagedWork>().spawn_task(
+                None,
+                "Resolve project root",
+                move |_| {
+                    let root = resolve_root(requested)?;
+                    let claim = if persistent {
+                        Some(crate::project::ProjectLock::acquire(&root)?)
+                    } else {
+                        None
+                    };
+                    Ok((root, claim))
+                },
+            );
+            match task {
+                Ok(task) => startup.loading = Some(task),
+                Err(error) => {
+                    startup.error = Some(error);
+                    startup.requested = None;
                 }
             }
         }
@@ -423,36 +429,15 @@ fn update_startup_root(world: &mut World) {
 }
 
 fn configure_panels(world: &mut World) {
-    // The command-line root seeds one workspace only. Later workspaces must
-    // explicitly supply their own project identity rather than inheriting it.
-    if world.resource::<StartupRoot>().assigned.is_none()
-        && let Some(root) = world.resource::<StartupRoot>().root.clone()
-    {
-        let workspace = world
-            .query_filtered::<Entity, With<Workspace>>()
-            .iter(world)
-            .next();
-        if let Some(workspace) = workspace {
-            if world.get::<WorkspaceRoot>(workspace).is_none() {
-                world.entity_mut(workspace).insert(WorkspaceRoot(root));
-                if world.resource::<StartupRoot>().persistent {
-                    world.entity_mut(workspace).insert(FolderWorkspace);
-                }
-            }
-            world.resource_mut::<StartupRoot>().assigned = Some(workspace);
-        }
-    }
+    let Some(root) = world.get_resource::<ProjectRoot>().map(|r| r.0.clone()) else {
+        return;
+    };
     let panels: Vec<_> = world
-        .query_filtered::<(Entity, &InWorkspace), (With<FileTreePanel>, Without<FileTreeRoot>)>()
+        .query_filtered::<Entity, (With<FileTreePanel>, Without<FileTreeRoot>)>()
         .iter(world)
-        .filter_map(|(panel, owner)| {
-            world
-                .get::<WorkspaceRoot>(owner.0)
-                .map(|root| (panel, root.0.clone()))
-        })
         .collect();
-    for (panel, root) in panels {
-        world.entity_mut(panel).insert(FileTreeRoot(root));
+    for panel in panels {
+        world.entity_mut(panel).insert(FileTreeRoot(root.clone()));
     }
 }
 
@@ -477,10 +462,9 @@ pub fn open_files(world: &mut World, layout: Entity) {
             workbench.focus_panel(panel)?;
             panel
         };
-        let workspace = workbench.workspace_id().entity();
         let root = workbench
             .world()
-            .get::<WorkspaceRoot>(workspace)
+            .get_resource::<ProjectRoot>()
             .map(|root| root.0.clone());
         if workbench.world().get::<FileTreeRoot>(panel).is_none()
             && let Some(root) = root
@@ -545,9 +529,8 @@ struct PreviewRead {
 struct PreviewLoad {
     generation: u64,
     path: PathBuf,
-    workspace: Entity,
     document_stamp: Option<(DocumentId, u64)>,
-    handle: WorkspaceTask<PreviewRead>,
+    handle: ManagedTask<PreviewRead>,
 }
 
 /// A replaceable file tab. Text binds to a shared document; unsupported files
@@ -745,12 +728,8 @@ fn split_editor(world: &mut World, panel: Entity) -> Result<Entity, String> {
 }
 
 fn open_requested(world: &mut World, request: &FileTreeOpenRequested) -> Result<Entity, String> {
-    let owner = world
-        .get::<InWorkspace>(request.panel)
-        .ok_or("Source Files panel closed")?
-        .0;
-    if owner != request.workspace || world.get::<FileTreePanel>(request.panel).is_none() {
-        return Err("File open request no longer belongs to its source workspace".into());
+    if world.get::<FileTreePanel>(request.panel).is_none() {
+        return Err("Source Files panel closed".into());
     }
     if !request.path.is_absolute() {
         return Err("File source path must be absolute".into());
@@ -781,14 +760,9 @@ fn open_requested(world: &mut World, request: &FileTreeOpenRequested) -> Result<
 
 /// A selected file preview supplies Structure even while Files retains focus.
 pub(crate) fn select_structure_source(world: &mut World, panel: Entity) {
-    let Some(owner) = world.get::<InWorkspace>(panel).map(|owner| owner.0) else {
-        return;
-    };
     let source = bedtime_editor2::workbench::code_document_for_panel(world, panel)
         .map(|document| bed_structure2::SourceBinding { panel, document });
-    world
-        .entity_mut(owner)
-        .insert(bed_structure2::StructureSource { source });
+    world.insert_resource(bed_structure2::StructureSource { source });
 }
 
 /// Viewer changes are admitted only on replaceable tabs, before a new source load.
@@ -826,9 +800,20 @@ pub(crate) fn set_viewer(
             .remove::<crate::images::ImagePreview>();
     }
     if viewer == crate::opening::ViewerId::Model {
-        if world.get::<crate::models::ModelPreview>(panel).is_none() { world.entity_mut(panel).insert((crate::models::ModelPreview::default(), bedtime_model2::ModelScene::default())); }
-    } else { world.entity_mut(panel).remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>(); }
-    if viewer != crate::opening::ViewerId::Hex { world.entity_mut(panel).remove::<crate::hex::HexPreview>(); }
+        if world.get::<crate::models::ModelPreview>(panel).is_none() {
+            world.entity_mut(panel).insert((
+                crate::models::ModelPreview::default(),
+                bedtime_model2::ModelScene::default(),
+            ));
+        }
+    } else {
+        world
+            .entity_mut(panel)
+            .remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>();
+    }
+    if viewer != crate::opening::ViewerId::Hex {
+        world.entity_mut(panel).remove::<crate::hex::HexPreview>();
+    }
     Ok(())
 }
 
@@ -857,7 +842,10 @@ pub(crate) fn file_open_result(
     if viewer.load.is_some() {
         return None;
     }
-    if viewer.viewer == crate::opening::ViewerId::Model && viewer.error.is_none() && !viewer.missing { return crate::models::open_result(world, panel); }
+    if viewer.viewer == crate::opening::ViewerId::Model && viewer.error.is_none() && !viewer.missing
+    {
+        return crate::models::open_result(world, panel);
+    }
     if viewer.viewer == crate::opening::ViewerId::Image && viewer.error.is_none() && !viewer.missing
     {
         return crate::images::open_result(world, panel);
@@ -881,10 +869,6 @@ pub(crate) fn load_preview(
     path: PathBuf,
     retain: bool,
 ) -> Result<(), String> {
-    let workspace = world
-        .get::<InWorkspace>(panel)
-        .ok_or("Preview has no workspace")?
-        .0;
     let viewer = world
         .get::<FilePreviewPanel>(panel)
         .ok_or("Missing file viewer")?
@@ -906,11 +890,18 @@ pub(crate) fn load_preview(
     if !same_source {
         crate::file_editor::detach(world, panel)?;
     }
-    if !retain { world.entity_mut(panel).remove::<crate::hex::HexPreview>(); }
+    if !retain {
+        world.entity_mut(panel).remove::<crate::hex::HexPreview>();
+    }
     if !retain && viewer == crate::opening::ViewerId::Model {
         // Removing first runs linked scene cleanup; component replacement is not removal.
-        world.entity_mut(panel).remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>();
-        world.entity_mut(panel).insert((crate::models::ModelPreview::default(), bedtime_model2::ModelScene::default()));
+        world
+            .entity_mut(panel)
+            .remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>();
+        world.entity_mut(panel).insert((
+            crate::models::ModelPreview::default(),
+            bedtime_model2::ModelScene::default(),
+        ));
     }
     if !retain && viewer == crate::opening::ViewerId::Image {
         world
@@ -945,7 +936,7 @@ pub(crate) fn load_preview(
         .to_string_lossy()
         .into_owned();
     let source = path.clone();
-    let task = if let Some(mut work) = world.get_mut::<WorkspaceWork>(workspace) {
+    let task = if let Some(mut work) = world.get_resource_mut::<ManagedWork>() {
         work.spawn_task(Some(panel), "Read file preview", move |cancel| {
             if cancel.is_cancelled() {
                 return PreviewRead {
@@ -957,14 +948,27 @@ pub(crate) fn load_preview(
                 .ok()
                 .map(|m| (m.len(), m.modified().ok()));
             let mut content = if viewer == crate::opening::ViewerId::Model {
-                if source.extension().is_some_and(|e| e.eq_ignore_ascii_case("gltf")) {
-                    crate::models::read_text(&source).map(PreviewContent::Text).map_err(PreviewReadError::Failed)
-                } else { Ok(PreviewContent::Model(Arc::new(crate::models::read(&source)))) }
+                if source
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("gltf"))
+                {
+                    crate::models::read_text(&source)
+                        .map(PreviewContent::Text)
+                        .map_err(PreviewReadError::Failed)
+                } else {
+                    Ok(PreviewContent::Model(Arc::new(crate::models::read(
+                        &source,
+                    ))))
+                }
             } else if viewer == crate::opening::ViewerId::Hex {
                 read_hex(&source)
             } else if image_source {
                 match read_image(&source) {
-                    Err(PreviewReadError::Unsupported(reason)) if automatic => read_automatic_text(&source).map(|content|PreviewContent::Fallback(Box::new(content),reason.into())),
+                    Err(PreviewReadError::Unsupported(reason)) if automatic => {
+                        read_automatic_text(&source).map(|content| {
+                            PreviewContent::Fallback(Box::new(content), reason.into())
+                        })
+                    }
                     result => result,
                 }
             } else if automatic {
@@ -974,8 +978,14 @@ pub(crate) fn load_preview(
             };
             if viewer == crate::opening::ViewerId::Image && !image_source && automatic {
                 if let Ok(PreviewContent::Text(text)) = &content {
-                    if let Err(reason) = bedtime_image2::ImageContent::prepare(text.to_string().as_bytes(), "preview.svg") {
-                        content = Ok(PreviewContent::Fallback(Box::new(PreviewContent::Text(text.clone())),reason.into()));
+                    if let Err(reason) = bedtime_image2::ImageContent::prepare(
+                        text.to_string().as_bytes(),
+                        "preview.svg",
+                    ) {
+                        content = Ok(PreviewContent::Fallback(
+                            Box::new(PreviewContent::Text(text.clone())),
+                            reason.into(),
+                        ));
                     }
                 }
             }
@@ -997,7 +1007,6 @@ pub(crate) fn load_preview(
             world.get_mut::<FilePreviewPanel>(panel).unwrap().load = Some(PreviewLoad {
                 generation,
                 path,
-                workspace,
                 document_stamp,
                 handle,
             });
@@ -1040,17 +1049,25 @@ fn read_image(path: &Path) -> Result<PreviewContent, PreviewReadError> {
 }
 
 fn read_hex(path: &Path) -> Result<PreviewContent, PreviewReadError> {
-    crate::hex::prepare(path).map(PreviewContent::Hex).map_err(PreviewReadError::Failed)
+    crate::hex::prepare(path)
+        .map(PreviewContent::Hex)
+        .map_err(PreviewReadError::Failed)
 }
 
 fn read_automatic_text(path: &Path) -> Result<PreviewContent, PreviewReadError> {
-    let metadata = fs::metadata(path).map_err(|e|preview_read_error(path,e))?;
-    if !metadata.is_file() { return read_preview(path); }
-    if metadata.len() > MAX_PREVIEW_BYTES { return read_hex(path); }
+    let metadata = fs::metadata(path).map_err(|e| preview_read_error(path, e))?;
+    if !metadata.is_file() {
+        return read_preview(path);
+    }
+    if metadata.len() > MAX_PREVIEW_BYTES {
+        return read_hex(path);
+    }
     let mut probe = Vec::new();
-    File::open(path).and_then(|file|file.take(8192).read_to_end(&mut probe)).map_err(|e|preview_read_error(path,e))?;
+    File::open(path)
+        .and_then(|file| file.take(8192).read_to_end(&mut probe))
+        .map_err(|e| preview_read_error(path, e))?;
     // An incomplete final UTF-8 code point at the probe boundary is valid.
-    if probe.contains(&0) || std::str::from_utf8(&probe).is_err_and(|e|e.error_len().is_some()) {
+    if probe.contains(&0) || std::str::from_utf8(&probe).is_err_and(|e| e.error_len().is_some()) {
         return read_hex(path);
     }
     match read_preview(path)? {
@@ -1102,16 +1119,12 @@ fn poll_previews(world: &mut World) {
         .iter(world)
         .collect();
     for panel in panels {
-        let owner = world.get::<InWorkspace>(panel).map(|owner| owner.0);
-        let closing = owner
-            .and_then(|owner| world.get::<WorkspaceWork>(owner))
-            .is_some_and(WorkspaceWork::is_closing);
+        let closing = world
+            .get_resource::<ManagedWork>()
+            .is_some_and(ManagedWork::is_closing);
         let mut state = world.get_mut::<FilePreviewPanel>(panel).unwrap();
         let Some(load) = &state.load else { continue };
-        if owner != Some(load.workspace)
-            || state.path.as_ref() != Some(&load.path)
-            || state.generation != load.generation
-        {
+        if state.path.as_ref() != Some(&load.path) || state.generation != load.generation {
             load.handle.cancel();
             state.load = None;
             continue;
@@ -1152,24 +1165,37 @@ fn poll_previews(world: &mut World) {
                         PreviewContent::Hex(_) => crate::opening::ViewerId::Hex,
                         PreviewContent::Image(..) => crate::opening::ViewerId::Image,
                         PreviewContent::Model(_) => crate::opening::ViewerId::Model,
-                        PreviewContent::Text(_) if automatic && previous != crate::opening::ViewerId::Model && (previous != crate::opening::ViewerId::Image || fallback_reason.is_some()) => crate::opening::ViewerId::Code,
+                        PreviewContent::Text(_)
+                            if automatic
+                                && previous != crate::opening::ViewerId::Model
+                                && (previous != crate::opening::ViewerId::Image
+                                    || fallback_reason.is_some()) =>
+                        {
+                            crate::opening::ViewerId::Code
+                        }
                         _ => state.viewer,
                     };
                     // Reconciliation must never detach local edits to install a fallback.
-                    if previous != resolved && !crate::file_editor::can_replace(world,panel) {
-                        let mut state=world.get_mut::<FilePreviewPanel>(panel).unwrap();
+                    if previous != resolved && !crate::file_editor::can_replace(world, panel) {
+                        let mut state = world.get_mut::<FilePreviewPanel>(panel).unwrap();
                         state.error=Some("The source is no longer supported by this viewer. Your edits were retained.".into());
                         continue;
                     }
                     if previous != resolved {
-                        if let Err(error)=set_viewer(world,panel,resolved) {
-                            world.get_mut::<FilePreviewPanel>(panel).unwrap().error=Some(error);
+                        if let Err(error) = set_viewer(world, panel, resolved) {
+                            world.get_mut::<FilePreviewPanel>(panel).unwrap().error = Some(error);
                             continue;
                         }
                     }
-                    let mut state=world.get_mut::<FilePreviewPanel>(panel).unwrap();
-                    if previous==crate::opening::ViewerId::Image && resolved!=previous && automatic {
-                        state.notice=Some(format!("Image could not be decoded; showing file contents. {}",fallback_reason.as_deref().unwrap_or("")));
+                    let mut state = world.get_mut::<FilePreviewPanel>(panel).unwrap();
+                    if previous == crate::opening::ViewerId::Image
+                        && resolved != previous
+                        && automatic
+                    {
+                        state.notice = Some(format!(
+                            "Image could not be decoded; showing file contents. {}",
+                            fallback_reason.as_deref().unwrap_or("")
+                        ));
                     }
                     state.content = Some(content.clone());
                     state.error = None;
@@ -1182,9 +1208,11 @@ fn poll_previews(world: &mut World) {
                         image.error = Some(summary.to_string());
                     }
                     if let (Some(path), PreviewContent::Hex(initial)) = (&path, &content) {
-                        crate::hex::accept(world,panel,path,initial);
+                        crate::hex::accept(world, panel, path, initial);
                     }
-                    if let PreviewContent::Model(loaded) = &content { crate::models::accept(world, panel, loaded); }
+                    if let PreviewContent::Model(loaded) = &content {
+                        crate::models::accept(world, panel, loaded);
+                    }
                     if let PreviewContent::Image(content, pixels) = &content {
                         crate::images::accept_loaded(world, panel, content.clone(), pixels.clone());
                     }
@@ -1308,7 +1336,9 @@ fn unload_deleted_preview(world: &mut World, panel: Entity) {
     if retained {
         return;
     }
-    world.entity_mut(panel).remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>();
+    world
+        .entity_mut(panel)
+        .remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>();
     if world.get::<crate::images::ImagePreview>(panel).is_some() {
         world
             .entity_mut(panel)
@@ -1341,11 +1371,11 @@ struct PreviewSource {
     disk_stamp: Option<DiskStamp>,
 }
 
-/// Short, bounded workspace-owned tasks, not one watcher/thread per viewer.
+/// Short, bounded world-owned tasks, not one watcher/thread per viewer.
 /// No tree snapshot can prove absence outside its lazy, filtered projection.
-#[derive(Component, Default)]
+#[derive(Resource, Default)]
 struct PreviewObservation {
-    pending: Option<WorkspaceTask<Vec<PreviewSource>>>,
+    pending: Option<ManagedTask<Vec<PreviewSource>>>,
     next_check: Option<Instant>,
     cursor: Option<Entity>,
 }
@@ -1375,62 +1405,54 @@ fn preview_source_changes(sources: Vec<PreviewSource>, cancel: Cancellation) -> 
 }
 
 fn preview_mutations_pending(world: &mut World) -> bool {
-    // A rename can remove the old path before its outcome reaches the main
-    // World. Defer absence decisions during admitted mutations, and reconcile
-    // outcomes first. This also covers a source viewed in another workspace.
-    world
-        .query_filtered::<Entity, With<Workspace>>()
-        .iter(world)
-        .any(|workspace| bedtime_filetree2::filetree_operation_count(world, workspace) != 0)
+    bedtime_filetree2::filetree_operation_count(world) != 0
+        || crate::git::has_pending_operation(world)
 }
 
 fn observe_preview_sources(world: &mut World) {
     let mutations_pending = preview_mutations_pending(world);
-    let mut sources = BTreeMap::<Entity, BTreeMap<Entity, PreviewSource>>::new();
-    for (panel, owner, state) in world
-        .query::<(Entity, &InWorkspace, &FilePreviewPanel)>()
+    let sources: BTreeMap<_, _> = world
+        .query::<(Entity, &FilePreviewPanel)>()
         .iter(world)
-    {
-        if matches!(state.viewer, crate::opening::ViewerId::Image | crate::opening::ViewerId::Model) && state.load.is_some() {
-            continue;
-        }
-        if let Some(path) = &state.path {
-            sources.entry(owner.0).or_default().insert(
+        .filter_map(|(panel, state)| {
+            if matches!(
+                state.viewer,
+                crate::opening::ViewerId::Image | crate::opening::ViewerId::Model
+            ) && state.load.is_some()
+            {
+                return None;
+            }
+            Some((
                 panel,
                 PreviewSource {
                     panel,
-                    path: path.clone(),
                     generation: state.generation,
-                    image: matches!(state.viewer, crate::opening::ViewerId::Image | crate::opening::ViewerId::Hex | crate::opening::ViewerId::Model),
+                    path: state.path.clone()?,
+                    image: matches!(
+                        state.viewer,
+                        crate::opening::ViewerId::Image
+                            | crate::opening::ViewerId::Hex
+                            | crate::opening::ViewerId::Model
+                    ),
                     disk_stamp: state.disk_stamp,
                 },
-            );
-        }
-    }
-    let retired: Vec<_> = world
-        .query_filtered::<Entity, With<PreviewObservation>>()
-        .iter(world)
-        .filter(|workspace| !sources.contains_key(workspace))
+            ))
+        })
         .collect();
-    for workspace in retired {
-        if let Some(observation) = world.entity_mut(workspace).take::<PreviewObservation>()
+    if sources.is_empty() {
+        if let Some(observation) = world.remove_resource::<PreviewObservation>()
             && let Some(task) = observation.pending
         {
             task.cancel();
         }
+        return;
     }
-    for (workspace, sources) in sources {
-        let Some(work) = world.get::<WorkspaceWork>(workspace) else {
-            continue;
-        };
-        if work.is_closing() {
-            continue;
-        }
-        world
-            .entity_mut(workspace)
-            .entry::<PreviewObservation>()
-            .or_default();
-        let mut observation = world.get_mut::<PreviewObservation>(workspace).unwrap();
+    if world.resource::<ManagedWork>().is_closing() {
+        return;
+    }
+    world.init_resource::<PreviewObservation>();
+    {
+        let mut observation = world.resource_mut::<PreviewObservation>();
         let result = observation
             .pending
             .as_ref()
@@ -1446,14 +1468,11 @@ fn observe_preview_sources(world: &mut World) {
             if !mutations_pending {
                 for source in changes {
                     if world
-                        .get::<InWorkspace>(source.panel)
-                        .is_some_and(|owner| owner.0 == workspace)
-                        && world
-                            .get::<FilePreviewPanel>(source.panel)
-                            .is_some_and(|state| {
-                                state.generation == source.generation
-                                    && state.path.as_ref() == Some(&source.path)
-                            })
+                        .get::<FilePreviewPanel>(source.panel)
+                        .is_some_and(|state| {
+                            state.generation == source.generation
+                                && state.path.as_ref() == Some(&source.path)
+                        })
                     {
                         if let Some(stamp) = source.disk_stamp {
                             let loading = world
@@ -1475,13 +1494,13 @@ fn observe_preview_sources(world: &mut World) {
                 }
             }
         }
-        let observation = world.get::<PreviewObservation>(workspace).unwrap();
+        let observation = world.resource::<PreviewObservation>();
         let now = Instant::now();
         if mutations_pending
             || observation.pending.is_some()
             || observation.next_check.is_some_and(|next| now < next)
         {
-            continue;
+            return;
         }
         // Rotate over all viewers, including hidden/inactive layouts and paths
         // outside every current tree root; no hard cap silently drops a source.
@@ -1507,15 +1526,14 @@ fn observe_preview_sources(world: &mut World) {
             .collect();
         let last = batch.last().map(|source| source.panel);
         if batch.is_empty() {
-            continue;
+            return;
         }
-        let task = world
-            .get_mut::<WorkspaceWork>(workspace)
-            .unwrap()
-            .spawn_task(None, "Observe file preview sources", move |cancel| {
-                preview_source_changes(batch, cancel)
-            });
-        let mut observation = world.get_mut::<PreviewObservation>(workspace).unwrap();
+        let task = world.get_resource_mut::<ManagedWork>().unwrap().spawn_task(
+            None,
+            "Observe file preview sources",
+            move |cancel| preview_source_changes(batch, cancel),
+        );
+        let mut observation = world.resource_mut::<PreviewObservation>();
         observation.next_check = Some(now + PREVIEW_CHECK_INTERVAL);
         observation.cursor = last;
         if let Ok(task) = task {
@@ -1530,15 +1548,16 @@ pub fn admit_preferences(world: &mut World) {
     // not erase the last folder, and preference loading must finish first.
     if crate::storage::global_ready(world) {
         let root = world
-            .query_filtered::<&WorkspaceRoot, (With<ActiveWorkspace>, With<FolderWorkspace>)>()
-            .iter(world)
-            .next()
-            .map(|root| root.0.clone());
+            .get_resource::<ProjectFolder>()
+            .and_then(|_| world.get_resource::<ProjectRoot>())
+            .map(|r| r.0.clone());
         if let Some(root) = root
+            && world.resource::<StartupRoot>().remembered.as_ref() != Some(&root)
             && let Some(mut preferences) =
                 world.get_resource_mut::<crate::settings::StartupPreferences>()
         {
-            preferences.last_workspace = Some(root);
+            preferences.last_workspace = Some(root.clone());
+            world.resource_mut::<StartupRoot>().remembered = Some(root);
         }
     }
     crate::session::admit(world);
@@ -1555,23 +1574,13 @@ pub fn flush_preferences(world: &mut World) -> Result<bool, String> {
         return Ok(false);
     }
     if world.resource::<StartupRoot>().requested.is_some() {
-        let has_target = world
-            .query::<&WorkspaceWork>()
-            .iter(world)
-            .any(|work| !work.is_closing());
+        let has_target = !world.resource::<ManagedWork>().is_closing();
         if has_target {
             return Ok(false);
         }
         world.resource_mut::<StartupRoot>().requested = None;
     }
-    let workspaces: Vec<_> = world
-        .query_filtered::<Entity, With<Workspace>>()
-        .iter(world)
-        .collect();
-    if workspaces
-        .iter()
-        .any(|&workspace| bedtime_filetree2::filetree_operation_count(world, workspace) != 0)
-    {
+    if bedtime_filetree2::filetree_operation_count(world) != 0 {
         return Ok(false);
     }
     Ok(true)
@@ -1800,12 +1809,12 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
         })
         .collect();
     let errors = events.errors.clone();
-    let trees: Vec<_> = world.query::<(Entity, &FileTreePanel, &InWorkspace, &PanelPresentation)>()
-        .iter(world).map(|(entity, tree, owner, presentation)| {
+    let trees: Vec<_> = world.query::<(Entity, &FileTreePanel, &PanelPresentation)>()
+        .iter(world).map(|(entity, tree, presentation)| {
             let snapshot = tree.snapshot();
             let settings = world.get::<FileTreeSettings>(entity).copied().unwrap_or_default();
             json!({
-                "entity": entity.to_bits().to_string(), "workspace": owner.0.to_bits().to_string(),
+                "entity": entity.to_bits().to_string(),
                 "layout": world.get::<InArea>(entity).and_then(|area| world.get::<InLayout>(area.0))
                     .map(|layout| layout.0.to_bits().to_string()),
                 "root": snapshot.root.to_string_lossy(), "generation": snapshot.generation,
@@ -1832,8 +1841,8 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
                     "tab_rect": {"min": presentation.tab_rect.min.to_array(), "max": presentation.tab_rect.max.to_array()}}, 
             })
         }).collect();
-    let previews: Vec<_> = world.query::<(Entity, &FilePreviewPanel, &PanelInstance, &InWorkspace)>()
-        .iter(world).map(|(entity, preview, instance, owner)| {
+    let previews: Vec<_> = world.query::<(Entity, &FilePreviewPanel, &PanelInstance)>()
+        .iter(world).map(|(entity, preview, instance)| {
             let document = world.get::<DocumentView>(entity).map(DocumentView::document);
             let canonical = document.and_then(|id| cast_document::<TextBuffer>(world, id).ok()).and_then(|handle| read_document(world, handle).ok());
             let text = canonical.or_else(|| match &preview.content { Some(PreviewContent::Text(text)) => Some(text), _ => None });
@@ -1845,7 +1854,7 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
                     _ => ("empty",None),
                 }
             };
-            json!({"entity": entity.to_bits().to_string(), "workspace": owner.0.to_bits().to_string(),
+            json!({"entity": entity.to_bits().to_string(),
                 "area": world.get::<InArea>(entity).map(|area| area.0.to_bits().to_string()),
                 "layout": world.get::<InArea>(entity).and_then(|area| world.get::<InLayout>(area.0))
                     .map(|layout| layout.0.to_bits().to_string()),
@@ -1867,26 +1876,21 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
             })
         }).collect();
     let storage = crate::session::inspect_storage(world);
-    let preferences: Vec<_> = world.query::<(Entity, &FileTreePreferences)>().iter(world)
-        .map(|(entity, preferences)| json!({
-            "workspace": entity.to_bits().to_string(),
-            "roots": preferences.roots.iter().map(|(root, visibility)| json!({
-                "root": root.to_string_lossy(), "hide_hidden": visibility.hide_hidden,
-                "hidden_paths": visibility.hidden_paths.iter().map(|path| path.to_string_lossy()).collect::<Vec<_>>(),
-            })).collect::<Vec<_>>(),
-        })).collect();
+    let preferences = world.resource::<FileTreePreferences>().roots.iter().map(|(root, visibility)| json!({
+        "root":root.to_string_lossy(), "hide_hidden":visibility.hide_hidden,
+        "hidden_paths":visibility.hidden_paths.iter().map(|p|p.to_string_lossy()).collect::<Vec<_>>()
+    })).collect::<Vec<_>>();
     let clipboard = world.get_resource::<Clipboard>().map(|clipboard| {
         json!({
             "mode": format!("{:?}", clipboard.mode()), "revision": clipboard.revision(),
             "initialization_error": clipboard.initialization_error(),
         })
     });
-    let roots: Vec<_> = world.query::<(Entity, &WorkspaceRoot, Option<&FolderWorkspace>)>().iter(world)
-        .map(|(workspace, root, folder)| json!({ "workspace": workspace.to_bits().to_string(), "root": root.0.to_string_lossy(), "persistent": folder.is_some(), "session_ready": crate::session::ready(world, workspace), "settings_ready": crate::storage::ready(world, workspace) })).collect();
+    let project = world.get_resource::<ProjectRoot>().map(|root| json!({ "root":root.0.to_string_lossy(), "persistent":world.contains_resource::<ProjectFolder>(), "session_ready":crate::session::ready(world), "settings_ready":crate::storage::ready(world) }));
     let startup = world.resource::<StartupRoot>();
     Ok(
         json!({"panels": trees, "previews": previews, "storage": storage, "clipboard": clipboard,
-        "preferences": preferences, "workspace_roots": roots, "startup_root": startup.root.as_ref().map(|path| path.to_string_lossy()),
+        "preferences": preferences, "project": project, "startup_root": startup.root.as_ref().map(|path| path.to_string_lossy()),
         "startup_error": startup.error}),
     )
 }
@@ -1943,7 +1947,7 @@ mod tests {
             ));
             crate::storage::configure_directory(&mut app, config.clone());
             let (owner, _) = workspace(&mut app, "Default");
-            crate::session::remember_initial_state(app.world_mut(), owner).unwrap();
+            crate::session::remember_initial_state(app.world_mut()).unwrap();
             app.insert_resource(StartupRoot {
                 persistent: argument.is_some(),
                 requested: Some(argument),
@@ -1952,15 +1956,12 @@ mod tests {
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
                 app.update();
-                if app.world().get::<WorkspaceRoot>(owner).is_some()
-                    && crate::storage::ready(app.world(), owner)
+                if app.world().get_resource::<ProjectRoot>().is_some()
+                    && crate::storage::ready(app.world())
                     && app
                         .world()
-                        .get::<WorkspaceMembers>(owner)
-                        .unwrap()
-                        .entities()
-                        .iter()
-                        .any(|&e| app.world().get::<crate::layouts::LayoutSlot>(e).is_some())
+                        .try_query::<&crate::layouts::LayoutSlot>()
+                        .is_some()
                 {
                     break;
                 }
@@ -1969,19 +1970,18 @@ mod tests {
             }
             (app, owner)
         };
-        let (mut app, owner) = boot(Some(fixture.0.clone()));
+        let (mut app, _owner) = boot(Some(fixture.0.clone()));
         app.world_mut()
             .resource_mut::<crate::settings::StartupPreferences>()
             .open_last_workspace = true;
-        crate::layouts::switch(app.world_mut(), owner, crate::layouts::LayoutSlot::Two).unwrap();
-        let layout = Workbench::for_entity(app.world_mut(), owner)
-            .unwrap()
-            .active_layout();
+        crate::layouts::switch(app.world_mut(), crate::layouts::LayoutSlot::Two).unwrap();
+        let layout = Workbench::new(app.world_mut()).active_layout();
         let area = Workbench::for_entity(app.world_mut(), layout)
             .unwrap()
             .destination_area(layout)
             .unwrap();
-        crate::layouts::spawn_tool(app.world_mut(), area, crate::layouts::ToolKind::Settings);
+        app.world_mut()
+            .spawn((crate::settings::SettingsPanel, InArea(area)));
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             app.update();
@@ -1994,15 +1994,13 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         drop(app);
-        let (mut app, owner) = boot(None);
+        let (mut app, _owner) = boot(None);
         assert_eq!(
-            app.world().get::<WorkspaceRoot>(owner).unwrap().0,
+            app.world().get_resource::<ProjectRoot>().unwrap().0,
             fixture.0
         );
-        assert!(app.world().get::<FolderWorkspace>(owner).is_some());
-        let layout = Workbench::for_entity(app.world_mut(), owner)
-            .unwrap()
-            .active_layout();
+        assert!(app.world().get_resource::<ProjectFolder>().is_some());
+        let layout = Workbench::new(app.world_mut()).active_layout();
         assert_eq!(
             app.world().get::<crate::layouts::LayoutSlot>(layout),
             Some(&crate::layouts::LayoutSlot::Two)
@@ -2037,11 +2035,13 @@ mod tests {
             (true, false, true),
         ] {
             let mut app = host();
+            app.insert_resource(crate::storage::ConfigDirectory(fixture.path("config")));
             app.add_plugins((
                 crate::settings::SettingsPlugin,
+                crate::session::SessionPlugin,
                 crate::layouts::LayoutsPlugin,
             ));
-            let (owner, _) = workspace(&mut app, "Default");
+            let (_owner, _) = workspace(&mut app, "Default");
             let last = if missing {
                 fixture.path("missing")
             } else {
@@ -2059,7 +2059,7 @@ mod tests {
                 ..default()
             });
             let deadline = Instant::now() + Duration::from_secs(5);
-            while app.world().get::<WorkspaceRoot>(owner).is_none() {
+            while app.world().get_resource::<ProjectRoot>().is_none() {
                 app.update();
                 assert!(Instant::now() < deadline, "startup did not resolve");
                 std::thread::sleep(Duration::from_millis(1));
@@ -2067,22 +2067,22 @@ mod tests {
             app.update();
             let persistent = explicit || (enabled && !missing);
             let expected = if persistent {
-                fixture.0.clone()
+                fs::canonicalize(&fixture.0).unwrap()
             } else {
                 resolve_root(None).unwrap()
             };
-            assert_eq!(app.world().get::<WorkspaceRoot>(owner).unwrap().0, expected);
             assert_eq!(
-                app.world().get::<FolderWorkspace>(owner).is_some(),
+                app.world().get_resource::<ProjectRoot>().unwrap().0,
+                expected
+            );
+            assert_eq!(
+                app.world().get_resource::<ProjectFolder>().is_some(),
                 persistent
             );
             let layouts = app
-                .world()
-                .get::<WorkspaceMembers>(owner)
-                .unwrap()
-                .entities()
-                .iter()
-                .filter(|&&e| app.world().get::<crate::layouts::LayoutSlot>(e).is_some())
+                .world_mut()
+                .query::<&crate::layouts::LayoutSlot>()
+                .iter(app.world())
                 .count();
             assert_eq!(layouts, 1);
             assert_eq!(
@@ -2102,12 +2102,9 @@ mod tests {
         }
     }
 
-    fn workspace(app: &mut App, name: &str) -> (Entity, Entity) {
-        let workspace = Workspaces::new(app.world_mut()).open(name).entity();
-        let layout = Workbench::for_entity(app.world_mut(), workspace)
-            .unwrap()
-            .active_layout();
-        (workspace, layout)
+    fn workspace(app: &mut App, _name: &str) -> (Entity, Entity) {
+        let layout = crate::test_layout(app.world_mut());
+        (layout, layout)
     }
     fn preview_panel(world: &mut World, layout: Entity) -> Entity {
         let area = Workbench::for_entity(world, layout)
@@ -2142,10 +2139,8 @@ mod tests {
         panel
     }
     fn request(app: &mut App, panel: Entity, path: &Path, activation: FileTreeActivation) {
-        let workspace = app.world().get::<InWorkspace>(panel).unwrap().0;
         app.world_mut().write_message(FileTreeOpenRequested {
             panel,
-            workspace,
             path: path.to_owned(),
             activation,
         });
@@ -2232,14 +2227,13 @@ mod tests {
 
     fn stop(app: &mut App) {
         admit_preferences(app.world_mut());
-        Workspaces::new(app.world_mut()).shutdown_work().unwrap();
-        wait(app, |world| Workspaces::new(world).work_finished());
+        shutdown_work(app.world_mut()).unwrap();
+        wait(app, |world| work_finished(world));
     }
-    fn viewers(app: &mut App, workspace: Entity) -> Vec<Entity> {
+    fn viewers(app: &mut App) -> Vec<Entity> {
         app.world_mut()
-            .query::<(Entity, &InWorkspace, &FilePreviewPanel)>()
+            .query_filtered::<Entity, With<FilePreviewPanel>>()
             .iter(app.world())
-            .filter_map(|(panel, owner, _)| (owner.0 == workspace).then_some(panel))
             .collect()
     }
     fn text(app: &App, panel: Entity) -> &TextBuffer {
@@ -2273,10 +2267,11 @@ mod tests {
     fn terminal_creation_waits_for_the_workspace_root_instead_of_using_launch_cwd() {
         let fixture = Fixture::new();
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Default");
+        crate::terminal::register_menu(&mut app);
+        let (_workspace, layout) = workspace(&mut app, "Default");
         app.world_mut().resource_mut::<StartupRoot>().requested = Some(None);
-        assert!(!root_ready(app.world(), workspace));
-        assert!(!crate::storage::ready(app.world(), workspace));
+        assert!(!root_ready(app.world()));
+        assert!(!crate::storage::ready(app.world()));
         assert!(
             crate::menus::open_panel(
                 app.world_mut(),
@@ -2293,8 +2288,7 @@ mod tests {
             0
         );
         app.world_mut()
-            .entity_mut(workspace)
-            .insert(WorkspaceRoot(fixture.0.clone()));
+            .insert_resource(ProjectRoot(fixture.0.clone()));
         app.world_mut().resource_mut::<StartupRoot>().requested = None;
         let panel = crate::menus::open_panel(
             app.world_mut(),
@@ -2330,18 +2324,17 @@ mod tests {
         let mut app = host();
         let (workspace, layout) = workspace(&mut app, "Default");
         app.world_mut().entity_mut(workspace).insert((
-            WorkspaceRoot(fixture.0.clone()),
+            ProjectRoot(fixture.0.clone()),
             FileTreePreferences::default(),
         ));
         let panel = tree(&mut app, layout, &fixture.0);
         app.update();
         app.world_mut()
-            .get_mut::<FileTreePreferences>(workspace)
+            .get_resource_mut::<FileTreePreferences>()
             .unwrap()
             .roots
             .insert(fixture.0.clone(), FileTreeVisibility::default());
-        app.world_mut()
-            .write_message(FileTreePreferencesChanged { workspace });
+        app.world_mut().write_message(FileTreePreferencesChanged {});
         app.update();
         assert!(flush_preferences(app.world_mut()).unwrap());
         assert!(app.world().get::<FileTreePanel>(panel).is_some());
@@ -2349,90 +2342,22 @@ mod tests {
     }
 
     #[test]
-    fn explicit_open_folder_creates_or_reuses_a_folder_workspace_without_promoting_default() {
+    fn project_root_configures_trees_across_layouts() {
         let fixture = Fixture::new();
         let mut app = host();
-        let (default_workspace, _) = workspace(&mut app, "Default");
-        app.world_mut()
-            .entity_mut(default_workspace)
-            .insert(WorkspaceRoot(home_directory().unwrap()));
-        open_folder(app.world_mut(), fixture.0.clone()).unwrap();
-        wait(&mut app, |world| {
-            world
-                .query_filtered::<Entity, With<FolderWorkspace>>()
-                .iter(world)
-                .count()
-                == 1
-        });
-        let folder = app
-            .world_mut()
-            .query_filtered::<Entity, With<FolderWorkspace>>()
-            .single(app.world())
-            .unwrap();
-        assert_ne!(folder, default_workspace);
-        assert_eq!(
-            app.world().get::<WorkspaceRoot>(folder).unwrap().0,
-            fixture.0
-        );
-        assert!(
-            app.world()
-                .get::<FolderWorkspace>(default_workspace)
-                .is_none()
-        );
-        let reopened = open_folder(app.world_mut(), fixture.0.clone()).unwrap();
-        wait(&mut app, |_| reopened.lock().unwrap().try_recv().is_ok());
-        assert_eq!(
-            app.world_mut()
-                .query_filtered::<Entity, With<Workspace>>()
-                .iter(app.world())
-                .count(),
-            2
-        );
-        assert_eq!(Workspaces::new(app.world_mut()).active().entity(), folder);
-        assert!(
-            !fixture.path(".bed").exists(),
-            "opening alone is not a persisted mutation"
-        );
-        Workspaces::new(app.world_mut()).shutdown_work().unwrap();
-        wait(&mut app, |world| Workspaces::new(world).work_finished());
-    }
-
-    #[test]
-    fn project_identity_configures_only_its_own_workspace() {
-        let first_root = Fixture::new();
-        let second_root = Fixture::new();
-        let mut app = host();
-        let (first, first_layout) = workspace(&mut app, "First");
-        let (second, second_layout) = workspace(&mut app, "Second");
-        app.world_mut()
-            .entity_mut(first)
-            .insert((WorkspaceRoot(first_root.0.clone()), FolderWorkspace));
-        app.world_mut()
-            .entity_mut(second)
-            .insert((WorkspaceRoot(second_root.0.clone()), FolderWorkspace));
-        open_files(app.world_mut(), first_layout);
-        open_files(app.world_mut(), second_layout);
+        let (_, first) = workspace(&mut app, "First");
+        let (_, second) = workspace(&mut app, "Second");
+        app.insert_resource(ProjectRoot(fixture.0.clone()));
+        open_files(app.world_mut(), first);
+        open_files(app.world_mut(), second);
         app.update();
-        for (panel, owner) in app
+        for root in app
             .world_mut()
-            .query_filtered::<(Entity, &InWorkspace), With<FileTreePanel>>()
+            .query_filtered::<&FileTreeRoot, With<FileTreePanel>>()
             .iter(app.world())
         {
-            let expected = if owner.0 == first {
-                &first_root.0
-            } else {
-                &second_root.0
-            };
-            assert_eq!(&app.world().get::<FileTreeRoot>(panel).unwrap().0, expected);
+            assert_eq!(root.0, fixture.0);
         }
-        assert_eq!(
-            app.world().get::<WorkspaceRoot>(first).unwrap().0,
-            first_root.0
-        );
-        assert_eq!(
-            app.world().get::<WorkspaceRoot>(second).unwrap().0,
-            second_root.0
-        );
         stop(&mut app);
     }
 
@@ -2441,10 +2366,10 @@ mod tests {
         let fixture = Fixture::new();
         let path = fixture.text("preview.txt", "preview");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Project");
+        let (_workspace, layout) = workspace(&mut app, "Project");
         let tree = tree(&mut app, layout, &fixture.0);
         request(&mut app, tree, &path, FileTreeActivation::SingleClick);
-        let preview = viewers(&mut app, workspace)[0];
+        let preview = viewers(&mut app)[0];
         let area = app.world().get::<InArea>(preview).unwrap().0;
         assert_eq!(
             app.world().get::<Area>(area).unwrap().selected_panel(),
@@ -2473,14 +2398,14 @@ mod tests {
         let second = fixture.text("second.rs", "fn second() {}\n");
         let mut app = host();
         app.add_plugins(crate::code::CodePlugin);
-        let (workspace, layout) = workspace(&mut app, "Preview structure");
+        let (_workspace, layout) = workspace(&mut app, "Preview structure");
         let tree = tree(&mut app, layout, &fixture.0);
         let mut previous = None;
         for (path, label) in [(&first, "first"), (&second, "second"), (&first, "first")] {
             request(&mut app, tree, path, FileTreeActivation::SingleClick);
             wait(&mut app, |world| {
                 world
-                    .get::<bed_structure2::StructureSource>(workspace)
+                    .get_resource::<bed_structure2::StructureSource>()
                     .and_then(|state| state.source)
                     .and_then(|source| {
                         bedtime_editor2::workbench::analysis_for_panel(world, source.panel)
@@ -2494,7 +2419,7 @@ mod tests {
             });
             let source = app
                 .world()
-                .get::<bed_structure2::StructureSource>(workspace)
+                .get_resource::<bed_structure2::StructureSource>()
                 .unwrap()
                 .source
                 .unwrap();
@@ -2519,7 +2444,7 @@ mod tests {
         let path = fixture.text("cats.rs", "fn cat() {\n let age=42;\n}\n");
         let mut app = host();
         app.add_plugins(crate::code::CodePlugin);
-        let (workspace, layout) = workspace(&mut app, "Code");
+        let (_workspace, layout) = workspace(&mut app, "Code");
         let tree = tree(&mut app, layout, &fixture.0);
         request(&mut app, tree, &path, FileTreeActivation::SingleClick);
         wait(&mut app, |world| {
@@ -2528,7 +2453,7 @@ mod tests {
                 .iter(world)
                 .any(|panel| analysis_for_panel(world, panel).is_some())
         });
-        let panel = viewers(&mut app, workspace)[0];
+        let panel = viewers(&mut app)[0];
         let document = app.world().get::<DocumentView>(panel).unwrap().document();
         assert_eq!(
             app.world()
@@ -2541,7 +2466,7 @@ mod tests {
         assert_eq!(observation.outline[0].label, "cat");
         assert_eq!(
             app.world()
-                .get::<bed_structure2::StructureSource>(workspace)
+                .get_resource::<bed_structure2::StructureSource>()
                 .unwrap()
                 .source
                 .unwrap()
@@ -2581,7 +2506,7 @@ mod tests {
         let fixture = Fixture::new();
         let path = fixture.text("edit.txt", "original\r\nUnicode é🙂\r\n");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Editor");
+        let (_workspace, layout) = workspace(&mut app, "Editor");
         let tree = tree(&mut app, layout, &fixture.0);
         request(&mut app, tree, &path, FileTreeActivation::SingleClick);
         wait(&mut app, |world| {
@@ -2590,7 +2515,7 @@ mod tests {
                 .iter(world)
                 .any(|(state, _)| state.path.as_ref() == Some(&path))
         });
-        let panel = viewers(&mut app, workspace)[0];
+        let panel = viewers(&mut app)[0];
         let other = split_editor(app.world_mut(), panel).unwrap();
         let handle = edit_text(&mut app, panel, "edited\r\nUnicode é🙂\r\n");
         assert_eq!(
@@ -2623,13 +2548,13 @@ mod tests {
         let first = fixture.text("first.txt", "first");
         let next = fixture.text("next.txt", "next");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Editor");
+        let (_workspace, layout) = workspace(&mut app, "Editor");
         let tree = tree(&mut app, layout, &fixture.0);
         request(&mut app, tree, &first, FileTreeActivation::SingleClick);
         wait(&mut app, |world| {
             world.query::<&DocumentView>().iter(world).next().is_some()
         });
-        let panel = viewers(&mut app, workspace)[0];
+        let panel = viewers(&mut app)[0];
         edit_text(&mut app, panel, "unsaved");
         request(&mut app, tree, &next, FileTreeActivation::SingleClick);
         wait(&mut app, |world| {
@@ -2647,7 +2572,7 @@ mod tests {
                 .as_ref(),
             Some(&first)
         );
-        assert_eq!(viewers(&mut app, workspace).len(), 2);
+        assert_eq!(viewers(&mut app).len(), 2);
         stop(&mut app);
     }
 
@@ -2656,13 +2581,13 @@ mod tests {
         let fixture = Fixture::new();
         let path = fixture.text("retained.rs", "fn base() {}\n");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Retained");
+        let (_workspace, layout) = workspace(&mut app, "Retained");
         let tree = tree(&mut app, layout, &fixture.0);
         request(&mut app, tree, &path, FileTreeActivation::Keyboard);
         wait(&mut app, |world| {
             world.query::<&DocumentView>().iter(world).next().is_some()
         });
-        let panel = viewers(&mut app, workspace)[0];
+        let panel = viewers(&mut app)[0];
         let handle = edit_text(&mut app, panel, "fn edited() {}\n");
         Workbench::for_entity(app.world_mut(), panel)
             .unwrap()
@@ -2675,7 +2600,7 @@ mod tests {
                 .iter(world)
                 .any(|v| v.document() == handle.id())
         });
-        let other = viewers(&mut app, workspace)[0];
+        let other = viewers(&mut app)[0];
         assert_eq!(text(&app, other), "fn edited() {}\n");
         let info = inspect_document(app.world(), handle.id()).unwrap();
         assert!(info.dirty && info.can_undo && !info.conflict);
@@ -2689,13 +2614,13 @@ mod tests {
         let fixture = Fixture::new();
         let path = fixture.text("conflict.txt", "base");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Editor");
+        let (_workspace, layout) = workspace(&mut app, "Editor");
         let tree = tree(&mut app, layout, &fixture.0);
         request(&mut app, tree, &path, FileTreeActivation::SingleClick);
         wait(&mut app, |world| {
             world.query::<&DocumentView>().iter(world).next().is_some()
         });
-        let panel = viewers(&mut app, workspace)[0];
+        let panel = viewers(&mut app)[0];
         let handle = edit_text(&mut app, panel, "mine");
         fs::write(&path, "theirs").unwrap();
         save_document(app.world_mut(), handle.id()).unwrap();
@@ -2738,13 +2663,13 @@ mod tests {
         let path = fixture.text("old.txt", "base");
         let renamed = fixture.path("new.txt");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Editor");
+        let (_workspace, layout) = workspace(&mut app, "Editor");
         let tree = tree(&mut app, layout, &fixture.0);
         request(&mut app, tree, &path, FileTreeActivation::SingleClick);
         wait(&mut app, |world| {
             world.query::<&DocumentView>().iter(world).next().is_some()
         });
-        let panel = viewers(&mut app, workspace)[0];
+        let panel = viewers(&mut app)[0];
         let handle = edit_text(&mut app, panel, "mine");
         fs::rename(&path, &renamed).unwrap();
         move_previews(app.world_mut(), &path, &renamed);
@@ -2776,13 +2701,13 @@ mod tests {
         let fixture = Fixture::new();
         let path = fixture.text("deleted.txt", "base");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Editor");
+        let (_workspace, layout) = workspace(&mut app, "Editor");
         let tree = tree(&mut app, layout, &fixture.0);
         request(&mut app, tree, &path, FileTreeActivation::SingleClick);
         wait(&mut app, |world| {
             world.query::<&DocumentView>().iter(world).next().is_some()
         });
-        let panel = viewers(&mut app, workspace)[0];
+        let panel = viewers(&mut app)[0];
         let handle = edit_text(&mut app, panel, "mine");
         fs::remove_file(&path).unwrap();
         unload_deleted_preview(app.world_mut(), panel);
@@ -2794,9 +2719,7 @@ mod tests {
             save_document(app.world_mut(), handle.id()),
             Err(DocumentError::NoSaveBinding)
         );
-        assert!(
-            preflight_workspace_close(app.world(), workspace, WorkspaceCloseMode::Saved).is_err()
-        );
+        assert!(preflight_session_close(app.world(), SessionCloseMode::Saved).is_err());
         Workbench::for_entity(app.world_mut(), panel)
             .unwrap()
             .close_panel(panel)
@@ -2806,15 +2729,8 @@ mod tests {
         stop(&mut app);
     }
 
-    fn operation(
-        app: &mut App,
-        workspace: Entity,
-        panel: Entity,
-        root: &Path,
-        change: FileTreeChange,
-    ) {
+    fn operation(app: &mut App, panel: Entity, root: &Path, change: FileTreeChange) {
         app.world_mut().write_message(FileTreeOperationFinished {
-            workspace,
             panel,
             root: root.to_owned(),
             generation: 1,
@@ -3015,7 +2931,7 @@ mod tests {
         let mut app = host();
         let (_, layout) = workspace(&mut app, "Project");
         let viewer = preview_panel(app.world_mut(), layout);
-        Workspaces::new(app.world_mut()).shutdown_work().unwrap();
+        shutdown_work(app.world_mut()).unwrap();
         let error = load_preview(app.world_mut(), viewer, source.clone(), false).unwrap_err();
         // Open routing may report this same admission failure before Update
         // collects the viewer's pending notification. Only one modal is needed.
@@ -3038,7 +2954,7 @@ mod tests {
             app.update();
         }
         assert!(app.world().get_resource::<ErrorDialogs>().is_none());
-        wait(&mut app, |world| Workspaces::new(world).work_finished());
+        wait(&mut app, |world| work_finished(world));
     }
 
     #[test]
@@ -3084,15 +3000,14 @@ mod tests {
         let second = fixture.text("two.txt", "actual disk text two");
         let third = fixture.text("three.txt", "actual disk text three");
         let mut app = host();
-        let (origin, layout) = workspace(&mut app, "Origin");
+        let (_origin, layout) = workspace(&mut app, "Origin");
         let panel = tree(&mut app, layout, &fixture.0);
         let (other, other_layout) = workspace(&mut app, "Other");
-        let other_id = Workbench::for_entity(app.world_mut(), other)
-            .unwrap()
-            .workspace_id();
-        Workspaces::new(app.world_mut()).activate(other_id).unwrap();
+        Workbench::new(app.world_mut())
+            .activate_layout(other)
+            .unwrap();
         request(&mut app, panel, &first, FileTreeActivation::SingleClick);
-        let viewer = viewers(&mut app, origin)[0];
+        let viewer = viewers(&mut app)[0];
         wait(&mut app, |world| {
             world
                 .get::<FilePreviewPanel>(viewer)
@@ -3101,8 +3016,7 @@ mod tests {
                 .is_none()
         });
         assert_eq!(text(&app, viewer), "actual disk text one");
-        assert!(app.world().get::<ActiveWorkspace>(other).is_some());
-        assert!(viewers(&mut app, other).is_empty());
+        assert_eq!(active_layout(app.world()), Some(other));
         assert_eq!(
             Workbench::for_entity(app.world_mut(), viewer)
                 .unwrap()
@@ -3123,15 +3037,15 @@ mod tests {
                 .load
                 .is_none()
         });
-        assert_eq!(viewers(&mut app, origin), vec![viewer]);
+        assert_eq!(viewers(&mut app), vec![viewer]);
         assert_eq!(text(&app, viewer), "actual disk text two");
         request(&mut app, panel, &second, FileTreeActivation::DoubleClick);
         assert!(!app.world().get::<PanelInstance>(viewer).unwrap().preview);
         request(&mut app, panel, &third, FileTreeActivation::SingleClick);
-        assert_eq!(viewers(&mut app, origin).len(), 2);
+        assert_eq!(viewers(&mut app).len(), 2);
         request(&mut app, panel, &second, FileTreeActivation::Keyboard);
         request(&mut app, panel, &second, FileTreeActivation::ContextMenu);
-        assert_eq!(viewers(&mut app, origin).len(), 2);
+        assert_eq!(viewers(&mut app).len(), 2);
         let other_panel = tree(&mut app, other_layout, &fixture.0);
         request(
             &mut app,
@@ -3139,8 +3053,15 @@ mod tests {
             &second,
             FileTreeActivation::SingleClick,
         );
-        assert_eq!(viewers(&mut app, other).len(), 1);
-        assert_ne!(viewers(&mut app, other)[0], viewer);
+        assert_eq!(
+            Workbench::new(app.world_mut())
+                .panels(other_layout)
+                .iter()
+                .filter(|&&p| app.world().get::<FilePreviewPanel>(p).is_some())
+                .count(),
+            1
+        );
+        assert_eq!(viewers(&mut app).len(), 3);
         stop(&mut app);
     }
 
@@ -3149,18 +3070,15 @@ mod tests {
         let fixture = Fixture::new();
         let file = fixture.text("same.txt", "same source");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Origin");
-        let other_layout = app
-            .world_mut()
-            .spawn((Layout::default(), InWorkspace(workspace)))
-            .id();
+        let (_workspace, layout) = workspace(&mut app, "Origin");
+        let other_layout = app.world_mut().spawn(Layout::default()).id();
         app.world_mut()
             .spawn((Area::default(), InLayout(other_layout)));
         let left = tree(&mut app, layout, &fixture.0);
         let right = tree(&mut app, other_layout, &fixture.0);
         request(&mut app, left, &file, FileTreeActivation::SingleClick);
         request(&mut app, right, &file, FileTreeActivation::SingleClick);
-        assert_eq!(viewers(&mut app, workspace).len(), 2);
+        assert_eq!(viewers(&mut app).len(), 2);
         stop(&mut app);
     }
 
@@ -3205,12 +3123,12 @@ mod tests {
         let fixture = Fixture::new();
         let file = fixture.text("new.txt", "new result");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Origin");
+        let (_workspace, layout) = workspace(&mut app, "Origin");
         let viewer = preview_panel(app.world_mut(), layout);
         let old_path = fixture.path("old.txt");
         let delayed = app
             .world_mut()
-            .get_mut::<WorkspaceWork>(workspace)
+            .get_resource_mut::<ManagedWork>()
             .unwrap()
             .spawn_task(Some(viewer), "Old preview", |cancel| {
                 cancel.wait(Duration::from_secs(2));
@@ -3226,7 +3144,6 @@ mod tests {
             preview.path = Some(old_path.clone());
             preview.load = Some(PreviewLoad {
                 generation: 1,
-                workspace,
                 path: old_path,
                 handle: delayed,
                 document_stamp: None,
@@ -3258,10 +3175,10 @@ mod tests {
         let source = fixture.text("before.txt", "retained data");
         let destination = fixture.path("after.txt");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Origin");
+        let (_workspace, layout) = workspace(&mut app, "Origin");
         let panel = tree(&mut app, layout, &fixture.0);
         request(&mut app, panel, &source, FileTreeActivation::Keyboard);
-        let viewer = viewers(&mut app, workspace)[0];
+        let viewer = viewers(&mut app)[0];
         wait(&mut app, |world| {
             world
                 .get::<FilePreviewPanel>(viewer)
@@ -3272,7 +3189,6 @@ mod tests {
         fs::rename(&source, &destination).unwrap();
         operation(
             &mut app,
-            workspace,
             panel,
             &fixture.0,
             FileTreeChange::Moved {
@@ -3302,7 +3218,6 @@ mod tests {
         fs::remove_file(&destination).unwrap();
         operation(
             &mut app,
-            workspace,
             panel,
             &fixture.0,
             FileTreeChange::Trashed { path: destination },
@@ -3330,18 +3245,15 @@ mod tests {
         fs::create_dir(fixture.path("before")).unwrap();
         let source = fixture.text("before/source.txt", "follow the own move");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Project");
-        let other_layout = app
-            .world_mut()
-            .spawn((Layout::default(), InWorkspace(workspace)))
-            .id();
+        let (_workspace, layout) = workspace(&mut app, "Project");
+        let other_layout = app.world_mut().spawn(Layout::default()).id();
         app.world_mut()
             .spawn((Area::default(), InLayout(other_layout)));
         let first_tree = tree(&mut app, layout, &fixture.0);
         let second_tree = tree(&mut app, other_layout, &fixture.0);
         request(&mut app, first_tree, &source, FileTreeActivation::Keyboard);
         request(&mut app, second_tree, &source, FileTreeActivation::Keyboard);
-        let panels = viewers(&mut app, workspace);
+        let panels = viewers(&mut app);
         wait(&mut app, |world| {
             panels.iter().all(|panel| {
                 world
@@ -3350,12 +3262,12 @@ mod tests {
                     .content
                     .is_some()
             }) && world
-                .get::<PreviewObservation>(workspace)
+                .get_resource::<PreviewObservation>()
                 .is_some_and(|observation| observation.pending.is_none())
         });
         fs::rename(fixture.path("before"), fixture.path("after")).unwrap();
         app.world_mut()
-            .get_mut::<PreviewObservation>(workspace)
+            .get_resource_mut::<PreviewObservation>()
             .unwrap()
             .next_check = None;
         observe_preview_sources(app.world_mut());
@@ -3364,7 +3276,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(8);
         while app
             .world()
-            .get::<PreviewObservation>(workspace)
+            .get_resource::<PreviewObservation>()
             .unwrap()
             .pending
             .as_ref()
@@ -3377,7 +3289,6 @@ mod tests {
         }
         operation(
             &mut app,
-            workspace,
             first_tree,
             &fixture.0,
             FileTreeChange::Moved {
@@ -3409,10 +3320,10 @@ mod tests {
         let file = fixture.text("never-expanded/source.txt", "remove these bytes");
         let other_root = Fixture::new();
         let mut app = host();
-        let (origin, layout) = workspace(&mut app, "Origin");
+        let (_origin, layout) = workspace(&mut app, "Origin");
         let panel = tree(&mut app, layout, &fixture.0);
         request(&mut app, panel, &file, FileTreeActivation::Keyboard);
-        let viewer = viewers(&mut app, origin)[0];
+        let viewer = viewers(&mut app)[0];
         wait(&mut app, |world| {
             world
                 .get::<FilePreviewPanel>(viewer)
@@ -3425,15 +3336,10 @@ mod tests {
         app.world_mut()
             .entity_mut(panel)
             .insert(FileTreeRoot(other_root.0.clone()));
-        app.world_mut()
-            .get_mut::<Workspace>(origin)
-            .unwrap()
-            .background_updates = false;
         let (other, _) = workspace(&mut app, "Foreground");
-        let other_id = Workbench::for_entity(app.world_mut(), other)
-            .unwrap()
-            .workspace_id();
-        Workspaces::new(app.world_mut()).activate(other_id).unwrap();
+        Workbench::new(app.world_mut())
+            .activate_layout(other)
+            .unwrap();
         let generation = app
             .world()
             .get::<FilePreviewPanel>(viewer)
@@ -3458,7 +3364,7 @@ mod tests {
             FilePreviewPanel::LABEL
         );
         assert!(!app.world().get::<PanelInstance>(viewer).unwrap().preview);
-        assert!(app.world().get::<ActiveWorkspace>(other).is_some());
+        assert_eq!(active_layout(app.world()), Some(other));
         stop(&mut app);
     }
 
@@ -3468,24 +3374,21 @@ mod tests {
         let shared = fixture.text("shared.txt", "deleted content");
         let retained = fixture.text("retained.txt", "surviving content");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Project");
-        let other_layout = app
-            .world_mut()
-            .spawn((Layout::default(), InWorkspace(workspace)))
-            .id();
+        let (_workspace, layout) = workspace(&mut app, "Project");
+        let other_layout = app.world_mut().spawn(Layout::default()).id();
         app.world_mut()
             .spawn((Area::default(), InLayout(other_layout)));
         let left_tree = tree(&mut app, layout, &fixture.0);
         let right_tree = tree(&mut app, other_layout, &fixture.0);
         request(&mut app, left_tree, &shared, FileTreeActivation::Keyboard);
-        let left = viewers(&mut app, workspace)[0];
+        let left = viewers(&mut app)[0];
         request(&mut app, left_tree, &retained, FileTreeActivation::Keyboard);
-        let survivor = viewers(&mut app, workspace)
+        let survivor = viewers(&mut app)
             .into_iter()
             .find(|panel| *panel != left)
             .unwrap();
         request(&mut app, right_tree, &shared, FileTreeActivation::Keyboard);
-        let right = viewers(&mut app, workspace)
+        let right = viewers(&mut app)
             .into_iter()
             .find(|panel| *panel != left && *panel != survivor)
             .unwrap();
@@ -3531,12 +3434,12 @@ mod tests {
         let second = fixture.text("folder/two.txt", "two");
         let sibling = fixture.text("folder-sibling.txt", "sibling");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Project");
+        let (_workspace, layout) = workspace(&mut app, "Project");
         let tree = tree(&mut app, layout, &fixture.0);
         for file in [&first, &second, &sibling] {
             request(&mut app, tree, file, FileTreeActivation::Keyboard);
         }
-        let panels = viewers(&mut app, workspace);
+        let panels = viewers(&mut app);
         let retained = panels
             .iter()
             .copied()
@@ -3563,14 +3466,13 @@ mod tests {
         fs::remove_dir_all(fixture.path("folder")).unwrap();
         operation(
             &mut app,
-            workspace,
             tree,
             &fixture.0,
             FileTreeChange::Trashed {
                 path: fixture.path("folder"),
             },
         );
-        assert_eq!(viewers(&mut app, workspace), vec![retained]);
+        assert_eq!(viewers(&mut app), vec![retained]);
         assert_eq!(text(&app, retained), "sibling");
         stop(&mut app);
     }
@@ -3580,13 +3482,13 @@ mod tests {
         let fixture = Fixture::new();
         let source = fixture.text("source.txt", "old disk bytes");
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Project");
+        let (_workspace, layout) = workspace(&mut app, "Project");
         let viewer = preview_panel(app.world_mut(), layout);
         let (release, waiting) = std::sync::mpsc::channel();
         let (finished, completion) = std::sync::mpsc::channel();
         let task = app
             .world_mut()
-            .get_mut::<WorkspaceWork>(workspace)
+            .get_resource_mut::<ManagedWork>()
             .unwrap()
             .spawn_task(Some(viewer), "Delayed file read", move |_| {
                 // Model a successful read whose completion races with delete;
@@ -3606,7 +3508,6 @@ mod tests {
             state.load = Some(PreviewLoad {
                 generation: 1,
                 path: source.clone(),
-                workspace,
                 handle: task,
                 document_stamp: None,
             });
@@ -3615,7 +3516,7 @@ mod tests {
         // because its tree snapshot/preview content is currently Loading/empty.
         wait(&mut app, |world| {
             world
-                .get::<PreviewObservation>(workspace)
+                .get_resource::<PreviewObservation>()
                 .is_some_and(|observation| {
                     observation.next_check.is_some() && observation.pending.is_none()
                 })
@@ -3713,7 +3614,7 @@ mod tests {
         }; // privileged/capability-limited host
         assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
         let mut app = host();
-        let (workspace, layout) = workspace(&mut app, "Project");
+        let (_workspace, layout) = workspace(&mut app, "Project");
         let viewer = preview_panel(app.world_mut(), layout);
         {
             let mut state = app.world_mut().get_mut::<FilePreviewPanel>(viewer).unwrap();
@@ -3724,7 +3625,7 @@ mod tests {
         }
         wait(&mut app, |world| {
             world
-                .get::<PreviewObservation>(workspace)
+                .get_resource::<PreviewObservation>()
                 .is_some_and(|observation| {
                     observation.next_check.is_some() && observation.pending.is_none()
                 })
@@ -3809,7 +3710,7 @@ mod tests {
         let image = fixture.path("foo.bin");
         fs::write(&image, b"\x89PNG\0binary").unwrap();
         let mut app = host();
-        let (owner, layout) = workspace(&mut app, "Shared route");
+        let (_owner, layout) = workspace(&mut app, "Shared route");
         let mut workbench = Workbench::for_entity(app.world_mut(), layout).unwrap();
         let source = workbench.destination_area(layout).unwrap();
         let largest = workbench
@@ -3851,7 +3752,7 @@ mod tests {
                 .content,
             Some(PreviewContent::Hex(_))
         ));
-        assert_eq!(viewers(&mut app, owner).len(), 3);
+        assert_eq!(viewers(&mut app).len(), 3);
         assert_eq!(
             app.world_mut()
                 .query_filtered::<Entity, With<FileTreePanel>>()
@@ -3864,43 +3765,97 @@ mod tests {
 
     #[test]
     fn automatic_hex_fallback_reuses_tabs_and_explicit_hex_preserves_dirty_code() {
-        use crate::opening::{FileOpenMode,ViewerId,open_file,open_file_with};
-        let fixture=Fixture::new();
-        let binary=fixture.path("unknown.dat");fs::write(&binary,[0,255,128]).unwrap();
-        let mut app=host();let (owner,layout)=workspace(&mut app,"Hex");
-        let opened=open_file(app.world_mut(),layout,binary.clone(),FileOpenMode::Focus).unwrap();
-        wait(&mut app,|world|opened.result(world).is_some());
+        use crate::opening::{FileOpenMode, ViewerId, open_file, open_file_with};
+        let fixture = Fixture::new();
+        let binary = fixture.path("unknown.dat");
+        fs::write(&binary, [0, 255, 128]).unwrap();
+        let mut app = host();
+        let (_owner, layout) = workspace(&mut app, "Hex");
+        let opened =
+            open_file(app.world_mut(), layout, binary.clone(), FileOpenMode::Focus).unwrap();
+        wait(&mut app, |world| opened.result(world).is_some());
         opened.result(app.world()).unwrap().unwrap();
-        assert_eq!(app.world().get::<FilePreviewPanel>(opened.panel).unwrap().viewer,ViewerId::Hex);
+        assert_eq!(
+            app.world()
+                .get::<FilePreviewPanel>(opened.panel)
+                .unwrap()
+                .viewer,
+            ViewerId::Hex
+        );
         assert!(app.world().get::<DocumentView>(opened.panel).is_none());
-        assert_eq!(open_file(app.world_mut(),layout,binary,FileOpenMode::Focus).unwrap().panel,opened.panel);
-        let path=fixture.text("edits.txt","original");
-        let code=open_file(app.world_mut(),layout,path.clone(),FileOpenMode::Focus).unwrap();
-        wait(&mut app,|world|code.result(world).is_some());
-        edit_text(&mut app,code.panel,"unsaved original");
-        let hex=open_file_with(app.world_mut(),layout,path.clone(),FileOpenMode::Focus,Some(ViewerId::Hex),Some(code.panel)).unwrap();
-        wait(&mut app,|world|hex.result(world).is_some());
+        assert_eq!(
+            open_file(app.world_mut(), layout, binary, FileOpenMode::Focus)
+                .unwrap()
+                .panel,
+            opened.panel
+        );
+        let path = fixture.text("edits.txt", "original");
+        let code = open_file(app.world_mut(), layout, path.clone(), FileOpenMode::Focus).unwrap();
+        wait(&mut app, |world| code.result(world).is_some());
+        edit_text(&mut app, code.panel, "unsaved original");
+        let hex = open_file_with(
+            app.world_mut(),
+            layout,
+            path.clone(),
+            FileOpenMode::Focus,
+            Some(ViewerId::Hex),
+            Some(code.panel),
+        )
+        .unwrap();
+        wait(&mut app, |world| hex.result(world).is_some());
         hex.result(app.world()).unwrap().unwrap();
-        assert_ne!(code.panel,hex.panel);
-        assert_eq!(text(&app,code.panel),"unsaved original");
-        assert!(crate::file_editor::disk_view_has_unsaved(app.world_mut(),owner,&path));
+        assert_ne!(code.panel, hex.panel);
+        assert_eq!(text(&app, code.panel), "unsaved original");
+        assert!(crate::file_editor::disk_view_has_unsaved(
+            app.world_mut(),
+            &path
+        ));
         assert!(app.world().get::<DocumentView>(hex.panel).is_none());
         stop(&mut app);
     }
 
     #[test]
     fn corrupt_images_fall_back_only_for_automatic_opening() {
-        use crate::opening::{FileOpenMode,ViewerId,open_file,open_file_with};
-        let fixture=Fixture::new();let path=fixture.text("wrong.png","this is text");
-        let mut app=host();let (_,layout)=workspace(&mut app,"Fallback");
-        let auto=open_file(app.world_mut(),layout,path.clone(),FileOpenMode::Focus).unwrap();
-        wait(&mut app,|world|auto.result(world).is_some());auto.result(app.world()).unwrap().unwrap();
-        assert_eq!(app.world().get::<FilePreviewPanel>(auto.panel).unwrap().viewer,ViewerId::Code);
-        assert!(app.world().get::<FilePreviewPanel>(auto.panel).unwrap().notice.is_some());
-        let explicit=open_file_with(app.world_mut(),layout,path,FileOpenMode::Focus,Some(ViewerId::Image),Some(auto.panel)).unwrap();
-        wait(&mut app,|world|explicit.result(world).is_some());
+        use crate::opening::{FileOpenMode, ViewerId, open_file, open_file_with};
+        let fixture = Fixture::new();
+        let path = fixture.text("wrong.png", "this is text");
+        let mut app = host();
+        let (_, layout) = workspace(&mut app, "Fallback");
+        let auto = open_file(app.world_mut(), layout, path.clone(), FileOpenMode::Focus).unwrap();
+        wait(&mut app, |world| auto.result(world).is_some());
+        auto.result(app.world()).unwrap().unwrap();
+        assert_eq!(
+            app.world()
+                .get::<FilePreviewPanel>(auto.panel)
+                .unwrap()
+                .viewer,
+            ViewerId::Code
+        );
+        assert!(
+            app.world()
+                .get::<FilePreviewPanel>(auto.panel)
+                .unwrap()
+                .notice
+                .is_some()
+        );
+        let explicit = open_file_with(
+            app.world_mut(),
+            layout,
+            path,
+            FileOpenMode::Focus,
+            Some(ViewerId::Image),
+            Some(auto.panel),
+        )
+        .unwrap();
+        wait(&mut app, |world| explicit.result(world).is_some());
         assert!(explicit.result(app.world()).unwrap().is_err());
-        assert_eq!(app.world().get::<FilePreviewPanel>(explicit.panel).unwrap().viewer,ViewerId::Image);
+        assert_eq!(
+            app.world()
+                .get::<FilePreviewPanel>(explicit.panel)
+                .unwrap()
+                .viewer,
+            ViewerId::Image
+        );
         stop(&mut app);
     }
 
@@ -4122,8 +4077,14 @@ mod tests {
         let invalid = open_file(app.world_mut(), layout, invalid, FileOpenMode::Focus).unwrap();
         wait(&mut app, |world| invalid.result(world).is_some());
         invalid.result(app.world()).unwrap().unwrap();
-        assert_eq!(app.world().get::<FilePreviewPanel>(invalid.panel).unwrap().viewer,crate::opening::ViewerId::Code);
-        assert_eq!(text(&app,invalid.panel),"not an image");
+        assert_eq!(
+            app.world()
+                .get::<FilePreviewPanel>(invalid.panel)
+                .unwrap()
+                .viewer,
+            crate::opening::ViewerId::Code
+        );
+        assert_eq!(text(&app, invalid.panel), "not an image");
         stop(&mut app);
     }
 
@@ -4159,34 +4120,283 @@ mod tests {
     fn model_associations_canonical_edits_and_session_state_follow_file_policy() {
         use crate::opening::{FileOpenMode, ViewerId, open_file, open_file_with};
         let fixture = Fixture::new();
-        let path = fixture.text("live.gltf", include_str!("../../bedtime/tests/fixtures/gltf/cube.gltf"));
+        let path = fixture.text(
+            "live.gltf",
+            include_str!("../../bedtime/tests/fixtures/gltf/cube.gltf"),
+        );
         let mut app = host();
-        let (owner, layout) = workspace(&mut app, "Models");
-        assert_eq!(crate::opening::viewers(&path), vec![ViewerId::Model, ViewerId::Code, ViewerId::Hex]);
-        assert_eq!(crate::opening::default_viewer(Path::new("scene.GLB")), ViewerId::Model);
-        assert_eq!(crate::opening::default_viewer(Path::new("scene.stl")), ViewerId::Model);
-        let model = open_file(app.world_mut(), layout, path.clone(), FileOpenMode::Preview).unwrap();
-        wait(&mut app, |world| world.get::<DocumentView>(model.panel).is_some() && world.get::<bedtime_model2::ModelScene>(model.panel).is_some_and(|scene|scene.is_loading()));
-        assert!(app.world().get::<bedtime_editor2::workbench::WorkbenchEditor>(model.panel).is_none());
-        let code = open_file_with(app.world_mut(),layout,path.clone(),FileOpenMode::Focus,Some(ViewerId::Code),Some(model.panel)).unwrap();
+        let (_owner, layout) = workspace(&mut app, "Models");
+        assert_eq!(
+            crate::opening::viewers(&path),
+            vec![ViewerId::Model, ViewerId::Code, ViewerId::Hex]
+        );
+        assert_eq!(
+            crate::opening::default_viewer(Path::new("scene.GLB")),
+            ViewerId::Model
+        );
+        assert_eq!(
+            crate::opening::default_viewer(Path::new("scene.stl")),
+            ViewerId::Model
+        );
+        let model =
+            open_file(app.world_mut(), layout, path.clone(), FileOpenMode::Preview).unwrap();
+        wait(&mut app, |world| {
+            world.get::<DocumentView>(model.panel).is_some()
+                && world
+                    .get::<bedtime_model2::ModelScene>(model.panel)
+                    .is_some_and(|scene| scene.is_loading())
+        });
+        assert!(
+            app.world()
+                .get::<bedtime_editor2::workbench::WorkbenchEditor>(model.panel)
+                .is_none()
+        );
+        let code = open_file_with(
+            app.world_mut(),
+            layout,
+            path.clone(),
+            FileOpenMode::Focus,
+            Some(ViewerId::Code),
+            Some(model.panel),
+        )
+        .unwrap();
         wait(&mut app, |world| code.result(world).is_some());
-        assert_eq!(app.world().get::<DocumentView>(model.panel).unwrap().document(),app.world().get::<DocumentView>(code.panel).unwrap().document());
-        app.world_mut().get_mut::<PanelPresentation>(model.panel).unwrap().visible = true;
-        edit_text(&mut app,code.panel,"invalid gltf");
-        wait(&mut app, |world| world.get::<crate::models::ModelPreview>(model.panel).unwrap().error.is_some());
-        assert_ne!(fs::read_to_string(&path).unwrap(),"invalid gltf");
-        assert!(!crate::file_editor::can_replace(app.world(),model.panel));
+        assert_eq!(
+            app.world()
+                .get::<DocumentView>(model.panel)
+                .unwrap()
+                .document(),
+            app.world()
+                .get::<DocumentView>(code.panel)
+                .unwrap()
+                .document()
+        );
+        app.world_mut()
+            .get_mut::<PanelPresentation>(model.panel)
+            .unwrap()
+            .visible = true;
+        edit_text(&mut app, code.panel, "invalid gltf");
+        wait(&mut app, |world| {
+            world
+                .get::<crate::models::ModelPreview>(model.panel)
+                .unwrap()
+                .error
+                .is_some()
+        });
+        assert_ne!(fs::read_to_string(&path).unwrap(), "invalid gltf");
+        assert!(!crate::file_editor::can_replace(app.world(), model.panel));
         let another = fixture.text("another.txt", "another source");
-        let other = open_file(app.world_mut(),layout,another,FileOpenMode::Preview).unwrap();
-        assert_ne!(other.panel,model.panel);
+        let other = open_file(app.world_mut(), layout, another, FileOpenMode::Preview).unwrap();
+        assert_ne!(other.panel, model.panel);
         let mut view = bedtime_model2::ViewState::default();
         view.appearance.exposure = 1.25;
-        app.world_mut().get_mut::<bedtime_model2::ModelScene>(model.panel).unwrap().view = view;
-        let recipe = crate::session::capture(app.world(),owner).unwrap();
-        let saved = recipe.layouts.iter().flat_map(|l| &l.areas).flat_map(|a| &a.tabs).find(|t| t.kind == crate::session::PanelKind::Model).unwrap();
-        assert_eq!(saved.model_view,Some(view));
-        crate::session::validate(&recipe).unwrap();
+        app.world_mut()
+            .get_mut::<bedtime_model2::ModelScene>(model.panel)
+            .unwrap()
+            .view = view;
+        let mut captured =
+            Workbench::capture_world::<ReflectWorkbenchPersist>(app.world_mut()).unwrap();
+        project_persistence(app.world_mut(), &mut captured);
+        let saved = captured.component::<PersistedFile>(model.panel).unwrap();
+        assert_eq!(saved.model, Some(view));
+        assert!(app.world().get::<PersistedFile>(model.panel).is_none());
         stop(&mut app);
     }
+}
 
+use bedtime_workbench2::persistence::{CapturedWorld, ReflectWorkbenchPersist};
+#[derive(Component, Reflect, Clone, serde::Serialize, serde::Deserialize)]
+#[reflect(opaque)]
+#[reflect(Component, Serialize, Deserialize, WorkbenchPersist)]
+#[require(FilePreviewPanel)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PersistedFile {
+    path: Option<PathBuf>,
+    viewer: String,
+    explicit: bool,
+    model: Option<bedtime_model2::ViewState>,
+}
+#[derive(Component, Reflect, Clone, serde::Serialize, serde::Deserialize)]
+#[reflect(opaque)]
+#[reflect(Component, Serialize, Deserialize, WorkbenchPersist)]
+#[require(FileTreePanel)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PersistedTree {
+    pub(crate) root: Option<PathBuf>,
+}
+#[derive(Resource, Reflect, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[reflect(opaque)]
+#[reflect(Resource, Serialize, Deserialize, ProjectPersist)]
+pub(crate) struct PersistedVisibility(pub bedtime_filetree2::FileTreePreferences);
+pub(crate) fn register_persistence(app: &mut App) {
+    app.register_type::<PersistedFile>()
+        .register_type::<PersistedTree>()
+        .register_type::<PersistedVisibility>();
+}
+pub(crate) fn project_persistence(
+    world: &mut World,
+    captured: &mut bedtime_workbench2::persistence::CapturedWorld,
+) {
+    let files: Vec<_> = world
+        .query::<(Entity, &FilePreviewPanel)>()
+        .iter(world)
+        .map(|(e, p)| {
+            (
+                e,
+                PersistedFile {
+                    path: p.path.clone(),
+                    viewer: p.viewer.id().into(),
+                    explicit: p.explicit,
+                    model: world.get::<bedtime_model2::ModelScene>(e).map(|s| s.view),
+                },
+            )
+        })
+        .collect();
+    for (e, p) in files {
+        captured.insert_component(e, p);
+    }
+    let trees: Vec<_> = world
+        .query_filtered::<(Entity, Option<&FileTreeRoot>), With<FileTreePanel>>()
+        .iter(world)
+        .map(|(e, r)| {
+            (
+                e,
+                PersistedTree {
+                    root: r.map(|r| r.0.clone()),
+                },
+            )
+        })
+        .collect();
+    for (e, p) in trees {
+        captured.insert_component(e, p);
+    }
+}
+pub(crate) fn clear_persistence(world: &mut World) {
+    let entities: Vec<_> = world
+        .query_filtered::<Entity, Or<(With<PersistedFile>, With<PersistedTree>)>>()
+        .iter(world)
+        .collect();
+    for e in entities {
+        world
+            .entity_mut(e)
+            .remove::<(PersistedFile, PersistedTree)>();
+    }
+}
+pub(crate) fn validate_persistence(prepared: &CapturedWorld) -> Result<(), String> {
+    for (_, p) in prepared.components::<PersistedFile>() {
+        if crate::opening::ViewerId::from_id(&p.viewer).is_none() {
+            return Err("Unknown persisted viewer".into());
+        }
+        if p.path
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute() || p.as_os_str().len() > 16384)
+        {
+            return Err("Invalid file source descriptor".into());
+        }
+        if p.model.is_some_and(|view| view.validate().is_err()) {
+            return Err("Invalid model view".into());
+        }
+    }
+    for (_, p) in prepared.components::<PersistedTree>() {
+        if p.root
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute() || p.as_os_str().len() > 16384)
+        {
+            return Err("Invalid Files root descriptor".into());
+        }
+    }
+    Ok(())
+}
+pub(crate) fn activate_persistence(world: &mut World) {
+    let entities: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedTree>>()
+        .iter(world)
+        .collect();
+    for e in entities {
+        let p = world.entity_mut(e).take::<PersistedTree>().unwrap();
+        if let Some(root) = p
+            .root
+            .or_else(|| world.get_resource::<ProjectRoot>().map(|r| r.0.clone()))
+        {
+            world.entity_mut(e).insert(FileTreeRoot(root));
+        }
+    }
+    let entities: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedFile>>()
+        .iter(world)
+        .collect();
+    for e in entities {
+        let p = world.entity_mut(e).take::<PersistedFile>().unwrap();
+        let metadata = world
+            .get::<PanelInstance>(e)
+            .map(|p| (p.title.clone(), p.preview));
+        let viewer = crate::opening::ViewerId::from_id(&p.viewer).unwrap();
+        let _ = set_viewer(world, e, viewer);
+        world.get_mut::<FilePreviewPanel>(e).unwrap().explicit = p.explicit;
+        if let Some(path) = p.path {
+            if let Err(error) = crate::opening::restore_file_panel(world, e, path) {
+                request_error_dialog(
+                    world,
+                    ErrorDialog {
+                        title: "Restore file".into(),
+                        message: "The session was restored, but a file could not be reopened."
+                            .into(),
+                        details: Some(error),
+                    },
+                );
+            }
+        }
+        if let Some(view) = p.model {
+            if let Some(mut model) = world.get_mut::<bedtime_model2::ModelScene>(e) {
+                model.view = view;
+            }
+        }
+        if let Some((title, preview)) = metadata {
+            let mut panel = world.get_mut::<PanelInstance>(e).unwrap();
+            panel.title = title;
+            panel.preview = preview;
+        }
+    }
+}
+
+/// Global layout defaults must not carry project source identity.
+pub(crate) fn validate_layout_default(
+    capture: &bedtime_workbench2::persistence::CapturedLayout,
+) -> Result<(), String> {
+    if !capture.components::<PersistedFile>().is_empty()
+        || capture
+            .components::<PersistedTree>()
+            .iter()
+            .any(|(_, tree)| tree.root.is_some())
+        || !capture
+            .components::<crate::layouts::LayoutSlot>()
+            .is_empty()
+    {
+        return Err(
+            "Layout defaults cannot contain file viewers, project paths or numbered slots".into(),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn register_menu(app: &mut App) {
+    crate::menus::register_panel::<bedtime_filetree2::FileTreePanel>(
+        app,
+        Some(20),
+        bedtime_workbench2::PanelFactory::new("Files", |world, area| {
+            let panel = world
+                .spawn((
+                    bedtime_filetree2::FileTreePanel::default(),
+                    bedtime_workbench2::InArea(area),
+                ))
+                .id();
+            if let Some(root) = world.get_resource::<ProjectRoot>().map(|r| r.0.clone()) {
+                world
+                    .entity_mut(panel)
+                    .insert(bedtime_filetree2::FileTreeRoot(root));
+            }
+            panel
+        }),
+        crate::storage::ready,
+    );
 }

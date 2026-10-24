@@ -1,5 +1,5 @@
 use super::*;
-use crate::{WorkbenchCorePlugin, Workspaces};
+use crate::WorkbenchCorePlugin;
 use std::{
     sync::{Mutex, mpsc},
     thread,
@@ -42,17 +42,17 @@ fn settings() -> Settings {
         count: 1,
     }
 }
-fn app() -> (App, Entity) {
+fn app() -> App {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin);
-    let workspace = Workspaces::new(app.world_mut()).open("Documents").entity();
-    (app, workspace)
+    crate::tests::layout(app.world_mut());
+    app
 }
 
 #[test]
 fn committed_changes_include_transactions_history_and_external_replacement() {
-    let (mut app, workspace) = app();
-    let handle = text(app.world_mut(), workspace, "abcdef");
+    let mut app = app();
+    let handle = text(app.world_mut(), "abcdef");
     edit_document_transaction(
         app.world_mut(),
         handle,
@@ -134,8 +134,8 @@ fn committed_changes_include_transactions_history_and_external_replacement() {
 
 #[test]
 fn committed_change_readers_are_independent_and_journal_gaps_are_explicit() {
-    let (mut app, workspace) = app();
-    let handle = text(app.world_mut(), workspace, "");
+    let mut app = app();
+    let handle = text(app.world_mut(), "");
     for revision in 0..140 {
         edit_document(
             app.world_mut(),
@@ -176,19 +176,13 @@ fn committed_change_readers_are_independent_and_journal_gaps_are_explicit() {
     );
     assert!(document_changes_since(app.world(), handle, 141).is_err());
 }
-fn panel(world: &mut World, workspace: Entity, title: &str) -> Entity {
-    let mut workbench = Workbench::with_workspace(world, WorkspaceId(workspace)).unwrap();
+fn panel(world: &mut World, title: &str) -> Entity {
+    let mut workbench = Workbench::new(world);
     let layout = workbench.active_layout();
     workbench.create_panel(layout, title).unwrap()
 }
-fn text(world: &mut World, workspace: Entity, initial: &str) -> DocumentHandle<String> {
-    open_document(
-        world,
-        workspace,
-        initial.to_owned(),
-        DocumentOptions::loaded("Text"),
-    )
-    .unwrap()
+fn text(world: &mut World, initial: &str) -> DocumentHandle<String> {
+    open_document(world, initial.to_owned(), DocumentOptions::loaded("Text")).unwrap()
 }
 fn info<M: DocumentModel>(world: &World, handle: DocumentHandle<M>) -> DocumentInfo {
     inspect_document(world, handle.id()).unwrap()
@@ -282,15 +276,14 @@ fn wait_save(world: &mut World, id: DocumentId) -> DocumentSaveFinished {
 fn typed_and_text_models_share_revision_history_and_dirty_checkpoints() {
     fn assert_copy<T: Copy>() {}
     assert_copy::<DocumentHandle<Settings>>();
-    let (mut app, workspace) = app();
+    let mut app = app();
     let typed = open_document(
         app.world_mut(),
-        workspace,
         settings(),
         DocumentOptions::loaded("Settings"),
     )
     .unwrap();
-    let text = text(app.world_mut(), workspace, "Original");
+    let text = text(app.world_mut(), "Original");
     assert!(!info(app.world(), typed).dirty);
     assert!(!info(app.world(), text).dirty);
     edit_document_transaction(
@@ -323,13 +316,8 @@ fn typed_and_text_models_share_revision_history_and_dirty_checkpoints() {
     assert_eq!(read_document(app.world(), typed).unwrap().count, 2);
     assert!(info(app.world(), typed).dirty);
 
-    let unsaved = open_document(
-        app.world_mut(),
-        workspace,
-        settings(),
-        DocumentOptions::unsaved("New"),
-    )
-    .unwrap();
+    let unsaved =
+        open_document(app.world_mut(), settings(), DocumentOptions::unsaved("New")).unwrap();
     assert!(
         info(app.world(), unsaved).dirty,
         "An untouched unsaved model has no checkpoint"
@@ -342,10 +330,10 @@ fn typed_and_text_models_share_revision_history_and_dirty_checkpoints() {
 
 #[test]
 fn typed_models_use_the_same_save_external_and_conflict_lifecycle_as_text() {
-    let (mut app, workspace) = app();
+    let mut app = app();
     let mut options = DocumentOptions::loaded("Settings");
     options.initial_state = DocumentInitialState::Loaded(Some("initial".into()));
-    let document = open_document(app.world_mut(), workspace, settings(), options).unwrap();
+    let document = open_document(app.world_mut(), settings(), options).unwrap();
     edit_document(
         app.world_mut(),
         document,
@@ -433,119 +421,10 @@ fn typed_models_use_the_same_save_external_and_conflict_lifecycle_as_text() {
 }
 
 #[test]
-fn source_keys_deduplicate_per_workspace_and_check_model_types() {
-    let (mut app, workspace) = app();
-    let other = Workspaces::new(app.world_mut()).open("Other").entity();
-    let mut options = DocumentOptions::loaded("First");
-    options.source_key = Some("file:///shared".into());
-    let first = open_document(
-        app.world_mut(),
-        workspace,
-        "first".to_owned(),
-        options.clone(),
-    )
-    .unwrap();
-    let duplicate = open_document(
-        app.world_mut(),
-        workspace,
-        "must not replace".to_owned(),
-        options.clone(),
-    )
-    .unwrap();
-    let second = open_document(
-        app.world_mut(),
-        other,
-        "other workspace".to_owned(),
-        options.clone(),
-    )
-    .unwrap();
-    assert_eq!(first, duplicate);
-    assert_ne!(first.id(), second.id());
-    assert_eq!(read_document(app.world(), first).unwrap(), "first");
-    assert!(matches!(
-        open_document(app.world_mut(), workspace, settings(), options),
-        Err(DocumentError::WrongModel { .. })
-    ));
-    assert!(matches!(
-        cast_document::<Settings>(app.world(), first.id()),
-        Err(DocumentError::WrongModel { .. })
-    ));
-    assert_eq!(
-        cast_document::<String>(app.world(), first.id()).unwrap(),
-        first
-    );
-    assert_eq!(document_ids(app.world(), workspace), [first.id()]);
-    assert_eq!(document_ids(app.world(), other), [second.id()]);
-}
-
-#[test]
-fn viewers_share_across_layouts_but_not_workspaces_and_do_not_own_sessions() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
-    let first = panel(app.world_mut(), workspace, "First");
-    let (second, second_layout) = {
-        let mut workbench =
-            Workbench::with_workspace(app.world_mut(), WorkspaceId(workspace)).unwrap();
-        let layout = workbench.create_layout("Second layout").unwrap();
-        (workbench.create_panel(layout, "Second").unwrap(), layout)
-    };
-    bind_document_view(app.world_mut(), first, document).unwrap();
-    bind_document_view(app.world_mut(), second, document).unwrap();
-    let other = Workspaces::new(app.world_mut()).open("Other").entity();
-    let foreign_panel = panel(app.world_mut(), other, "Foreign");
-    assert_eq!(
-        bind_document_view(app.world_mut(), foreign_panel, document),
-        Err(DocumentError::WrongWorkspace)
-    );
-    assert!(app.world().get::<DocumentView>(foreign_panel).is_none());
-    let model = open_document(
-        app.world_mut(),
-        workspace,
-        settings(),
-        DocumentOptions::loaded("Typed"),
-    )
-    .unwrap();
-    assert!(matches!(
-        bind_document_view(app.world_mut(), first, model),
-        Err(DocumentError::WrongModel { .. })
-    ));
-    assert_eq!(
-        app.world().get::<DocumentView>(first).unwrap().document(),
-        document.id()
-    );
-    replace(app.world_mut(), document, "visible in both");
-    reconcile_document_views(app.world_mut()).unwrap();
-    assert!(app.world().get::<PanelInstance>(first).unwrap().dirty);
-    assert!(app.world().get::<PanelInstance>(second).unwrap().dirty);
-    Workbench::with_workspace(app.world_mut(), WorkspaceId(workspace))
-        .unwrap()
-        .close_panel(first)
-        .unwrap();
-    Workbench::with_workspace(app.world_mut(), WorkspaceId(workspace))
-        .unwrap()
-        .delete_layout(second_layout)
-        .unwrap();
-    assert_eq!(
-        read_document(app.world(), document).unwrap(),
-        "visible in both"
-    );
-    assert_eq!(document_ids(app.world(), workspace).len(), 2);
-    assert!(info(app.world(), document).can_undo);
-    undo_document(app.world_mut(), document.id()).unwrap();
-    assert!(!info(app.world(), document).dirty);
-    close_document(app.world_mut(), document.id()).unwrap();
-    assert!(matches!(
-        read_document(app.world(), document),
-        Err(DocumentError::Unavailable(_))
-    ));
-}
-
-#[test]
 fn rejected_transactions_stale_edits_and_invalid_utf8_leave_everything_unchanged() {
-    let (mut app, workspace) = app();
+    let mut app = app();
     let model = open_document(
         app.world_mut(),
-        workspace,
         settings(),
         DocumentOptions::loaded("Typed"),
     )
@@ -563,7 +442,7 @@ fn rejected_transactions_stale_edits_and_invalid_utf8_leave_everything_unchanged
     assert!(!info(app.world(), model).can_undo);
     assert!(!info(app.world(), model).dirty);
 
-    let document = text(app.world_mut(), workspace, "a🦀b");
+    let document = text(app.world_mut(), "a🦀b");
     let transaction = [
         TextChange {
             range: 0..1,
@@ -644,10 +523,10 @@ fn rejected_transactions_stale_edits_and_invalid_utf8_leave_everything_unchanged
 
 #[test]
 fn explicit_groups_merge_only_consecutive_edits_and_never_reopen() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "a");
-    let first = panel(app.world_mut(), workspace, "First");
-    let second = panel(app.world_mut(), workspace, "Second");
+    let mut app = app();
+    let document = text(app.world_mut(), "a");
+    let first = panel(app.world_mut(), "First");
+    let second = panel(app.world_mut(), "Second");
     bind_document_view(app.world_mut(), first, document).unwrap();
     bind_document_view(app.world_mut(), second, document).unwrap();
     let group = begin_document_undo_group(app.world_mut(), document.id(), first).unwrap();
@@ -752,11 +631,10 @@ fn explicit_groups_merge_only_consecutive_edits_and_never_reopen() {
 
 #[test]
 fn bounded_history_retains_only_recent_transactions_and_can_be_disabled() {
-    let (mut app, workspace) = app();
+    let mut app = app();
     let mut options = DocumentOptions::loaded("Bounded");
     options.history_limit = 2;
-    let document =
-        open_document(app.world_mut(), workspace, "0".to_owned(), options.clone()).unwrap();
+    let document = open_document(app.world_mut(), "0".to_owned(), options.clone()).unwrap();
     for value in ["1", "2", "3"] {
         replace(app.world_mut(), document, value);
     }
@@ -769,7 +647,7 @@ fn bounded_history_retains_only_recent_transactions_and_can_be_disabled() {
     );
     assert!(info(app.world(), document).dirty);
     options.history_limit = 0;
-    let no_history = open_document(app.world_mut(), workspace, "0".to_owned(), options).unwrap();
+    let no_history = open_document(app.world_mut(), "0".to_owned(), options).unwrap();
     replace(app.world_mut(), no_history, "1");
     assert_eq!(info(app.world(), no_history).revision, 1);
     assert!(!info(app.world(), no_history).can_undo);
@@ -777,10 +655,10 @@ fn bounded_history_retains_only_recent_transactions_and_can_be_disabled() {
 
 #[test]
 fn drafts_explicitly_block_save_history_and_retirement_in_every_viewer() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
-    let first = panel(app.world_mut(), workspace, "First");
-    let second = panel(app.world_mut(), workspace, "Second");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
+    let first = panel(app.world_mut(), "First");
+    let second = panel(app.world_mut(), "Second");
     bind_document_view(app.world_mut(), first, document).unwrap();
     bind_document_view(app.world_mut(), second, document).unwrap();
     bind_document_save(
@@ -816,7 +694,7 @@ fn drafts_explicitly_block_save_history_and_retirement_in_every_viewer() {
         Err(DocumentError::Drafts)
     );
     assert_eq!(
-        check_workspace_documents(app.world(), workspace),
+        check_session_documents(app.world()),
         Err(DocumentError::Drafts)
     );
     reconcile_document_views(app.world_mut()).unwrap();
@@ -834,15 +712,14 @@ fn drafts_explicitly_block_save_history_and_retirement_in_every_viewer() {
 
 #[test]
 fn saves_acknowledge_only_the_captured_model_and_survive_last_viewer_close() {
-    let (mut app, workspace) = app();
+    let mut app = app();
     let document = open_document(
         app.world_mut(),
-        workspace,
         "captured".to_owned(),
         DocumentOptions::unsaved("New"),
     )
     .unwrap();
-    let viewer = panel(app.world_mut(), workspace, "Viewer");
+    let viewer = panel(app.world_mut(), "Viewer");
     bind_document_view(app.world_mut(), viewer, document).unwrap();
     let (binding, release, snapshots) =
         controlled_save(Some("global://destination"), Ok(Some("v1".into())));
@@ -874,14 +751,11 @@ fn saves_acknowledge_only_the_captured_model_and_survive_last_viewer_close() {
         close_document(app.world_mut(), document.id()),
         Err(DocumentError::Saving)
     );
-    Workbench::with_workspace(app.world_mut(), WorkspaceId(workspace))
-        .unwrap()
-        .close_panel(viewer)
-        .unwrap();
+    Workbench::new(app.world_mut()).close_panel(viewer).unwrap();
     app.update();
     assert!(
         app.world()
-            .get::<WorkspaceWork>(workspace)
+            .get_resource::<ManagedWork>()
             .unwrap()
             .list()
             .iter()
@@ -911,8 +785,8 @@ fn saves_acknowledge_only_the_captured_model_and_survive_last_viewer_close() {
 
 #[test]
 fn undo_during_save_does_not_change_the_immutable_capture() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "save this");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("written".into())));
     bind_document_save(app.world_mut(), document, binding).unwrap();
@@ -936,8 +810,8 @@ fn undo_during_save_does_not_change_the_immutable_capture() {
 
 #[test]
 fn save_errors_and_panics_preserve_content_and_history_and_release_bindings() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "local");
     let failure = DocumentSaveError::Failed("disk full".into());
     let expected = failure.clone();
@@ -990,11 +864,10 @@ fn save_errors_and_panics_preserve_content_and_history_and_release_bindings() {
 }
 
 #[test]
-fn destination_keys_serialize_saves_across_documents_and_workspaces() {
-    let (mut app, workspace) = app();
-    let other = Workspaces::new(app.world_mut()).open("Other").entity();
-    let first = text(app.world_mut(), workspace, "first");
-    let second = text(app.world_mut(), other, "second");
+fn destination_keys_serialize_saves_across_documents() {
+    let mut app = app();
+    let first = text(app.world_mut(), "first");
+    let second = text(app.world_mut(), "second");
     let (first_binding, release_first, snapshots_first) =
         controlled_save(Some("same destination"), Ok(Some("one".into())));
     let (second_binding, release_second, snapshots_second) =
@@ -1026,8 +899,8 @@ fn destination_keys_serialize_saves_across_documents_and_workspaces() {
 
 #[test]
 fn save_cas_failure_requires_refresh_before_retry_even_if_source_contents_match() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "local");
     bind_document_save(
         app.world_mut(),
@@ -1098,9 +971,9 @@ fn save_cas_failure_requires_refresh_before_retry_even_if_source_contents_match(
 
 #[test]
 fn saves_and_external_observations_close_explicit_groups() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "a");
-    let viewer = panel(app.world_mut(), workspace, "Viewer");
+    let mut app = app();
+    let document = text(app.world_mut(), "a");
+    let viewer = panel(app.world_mut(), "Viewer");
     bind_document_view(app.world_mut(), viewer, document).unwrap();
     let group = begin_document_undo_group(app.world_mut(), document.id(), viewer).unwrap();
     assert_eq!(
@@ -1136,10 +1009,10 @@ fn saves_and_external_observations_close_explicit_groups() {
 
 #[test]
 fn clean_external_refresh_is_undoable_without_undoing_acknowledged_source_knowledge() {
-    let (mut app, workspace) = app();
+    let mut app = app();
     let mut options = DocumentOptions::loaded("Source");
     options.initial_state = DocumentInitialState::Loaded(Some("v1".into()));
-    let document = open_document(app.world_mut(), workspace, "one".to_owned(), options).unwrap();
+    let document = open_document(app.world_mut(), "one".to_owned(), options).unwrap();
     assert_eq!(
         offer(app.world_mut(), document, "two", "v2"),
         DocumentExternalUpdate::Applied
@@ -1173,8 +1046,8 @@ fn clean_external_refresh_is_undoable_without_undoing_acknowledged_source_knowle
 
 #[test]
 fn dirty_external_duplicates_convergence_and_self_write_echoes_add_no_history() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "local");
     assert_eq!(
         offer(app.world_mut(), document, "base", "v1"),
@@ -1230,8 +1103,8 @@ fn dirty_external_duplicates_convergence_and_self_write_echoes_add_no_history() 
 
 #[test]
 fn conflicts_retain_base_editable_local_and_newest_incoming_and_reject_stale_resolutions() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "local");
     bind_document_save(
         app.world_mut(),
@@ -1313,8 +1186,8 @@ fn conflicts_retain_base_editable_local_and_newest_incoming_and_reject_stale_res
 
 #[test]
 fn keep_local_and_supplied_merge_acknowledge_incoming_without_implicitly_writing() {
-    let (mut app, workspace) = app();
-    let keep = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let keep = text(app.world_mut(), "base");
     replace(app.world_mut(), keep, "local");
     offer(app.world_mut(), keep, "remote", "v2");
     let revision = info(app.world(), keep).revision;
@@ -1332,7 +1205,7 @@ fn keep_local_and_supplied_merge_acknowledge_incoming_without_implicitly_writing
     );
     assert_eq!(info(app.world(), keep).source_version, Some("v2".into()));
 
-    let merged = text(app.world_mut(), workspace, "base");
+    let merged = text(app.world_mut(), "base");
     replace(app.world_mut(), merged, "local");
     offer(app.world_mut(), merged, "remote", "v2");
     resolve(
@@ -1353,8 +1226,8 @@ fn keep_local_and_supplied_merge_acknowledge_incoming_without_implicitly_writing
 
 #[test]
 fn retained_conflicts_require_explicit_resolution_but_can_converge_or_revert_at_source() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "local");
     offer(app.world_mut(), document, "remote", "v2");
     undo_document(app.world_mut(), document.id()).unwrap();
@@ -1392,10 +1265,10 @@ fn retained_conflicts_require_explicit_resolution_but_can_converge_or_revert_at_
 
 #[test]
 fn late_save_completion_preserves_newer_conflict_and_requires_reconciliation() {
-    let (mut app, workspace) = app();
+    let mut app = app();
     let mut options = DocumentOptions::loaded("Source");
     options.initial_state = DocumentInitialState::Loaded(Some("v1".into()));
-    let document = open_document(app.world_mut(), workspace, "base".to_owned(), options).unwrap();
+    let document = open_document(app.world_mut(), "base".to_owned(), options).unwrap();
     replace(app.world_mut(), document, "local");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("save v3".into())));
     bind_document_save(app.world_mut(), document, binding).unwrap();
@@ -1473,8 +1346,8 @@ fn late_save_completion_preserves_newer_conflict_and_requires_reconciliation() {
 
 #[test]
 fn late_save_cannot_make_a_clean_external_refresh_falsely_clean_against_its_snapshot() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("save v3".into())));
     bind_document_save(app.world_mut(), document, binding).unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
@@ -1519,10 +1392,10 @@ fn late_save_cannot_make_a_clean_external_refresh_falsely_clean_against_its_snap
 
 #[test]
 fn stale_source_observations_are_atomic_and_dont_end_current_groups() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     offer(app.world_mut(), document, "incoming", "v2");
-    let viewer = panel(app.world_mut(), workspace, "Viewer");
+    let viewer = panel(app.world_mut(), "Viewer");
     bind_document_view(app.world_mut(), viewer, document).unwrap();
     let group = begin_document_undo_group(app.world_mut(), document.id(), viewer).unwrap();
     assert_eq!(
@@ -1549,12 +1422,12 @@ fn stale_source_observations_are_atomic_and_dont_end_current_groups() {
 
 #[test]
 fn explicit_discard_closes_all_bound_viewers_but_not_other_documents() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
-    let other = text(app.world_mut(), workspace, "unrelated");
-    let first = panel(app.world_mut(), workspace, "First");
-    let second = panel(app.world_mut(), workspace, "Second");
-    let unrelated = panel(app.world_mut(), workspace, "Unrelated");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
+    let other = text(app.world_mut(), "unrelated");
+    let first = panel(app.world_mut(), "First");
+    let second = panel(app.world_mut(), "Second");
+    let unrelated = panel(app.world_mut(), "Unrelated");
     bind_document_view(app.world_mut(), first, document).unwrap();
     bind_document_view(app.world_mut(), second, document).unwrap();
     bind_document_view(app.world_mut(), unrelated, other).unwrap();
@@ -1569,40 +1442,32 @@ fn explicit_discard_closes_all_bound_viewers_but_not_other_documents() {
     assert!(app.world().get_entity(second).is_err());
     assert!(app.world().get::<PanelInstance>(unrelated).is_some());
     assert_eq!(read_document(app.world(), other).unwrap(), "unrelated");
-    assert_eq!(document_ids(app.world(), workspace), [other.id()]);
+    assert_eq!(document_ids(app.world()), [other.id()]);
 }
 
 #[test]
 fn reconciliation_rejects_invalid_references_ownership_and_unbound_drafts_without_partial_flag_writes()
  {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
-    let viewer = panel(app.world_mut(), workspace, "Viewer");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
+    let viewer = panel(app.world_mut(), "Viewer");
     bind_document_view(app.world_mut(), viewer, document).unwrap();
     replace(app.world_mut(), document, "dirty");
-    let draft = panel(app.world_mut(), workspace, "Unbound draft");
+    let draft = panel(app.world_mut(), "Unbound draft");
     app.world_mut().entity_mut(draft).insert(DocumentDraft);
     assert!(reconcile_document_views(app.world_mut()).is_err());
     assert!(!app.world().get::<PanelInstance>(viewer).unwrap().dirty);
     app.world_mut().entity_mut(draft).remove::<DocumentDraft>();
     reconcile_document_views(app.world_mut()).unwrap();
     assert!(app.world().get::<PanelInstance>(viewer).unwrap().dirty);
-    let other = Workspaces::new(app.world_mut()).open("Other").entity();
-    app.world_mut()
-        .entity_mut(document.id().entity())
-        .insert(InWorkspace(other));
-    assert!(reconcile_document_views(app.world_mut()).is_err());
-    app.world_mut()
-        .entity_mut(document.id().entity())
-        .insert(InWorkspace(workspace));
     app.world_mut().despawn(document.id().entity());
     assert!(reconcile_document_views(app.world_mut()).is_err());
 }
 
 #[test]
 fn cancelling_work_after_a_write_starts_cannot_leave_a_false_clean_checkpoint() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "written snapshot");
     let stored = Arc::new(Mutex::new(String::from("base")));
     let source = stored.clone();
@@ -1630,7 +1495,7 @@ fn cancelling_work_after_a_write_starts_cannot_leave_a_false_clean_checkpoint() 
         .unwrap();
     undo_document(app.world_mut(), document.id()).unwrap();
     app.world_mut()
-        .get_mut::<WorkspaceWork>(workspace)
+        .get_resource_mut::<ManagedWork>()
         .unwrap()
         .cancel(work)
         .unwrap();
@@ -1646,11 +1511,7 @@ fn cancelling_work_after_a_write_starts_cannot_leave_a_false_clean_checkpoint() 
         close_document(app.world_mut(), document.id()),
         Err(DocumentError::Conflict)
     );
-    assert!(
-        crate::Workspaces::new(app.world_mut())
-            .close(WorkspaceId(workspace), None)
-            .is_err()
-    );
+    assert!(crate::preflight_session_close(app.world(), crate::SessionCloseMode::Saved).is_err());
     assert!(matches!(
         offer_document_external_update(app.world_mut(), document, 0, "base".into(), None),
         Err(DocumentError::StaleSourceGeneration { .. })
@@ -1659,8 +1520,8 @@ fn cancelling_work_after_a_write_starts_cannot_leave_a_false_clean_checkpoint() 
 
 #[test]
 fn a_watcher_echo_before_the_save_receipt_never_reapplies_undone_content() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "saved capture");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("saved version".into())));
     bind_document_save(app.world_mut(), document, binding).unwrap();
@@ -1688,8 +1549,8 @@ fn a_watcher_echo_before_the_save_receipt_never_reapplies_undone_content() {
 
 #[test]
 fn a_watcher_echo_waits_for_success_and_a_newer_observation_is_not_mistaken_for_it() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "capture");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("our version".into())));
     bind_document_save(app.world_mut(), document, binding).unwrap();
@@ -1714,8 +1575,8 @@ fn a_watcher_echo_waits_for_success_and_a_newer_observation_is_not_mistaken_for_
 
 #[test]
 fn a_failed_write_with_a_watcher_echo_does_not_acknowledge_durable_success() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "capture");
     let (binding, release, snapshots) =
         controlled_save(None, Err(DocumentSaveError::Failed("flush failed".into())));
@@ -1740,12 +1601,12 @@ fn a_failed_write_with_a_watcher_echo_does_not_acknowledge_durable_success() {
 #[cfg(feature = "ui")]
 #[test]
 fn retirement_during_drawing_is_rejected_without_closing_viewers() {
-    let (mut app, workspace) = app();
-    let document = text(app.world_mut(), workspace, "base");
-    let viewer = panel(app.world_mut(), workspace, "Viewer");
+    let mut app = app();
+    let document = text(app.world_mut(), "base");
+    let viewer = panel(app.world_mut(), "Viewer");
     bind_document_view(app.world_mut(), viewer, document).unwrap();
     app.world_mut()
-        .get_mut::<crate::WorkspaceUi>(workspace)
+        .get_resource_mut::<crate::WorkbenchUi>()
         .unwrap()
         .drawing = true;
     assert!(close_document(app.world_mut(), document.id()).is_err());
@@ -1753,8 +1614,45 @@ fn retirement_during_drawing_is_rejected_without_closing_viewers() {
     assert!(app.world().get::<PanelInstance>(viewer).is_some());
     assert!(read_document(app.world(), document).is_ok());
     app.world_mut()
-        .get_mut::<crate::WorkspaceUi>(workspace)
+        .get_resource_mut::<crate::WorkbenchUi>()
         .unwrap()
         .drawing = false;
     close_document(app.world_mut(), document.id()).unwrap();
+}
+
+#[test]
+fn source_keys_deduplicate_in_world_and_check_model_types() {
+    let mut app = app();
+    let mut options = DocumentOptions::loaded("File");
+    options.source_key = Some("file:///shared".into());
+    let first = open_document(app.world_mut(), "first".to_owned(), options.clone()).unwrap();
+    let duplicate =
+        open_document(app.world_mut(), "replacement".to_owned(), options.clone()).unwrap();
+    assert_eq!(first, duplicate);
+    assert_eq!(read_document(app.world(), first).unwrap(), "first");
+    assert!(matches!(
+        open_document(app.world_mut(), settings(), options),
+        Err(DocumentError::WrongModel { .. })
+    ));
+    assert_eq!(document_ids(app.world()), [first.id()]);
+}
+
+#[test]
+fn viewers_share_documents_across_layouts_and_do_not_own_them() {
+    let mut app = app();
+    let document = open_document(
+        app.world_mut(),
+        "base".to_owned(),
+        DocumentOptions::loaded("File"),
+    )
+    .unwrap();
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.create_panel(w.active_layout(), "One").unwrap();
+    let other = w.create_layout("Other").unwrap();
+    let second = w.create_panel(other, "Two").unwrap();
+    bind_document_view(w.world_mut(), first, document).unwrap();
+    bind_document_view(w.world_mut(), second, document).unwrap();
+    w.close_panel(first).unwrap();
+    w.delete_layout(other).unwrap();
+    assert_eq!(read_document(w.world(), document).unwrap(), "base");
 }

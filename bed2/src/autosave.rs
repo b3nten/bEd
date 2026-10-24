@@ -45,11 +45,7 @@ fn focused_editor(world: &mut World) -> Option<(Entity, DocumentId)> {
     if !windows_focused {
         return None;
     }
-    let active = world
-        .query_filtered::<Entity, With<ActiveWorkspace>>()
-        .iter(world)
-        .next()?;
-    let layout = active_layout(world, active)?;
+    let layout = active_layout(world)?;
     world
         .query_filtered::<(Entity, &DocumentView, &InArea), With<WorkbenchEditor>>()
         .iter(world)
@@ -81,10 +77,8 @@ fn tick(world: &mut World, now: Instant, focused: Option<(Entity, DocumentId)>) 
     if !crate::close::accepts_user_actions(world) {
         return;
     }
-    let infos: Vec<_> = world
-        .query_filtered::<Entity, With<Workspace>>()
-        .iter(world)
-        .flat_map(|workspace| document_ids(world, workspace))
+    let infos: Vec<_> = document_ids(world)
+        .into_iter()
         .filter_map(|id| inspect_document(world, id).ok())
         .collect();
     world.resource_scope(|world, mut state: Mut<Autosaves>| {
@@ -109,7 +103,7 @@ fn tick(world: &mut World, now: Instant, focused: Option<(Entity, DocumentId)>) 
             }
             if departed == Some(info.id) { pending.focus_left = true; }
             if !info.dirty { pending.focus_left = false; continue; }
-            let preferences = settings::effective_settings(world, info.workspace);
+            let preferences = settings::effective_settings(world);
             let due = match preferences.autosave {
                 Autosave::Never => { pending.focus_left = false; false },
                 Autosave::ChangeFocus => pending.focus_left,
@@ -119,7 +113,7 @@ fn tick(world: &mut World, now: Instant, focused: Option<(Entity, DocumentId)>) 
             if crate::file_editor::source_path(world, info.id).is_some_and(|path|
                 world.get_resource::<crate::file_editor::FileWrites>().is_some_and(|writes| writes.blocks(path))) { continue; }
             if !due || info.saving || info.has_drafts || info.conflict || info.requires_source_refresh || !info.has_save_binding
-                || !crate::storage::ready(world, info.workspace) || pending.attempted == Some(attempt) { continue; }
+                || !crate::storage::ready(world) || pending.attempted == Some(attempt) { continue; }
             match save_document(world, info.id) {
                 Ok(work) => {
                     pending.attempted = Some(attempt);
@@ -144,7 +138,7 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
-    
+
     fn host(mode: Autosave) -> (App, Entity, DocumentHandle<String>, Arc<AtomicUsize>) {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin)
@@ -153,10 +147,9 @@ mod tests {
             autosave: mode,
             ..default()
         }));
-        let workspace = Workspaces::new(app.world_mut()).open("Project").entity();
+        let workspace = crate::test_layout(app.world_mut());
         let document = open_document(
             app.world_mut(),
-            workspace,
             String::new(),
             DocumentOptions::loaded("Test"),
         )
@@ -175,7 +168,7 @@ mod tests {
         edit(&mut app, document, "first");
         (app, workspace, document, saves)
     }
-    
+
     fn edit(app: &mut App, document: DocumentHandle<String>, text: &str) {
         let revision = inspect_document(app.world(), document.id())
             .unwrap()
@@ -193,7 +186,7 @@ mod tests {
         )
         .unwrap();
     }
-    
+
     fn finish(app: &mut App, document: DocumentId) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while inspect_document(app.world(), document).unwrap().saving {
@@ -202,7 +195,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    
+
     #[test]
     fn timer_waits_for_idle_and_saves_documents_without_viewers() {
         let (mut app, _, document, saves) = host(Autosave::Timer);
@@ -219,7 +212,7 @@ mod tests {
         assert_eq!(saves.load(Ordering::SeqCst), 1);
         assert!(!inspect_document(app.world(), document.id()).unwrap().dirty);
     }
-    
+
     #[test]
     fn focus_save_is_deduplicated_and_never_mode_does_not_write() {
         let (mut app, _, document, saves) = host(Autosave::ChangeFocus);
@@ -244,7 +237,7 @@ mod tests {
         tick(app.world_mut(), now + Duration::from_secs(200), None);
         assert_eq!(saves.load(Ordering::SeqCst), 1);
     }
-    
+
     #[test]
     fn failure_is_visible_and_does_not_retry_the_same_revision_forever() {
         let (mut app, _, document, saves) = host(Autosave::Timer);
@@ -274,26 +267,24 @@ mod tests {
         finish(&mut app, document.id());
         assert_eq!(saves.load(Ordering::SeqCst), 2);
     }
-    
+
     #[test]
     fn workspace_overrides_control_inactive_documents_and_unbound_documents_are_skipped() {
         let (mut app, workspace, document, saves) = host(Autosave::Timer);
         app.world_mut()
             .entity_mut(workspace)
-            .insert(settings::WorkspacePreferences(
-                settings::SettingsOverrides {
-                    autosave: Some(Autosave::Never),
-                    ..default()
-                },
-            ));
-        let other = Workspaces::new(app.world_mut()).open("Other");
-        Workspaces::new(app.world_mut()).activate(other).unwrap();
+            .insert(settings::ProjectPreferences(settings::SettingsOverrides {
+                autosave: Some(Autosave::Never),
+                ..default()
+            }));
+        let _other = crate::test_layout(app.world_mut());
+
         let now = Instant::now();
         tick(app.world_mut(), now, None);
         tick(app.world_mut(), now + Duration::from_secs(2), None);
         assert_eq!(saves.load(Ordering::SeqCst), 0);
         app.world_mut()
-            .get_mut::<settings::WorkspacePreferences>(workspace)
+            .get_mut::<settings::ProjectPreferences>(workspace)
             .unwrap()
             .0
             .autosave = None;
@@ -302,7 +293,6 @@ mod tests {
         assert_eq!(saves.load(Ordering::SeqCst), 1);
         let unbound = open_document(
             app.world_mut(),
-            workspace,
             "unsaved".to_owned(),
             DocumentOptions::unsaved("Unbound"),
         )
@@ -311,11 +301,11 @@ mod tests {
         tick(app.world_mut(), now + Duration::from_secs(10), None);
         assert!(inspect_document(app.world(), unbound.id()).unwrap().dirty);
     }
-    
+
     #[test]
     fn composition_and_source_conflicts_block_autosave() {
-        let (mut app, workspace, document, saves) = host(Autosave::Timer);
-        let layout = active_layout(app.world(), workspace).unwrap();
+        let (mut app, _workspace, document, saves) = host(Autosave::Timer);
+        let layout = active_layout(app.world()).unwrap();
         let area = Workbench::for_entity(app.world_mut(), layout)
             .unwrap()
             .destination_area(layout)
@@ -350,10 +340,10 @@ mod tests {
         );
         assert_eq!(saves.load(Ordering::SeqCst), 0);
     }
-    
+
     #[test]
     fn a_busy_destination_defers_without_suppressing_the_later_save() {
-        let (mut app, workspace, first, saves) = host(Autosave::Timer);
+        let (mut app, _workspace, first, saves) = host(Autosave::Timer);
         let observed = saves.clone();
         let binding = DocumentSaveBinding::new(Some("shared destination".into()), move |_| {
             observed.fetch_add(1, Ordering::SeqCst);
@@ -362,7 +352,6 @@ mod tests {
         bind_document_save(app.world_mut(), first, binding.clone()).unwrap();
         let second = open_document(
             app.world_mut(),
-            workspace,
             String::new(),
             DocumentOptions::loaded("Second"),
         )
@@ -380,7 +369,7 @@ mod tests {
         assert!(!inspect_document(app.world(), second.id()).unwrap().dirty);
         assert_eq!(saves.load(Ordering::SeqCst), 2);
     }
-    
+
     #[test]
     fn quit_decisions_suspend_new_autosaves() {
         let (mut app, _, document, saves) = host(Autosave::Timer);

@@ -8,6 +8,7 @@ use bevy::prelude::*;
 pub struct CodePlugin;
 impl Plugin for CodePlugin {
     fn build(&self, app: &mut App) {
+        register_menu(app);
         app.add_plugins((
             EditorAnalysisPlugin,
             bed_structure2::StructurePlugin,
@@ -39,4 +40,45 @@ fn inspect(world: &mut World, _: serde_json::Value) -> Result<serde_json::Value,
     }).collect();
     let sources:Vec<_>=world.query::<(Entity,&bed_structure2::StructureSource)>().iter(world).map(|(workspace,s)|serde_json::json!({"workspace":workspace.to_bits().to_string(),"source":s.source.map(|source|source.panel.to_bits().to_string())})).collect();
     Ok(serde_json::json!({"panels":panels,"sources":sources}))
+}
+
+use bedtime_workbench2::persistence::ReflectWorkbenchPersist;
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, WorkbenchPersist)]
+#[require(bed_structure2::StructurePanel)]
+pub(crate) struct PersistedStructure;
+
+pub(crate) fn register_persistence(app: &mut App) {
+    app.register_type::<PersistedStructure>();
+}
+pub(crate) fn project_persistence(
+    world: &mut World,
+    captured: &mut bedtime_workbench2::persistence::CapturedWorld,
+) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<bed_structure2::StructurePanel>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        captured.insert_component(panel, PersistedStructure);
+    }
+}
+pub(crate) fn clear_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedStructure>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        world.entity_mut(panel).remove::<PersistedStructure>();
+    }
+}
+
+pub(crate) fn register_menu(app: &mut App) {
+    crate::menus::register_panel::<bed_structure2::StructurePanel>(
+        app,
+        Some(30),
+        bedtime_workbench2::PanelFactory::of::<bed_structure2::StructurePanel>(),
+        crate::storage::ready,
+    );
 }

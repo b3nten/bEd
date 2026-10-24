@@ -1,55 +1,49 @@
 //! ECS owns the tiling. Geometry snapshots are temporary calculations, never a
 //! second live model. This module alone commits membership and topology changes.
-use crate::{InWorkspace, Workbench, WorkspaceId, geometry};
+#[cfg(feature = "persistence")]
+use crate::persistence::ReflectWorkbenchPersist;
+use crate::{Workbench, geometry};
+#[cfg(feature = "persistence")]
+use bevy::ecs::reflect::ReflectMapEntities;
 use bevy::prelude::*;
 pub use geometry::EXTENT as LAYOUT_EXTENT;
 pub use geometry::Rect as AreaRect;
 use std::collections::{HashMap, VecDeque};
 
-/// Application-owned workspace data. A bare workspace has no layouts.
-#[derive(Component, Debug)]
-#[component(on_insert = crate::membership::workspace_changed, on_remove = crate::membership::workspace_changed)]
-#[require(
-    crate::WorkspaceWork,
-    WorkbenchRequests,
-    crate::ContextCommandRequests,
-    WorkspaceRuntime
-)]
-#[cfg_attr(
-    feature = "ui",
-    require(crate::WorkspaceUi, crate::WorkbenchPresentation)
-)]
-pub struct Workspace {
-    pub name: String,
-    pub background_updates: bool,
-}
-impl Default for Workspace {
-    fn default() -> Self {
-        Self {
-            name: "Workspace".into(),
-            background_updates: true,
-        }
-    }
-}
-
-#[derive(Component, Default)]
-pub(crate) struct WorkspaceRuntime {
-    pub activation: u64,
-    pub closing: bool,
-}
 #[derive(Component, Default)]
 pub(crate) struct LayoutRevision(pub u64);
 
-/// Selected layout within its workspace. Each workspace may select zero or one.
+/// Stable layout order. Entity allocation and archetype iteration are not order.
+#[derive(Resource, Default)]
+#[cfg_attr(
+    feature = "persistence",
+    derive(Reflect, Clone, bevy::ecs::entity::MapEntities)
+)]
+#[cfg_attr(
+    feature = "persistence",
+    reflect(Resource, MapEntities, WorkbenchPersist)
+)]
+pub(crate) struct LayoutOrder(#[cfg_attr(feature = "persistence", entities)] pub Vec<Entity>);
+pub fn layouts(world: &World) -> &[Entity] {
+    &world.resource::<LayoutOrder>().0
+}
+
+/// Selected layout in this World. Zero or one may be selected.
 #[derive(Component, Default)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[require(Layout)]
 #[component(on_add = crate::membership::layout_selection_changed, on_remove = crate::membership::layout_selection_changed)]
 pub struct ActiveLayout;
 
 #[derive(Component, Debug)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[require(LayoutAreas, LayoutRevision)]
+#[component(on_add = crate::membership::layout_added, on_remove = crate::membership::layout_removed)]
 pub struct Layout {
     pub name: String,
+    #[cfg_attr(feature = "persistence", entities)]
     pub focused_area: Option<Entity>,
 }
 impl Default for Layout {
@@ -67,9 +61,12 @@ impl Layout {
 }
 
 #[derive(Component, Debug)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[require(AreaPresentation, AreaLocation)]
 pub struct Area {
     pub rect: AreaRect,
+    #[cfg_attr(feature = "persistence", entities)]
     pub selected: Option<Entity>,
 }
 impl Default for Area {
@@ -93,15 +90,20 @@ impl Area {
 }
 
 #[derive(Component, Debug, Default)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[require(PanelPresentation, PanelLocation)]
 pub struct PanelInstance {
     /// Descriptive application identity, never used by workbench to create a panel.
+    #[cfg_attr(feature = "persistence", reflect(ignore))]
     pub key: String,
     pub title: String,
+    #[cfg_attr(feature = "persistence", reflect(ignore))]
     pub dirty: bool,
     pub preview: bool,
     /// Optional ordinary drawing capability, available as soon as composition applies.
     #[cfg(feature = "ui")]
+    #[cfg_attr(feature = "persistence", reflect(ignore))]
     pub draw: Option<PanelDraw>,
 }
 
@@ -135,30 +137,29 @@ impl PanelInstance {
     }
 }
 
-/// Find the selected layout without storing a second selection on Workspace.
-pub fn active_layout(world: &World, workspace: Entity) -> Option<Entity> {
-    let mut layouts = world
-        .get::<crate::WorkspaceMembers>(workspace)?
-        .entities()
-        .iter()
-        .copied()
-        .filter(|&e| world.get::<Layout>(e).is_some() && world.get::<ActiveLayout>(e).is_some());
+/// Find the selected layout from its authoritative marker.
+pub fn active_layout(world: &World) -> Option<Entity> {
+    let mut query = world.try_query_filtered::<Entity, With<ActiveLayout>>()?;
+    let mut layouts = query.iter(world);
     let selected = layouts.next();
-    assert!(
-        layouts.next().is_none(),
-        "Multiple ActiveLayout entities in one workspace"
-    );
+    assert!(layouts.next().is_none(), "Multiple ActiveLayout entities");
     selected
 }
 
 #[derive(Component, Debug)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component))]
 #[component(on_insert = crate::membership::area_inserted, on_discard = crate::membership::area_replaced, on_remove = crate::membership::area_removed)]
 #[relationship(relationship_target = LayoutAreas)]
-pub struct InLayout(pub Entity);
+pub struct InLayout(#[cfg_attr(feature = "persistence", entities)] pub Entity);
 
+/// Ordered area membership. Persistence stores this order and rebuilds InLayout
+/// sources through attachment hooks instead of persisting ownership twice.
 #[derive(Component, Default)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[relationship_target(relationship = InLayout, linked_spawn)]
-pub struct LayoutAreas(Vec<Entity>);
+pub struct LayoutAreas(#[cfg_attr(feature = "persistence", entities)] Vec<Entity>);
 
 impl LayoutAreas {
     pub fn entities(&self) -> &[Entity] {
@@ -167,13 +168,19 @@ impl LayoutAreas {
 }
 
 #[derive(Component, Debug)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component))]
 #[component(on_insert = crate::membership::panel_inserted, on_discard = crate::membership::panel_replaced, on_remove = crate::membership::panel_removed)]
 #[relationship(relationship_target = AreaPanels)]
-pub struct InArea(pub Entity);
+pub struct InArea(#[cfg_attr(feature = "persistence", entities)] pub Entity);
 
+/// Authoritative tab order as well as reverse membership. Persistence stores this
+/// list and rebuilds InArea sources in order; missing and empty lists are equivalent.
 #[derive(Component, Default)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[relationship_target(relationship = InArea, linked_spawn)]
-pub struct AreaPanels(Vec<Entity>);
+pub struct AreaPanels(#[cfg_attr(feature = "persistence", entities)] Vec<Entity>);
 
 impl AreaPanels {
     pub fn entities(&self) -> &[Entity] {
@@ -326,7 +333,7 @@ pub enum WorkbenchRequest {
     },
 }
 
-#[derive(Component, Default)]
+#[derive(Resource, Default)]
 pub struct WorkbenchRequests(VecDeque<WorkbenchRequest>);
 impl WorkbenchRequests {
     pub fn submit(&mut self, request: WorkbenchRequest) {
@@ -339,7 +346,6 @@ impl WorkbenchRequests {
 /// The captured stamp prevents delayed approval from targeting a changed layout.
 #[derive(Message, Clone, Debug)]
 pub struct PanelCloseRequested {
-    pub workspace: WorkspaceId,
     pub stamp: LayoutStamp,
     pub edit: LayoutEdit,
 }
@@ -413,8 +419,8 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(PreUpdate, apply.in_set(WorkbenchSystems::Apply));
 }
 
-pub(crate) fn new_layout(world: &mut World, workspace: WorkspaceId, name: String) -> Entity {
-    let layout = world.spawn(InWorkspace(workspace.0)).id();
+pub(crate) fn new_layout(world: &mut World, name: String) -> Entity {
+    let layout = world.spawn(Layout::default()).id();
     let area = world
         .spawn((
             Area {
@@ -425,7 +431,6 @@ pub(crate) fn new_layout(world: &mut World, workspace: WorkspaceId, name: String
                 selected: None,
             },
             InLayout(layout),
-            InWorkspace(workspace.0),
         ))
         .id();
     world.entity_mut(layout).insert(Layout {
@@ -510,7 +515,7 @@ pub(crate) fn plan_tab_geometry(
 
 impl Workbench<'_> {
     pub fn active_layout(&self) -> Entity {
-        active_layout(self.world, self.workspace.0).expect("No active layout")
+        active_layout(self.world).expect("No active layout")
     }
 
     pub fn stamp(&self) -> LayoutStamp {
@@ -520,14 +525,13 @@ impl Workbench<'_> {
             revision: self.world.get::<LayoutRevision>(layout).unwrap().0,
             activation: self
                 .world
-                .get::<WorkspaceRuntime>(self.workspace.0)
-                .unwrap()
-                .activation,
+                .resource::<crate::lifecycle::LayoutSelectionRevision>()
+                .0,
         }
     }
 
     pub fn create_layout(&mut self, name: impl Into<String>) -> Result<Entity, String> {
-        Ok(new_layout(self.world, self.workspace, name.into()))
+        Ok(new_layout(self.world, name.into()))
     }
 
     pub fn activate_layout(&mut self, layout: Entity) -> Result<(), String> {
@@ -535,8 +539,8 @@ impl Workbench<'_> {
         self.world
             .get::<Layout>(layout)
             .ok_or("Layout is unavailable")?;
-        if active_layout(self.world, self.workspace.0) != Some(layout) {
-            if let Some(previous) = active_layout(self.world, self.workspace.0) {
+        if active_layout(self.world) != Some(layout) {
+            if let Some(previous) = active_layout(self.world) {
                 self.world.entity_mut(previous).remove::<ActiveLayout>();
             }
             self.world.entity_mut(layout).insert(ActiveLayout);
@@ -619,7 +623,6 @@ impl Workbench<'_> {
                 ..default()
             },
             InArea(area),
-            InWorkspace(self.workspace.0),
         ));
         self.world
             .get_mut::<Area>(area)
@@ -714,7 +717,6 @@ impl Workbench<'_> {
                             selected: None,
                         },
                         InLayout(layout),
-                        InWorkspace(self.workspace.0),
                     ))
                     .id()
             };
@@ -771,41 +773,21 @@ impl Workbench<'_> {
         Ok(())
     }
 
-    /// Checked relocation between layouts/workspaces, leaving the old area intact.
-    /// Cross-workspace relocation detaches the non-owning document reference;
-    /// documents never migrate implicitly. Resolve drafts and drain panel-owned
-    /// work first, and detach any application-owned scoped links before calling.
-    /// Raw relationship edits on a bound viewer do not perform this negotiation.
+    /// Move between layouts while retaining canonical document links and work.
+    /// The old area remains, and relationship hooks maintain tab/focus fallbacks.
     pub fn relocate_panel(&mut self, panel: Entity, area: Entity) -> Result<(), String> {
         self.panel_layout(panel)?;
         self.world
             .get::<Area>(area)
             .ok_or("Destination area is unavailable")?;
-        let destination = self
-            .world
-            .get::<InWorkspace>(area)
-            .ok_or("Destination area has no workspace")?
-            .0;
-        crate::workspaces::validate(self.world, WorkspaceId(destination))?;
         let layout = self
             .world
             .get::<InLayout>(area)
             .ok_or("Destination area has no layout")?
             .0;
-        if self.world.get::<InWorkspace>(layout).map(|owner| owner.0) != Some(destination) {
-            return Err("Destination ownership is invalid".into());
-        }
-        if destination != self.workspace.0 {
-            check_panel_drafts(self.world, [panel])?;
-            if self
-                .world
-                .get::<crate::WorkspaceWork>(self.workspace.0)
-                .is_some_and(|work| work.list().iter().any(|job| job.owner == Some(panel)))
-            {
-                return Err("Drain panel-owned work before moving to another workspace".into());
-            }
-            crate::unbind_document_view(self.world, panel).map_err(|error| error.to_string())?;
-        }
+        self.world
+            .get::<Layout>(layout)
+            .ok_or("Destination layout is unavailable")?;
         self.world.entity_mut(panel).insert(InArea(area));
         Ok(())
     }
@@ -1024,10 +1006,10 @@ impl Workbench<'_> {
         check_panel_drafts(self.world, self.panels(layout))?;
         let replacement = self
             .world
-            .query::<(Entity, &InWorkspace, &Layout)>()
+            .query::<(Entity, &Layout)>()
             .iter(self.world)
-            .find_map(|(e, owner, _)| (owner.0 == self.workspace.0 && e != layout).then_some(e));
-        if active_layout(self.world, self.workspace.0) == Some(layout) {
+            .find_map(|(e, _)| (e != layout).then_some(e));
+        if active_layout(self.world) == Some(layout) {
             if let Some(next) = replacement {
                 self.world.entity_mut(next).insert(ActiveLayout);
             }
@@ -1041,7 +1023,7 @@ impl Workbench<'_> {
         stamp: LayoutStamp,
         edit: &LayoutEdit,
     ) -> Result<(), String> {
-        if active_layout(self.world, self.workspace.0).is_none() || self.stamp() != stamp {
+        if active_layout(self.world).is_none() || self.stamp() != stamp {
             return Err("Layout changed during interaction".into());
         }
         // Entity-bearing edits must belong to the admitted layout, even when a
@@ -1091,20 +1073,14 @@ impl Workbench<'_> {
         ) {
             return Err("Not a destructive layout edit".into());
         }
-        self.world.write_message(PanelCloseRequested {
-            workspace: self.workspace,
-            stamp,
-            edit,
-        });
+        self.world
+            .write_message(PanelCloseRequested { stamp, edit });
         Ok(())
     }
 
     /// Read-only preflight for application close policy, including the exact
     /// panels removed by joins/docks. Uses the same geometry planner as commit.
     pub fn close_targets(&self, request: &PanelCloseRequested) -> Result<Vec<Entity>, String> {
-        if request.workspace != self.workspace {
-            return Err("Close request belongs to another workspace".into());
-        }
         self.validate_edit(request.stamp, &request.edit)?;
         match &request.edit {
             LayoutEdit::ClosePanels(panels) => Ok(panels.clone()),
@@ -1147,9 +1123,6 @@ impl Workbench<'_> {
 
     /// Commit an application-approved intention, revalidating its captured target.
     pub fn commit_close(&mut self, request: &PanelCloseRequested) -> Result<(), String> {
-        if request.workspace != self.workspace {
-            return Err("Close request belongs to another workspace".into());
-        }
         if !matches!(
             request.edit,
             LayoutEdit::ClosePanels(_)
@@ -1269,45 +1242,35 @@ fn valid_minimum(minimum: [i32; 2]) -> Result<(), String> {
 }
 
 fn apply(world: &mut World) {
-    let pending: Vec<_> = world
-        .query::<(Entity, &mut WorkbenchRequests)>()
-        .iter_mut(world)
-        .map(|(entity, mut requests)| (WorkspaceId(entity), std::mem::take(&mut requests.0)))
-        .collect();
-    for (workspace, requests) in pending {
-        for request in requests {
-            let result =
-                Workbench::with_workspace(world, workspace).and_then(|mut w| match &request {
-                    WorkbenchRequest::ActivateLayout(e) => w.activate_layout(*e),
-                    WorkbenchRequest::FocusPanel(e) => w.focus_panel(*e),
-                    WorkbenchRequest::ClosePanel(e) => w.close_panel(*e),
-                    WorkbenchRequest::Edit { stamp, edit } => w.edit(*stamp, edit),
-                    #[cfg(feature = "ui")]
-                    WorkbenchRequest::UserEdit { stamp, edit } => w.user_edit(*stamp, edit),
-                });
-            world.write_message(WorkbenchFinished { request, result });
-        }
+    let requests = std::mem::take(&mut world.resource_mut::<WorkbenchRequests>().0);
+    for request in requests {
+        let mut w = Workbench::new(world);
+        let result = match &request {
+            WorkbenchRequest::ActivateLayout(e) => w.activate_layout(*e),
+            WorkbenchRequest::FocusPanel(e) => w.focus_panel(*e),
+            WorkbenchRequest::ClosePanel(e) => w.close_panel(*e),
+            WorkbenchRequest::Edit { stamp, edit } => w.edit(*stamp, edit),
+            #[cfg(feature = "ui")]
+            WorkbenchRequest::UserEdit { stamp, edit } => w.user_edit(*stamp, edit),
+        };
+        world.write_message(WorkbenchFinished { request, result });
     }
 }
 
 /// Admit current UI focus before keyboard routing; structural edits stay queued.
 #[cfg(feature = "ui")]
 pub(crate) fn apply_focus(world: &mut World) {
-    let Some(workspace) = crate::workspaces::selected(world) else {
-        return;
-    };
-    let requests = std::mem::take(&mut world.get_mut::<WorkbenchRequests>(workspace.0).unwrap().0);
+    let requests = std::mem::take(&mut world.resource_mut::<WorkbenchRequests>().0);
     let mut structural_pending = false;
     for request in requests {
         if structural_pending {
             world
-                .get_mut::<WorkbenchRequests>(workspace.0)
-                .unwrap()
+                .resource_mut::<WorkbenchRequests>()
                 .0
                 .push_back(request);
             continue;
         }
-        let mut w = Workbench::with_workspace(world, workspace).unwrap();
+        let mut w = Workbench::new(world);
         let result = match &request {
             WorkbenchRequest::FocusPanel(panel) => Some(w.focus_panel(*panel)),
             WorkbenchRequest::Edit {
@@ -1325,8 +1288,7 @@ pub(crate) fn apply_focus(world: &mut World) {
         } else {
             structural_pending = true;
             world
-                .get_mut::<WorkbenchRequests>(workspace.0)
-                .unwrap()
+                .resource_mut::<WorkbenchRequests>()
                 .0
                 .push_back(request);
         }

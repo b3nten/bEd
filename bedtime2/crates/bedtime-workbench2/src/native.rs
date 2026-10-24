@@ -134,8 +134,8 @@ impl Plugin for WorkbenchNativeMenuPlugin {
         .configure_sets(
             PreUpdate,
             NativeSystems::Poll
-                .after(crate::WorkspaceSystems::Prepare)
-                .before(crate::WorkspaceSystems::Dispatch),
+                .after(crate::SessionSystems::Prepare)
+                .before(crate::WorkbenchSystems::Apply),
         )
         .init_non_send::<NativeState>()
         .add_systems(PreUpdate, poll.in_set(NativeSystems::Poll))
@@ -157,7 +157,6 @@ impl Plugin for WorkbenchNativeMenuPlugin {
 #[derive(Default)]
 pub(crate) struct NativeState {
     attempted: Option<Result<MenuSnapshot, String>>,
-    workspace: Option<crate::WorkspaceId>,
     installed_root: Option<Entity>,
     #[cfg(target_os = "macos")]
     menu: Option<macos::InstalledMenu>,
@@ -190,32 +189,15 @@ pub(crate) fn poll(world: &mut World) {
     {
         return;
     }
-    let id = crate::workspaces::selected(world);
-    if world.non_send::<NativeState>().workspace != id {
-        #[cfg(target_os = "macos")]
-        if let Some(menu) = world.non_send_mut::<NativeState>().menu.take() {
-            let _ = menu.take_activations();
-            menu.remove();
-        }
-        let mut native = world.non_send_mut::<NativeState>();
-        native.attempted = None;
-        native.installed_root = None;
-        native.workspace = id;
-    }
-    poll_workspace(world);
+    poll_menus(world);
 }
 
-// Global application menus survive an empty workbench. Workspace-owned roots
-// participate only while their workspace is active; competing roots are errors.
+// Global application menus survive an empty workbench. Panel-owned roots
+// contribute only in their panel context; competing roots are errors.
 fn requested_menu(world: &mut World) -> Result<MenuSnapshot, String> {
     let roots: Vec<_> = world
-        .query_filtered::<(
-            Entity,
-            Option<&crate::InWorkspace>,
-            Has<crate::InActiveWorkspace>,
-        ), With<NativeMenuBar>>()
+        .query_filtered::<Entity, With<NativeMenuBar>>()
         .iter(world)
-        .filter_map(|(entity, owner, active)| (owner.is_none() || active).then_some(entity))
         .collect();
     match roots.as_slice() {
         [] => Ok(MenuSnapshot::default()),
@@ -227,7 +209,7 @@ fn requested_menu(world: &mut World) -> Result<MenuSnapshot, String> {
     }
 }
 
-fn poll_workspace(world: &mut World) {
+fn poll_menus(world: &mut World) {
     let requested = requested_menu(world);
     #[cfg(target_os = "macos")]
     {
@@ -245,21 +227,9 @@ fn poll_workspace(world: &mut World) {
                 .and_then(|snapshot| snapshot.request(source, target))
                 .filter(|request| request.context == context)
             {
-                let workspace = requested
-                    .as_ref()
-                    .ok()
-                    .and_then(|menu| menu.root)
-                    .and_then(|root| crate::menus::optional_menu_workspace(world, root));
-                if let Some(workspace) = workspace {
-                    crate::Workbench::with_workspace(world, workspace)
-                        .expect("Native menu workspace")
-                        .commands()
-                        .submit(request);
-                } else {
-                    world
-                        .resource_mut::<crate::GlobalCommandRequests>()
-                        .submit(request);
-                }
+                world
+                    .resource_mut::<crate::ContextCommandRequests>()
+                    .submit(request);
             }
         }
     }
@@ -433,16 +403,13 @@ mod macos {
 mod tests {
     use super::*;
     #[test]
-    fn global_native_root_survives_empty_workbench_and_workspace_switches() {
+    fn global_native_root_survives_empty_workbench_and_layout_switches() {
         let mut app = App::new();
         app.add_plugins(crate::WorkbenchCorePlugin);
         let root = app.world_mut().spawn((crate::MenuBar, NativeMenuBar)).id();
         assert_eq!(requested_menu(app.world_mut()).unwrap().root, Some(root));
-        let workspace = crate::Workspaces::new(app.world_mut())
-            .open("Project")
-            .entity();
-        assert_eq!(requested_menu(app.world_mut()).unwrap().root, Some(root));
-        app.world_mut().despawn(workspace);
+        let layout = crate::tests::layout(app.world_mut());
+        app.world_mut().despawn(layout);
         assert_eq!(requested_menu(app.world_mut()).unwrap().root, Some(root));
         app.world_mut().spawn((crate::MenuBar, NativeMenuBar));
         assert!(
@@ -452,19 +419,12 @@ mod tests {
     }
 
     #[test]
-    fn inactive_workspace_native_roots_do_not_compete_with_global_root() {
+    fn native_menu_roots_must_be_unique_even_without_a_selected_layout() {
         let mut app = App::new();
         app.add_plugins(crate::WorkbenchCorePlugin);
-        let workspace = crate::Workspaces::new(app.world_mut())
-            .open("Project")
-            .entity();
-        app.world_mut()
-            .entity_mut(workspace)
-            .remove::<crate::ActiveWorkspace>();
-        app.world_mut()
-            .spawn((crate::MenuBar, NativeMenuBar, crate::InWorkspace(workspace)));
-        let root = app.world_mut().spawn((crate::MenuBar, NativeMenuBar)).id();
-        assert_eq!(requested_menu(app.world_mut()).unwrap().root, Some(root));
+        app.world_mut().spawn((crate::MenuBar, NativeMenuBar));
+        app.world_mut().spawn((crate::MenuBar, NativeMenuBar));
+        assert!(requested_menu(app.world_mut()).is_err());
     }
 
     #[test]

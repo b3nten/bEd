@@ -9,13 +9,12 @@ from pathlib import Path
 from automation import Application
 
 
-def workspace(snapshot):
-    return next(w for w in snapshot["workbench"]["workspaces"] if w["active"])
+def session(snapshot):
+    return snapshot["workbench"]
 
 
 def panels(snapshot):
-    return [p for w in snapshot["workbench"]["workspaces"]
-            for layout in w["layouts"] for area in layout["areas"] for p in area["panels"]]
+    return [p for layout in snapshot["workbench"]["layouts"] for area in layout["areas"] for p in area["panels"]]
 
 
 def open_panel(app, label, *, area=None, layout=None):
@@ -40,12 +39,12 @@ def open_panel(app, label, *, area=None, layout=None):
 
 def ready(app):
     for _ in range(300):
-        roots = app.request("app.inspect_filetree")["workspace_roots"]
+        project = app.request("app.inspect_filetree")["project"]
         layouts = app.request("app.inspect_layouts")["layouts"]
-        if roots and layouts and all(root["settings_ready"] and root["session_ready"] for root in roots):
+        if project and layouts and project["settings_ready"] and project["session_ready"]:
             return app.inspect()
         app.request("wait_frames", frames=1)
-    raise AssertionError("Workspace startup did not settle")
+    raise AssertionError("Session startup did not settle")
 
 
 def prepare_demo_layout(app, *, viewport=True):
@@ -54,7 +53,7 @@ def prepare_demo_layout(app, *, viewport=True):
     app.request("app.set_settings", values={"autosave": "Never", "smart_wrapping": False})
     app.request("app.select_layout", slot=2)
     snapshot = app.inspect()
-    active = workspace(snapshot)
+    active = session(snapshot)
     current = next(layout["entity"] for layout in active["layouts"] if layout["active"])
     for layout in active["layouts"]:
         if layout["entity"] != current:
@@ -94,13 +93,13 @@ def main():
             with Application([str(Path(args.binary).resolve())], output=output, timeout=60) as app:
                 app.request("configure", fixed_dt=1/60)
                 snapshot = ready(app)
-                initial = workspace(snapshot)
+                initial = session(snapshot)
                 assert len(initial["layouts"]) == 1 and len(initial["layouts"][0]["areas"]) == 1, initial
                 assert [p["key"] for p in panels(snapshot)] == ["bedtime.terminal"], snapshot
                 assert app.request("app.inspect_settings")["startup"]["open_last_workspace"] is False
                 assert app.request("app.inspect_settings")["global"]["smart_wrapping"] is True
                 tools = app.request("app.inspect_titlebar")["tools"]
-                assert [tool["key"] for tool in sorted(tools, key=lambda t: t["rect"]["min"][0])] == ["bedtime.terminal", "bedtime.filetree", "bed.structure", "bed.settings"], tools
+                assert [tool["key"] for tool in sorted(tools, key=lambda t: t["rect"]["min"][0])] == ["bedtime.terminal", "bed.git", "bedtime.filetree", "bed.structure", "bed.settings"], tools
                 for key in ["bedtime.terminal", "bedtime.filetree", "bed.structure", "bed.settings"]:
                     app.input({"type": "click", "position": toolbar(app, key)})
                     before = len([p for p in panels(app.inspect()) if p["key"] == key])
@@ -108,7 +107,7 @@ def main():
                     assert len([p for p in panels(app.inspect()) if p["key"] == key]) == before
                 snapshot = app.inspect()
                 settings = next(p["entity"] for p in panels(snapshot) if p["key"] == "bed.settings")
-                largest = max(workspace(snapshot)["layouts"][0]["areas"], key=lambda a: (a["rect"]["max"][0]-a["rect"]["min"][0])*(a["rect"]["max"][1]-a["rect"]["min"][1]))
+                largest = max(session(snapshot)["layouts"][0]["areas"], key=lambda a: (a["rect"]["max"][0]-a["rect"]["min"][0])*(a["rect"]["max"][1]-a["rect"]["min"][1]))
                 app.request("panel.move", panel=settings, area=largest["entity"])
                 app.request("panel.focus", panel=settings)
                 app.click_text("Language servers")
@@ -149,24 +148,24 @@ def main():
                 app.click_text("Editor")
                 app.click_text("Line numbers")
                 state = app.request("app.inspect_settings")
-                scoped = next(w for w in state["workspaces"] if w["workspace"] == initial["entity"])
+                scoped = state["project"]
                 assert state["global"]["line_numbers"] and scoped["overrides"]["line_numbers"] is False, state
                 captures.append(app.capture("03-workspace-editor.png"))
                 app.click_text("↶")
                 state = app.request("app.inspect_settings")
-                assert next(w for w in state["workspaces"] if w["workspace"] == initial["entity"])["overrides"]["line_numbers"] is None
+                assert state["project"]["overrides"]["line_numbers"] is None
                 primary = "SuperLeft" if sys.platform == "darwin" else "ControlLeft"
                 app.input({"type":"key", "code":primary, "pressed":True}, {"type":"key", "code":"Digit2", "pressed":True}, {"type":"key", "code":"Digit2", "pressed":False}, {"type":"key", "code":primary, "pressed":False})
                 slots = app.request("app.inspect_layouts")["layouts"]
                 assert next(slot for slot in slots if slot["active"])["slot"] == 2, slots
                 snapshot = app.inspect()
-                active = next(layout for layout in workspace(snapshot)["layouts"] if layout["active"])
+                active = next(layout for layout in session(snapshot)["layouts"] if layout["active"])
                 target = center(active["areas"][0]["surface"], snapshot["ui"]["surfaces"][0]["zoom"])
                 before = len(panels(snapshot))
                 app.input({"type":"drag", "from":toolbar(app,"bed.settings"), "to":target, "frames":15})
                 app.wait_until(lambda s: len(panels(s)) == before+1)
                 snapshot = app.inspect()
-                area = next(layout for layout in workspace(snapshot)["layouts"] if layout["active"])["areas"][0]
+                area = next(layout for layout in session(snapshot)["layouts"] if layout["active"])["areas"][0]
                 target = [area["surface"]["max"][0]-8, (area["surface"]["min"][1]+area["surface"]["max"][1])/2]
                 zoom = snapshot["ui"]["surfaces"][0]["zoom"]
                 target = [v*zoom for v in target]

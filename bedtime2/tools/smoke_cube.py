@@ -54,7 +54,7 @@ def main():
                                   and s["viewports"][0]["visible"]
                                   and s["render"]["pending_pipelines"] == 0)
         entity = snapshot["viewports"][0]["entity"]
-        workspace = snapshot["workbench"]["workspaces"][0]
+        workspace = snapshot["workbench"]
         area = workspace["layouts"][0]["areas"][0]["entity"]
         initial = orbit(app, entity)
         assert initial["active"]
@@ -173,8 +173,8 @@ def main():
                                 rel_tol=1e-5)
         captures.append(app.capture("06-resized.png"))
 
-        # Hidden tabs and inactive workspaces suspend rendering without losing
-        # orbit state. A newly created workspace gets fresh concrete view state.
+        # Hidden tabs and hidden layouts suspend rendering without losing
+        # orbit state. A newly created layout gets fresh concrete view state.
         open_panel(app, "Settings", area=area)
         assert not orbit(app, entity)["active"]
         app.input({"type": "drag", "from": point(app.inspect(), entity),
@@ -182,9 +182,9 @@ def main():
         assert stable(orbit(app, entity), stopped)
         app.request("panel.focus", panel=entity)
         assert orbit(app, entity)["active"]
-        fresh = app.request("workspace.create", name="Fresh viewports", activate=True)
+        fresh = app.request("layout.create", name="Fresh viewports", activate=True)
         fresh_first = open_panel(app, "3D Viewport")
-        fresh_split = app.request("area.split", area=fresh["area"], axis="horizontal", fraction=0.5)
+        fresh_split = app.request("area.split", area=next(l["areas"][0]["entity"] for l in app.inspect()["workbench"]["layouts"] if l["entity"] == fresh["layout"]), axis="horizontal", fraction=0.5)
         fresh_second = open_panel(app, "3D Viewport", area=fresh_split["area"])
         app.wait_until(lambda s: len(s["viewports"]) == 4
                        and all(v["visible"] for v in s["viewports"] if v["entity"] in (fresh_first, fresh_second)))
@@ -193,10 +193,10 @@ def main():
         assert all(not v["active"] for v in states if v["entity"] in images)
         assert all(stable(v, initial) for v in states if v["entity"] not in images)
         captures.append(app.capture("07-fresh.png"))
-        app.request("workspace.activate", workspace=workspace["entity"])
+        app.request("layout.activate", layout=workspace["layouts"][0]["entity"])
         assert stable(orbit(app, entity), stopped)
 
-        # Detach/reattach UI, close a viewport, then retire complete workspaces.
+        # Detach/reattach UI, close a viewport, then retire complete layouts.
         app.request("surface.detach")
         assert all(not v["active"] for v in app.request("app.inspect_cube")["viewports"])
         app.request("surface.attach")
@@ -204,10 +204,10 @@ def main():
         assert orbit(app, entity)["active"]
         app.request("panel.close", panel=other)
         assert all(v["entity"] != other for v in app.request("app.inspect_cube")["viewports"])
-        app.request("workspace.close", workspace=workspace["entity"])
-        app.request("workspace.close", workspace=fresh["workspace"])
+        app.request("layout.delete", layout=workspace["layouts"][0]["entity"])
+        app.request("layout.delete", layout=fresh["layout"])
         assert app.request("app.inspect_cube")["viewports"] == []
-        app.request("workspace.create", name="Fresh", activate=True)
+        app.request("layout.create", name="Fresh", activate=True)
         open_panel(app, "3D Viewport")
         app.wait_until(lambda s: len(s["viewports"]) == 1 and s["viewports"][0]["visible"])
         captures.append(app.capture("08-rebuilt.png"))

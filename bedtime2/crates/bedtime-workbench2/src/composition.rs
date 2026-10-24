@@ -1,5 +1,4 @@
 //! Graph validation and layout bookkeeping; composition is complete before this runs.
-use crate::layout::WorkspaceRuntime;
 use crate::*;
 use bevy::prelude::*;
 use std::collections::HashMap;
@@ -9,8 +8,7 @@ use std::collections::HashMap;
 /// Without this component, normal tabs inherit the theme unchanged and preview
 /// tabs use italic text at 90% opacity. An explicit component replaces both
 /// defaults without changing [`PanelInstance::preview`] or keep/move behavior.
-/// Font size, color, selection and hover emphasis remain theme-owned. Workspace
-/// and layout snapshots do not capture this component; applications reapply it.
+/// Font size, color, selection and hover emphasis remain theme-owned. Reflected snapshots do not capture this component; applications reapply it.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct PanelTabStyle {
     pub italic: bool,
@@ -95,11 +93,11 @@ pub(crate) fn observe_topology(world: &mut World, layout: Entity) {
         .insert(layout, shape);
 }
 
-/// Resolve a composed graph immediately, or let WorkspaceSystems::Prepare do it.
+/// Resolve a composed graph immediately, or let SessionSystems::Prepare do it.
 /// Required components supply local defaults; this phase validates references
 /// and updates layout revisions. Lifecycle hooks
-/// maintain workspace membership and selection markers as commands are applied.
-/// Zero workspaces, layouts, areas or panels is valid. Conflicting live references
+/// maintain attachment order and selection markers as commands are applied.
+/// Zero layouts, areas or panels is valid. Conflicting live references
 /// and duplicate active selections return an error rather than choosing a winner.
 pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
     world.flush();
@@ -119,38 +117,16 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
     {
         return Err("InArea requires PanelInstance".into());
     }
-    let roots: Vec<_> = world
-        .query_filtered::<Entity, With<Workspace>>()
-        .iter(world)
-        .collect();
-    let active: Vec<_> = world
-        .query_filtered::<Entity, With<ActiveWorkspace>>()
-        .iter(world)
-        .collect();
-    if active.len() > 1 {
-        return Err("Multiple ActiveWorkspace entities".into());
-    }
-    if active.iter().any(|e| world.get::<Workspace>(*e).is_none()) {
-        return Err("ActiveWorkspace requires Workspace".into());
-    }
     let layouts: Vec<_> = world
         .query_filtered::<Entity, With<Layout>>()
         .iter(world)
         .collect();
-    let mut selected = HashMap::new();
-    for &layout in &layouts {
-        let workspace = world
-            .get::<InWorkspace>(layout)
-            .ok_or("Layout requires InWorkspace")?
-            .0;
-        if world.get::<Workspace>(workspace).is_none() {
-            return Err("Layout references a missing Workspace".into());
-        }
-        if world.get::<ActiveLayout>(layout).is_some()
-            && selected.insert(workspace, layout).is_some()
-        {
-            return Err("Multiple ActiveLayout entities in one workspace".into());
-        }
+    let selected = layouts
+        .iter()
+        .filter(|&&e| world.get::<ActiveLayout>(e).is_some())
+        .count();
+    if selected > 1 {
+        return Err("Multiple ActiveLayout entities".into());
     }
     for entity in world
         .query_filtered::<Entity, With<ActiveLayout>>()
@@ -171,10 +147,6 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
             .0;
         if world.get::<Layout>(layout).is_none() {
             return Err("Area references a missing Layout".into());
-        }
-        let workspace = world.get::<InWorkspace>(layout).unwrap().0;
-        if world.get::<InWorkspace>(area).map(|w| w.0) != Some(workspace) {
-            return Err("Area workspace membership disagrees with its layout".into());
         }
     }
     for &layout in &layouts {
@@ -210,10 +182,6 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
         if world.get::<Area>(area).is_none() {
             return Err("Panel references a missing Area".into());
         }
-        let workspace = world.get::<InWorkspace>(area).unwrap().0;
-        if world.get::<InWorkspace>(panel).map(|w| w.0) != Some(workspace) {
-            return Err("Panel workspace membership disagrees with its area".into());
-        }
     }
     for area in areas {
         let selected = world.get::<Area>(area).unwrap().selected;
@@ -246,35 +214,6 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
             .0 += 1;
     }
     world.resource_mut::<ReconciledState>().topology = topology;
-    let mut current = HashMap::new();
-    for workspace in roots {
-        let closing = world.get::<WorkspaceRuntime>(workspace).unwrap().closing;
-        let is_active = active.first() == Some(&workspace) && !closing;
-        current.insert(workspace, (is_active, selected.get(&workspace).copied()));
-        crate::membership::refresh_running(world, workspace);
-    }
-    let members: Vec<_> = world
-        .query_filtered::<Entity, Or<(
-            With<InWorkspace>,
-            With<InActiveWorkspace>,
-            With<InRunningWorkspace>,
-        )>>()
-        .iter(world)
-        .collect();
-    for member in members {
-        let owner = world.get::<InWorkspace>(member).map(|w| w.0);
-        if owner.is_some_and(|e| !current.contains_key(&e)) {
-            return Err("InWorkspace references a missing Workspace".into());
-        }
-        let is_active = owner.is_some_and(|e| current[&e].0);
-        let running = owner.is_some_and(|e| world.get::<WorkspaceRunning>(e).is_some());
-        if is_active != world.get::<InActiveWorkspace>(member).is_some() {
-            return Err("InActiveWorkspace disagrees with workspace selection".into());
-        }
-        if running != world.get::<InRunningWorkspace>(member).is_some() {
-            return Err("InRunningWorkspace disagrees with workspace running state".into());
-        }
-    }
     crate::documents::reconcile_documents(world)?;
     Ok(())
 }

@@ -45,7 +45,7 @@ def main():
             prepare_demo_layout(app, viewport=True)
             app.request("configure", fixed_dt=1 / 60, clipboard="")
             snapshot = app.inspect()
-            workspace = next(w for w in snapshot["workbench"]["workspaces"] if w["active"])
+            workspace = snapshot["workbench"]
             layout = workspace["layouts"][0]
             area = layout["areas"][0]["entity"]
             cube = layout["areas"][0]["panels"][0]["entity"]
@@ -63,7 +63,7 @@ def main():
             app.click_text("cats.rs")
             app.click_text("cats.rs")
             snapshot=app.inspect()
-            area=next(ar["entity"] for w in snapshot["workbench"]["workspaces"] for l in w["layouts"] for ar in l["areas"] if any(p["entity"]==a for p in ar["panels"]))
+            area=next(ar["entity"] for l in snapshot["workbench"]["layouts"] for ar in l["areas"] if any(p["entity"]==a for p in ar["panels"]))
             right=app.request("area.split",area=area,axis="horizontal",fraction=0.7)["area"]
             structure = open_panel(app, "Structure", area=right)
             app.request("panel.focus", panel=a)
@@ -71,7 +71,7 @@ def main():
             captures.append(app.capture("01-syntax-structure.png"))
             # The first Structure branch collapses with the shared disclosure triangle.
             snapshot = app.inspect()
-            structure_panel = next(p for w in snapshot["workbench"]["workspaces"] for l in w["layouts"] for ar in l["areas"] for p in ar["panels"] if str(p["entity"]) == str(structure))
+            structure_panel = next(p for l in snapshot["workbench"]["layouts"] for ar in l["areas"] for p in ar["panels"] if str(p["entity"]) == str(structure))
             x, y = structure_panel["rect"]["min"]
             app.input({"type": "click", "position": [x + 16, y + 9]})
             app.request("wait_frames", frames=12)
@@ -103,8 +103,7 @@ def main():
             app.request("panel.focus", panel=cube)
             app.click_text("main")
             app.wait_until(lambda s: any(p["entity"] == a and p["focused"]
-                                        for w in s["workbench"]["workspaces"]
-                                        for l in w["layouts"] for ar in l["areas"] for p in ar["panels"]))
+                                        for l in s["workbench"]["layouts"] for ar in l["areas"] for p in ar["panels"]))
             captures.append(app.capture("06-hidden-source-revealed.png"))
 
             # Automatic tab focus after closure is eligible to establish a source.

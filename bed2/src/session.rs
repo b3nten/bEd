@@ -1,53 +1,56 @@
-//! Application-owned concrete workspace recipes, never document/process state.
+//! One application-owned reflected project record, with bounded asynchronous I/O.
+use crate::persistence::ReflectProjectPersist;
+use bedtime_workbench2::persistence::Snapshot;
 use bedtime_workbench2::*;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     io::Read,
     path::PathBuf,
     thread::JoinHandle,
     time::{Duration, Instant},
 };
-
-const VERSION: u32 = 1;
-const MAX_BYTES: usize = 4 * 1024 * 1024;
+const VERSION: u32 = 2;
+const MAX_BYTES: usize = crate::storage::MAX_BYTES;
 const DEBOUNCE: Duration = Duration::from_millis(250);
-
+#[derive(Resource, Reflect, Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
+#[reflect(Resource, Serialize, Deserialize, ProjectPersist)]
+pub(crate) struct ProjectTitle(pub String);
 pub struct SessionPlugin;
 impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
+        crate::persistence::register(app);
         app.init_resource::<Sessions>()
+            .init_resource::<ProjectTitle>()
+            .init_resource::<crate::settings::ProjectPreferences>()
+            .init_resource::<crate::keybindings::ProjectBindings>()
             .add_systems(PostUpdate, capture_sessions);
     }
 }
-
-/// Startup composition is remembered before asynchronous root resolution, so a
-/// user mutation made while identity is loading isn't mistaken for a default.
-#[derive(Component)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Session {
+    version: u32,
+    root: Option<PathBuf>,
+    graph: Snapshot,
+    local: Snapshot,
+}
+#[derive(Resource)]
 struct InitialSession(Session);
-
-pub fn remember_initial_state(world: &mut World, workspace: Entity) -> Result<(), String> {
-    if world.get::<InitialSession>(workspace).is_none() {
-        let initial = capture(world, workspace)?;
-        world.entity_mut(workspace).insert(InitialSession(initial));
+pub fn remember_initial_state(world: &mut World) -> Result<(), String> {
+    if !world.contains_resource::<InitialSession>() {
+        let initial = capture(world)?;
+        world.insert_resource(InitialSession(initial));
     }
     Ok(())
 }
-
-/// Root-derived naming is startup policy, not a user mutation. Preserve a name
-/// the user already changed, while advancing the remembered startup baseline.
-pub fn seed_initial_layout(world: &mut World, workspace: Entity) {
-    if let Ok(current) = capture(world, workspace) {
-        if let Some(mut initial) = world.get_mut::<InitialSession>(workspace) {
-            initial.0.layouts = current.layouts.clone();
-            initial.0.active_layout = current.active_layout;
+pub fn seed_initial_layout(world: &mut World) {
+    if let Ok(current) = capture(world) {
+        if let Some(mut initial) = world.get_resource_mut::<InitialSession>() {
+            initial.0.graph = current.graph.clone();
         }
-        // A missing workspace file is resolved before instantiating defaults:
-        // otherwise a starter terminal could run before restoration. Seeding
-        // this untouched composition is startup policy, not an autosave edit.
         if let Some(mut sessions) = world.get_resource_mut::<Sessions>()
-            && let Some(file) = sessions.0.get_mut(&workspace)
+            && let Some(file) = sessions.0.as_mut()
             && file.policy_ready
             && file.pending_restore.is_none()
             && file.desired == file.saved
@@ -57,504 +60,148 @@ pub fn seed_initial_layout(world: &mut World, workspace: Entity) {
         }
     }
 }
-
-pub fn initialize_folder_name(world: &mut World, workspace: Entity, name: String) {
-    let previous = world
-        .get::<InitialSession>(workspace)
-        .map(|initial| initial.0.name.clone());
-    if previous
+pub fn initialize_folder_name(world: &mut World, name: String) {
+    world.init_resource::<ProjectTitle>();
+    let registry = world.resource::<AppTypeRegistry>().clone();
+    let initial = world
+        .get_resource::<InitialSession>()
+        .and_then(|i| crate::persistence::prepare_local(&i.0.local, &registry).ok())
+        .and_then(|p| p.resource::<ProjectTitle>());
+    if initial
         .as_ref()
-        .is_none_or(|previous| world.get::<Workspace>(workspace).unwrap().name == *previous)
+        .is_none_or(|previous| world.resource::<ProjectTitle>() == previous)
     {
-        world.get_mut::<Workspace>(workspace).unwrap().name = name.clone();
+        world.resource_mut::<ProjectTitle>().0 = name.clone();
     }
-    if let Some(mut initial) = world.get_mut::<InitialSession>(workspace) {
-        initial.0.name = name;
+    if let Some(initial) = world.get_resource::<InitialSession>()
+        && let Ok(mut prepared) = crate::persistence::prepare_local(&initial.0.local, &registry)
+    {
+        let _ = prepared.replace_resource(ProjectTitle(name));
+        if let Ok(local) = prepared.serialize(&registry) {
+            world.resource_mut::<InitialSession>().0.local = local;
+        }
     }
 }
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct Session {
-    pub(crate) version: u32,
-    pub(crate) root: Option<PathBuf>,
-    pub(crate) settings: crate::settings::SettingsOverrides,
-    pub(crate) visibility: bedtime_filetree2::FileTreePreferences,
-    pub(crate) name: String,
-    pub(crate) background_updates: bool,
-    #[serde(default)]
-    pub(crate) git_draft: String,
-    #[serde(default)]
-    pub(crate) git_panel: crate::git::GitPanelOptions,
-    pub(crate) active_layout: Option<usize>,
-    pub(crate) layouts: Vec<LayoutRecipe>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct LayoutRecipe {
-    pub(crate) slot: Option<crate::layouts::LayoutSlot>,
-    pub(crate) name: String,
-    pub(crate) focused_area: Option<usize>,
-    pub(crate) areas: Vec<AreaRecipe>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AreaRecipe {
-    pub(crate) rect: AreaRect,
-    pub(crate) selected_tab: Option<usize>,
-    pub(crate) tabs: Vec<TabRecipe>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct TabRecipe {
-    pub(crate) kind: PanelKind,
-    pub(crate) title: String,
-    pub(crate) preview: bool,
-    pub(crate) file: Option<PathBuf>,
-    #[serde(default)]
-    pub(crate) viewer_explicit: bool,
-    #[serde(default)]
-    pub(crate) model_view: Option<bedtime_model2::ViewState>,
-    pub(crate) tree_root: Option<PathBuf>,
-    #[serde(default)]
-    pub(crate) git_diff: Option<crate::git::diff::Descriptor>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PanelKind {
-    Git,
-    GitDiff,
-    LanguageServers,
-    Files,
-    Code,
-    Image,
-    Model,
-    Hex,
-    Structure,
-    Terminal,
-    Viewport,
-    Bed,
-    Ducky,
-    Tasks,
-    Settings,
-}
-
 pub(crate) fn validate(session: &Session) -> Result<(), String> {
     if session.version != VERSION {
-        return Err("Unsupported workspace session version".into());
-    }
-    session.settings.validate()?;
-    if session.git_draft.len() > 64 * 1024 || session.git_draft.contains('\0') {
-        return Err("Git commit draft exceeds 64 KiB or contains a null character".into());
+        return Err("Unsupported project session version; original file preserved".into());
     }
     if session
         .root
         .as_ref()
-        .is_some_and(|root| !root.is_absolute())
+        .is_some_and(|r| !r.is_absolute() || r.as_os_str().len() > 16384)
     {
-        return Err("Workspace root must be absolute".into());
-    }
-    let mut slots = std::collections::BTreeSet::new();
-    for layout in &session.layouts {
-        if let Some(slot) = layout.slot {
-            if !slots.insert(slot) {
-                return Err("Duplicate layout slot".into());
-            }
-        }
-    }
-    let text = |s: &str| s.len() <= 4096 && !s.contains('\0');
-    if !text(&session.name)
-        || session.layouts.len() > 32
-        || session
-            .active_layout
-            .is_some_and(|i| i >= session.layouts.len())
-    {
-        return Err("Invalid workspace name or layout selection/count".into());
-    }
-    let mut area_count = 0;
-    let mut tab_count = 0;
-    for layout in &session.layouts {
-        area_count += layout.areas.len();
-        if !text(&layout.name)
-            || area_count > 256
-            || layout.focused_area.is_some_and(|i| i >= layout.areas.len())
-        {
-            return Err("Invalid layout name, area selection or area count".into());
-        }
-        let mut coverage = 0_i64;
-        for (i, area) in layout.areas.iter().enumerate() {
-            let r = area.rect;
-            if (0..2).any(|a| r.min[a] < 0 || r.max[a] > LAYOUT_EXTENT || r.min[a] >= r.max[a]) {
-                return Err("Invalid workspace area geometry".into());
-            }
-            coverage += i64::from(r.max[0] - r.min[0]) * i64::from(r.max[1] - r.min[1]);
-            if layout.areas[..i].iter().any(|other| {
-                (0..2).all(|a| r.min[a] < other.rect.max[a] && other.rect.min[a] < r.max[a])
-            }) {
-                return Err("Overlapping workspace areas".into());
-            }
-            tab_count += area.tabs.len();
-            if tab_count > 2048 || area.selected_tab.is_some_and(|i| i >= area.tabs.len()) {
-                return Err("Invalid tab selection or tab count".into());
-            }
-            for tab in &area.tabs {
-                if let Some(diff)=&tab.git_diff {
-                    if tab.kind!=PanelKind::GitDiff {return Err("Git comparison on a non-diff tab".into());}
-                    diff.validate()?;
-                } else if tab.kind==PanelKind::GitDiff {return Err("Missing Git comparison descriptor".into());}
-                if let Some(view) = &tab.model_view {
-                    if tab.kind != PanelKind::Model { return Err("Model view state on a non-model tab".into()); }
-                    view.validate()?;
-                }
-                if !text(&tab.title)
-                    || tab.file.as_ref().is_some_and(|p| {
-                        !matches!(tab.kind, PanelKind::Code | PanelKind::Image | PanelKind::Hex | PanelKind::Model)
-                            || !p.is_absolute()
-                            || p.as_os_str().len() > 16384
-                    })
-                    || tab.tree_root.as_ref().is_some_and(|p| {
-                        tab.kind != PanelKind::Files
-                            || !p.is_absolute()
-                            || p.as_os_str().len() > 16384
-                    })
-                {
-                    return Err("Invalid panel title or source descriptor".into());
-                }
-            }
-        }
-        if !layout.areas.is_empty() && coverage != i64::from(LAYOUT_EXTENT).pow(2) {
-            return Err("Workspace areas do not completely cover the layout".into());
-        }
+        return Err("Invalid project root".into());
     }
     Ok(())
 }
-
-fn decode(bytes: &[u8]) -> Result<Session, String> {
-    if bytes.len() > MAX_BYTES {
-        return Err("Workspace session exceeds 4 MiB".into());
-    }
-    let session: Session = ron::de::from_bytes(bytes).map_err(|e| e.to_string())?;
-    validate(&session)?;
-    Ok(session)
-}
-
-pub(crate) fn capture(world: &World, workspace: Entity) -> Result<Session, String> {
-    let owner = world
-        .get::<Workspace>(workspace)
-        .ok_or("Workspace retired")?;
-    let layouts: Vec<_> = world
-        .get::<WorkspaceMembers>(workspace)
-        .map_or(&[][..], |m| m.entities())
-        .iter()
-        .copied()
-        .filter(|&e| world.get::<Layout>(e).is_some())
-        .collect();
-    let mut recipes = Vec::new();
-    for &layout in &layouts {
-        let data = world.get::<Layout>(layout).unwrap();
-        let areas = world
-            .get::<LayoutAreas>(layout)
-            .map_or(&[][..], |a| a.entities());
-        let mut area_recipes = Vec::new();
-        for &area in areas {
-            let data = world.get::<Area>(area).ok_or("Missing workspace area")?;
-            let panels = panels_in_area(world, area);
-            let mut tabs = Vec::new();
-            for &panel in panels {
-                let instance = world
-                    .get::<PanelInstance>(panel)
-                    .ok_or("Missing panel metadata")?;
-                // Component identity, never a registry or a key-based factory.
-                let kind = if world
-                    .get::<bedtime_filetree2::FileTreePanel>(panel)
-                    .is_some()
-                {
-                    PanelKind::Files
-                } else if world.get::<crate::files::FilePreviewPanel>(panel).is_some() {
-                    match world.get::<crate::files::FilePreviewPanel>(panel).unwrap().viewer {
-                        crate::opening::ViewerId::Code => PanelKind::Code,
-                        crate::opening::ViewerId::Image => PanelKind::Image,
-                        crate::opening::ViewerId::Hex => PanelKind::Hex,
-                        crate::opening::ViewerId::Model => PanelKind::Model,
-                    }
-                } else if world.get::<bed_structure2::StructurePanel>(panel).is_some() {
-                    PanelKind::Structure
-                } else if world
-                    .get::<bedtime_terminal2::TerminalPanel>(panel)
-                    .is_some()
-                {
-                    PanelKind::Terminal
-                } else if world.get::<bedtime_mascots2::BedPanel>(panel).is_some() {
-                    PanelKind::Bed
-                } else if world.get::<bedtime_mascots2::DuckPanel>(panel).is_some() {
-                    PanelKind::Ducky
-                } else if world.get::<crate::cube::CubeViewport>(panel).is_some() {
-                    PanelKind::Viewport
-                } else if world.get::<crate::lsp_panel::LspPanel>(panel).is_some() {
-                    PanelKind::LanguageServers
-                } else if world.get::<crate::git::diff::DiffPanel>(panel).is_some() {
-                    PanelKind::GitDiff
-                } else if world.get::<crate::git::GitPanel>(panel).is_some() {
-                    PanelKind::Git
-                } else if world.get::<crate::tasks::TasksPanel>(panel).is_some() {
-                    PanelKind::Tasks
-                } else if world.get::<crate::settings::SettingsPanel>(panel).is_some() {
-                    PanelKind::Settings
-                } else {
-                    return Err(format!(
-                        "Unsupported concrete panel {:?}; session not overwritten",
-                        instance.key
-                    ));
-                };
-                tabs.push(TabRecipe {
-                    kind,
-                    git_diff: world.get::<crate::git::diff::DiffPanel>(panel).map(|d|d.descriptor.clone()),
-                    // Foreground-process names are observations, not workspace
-                    // mutations. A starter shell must not create a session file
-                    // merely because its first title observation arrived.
-                    title: if kind == PanelKind::Terminal {
-                        bedtime_terminal2::TerminalPanel::LABEL.into()
-                    } else {
-                        instance.title.clone()
-                    },
-                    preview: instance.preview,
-                    file: crate::files::panel_path(world, panel),
-                    viewer_explicit: world.get::<crate::files::FilePreviewPanel>(panel).is_some_and(|p|p.explicit),
-                    model_view: world.get::<bedtime_model2::ModelScene>(panel).map(|scene| scene.view),
-                    tree_root: world
-                        .get::<bedtime_filetree2::FileTreeRoot>(panel)
-                        .map(|r| r.0.clone()),
-                });
-            }
-            area_recipes.push(AreaRecipe {
-                rect: data.rect,
-                selected_tab: data
-                    .selected
-                    .and_then(|e| panels.iter().position(|&p| p == e)),
-                tabs,
-            });
-        }
-        recipes.push(LayoutRecipe {
-            slot: world.get::<crate::layouts::LayoutSlot>(layout).copied(),
-            name: data.name.clone(),
-            focused_area: data
-                .focused_area
-                .and_then(|e| areas.iter().position(|&a| a == e)),
-            areas: area_recipes,
-        });
-    }
-    let session = Session {
+pub(crate) fn capture(world: &mut World) -> Result<Session, String> {
+    Ok(Session {
         version: VERSION,
         root: world
-            .get::<crate::files::WorkspaceRoot>(workspace)
+            .get_resource::<crate::files::ProjectRoot>()
             .map(|r| r.0.clone()),
-        settings: world
-            .get::<crate::settings::WorkspacePreferences>(workspace)
-            .map(|p| p.0.clone())
-            .unwrap_or_default(),
-        visibility: world
-            .get::<bedtime_filetree2::FileTreePreferences>(workspace)
-            .cloned()
-            .unwrap_or_default(),
-        name: owner.name.clone(),
-        background_updates: owner.background_updates,
-        git_draft: crate::git::commit_draft(world, workspace),
-        git_panel: crate::git::panel_options(world, workspace),
-        active_layout: active_layout(world, workspace)
-            .and_then(|e| layouts.iter().position(|&l| l == e)),
-        layouts: recipes,
-    };
-    validate(&session)?;
-    Ok(session)
+        graph: crate::persistence::capture_graph(world)?,
+        local: crate::persistence::capture_local(world)?,
+    })
 }
-
-/// Validate everything before changing entities. Late loads never retire documents.
-fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<(), String> {
-    validate(session)?;
-    if !document_ids(world, workspace).is_empty() {
-        return Err("Documents opened while the workspace session was loading; existing work was preserved. Reopen the folder to restore its session.".into());
-    }
-    if world.get::<WorkspaceWork>(workspace).is_some_and(|work| {
-        work.list().iter().any(|job| {
-            job.owner.is_some_and(|owner| {
-                world.get::<crate::tasks::TasksPanel>(owner).is_some()
-                    || world
-                        .get::<bedtime_terminal2::TerminalPanel>(owner)
-                        .is_some()
-            })
-        })
-    }) {
-        return Err("Tasks or terminals started while the session was loading; live work was preserved. Explicitly retry to save the current workspace instead.".into());
-    }
-    if crate::git::has_pending_operation(world, workspace) {
+fn merge_loaded(
+    world: &World,
+    baseline: &Session,
+    live: &Session,
+    disk: &Session,
+) -> Result<Snapshot, String> {
+    let registry = world.resource::<AppTypeRegistry>();
+    let baseline = crate::persistence::prepare_local(&baseline.local, registry)?;
+    let live = crate::persistence::prepare_local(&live.local, registry)?;
+    let mut disk = crate::persistence::prepare_local(&disk.local, registry)?;
+    if baseline.resource::<ProjectTitle>() != live.resource::<ProjectTitle>()
+        || baseline.resource::<crate::git::PersistedGit>()
+            != live.resource::<crate::git::PersistedGit>()
+    {
         return Err(
-            "A Git operation started while the session was loading; live work was preserved."
-                .into(),
+            "Project state changed while its session was loading; existing work preserved".into(),
         );
     }
-    let old: Vec<_> = world
-        .get::<WorkspaceMembers>(workspace)
-        .map_or(&[][..], |m| m.entities())
-        .iter()
-        .copied()
-        .filter(|&e| world.get::<Layout>(e).is_some())
-        .collect();
-    // Nothing below can reject the graph: all kinds/references/geometry passed
-    // validation. Retire startup composition before spawning so relationship
-    // removal cannot reorder the newly restored layouts.
-    for layout in old {
+    let a = baseline
+        .resource::<crate::settings::ProjectPreferences>()
+        .unwrap();
+    let b = live
+        .resource::<crate::settings::ProjectPreferences>()
+        .unwrap();
+    let c = disk
+        .resource::<crate::settings::ProjectPreferences>()
+        .unwrap();
+    disk.replace_resource(crate::settings::ProjectPreferences(
+        crate::settings::SettingsOverrides::merge_loaded(&a.0, &b.0, &c.0),
+    ))?;
+    let a = baseline
+        .resource::<crate::files::PersistedVisibility>()
+        .unwrap();
+    let b = live
+        .resource::<crate::files::PersistedVisibility>()
+        .unwrap();
+    let mut c = disk
+        .resource::<crate::files::PersistedVisibility>()
+        .unwrap();
+    let roots: std::collections::BTreeSet<_> =
+        a.0.roots.keys().chain(b.0.roots.keys()).cloned().collect();
+    for root in roots {
+        if a.0.roots.get(&root) != b.0.roots.get(&root) {
+            if let Some(value) = b.0.roots.get(&root) {
+                c.0.roots.insert(root, value.clone());
+            } else {
+                c.0.roots.remove(&root);
+            }
+        }
+    }
+    disk.replace_resource(c)?;
+    let a = baseline
+        .resource::<crate::keybindings::ProjectBindings>()
+        .unwrap();
+    let b = live
+        .resource::<crate::keybindings::ProjectBindings>()
+        .unwrap();
+    let c = disk
+        .resource::<crate::keybindings::ProjectBindings>()
+        .unwrap();
+    disk.replace_resource(crate::keybindings::ProjectBindings(
+        crate::keybindings::merge(&a.0, &b.0, &c.0),
+    ))?;
+    disk.serialize(registry)
+}
+fn restore(world: &mut World, session: &Session) -> Result<(), String> {
+    validate(session)?;
+    let registry = world.resource::<AppTypeRegistry>();
+    // All partitions and application descriptors pass validation before mutation.
+    let graph = crate::persistence::prepare_graph(&session.graph, registry)?;
+    let local = crate::persistence::prepare_local(&session.local, registry)?;
+    if !document_ids(world).is_empty() {
+        return Err(
+            "Documents opened while session data was loading; existing work preserved".into(),
+        );
+    }
+    if world.resource::<ManagedWork>().list().iter().any(|job| {
+        job.owner.is_some_and(|owner| {
+            world.get::<crate::tasks::TasksPanel>(owner).is_some()
+                || world
+                    .get::<bedtime_terminal2::TerminalPanel>(owner)
+                    .is_some()
+        })
+    }) || crate::git::has_pending_operation(world)
+        || bedtime_filetree2::filetree_operation_count(world) > 0
+    {
+        return Err(
+            "Live work started while session data was loading; existing work preserved".into(),
+        );
+    }
+    for layout in layouts(world).to_vec() {
         world.despawn(layout);
     }
-    world.flush();
-    world.entity_mut(workspace).insert((
-        crate::settings::WorkspacePreferences(session.settings.clone()),
-        session.visibility.clone(),
-    ));
-    crate::git::restore_draft(world, workspace, session.git_draft.clone());
-    crate::git::restore_options(world, workspace, session.git_panel);
-    let mut layouts = Vec::new();
-    let mut reopen = Vec::new();
-    let mut selections = Vec::new();
-    let mut focuses = Vec::new();
-    for recipe in &session.layouts {
-        let layout = world
-            .spawn((
-                Layout {
-                    name: recipe.name.clone(),
-                    focused_area: None,
-                },
-                InWorkspace(workspace),
-            ))
-            .id();
-        if let Some(slot) = recipe.slot {
-            world.entity_mut(layout).insert(slot);
-        }
-        layouts.push(layout);
-        let mut areas = Vec::new();
-        for recipe in &recipe.areas {
-            let area = world
-                .spawn((
-                    Area {
-                        rect: recipe.rect,
-                        selected: None,
-                    },
-                    InLayout(layout),
-                ))
-                .id();
-            areas.push(area);
-            let mut panels = Vec::new();
-            for tab in &recipe.tabs {
-                let panel = match tab.kind {
-                    PanelKind::GitDiff => world.spawn((crate::git::diff::DiffPanel::new(tab.git_diff.clone().ok_or("Missing comparison descriptor")?),InArea(area))).id(),
-                    PanelKind::Git => world
-                        .spawn((crate::git::GitPanel::default(), InArea(area)))
-                        .id(),
-                    PanelKind::Files => world
-                        .spawn((bedtime_filetree2::FileTreePanel::default(), InArea(area)))
-                        .id(),
-                    PanelKind::Image | PanelKind::Hex | PanelKind::Model => {
-                        let panel = world
-                            .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
-                            .id();
-                        crate::files::set_viewer(world, panel, match tab.kind { PanelKind::Model => crate::opening::ViewerId::Model, PanelKind::Hex => crate::opening::ViewerId::Hex, _ => crate::opening::ViewerId::Image })?;
-                        panel
-                    }
-                    PanelKind::Code => world
-                        .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
-                        .id(),
-                    PanelKind::Structure => world
-                        .spawn((bed_structure2::StructurePanel::default(), InArea(area)))
-                        .id(),
-                    PanelKind::Terminal => {
-                        let mut options = bedtime_terminal2::TerminalOptions::default();
-                        if crate::settings::effective_preferences(world, workspace)
-                            .terminal
-                            .unwrap_or_default()
-                            .project_directory
-                        {
-                            options.working_directory = world
-                                .get::<crate::files::WorkspaceRoot>(workspace)
-                                .map(|r| r.0.clone());
-                        }
-                        world
-                            .spawn((bedtime_terminal2::TerminalPanel::new(options), InArea(area)))
-                            .id()
-                    }
-                    PanelKind::Bed => world.spawn((bedtime_mascots2::BedPanel, InArea(area))).id(),
-                    PanelKind::Ducky => world
-                        .spawn((bedtime_mascots2::DuckPanel, InArea(area)))
-                        .id(),
-                    PanelKind::Viewport => {
-                        world.spawn((crate::cube::CubeViewport, InArea(area))).id()
-                    }
-                    PanelKind::LanguageServers => {
-                        world.spawn((crate::lsp_panel::LspPanel, InArea(area))).id()
-                    }
-                    PanelKind::Tasks => world
-                        .spawn((crate::tasks::TasksPanel::default(), InArea(area)))
-                        .id(),
-                    PanelKind::Settings => world
-                        .spawn((crate::settings::SettingsPanel, InArea(area)))
-                        .id(),
-                };
-                panels.push(panel);
-                if let Some(root) = &tab.tree_root {
-                    world
-                        .entity_mut(panel)
-                        .insert(bedtime_filetree2::FileTreeRoot(root.clone()));
-                }
-                if let Some(mut preview)=world.get_mut::<crate::files::FilePreviewPanel>(panel) {preview.explicit=tab.viewer_explicit;}
-                if let Some(path) = &tab.file {
-                    reopen.push((panel, path.clone(), tab.title.clone(), tab.model_view));
-                }
-                let mut metadata = world.get_mut::<PanelInstance>(panel).unwrap();
-                metadata.title = tab.title.clone();
-                metadata.preview = tab.preview;
-            }
-            selections.push((area, recipe.selected_tab.map(|i| panels[i])));
-        }
-        focuses.push((layout, recipe.focused_area.map(|i| areas[i])));
-    }
-    // Drain attachment hooks before applying persisted selection/focus; hooks
-    // correctly select newly spawned tabs during ordinary composition.
-    world.flush();
-    for (area, selected) in selections {
-        world.get_mut::<Area>(area).unwrap().selected = selected;
-    }
-    for (layout, focused) in focuses {
-        world.get_mut::<Layout>(layout).unwrap().focused_area = focused;
-    }
-    for &layout in &layouts {
-        world.entity_mut(layout).remove::<ActiveLayout>();
-    }
-    if let Some(i) = session.active_layout {
-        world.entity_mut(layouts[i]).insert(ActiveLayout);
-    }
-    let mut owner = world.get_mut::<Workspace>(workspace).unwrap();
-    owner.name = session.name.clone();
-    owner.background_updates = session.background_updates;
-    // A missing file leaves the editor/error visible; the graph is still valid.
-    for (panel, path, title, model_view) in reopen {
-        if let Err(error) = crate::opening::restore_file_panel(world, panel, path) {
-            request_error_dialog(
-                world,
-                ErrorDialog {
-                    title: "Restore file".into(),
-                    message: "The workspace was restored, but a file couldn't be reopened.".into(),
-                    details: Some(error),
-                },
-            );
-        }
-        if let Some(view) = model_view && let Some(mut scene) = world.get_mut::<bedtime_model2::ModelScene>(panel) { scene.view = view; }
-        world.get_mut::<PanelInstance>(panel).unwrap().title = title;
-    }
-    Ok(())
+    Workbench::restore_world(world, local)?;
+    crate::persistence::activate_local(world);
+    crate::persistence::restore_graph(world, graph)
 }
-
 enum Job {
     Read(JoinHandle<Result<Option<Session>, String>>),
     Write {
@@ -578,9 +225,18 @@ struct SessionFile {
 }
 
 #[derive(Resource, Default)]
-struct Sessions(BTreeMap<Entity, SessionFile>);
+struct Sessions(Option<SessionFile>, Option<String>);
 
-fn read_source(path: &std::path::Path) -> Result<Option<Session>, String> {
+fn decode(bytes: &[u8]) -> Result<Session, String> {
+    let session: Session = ron::de::from_bytes(bytes)
+        .map_err(|e| format!("Unsupported or invalid project session; original preserved: {e}"))?;
+    validate(&session)?;
+    Ok(session)
+}
+fn read_source(
+    path: &std::path::Path,
+    registry: &AppTypeRegistry,
+) -> Result<Option<Session>, String> {
     match std::fs::metadata(path) {
         Ok(metadata) if !metadata.is_file() => {
             return Err("Workspace session is not a regular file".into());
@@ -601,11 +257,17 @@ fn read_source(path: &std::path::Path) -> Result<Option<Session>, String> {
     file.take(MAX_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|e| e.to_string())?;
-    decode(&bytes).map(Some)
+    if bytes.len() > MAX_BYTES {
+        return Err("Project session exceeds 4 MiB".into());
+    }
+    let recipe = decode(&bytes)?;
+    crate::persistence::prepare_graph(&recipe.graph, registry)?;
+    crate::persistence::prepare_local(&recipe.local, registry)?;
+    Ok(Some(recipe))
 }
 
-fn read_job(path: PathBuf) -> Job {
-    Job::Read(std::thread::spawn(move || read_source(&path)))
+fn read_job(path: PathBuf, registry: AppTypeRegistry) -> Job {
+    Job::Read(std::thread::spawn(move || read_source(&path, &registry)))
 }
 
 pub fn admit(world: &mut World) {
@@ -627,56 +289,29 @@ fn tick(world: &mut World, flush: bool) -> Result<bool, String> {
     world.resource_scope(|world, mut sessions: Mut<Sessions>| {
         if world.get_resource::<crate::storage::ConfigDirectory>().is_none() { return Ok(true); }
         if !crate::storage::global_ready(world) { return Ok(false); }
-        let owners: Vec<_> = world.query_filtered::<(Entity, &crate::files::WorkspaceRoot), (With<Workspace>, With<crate::files::FolderWorkspace>)>()
-            .iter(world).map(|(e, r)| (e, r.0.clone())).collect();
-        let mut capture_errors = Vec::new();
-        for (owner, root) in owners {
-            let path = crate::storage::workspace_path(world, &root).unwrap();
-            if !sessions.0.contains_key(&owner)
-                && let Some(previous) = sessions.0.iter().find_map(|(&previous, file)| (previous != owner && file.path == path).then_some(previous)) {
-                if world.get::<Workspace>(previous).is_some() {
-                    return Err("The same folder cannot have two workspace storage owners".into());
-                }
-                let current = capture(world, owner)?;
-                let pristine = world.get::<InitialSession>(owner).is_none_or(|initial| {
-                    let mut baseline = initial.0.clone(); baseline.root = current.root.clone(); baseline == current
-                });
-                if !pristine { continue; }
-                // Reopen joins the retained writer and its latest admitted state,
-                // including a pending write/error. It never starts a second writer.
-                let mut predecessor = sessions.0.remove(&previous).unwrap();
-                if let Err(error) = restore(world, owner, &predecessor.desired) {
-                    predecessor.error = Some(error);
-                    sessions.0.insert(previous, predecessor);
-                    continue;
-                }
-                sessions.0.insert(owner, predecessor);
-                world.entity_mut(owner).remove::<InitialSession>();
+        if world.get_resource::<crate::files::ProjectFolder>().is_none() { return Ok(true); }
+        let Some(root) = world.get_resource::<crate::files::ProjectRoot>().map(|r| r.0.clone()) else { return Ok(false); };
+        let desired = match capture(world) {
+            Ok(desired) => { sessions.1 = None; desired },
+            Err(error) => {
+                if sessions.1.as_ref()!=Some(&error) {request_error_dialog(world,ErrorDialog {title:"Project session".into(),message:"Session data could not be captured. Previous storage and live work are preserved.".into(),details:Some(error.clone())});}
+                sessions.1=Some(error.clone());return Err(error);
             }
-            let desired = match capture(world, owner) {
-                Ok(recipe) => recipe,
-                Err(error) => {
-                    if let Some(file) = sessions.0.get_mut(&owner) { file.error = Some(error.clone()); }
-                    capture_errors.push(error);
-                    continue;
-                }
-            };
-            let initial = world.get::<InitialSession>(owner).map(|initial| { let mut recipe = initial.0.clone(); recipe.root = desired.root.clone(); recipe });
-            world.entity_mut(owner).remove::<InitialSession>();
-            let file = sessions.0.entry(owner).or_insert_with(|| {
-                let path = crate::storage::workspace_path(world, &root).unwrap();
-                SessionFile { job: Some(read_job(path.clone())), path, saved: initial.unwrap_or_else(|| desired.clone()), desired: desired.clone(), loaded: false, policy_ready: false,
-                    retrying: false, pending_restore: None, changed_at: Instant::now(), error: None, reported: false }
-            });
+        };
+        let initial = world.get_resource::<InitialSession>().map(|initial| { let mut recipe = initial.0.clone(); recipe.root = desired.root.clone(); recipe });
+        world.remove_resource::<InitialSession>();
+        let file = sessions.0.get_or_insert_with(|| {
+            let path = crate::storage::workspace_path(world, &root).unwrap();
+            SessionFile { job: Some(read_job(path.clone(), world.resource::<AppTypeRegistry>().clone())), path, saved: initial.unwrap_or_else(|| desired.clone()), desired: desired.clone(), loaded: false, policy_ready: false,
+                retrying: false, pending_restore: None, changed_at: Instant::now(), error: None, reported: false }
+        });
             if file.path != crate::storage::workspace_path(world, &root).unwrap() {
                 file.error = Some("Workspace root changed while session I/O was pending; reopen the folder instead".into());
             }
             if file.desired != desired { file.desired = desired; file.changed_at = Instant::now(); }
-        }
         let mut drained = true;
-        let mut errors = capture_errors;
-        // Jobs/last buffered recipes outlive their workspace entities.
-        for (&owner, file) in &mut sessions.0 {
+        let mut errors = Vec::new();
+        {
             let finished = match &file.job {
                 Some(Job::Read(handle)) => handle.is_finished(),
                 Some(Job::Write { handle, .. }) => handle.is_finished(),
@@ -713,27 +348,20 @@ fn tick(world: &mut World, flush: bool) -> Result<bool, String> {
                 }
             }
             if let Some(mut recipe) = file.pending_restore.take() {
-                if !crate::storage::global_ready(world) || !crate::files::root_ready(world, owner) {
+                if !crate::storage::global_ready(world) || !crate::files::root_ready(world) {
                     file.pending_restore = Some(recipe);
-                } else if world.get::<Workspace>(owner).is_none() {
-                    file.desired = file.saved.clone();
+
                 } else {
-                    let disk = recipe.clone();
-                    recipe.settings = crate::settings::SettingsOverrides::merge_loaded(&file.saved.settings, &file.desired.settings, &recipe.settings);
-                    let roots: std::collections::BTreeSet<_> = file.saved.visibility.roots.keys().chain(file.desired.visibility.roots.keys()).cloned().collect();
-                    for root in roots {
-                        if file.saved.visibility.roots.get(&root) != file.desired.visibility.roots.get(&root) {
-                            if let Some(value) = file.desired.visibility.roots.get(&root) { recipe.visibility.roots.insert(root, value.clone()); }
-                            else { recipe.visibility.roots.remove(&root); }
-                        }
-                    }
-                    let composition_changed = file.desired.name != file.saved.name || file.desired.background_updates != file.saved.background_updates
-                        || file.desired.active_layout != file.saved.active_layout || file.desired.layouts != file.saved.layouts;
-                    if composition_changed {
+                    let _disk = recipe.clone();
+                    let merged=merge_loaded(world,&file.saved,&file.desired,&recipe);
+                    let composition_changed = file.desired.graph != file.saved.graph;
+                    if let Ok(local)=&merged { recipe.local=local.clone(); }
+                    if let Err(error)=merged { file.error=Some(error); }
+                    if composition_changed || file.error.is_some() {
                         file.error = Some("Workspace changed while its session was loading. Existing work and the disk session were preserved; reopen the folder to restore, or explicitly retry after review.".into());
                     } else {
-                        match restore(world, owner, &recipe).and_then(|()| capture(world, owner)) {
-                            Ok(restored) => { file.saved = disk; file.desired = restored; file.policy_ready = true; }
+                        match restore(world, &recipe).and_then(|()| capture(world)) {
+                            Ok(restored) => { file.saved = restored.clone(); file.desired = restored; file.policy_ready = true; }
                             Err(error) => file.error = Some(error),
                         }
                     }
@@ -749,11 +377,11 @@ fn tick(world: &mut World, flush: bool) -> Result<bool, String> {
                     file.reported = true;
                 }
                 if file.job.is_some() { drained = false; }
-                continue;
+                return if errors.is_empty() { Ok(drained) } else { Err(errors.join("\n")) };
             }
             if file.pending_restore.is_some() {
                 drained = false;
-                continue;
+                return if errors.is_empty() { Ok(drained) } else { Err(errors.join("\n")) };
             }
             if file.loaded && file.job.is_none() && file.desired != file.saved && (flush || file.changed_at.elapsed() >= DEBOUNCE) {
                 let recipe = file.desired.clone();
@@ -765,16 +393,17 @@ fn tick(world: &mut World, flush: bool) -> Result<bool, String> {
                         // the file so the next tick reports it and quit blocks.
                         file.error = Some(format!("Couldn't serialize workspace session: {error}. Previous file preserved."));
                         drained = false;
-                        continue;
+                        return if errors.is_empty() { Ok(drained) } else { Err(errors.join("\n")) };
                     }
                 };
-                if bytes.len() > MAX_BYTES { file.error = Some("Workspace session exceeds 4 MiB; previous file preserved".into()); drained = false; continue; }
+                if bytes.len() > MAX_BYTES { file.error = Some("Workspace session exceeds 4 MiB; previous file preserved".into()); return Ok(false); }
                 let path = file.path.clone();
                 let expected_root = recipe.root.clone();
+                let registry=world.resource::<AppTypeRegistry>().clone();
                 file.job = Some(Job::Write { recipe, handle: std::thread::spawn(move || {
                     // Revalidate before replacement too: an externally introduced
                     // malformed/newer-version session is not overwrite consent.
-                    if read_source(&path)?.is_some_and(|existing| existing.root != expected_root) {
+                    if read_source(&path, &registry)?.is_some_and(|existing| existing.root != expected_root) {
                         return Err("Workspace file belongs to a different folder; previous data preserved".into());
                     }
                     crate::storage::atomic_write(&path, &bytes)
@@ -782,15 +411,13 @@ fn tick(world: &mut World, flush: bool) -> Result<bool, String> {
             }
             if file.job.is_some() || file.desired != file.saved { drained = false; }
         }
-        sessions.0.retain(|owner, file| world.get::<Workspace>(*owner).is_some() || file.job.is_some()
-            || file.pending_restore.is_some() || file.desired != file.saved || file.error.is_some());
         if errors.is_empty() { Ok(drained) } else { Err(errors.join("\n")) }
     })
 }
 
-pub fn preferences_ready(world: &World, workspace: Entity) -> bool {
+pub fn preferences_ready(world: &World) -> bool {
     if world
-        .get::<crate::files::FolderWorkspace>(workspace)
+        .get_resource::<crate::files::ProjectFolder>()
         .is_none()
         || !world.contains_resource::<crate::storage::ConfigDirectory>()
     {
@@ -799,7 +426,7 @@ pub fn preferences_ready(world: &World, workspace: Entity) -> bool {
     world.get_resource::<Sessions>().is_some_and(|sessions| {
         sessions
             .0
-            .get(&workspace)
+            .as_ref()
             .is_some_and(|file| file.policy_ready && file.pending_restore.is_none())
     })
 }
@@ -807,9 +434,9 @@ pub fn preferences_ready(world: &World, workspace: Entity) -> bool {
 /// Loading readiness for application UI/automation, independent of whether a
 /// buffered mutation has reached disk. Temporary workspaces never load sessions.
 #[cfg(feature = "automation")]
-pub fn ready(world: &World, workspace: Entity) -> bool {
+pub fn ready(world: &World) -> bool {
     if world
-        .get::<crate::files::FolderWorkspace>(workspace)
+        .get_resource::<crate::files::ProjectFolder>()
         .is_none()
     {
         return true;
@@ -817,7 +444,7 @@ pub fn ready(world: &World, workspace: Entity) -> bool {
     world.get_resource::<Sessions>().is_none_or(|sessions| {
         sessions
             .0
-            .get(&workspace)
+            .as_ref()
             .is_some_and(|file| file.loaded && file.pending_restore.is_none())
     })
 }
@@ -830,13 +457,14 @@ pub fn flush(world: &mut World) -> Result<bool, String> {
 
 /// After repair, validate disk again before retrying the current live recipe.
 /// Malformed/unsupported sessions are never overwritten by a retry.
-pub fn retry(world: &mut World, workspace: Entity) -> Result<(), String> {
+pub fn retry(world: &mut World) -> Result<(), String> {
+    let registry = world.resource::<AppTypeRegistry>().clone();
     let mut sessions = world
         .get_resource_mut::<Sessions>()
         .ok_or("Session storage is not installed")?;
     let file = sessions
         .0
-        .get_mut(&workspace)
+        .as_mut()
         .ok_or("Workspace has no folder session")?;
     if file.job.is_some() {
         return Err("Workspace session I/O is still pending".into());
@@ -848,16 +476,16 @@ pub fn retry(world: &mut World, workspace: Entity) -> Result<(), String> {
     file.retrying = true;
     file.error = None;
     file.reported = false;
-    file.job = Some(read_job(file.path.clone()));
+    file.job = Some(read_job(file.path.clone(), registry));
     Ok(())
 }
 
 /// Application settings expose the same retry used by quit, without requiring
 /// a quit attempt just to repair workspace storage.
-pub fn draw_status(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, workspace: Entity) {
+pub fn draw_status(ui: &mut bedtime_ui2::egui::Ui, world: &mut World) {
     let Some(file) = world
         .get_resource::<Sessions>()
-        .and_then(|sessions| sessions.0.get(&workspace))
+        .and_then(|sessions| sessions.0.as_ref())
     else {
         return;
     };
@@ -868,7 +496,7 @@ pub fn draw_status(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, workspace:
             format!("Workspace storage: {error}"),
         );
         if ui.button("Retry workspace storage").clicked() {
-            if let Err(error) = retry(world, workspace) {
+            if let Err(error) = retry(world) {
                 request_error_dialog(
                     world,
                     ErrorDialog {
@@ -885,811 +513,331 @@ pub fn draw_status(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, workspace:
 /// Retry all failed sessions, including retired workspaces retained by storage.
 /// Used by the quit error UI after an explicit user retry.
 pub fn retry_failed(world: &mut World) {
-    let owners: Vec<_> = world
-        .get_resource::<Sessions>()
-        .map(|s| {
-            s.0.iter()
-                .filter_map(|(&owner, file)| {
-                    (file.error.is_some() && file.job.is_none()).then_some(owner)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for owner in owners {
-        let _ = retry(world, owner);
-    }
+    let _ = retry(world);
+}
+
+#[cfg(feature = "automation")]
+pub fn inspect_storage(world: &World) -> Vec<serde_json::Value> {
+    world.get_resource::<Sessions>().map(|s|s.0.iter().map(|f|serde_json::json!({"root":f.desired.root,"path":f.path,"loaded":f.loaded,"pending":f.job.is_some()||f.pending_restore.is_some()||f.desired!=f.saved,"error":f.error.as_ref().or(s.1.as_ref())})).collect()).unwrap_or_default()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
-    fn host(root: &std::path::Path, folder: bool) -> (App, Entity) {
-        let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, SessionPlugin));
-        app.insert_resource(crate::storage::ConfigDirectory(root.join("config")));
-        let owner = Workspaces::new(app.world_mut()).open("Initial").entity();
-        app.world_mut()
-            .entity_mut(owner)
-            .insert(crate::files::WorkspaceRoot(root.into()));
-        if folder {
-            app.world_mut()
-                .entity_mut(owner)
-                .insert(crate::files::FolderWorkspace);
-        }
-        (app, owner)
-    }
-    fn root() -> PathBuf {
+    fn fixture() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "bed2-session-{}-{}",
+        let root = std::env::temp_dir().join(format!(
+            "bed2-reflect-session-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(&path).unwrap();
-        path
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+    fn host(root: &std::path::Path, persistent: bool) -> App {
+        let mut app = App::new();
+        app.add_plugins((WorkbenchCorePlugin, SessionPlugin));
+        app.insert_resource(crate::storage::ConfigDirectory(root.join("config")))
+            .insert_resource(crate::files::ProjectRoot(root.into()));
+        if persistent {
+            app.insert_resource(crate::files::ProjectFolder);
+        }
+        remember_initial_state(app.world_mut()).unwrap();
+        app
     }
     fn settle(app: &mut App) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
+            app.update();
             if flush(app.world_mut())? {
                 return Ok(());
             }
-            assert!(Instant::now() < deadline, "Session I/O timed out");
+            assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
     }
-    #[test]
-    fn image_code_and_hex_sessions_restore_explicit_viewers() {
-        use crate::opening::ViewerId;
-        let root = root();
-        let path = root.join("both.svg");
-        std::fs::write(
-            &path,
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"/>"#,
-        )
-        .unwrap();
-        let (mut app, owner) = host(&root, false);
-        let layout = active_layout(app.world(), owner).unwrap();
-        let area = Workbench::for_entity(app.world_mut(), owner)
-            .unwrap()
-            .destination_area(layout)
+    fn settings_panel(world: &mut World) -> Entity {
+        let layout = Workbench::new(world)
+            .create_layout("Settings layout")
             .unwrap();
-        for viewer in [ViewerId::Image, ViewerId::Code, ViewerId::Hex] {
-            let panel = app
-                .world_mut()
-                .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
-                .id();
-            crate::files::set_viewer(app.world_mut(), panel, viewer).unwrap();
-            app.world_mut().get_mut::<crate::files::FilePreviewPanel>(panel).unwrap().explicit=true;
-            crate::opening::restore_file_panel(app.world_mut(), panel, path.clone()).unwrap();
-        }
-        let recipe = capture(app.world(), owner).unwrap();
-        validate(&recipe).unwrap();
-        let encoded = ron::to_string(&recipe).unwrap();
-        let decoded: Session = ron::from_str(&encoded).unwrap();
-        let (mut restored, new_owner) = host(&root, false);
-        restore(restored.world_mut(), new_owner, &decoded).unwrap();
-        let recipe = capture(restored.world(), new_owner).unwrap();
-        let kinds: Vec<_> = recipe
-            .layouts
-            .iter()
-            .flat_map(|layout| &layout.areas)
-            .flat_map(|area| &area.tabs)
-            .map(|tab| tab.kind)
-            .collect();
-        assert_eq!(kinds, vec![PanelKind::Image, PanelKind::Code, PanelKind::Hex]);
-        assert_eq!(recipe, decoded);
-        std::fs::remove_dir_all(root).unwrap();
+        Workbench::new(world).activate_layout(layout).unwrap();
+        let area = Workbench::new(world).destination_area(layout).unwrap();
+        world
+            .spawn((crate::settings::SettingsPanel, InArea(area)))
+            .id()
     }
-
     #[test]
-    fn default_workspace_is_memory_only_even_when_root_has_a_session() {
-        let root = root();
-        let (mut app, owner) = host(&root, false);
-        app.update();
-        app.world_mut().get_mut::<Workspace>(owner).unwrap().name = "Memory only".into();
-        settle(&mut app).unwrap();
-        assert!(!root.join(".bed").exists());
-        std::fs::create_dir_all(root.join(".bed")).unwrap();
-        std::fs::write(root.join(".bed/workspace2.json"), b"invalid").unwrap();
-        app.update();
-        settle(&mut app).unwrap();
-        assert!(app.world().resource::<Sessions>().0.is_empty());
-        assert_eq!(
-            std::fs::read(root.join(".bed/workspace2.json")).unwrap(),
-            b"invalid"
+    fn startup_is_memory_only_without_an_explicit_project_and_pristine_projects_do_not_write() {
+        let root = fixture();
+        let mut memory = host(&root, false);
+        settings_panel(memory.world_mut());
+        settle(&mut memory).unwrap();
+        assert!(!root.join("config").exists());
+        let mut project = host(&root, true);
+        settle(&mut project).unwrap();
+        assert!(
+            !crate::storage::workspace_path(project.world(), &root)
+                .unwrap()
+                .exists()
         );
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn root_derived_startup_name_does_not_count_as_a_user_mutation() {
-        let root = root();
-        let (mut app, owner) = host(&root, false);
-        remember_initial_state(app.world_mut(), owner).unwrap();
-        initialize_folder_name(app.world_mut(), owner, "Resolved folder".into());
-        app.world_mut()
-            .entity_mut(owner)
-            .insert(crate::files::FolderWorkspace);
+    fn reflected_tools_resources_layout_order_and_selection_roundtrip_without_a_startup_write() {
+        let root = fixture();
+        let mut app = host(&root, true);
         settle(&mut app).unwrap();
-        assert!(!root.join(".bed").exists());
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn mutations_before_root_resolution_are_saved_rather_than_mistaken_for_startup_defaults() {
-        let root = root();
-        let (mut app, owner) = host(&root, false);
-        remember_initial_state(app.world_mut(), owner).unwrap();
-        app.world_mut().get_mut::<Workspace>(owner).unwrap().name = "Edited while resolving".into();
-        initialize_folder_name(app.world_mut(), owner, "Resolved folder".into());
+        let panel = settings_panel(app.world_mut());
         app.world_mut()
-            .entity_mut(owner)
-            .insert(crate::files::FolderWorkspace);
-        settle(&mut app).unwrap();
-        let saved = decode(
-            &std::fs::read(root.join("config/workspaces").join(format!(
-                "{}.bed",
-                blake3::hash(root.as_os_str().as_encoded_bytes())
-            )))
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(saved.name, "Edited while resolving");
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn folder_mutations_are_buffered_flushed_and_roundtrip_without_startup_write() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        assert!(!root.join(".bed").exists());
-        let layout = active_layout(app.world(), owner).unwrap();
-        let area = Workbench::for_entity(app.world_mut(), owner)
-            .unwrap()
-            .destination_area(layout)
-            .unwrap();
-        let first = app
-            .world_mut()
-            .spawn((crate::settings::SettingsPanel, InArea(area)))
-            .id();
-        let second = app
-            .world_mut()
-            .spawn((crate::settings::SettingsPanel, InArea(area)))
-            .id();
-        app.world_mut()
-            .get_mut::<PanelInstance>(first)
+            .get_mut::<PanelInstance>(panel)
             .unwrap()
             .preview = true;
-        let mut workbench = Workbench::for_entity(app.world_mut(), owner).unwrap();
-        let split = workbench
-            .split_area(area, SplitAxis::Horizontal, 4000, [100, 100])
+        let layout = Workbench::new(app.world_mut())
+            .create_layout("Second")
             .unwrap();
-        workbench
-            .world_mut()
-            .spawn((crate::tasks::TasksPanel::default(), InArea(split)));
-        workbench.select_panel(first).unwrap();
-        workbench.focus_area(split).unwrap();
-        let extra = workbench.create_layout("Second layout").unwrap();
-        workbench.activate_layout(extra).unwrap();
-        let mut metadata = app.world_mut().get_mut::<Workspace>(owner).unwrap();
-        metadata.name = "Renamed".into();
-        metadata.background_updates = false;
-        assert_ne!(first, second);
-        app.update();
-        assert!(
-            !root
-                .join("config/workspaces")
-                .join(format!(
-                    "{}.bed",
-                    blake3::hash(root.as_os_str().as_encoded_bytes())
-                ))
-                .exists()
-        );
-        let expected = capture(app.world(), owner).unwrap();
-        settle(&mut app).unwrap();
-        let bytes = std::fs::read(root.join("config/workspaces").join(format!(
-            "{}.bed",
-            blake3::hash(root.as_os_str().as_encoded_bytes())
-        )))
-        .unwrap();
-        assert_eq!(decode(&bytes).unwrap(), expected);
-        let (mut restored, owner) = host(&root, true);
-        settle(&mut restored).unwrap();
-        assert_eq!(capture(restored.world(), owner).unwrap(), expected);
-        assert_eq!(
-            std::fs::read(root.join("config/workspaces").join(format!(
-                "{}.bed",
-                blake3::hash(root.as_os_str().as_encoded_bytes())
-            )))
-            .unwrap(),
-            bytes
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn git_panel_and_commit_draft_roundtrip_without_starting_workers() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        let layout = active_layout(app.world(), owner).unwrap();
-        let area = Workbench::for_entity(app.world_mut(), owner)
-            .unwrap()
-            .destination_area(layout)
+        Workbench::new(app.world_mut())
+            .activate_layout(layout)
             .unwrap();
         app.world_mut()
-            .spawn((crate::git::GitPanel::default(), InArea(area)));
-        crate::git::restore_draft(app.world_mut(), owner, "Keep my commit message".into());
-        crate::git::restore_options(
-            app.world_mut(),
-            owner,
-            crate::git::GitPanelOptions {
-                view: crate::git::ViewMode::Tree,
-                group_by: crate::git::GroupBy::StagedUnstaged,
-            },
-        );
-        let expected = capture(app.world(), owner).unwrap();
-        app.update();
-        settle(&mut app).unwrap();
-        let (mut restored, owner) = host(&root, true);
-        settle(&mut restored).unwrap();
-        assert_eq!(capture(restored.world(), owner).unwrap(), expected);
-        assert_eq!(
-            crate::git::commit_draft(restored.world(), owner),
-            "Keep my commit message"
-        );
-        assert_eq!(
-            restored
-                .world_mut()
-                .query::<&crate::git::GitPanel>()
-                .iter(restored.world())
-                .count(),
-            1
-        );
-        assert!(
-            restored
-                .world()
-                .get::<WorkspaceWork>(owner)
-                .unwrap()
-                .list()
-                .is_empty()
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn mascot_panels_roundtrip_without_renderer_or_audio_startup() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        let layout = active_layout(app.world(), owner).unwrap();
-        let area = Workbench::for_entity(app.world_mut(), owner)
-            .unwrap()
-            .destination_area(layout)
-            .unwrap();
-        crate::layouts::spawn_tool(app.world_mut(), area, crate::layouts::ToolKind::Bed);
-        crate::layouts::spawn_tool(app.world_mut(), area, crate::layouts::ToolKind::Ducky);
-        let expected = capture(app.world(), owner).unwrap();
-        app.update();
-        settle(&mut app).unwrap();
-        let (mut restored, owner) = host(&root, true);
-        settle(&mut restored).unwrap();
-        assert_eq!(capture(restored.world(), owner).unwrap(), expected);
-        let kinds: Vec<_> = restored
-            .world_mut()
-            .query::<&bedtime_mascots2::MascotScene>()
-            .iter(restored.world())
-            .map(|scene| scene.kind())
-            .collect();
-        assert_eq!(kinds.len(), 2);
-        assert!(kinds.contains(&bedtime_mascots2::MascotKind::Bed));
-        assert!(kinds.contains(&bedtime_mascots2::MascotKind::Duck));
-        assert_eq!(
-            restored
-                .world_mut()
-                .query::<&bedtime_ui2::UiViewport>()
-                .iter(restored.world())
-                .count(),
-            0
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn language_server_panel_roundtrips_without_starting_workers() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        let layout = active_layout(app.world(), owner).unwrap();
-        let area = Workbench::for_entity(app.world_mut(), owner)
-            .unwrap()
-            .destination_area(layout)
-            .unwrap();
-        app.world_mut()
-            .spawn((crate::lsp_panel::LspPanel, InArea(area)));
-        let expected = capture(app.world(), owner).unwrap();
-        app.update();
-        settle(&mut app).unwrap();
-        let (mut restored, owner) = host(&root, true);
-        settle(&mut restored).unwrap();
-        assert_eq!(capture(restored.world(), owner).unwrap(), expected);
-        assert_eq!(
-            restored
-                .world_mut()
-                .query::<&crate::lsp_panel::LspPanel>()
-                .iter(restored.world())
-                .count(),
-            1
-        );
-        assert!(
-            restored
-                .world()
-                .get::<WorkspaceWork>(owner)
-                .unwrap()
-                .list()
-                .is_empty()
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn invalid_session_is_preserved_and_blocks_automatic_overwrite() {
-        let root = root();
-        std::fs::create_dir_all(root.join("config/workspaces")).unwrap();
-        let bad = br#"{"version":999,"name":"Future","background_updates":true,"active_layout":null,"layouts":[]}"#;
-        std::fs::write(
-            root.join("config/workspaces").join(format!(
-                "{}.bed",
-                blake3::hash(root.as_os_str().as_encoded_bytes())
-            )),
-            bad,
-        )
-        .unwrap();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        app.world_mut().get_mut::<Workspace>(owner).unwrap().name = "Still editable".into();
-        assert!(flush(app.world_mut()).is_err());
-        assert_eq!(
-            std::fs::read(root.join("config/workspaces").join(format!(
-                "{}.bed",
-                blake3::hash(root.as_os_str().as_encoded_bytes())
-            )))
-            .unwrap(),
-            bad
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn restore_waits_for_preferences_without_starting_terminals_or_overwriting_late_edits() {
-        for late_edit in [false, true] {
-            let root = root();
-            let (mut app, owner) = host(&root, true);
-            let mut recipe = capture(app.world(), owner).unwrap();
-            recipe.name = "Restored".into();
-            recipe.layouts[0].areas[0].tabs.push(TabRecipe {
-                git_diff: None,
-                kind: PanelKind::Terminal,
-                title: "Terminal".into(),
-                preview: false,
-                file: None,
-                viewer_explicit: false,
-                model_view: None,
-                tree_root: None,
-            });
-            recipe.layouts[0].areas[0].selected_tab = Some(0);
-            std::fs::create_dir_all(root.join("config/workspaces")).unwrap();
-            let bytes = crate::storage::encode(&recipe).unwrap();
-            std::fs::write(
-                root.join("config/workspaces").join(format!(
-                    "{}.bed",
-                    blake3::hash(root.as_os_str().as_encoded_bytes())
-                )),
-                &bytes,
-            )
-            .unwrap();
-            app.init_resource::<crate::settings::GlobalPreferences>();
-            crate::storage::install(&mut app);
-            crate::storage::configure_directory(&mut app, root.join("config"));
-            assert!(!crate::storage::ready(app.world(), owner));
-            let deadline = Instant::now() + Duration::from_secs(5);
-            assert!(!flush(app.world_mut()).unwrap());
-            assert_eq!(
-                app.world_mut()
-                    .query::<&bedtime_terminal2::TerminalPanel>()
-                    .iter(app.world())
-                    .count(),
-                0
-            );
-            while !crate::storage::flush(app.world_mut()).unwrap() {
-                assert!(Instant::now() < deadline, "Preference load timed out");
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            assert!(!flush(app.world_mut()).unwrap());
-            if late_edit {
-                app.world_mut().get_mut::<Workspace>(owner).unwrap().name = "Local edit".into();
-                let deadline = Instant::now() + Duration::from_secs(5);
-                while flush(app.world_mut()).is_ok() {
-                    assert!(Instant::now() < deadline);
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-
-                assert_eq!(
-                    app.world().get::<Workspace>(owner).unwrap().name,
-                    "Local edit"
-                );
-                assert_eq!(
-                    app.world_mut()
-                        .query::<&bedtime_terminal2::TerminalPanel>()
-                        .iter(app.world())
-                        .count(),
-                    0
-                );
-            } else {
-                settle(&mut app).unwrap();
-                assert_eq!(capture(app.world(), owner).unwrap(), recipe);
-                assert_eq!(
-                    app.world_mut()
-                        .query::<&bedtime_terminal2::TerminalPanel>()
-                        .iter(app.world())
-                        .count(),
-                    1
-                );
-            }
-            assert_eq!(
-                std::fs::read(root.join("config/workspaces").join(format!(
-                    "{}.bed",
-                    blake3::hash(root.as_os_str().as_encoded_bytes())
-                )))
-                .unwrap(),
-                bytes
-            );
-            std::fs::remove_dir_all(root).unwrap();
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn non_utf8_descriptor_serialization_failure_is_visible_and_blocks_unsaved_quit() {
-        use std::os::unix::ffi::OsStringExt;
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        let layout = active_layout(app.world(), owner).unwrap();
-        let area = Workbench::for_entity(app.world_mut(), owner)
-            .unwrap()
-            .destination_area(layout)
-            .unwrap();
-        let path = root.join(std::ffi::OsString::from_vec(vec![0xff]));
-        app.world_mut().spawn((
-            bedtime_filetree2::FileTreePanel::default(),
-            bedtime_filetree2::FileTreeRoot(path),
-            InArea(area),
-        ));
-        app.update();
-        assert!(!flush(app.world_mut()).unwrap());
-        assert!(
-            app.world().resource::<Sessions>().0[&owner]
-                .error
-                .as_ref()
-                .unwrap()
-                .contains("serialize")
-        );
-        app.update();
-        assert!(app.world().resource::<ErrorDialogs>().front().is_some());
-        assert!(flush(app.world_mut()).is_err());
-        assert!(
-            !root
-                .join("config/workspaces")
-                .join(format!(
-                    "{}.bed",
-                    blake3::hash(root.as_os_str().as_encoded_bytes())
-                ))
-                .exists()
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn invalid_geometry_and_references_are_rejected_before_restore() {
-        let root = root();
-        let (mut app, owner) = host(&root, false);
-        let original = capture(app.world(), owner).unwrap();
-        let mut invalid = original.clone();
-        invalid.layouts[0].areas[0].rect.max[0] -= 1;
-        assert!(restore(app.world_mut(), owner, &invalid).is_err());
-        invalid = original.clone();
-        invalid.layouts[0].focused_area = Some(99);
-        assert!(restore(app.world_mut(), owner, &invalid).is_err());
-        assert_eq!(capture(app.world(), owner).unwrap(), original);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn buffered_write_survives_workspace_retirement() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        app.world_mut().get_mut::<Workspace>(owner).unwrap().name = "Retired but saved".into();
-        app.update();
-        app.world_mut().despawn(owner);
-        settle(&mut app).unwrap();
-        assert_eq!(
-            decode(
-                &std::fs::read(root.join("config/workspaces").join(format!(
-                    "{}.bed",
-                    blake3::hash(root.as_os_str().as_encoded_bytes())
-                )))
-                .unwrap()
-            )
-            .unwrap()
-            .name,
-            "Retired but saved"
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-    #[test]
-    fn workspace_settings_and_native_visibility_share_one_ron_file() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        app.world_mut()
-            .entity_mut(owner)
-            .insert(crate::settings::WorkspacePreferences(
-                crate::settings::SettingsOverrides {
-                    line_numbers: Some(false),
-                    panel_gap: Some(9.0),
-                    effects_enabled: Some(true),
-                    curvature_intensity: Some(0.7),
-                    ..default()
-                },
-            ));
-        let mut visibility = bedtime_filetree2::FileTreePreferences::default();
-        let mut hidden = bedtime_filetree2::FileTreeVisibility::default();
-        hidden.hide("private".into()).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStringExt;
-            hidden
-                .hide(std::ffi::OsString::from_vec(vec![0xff]).into())
-                .unwrap();
-        }
-        visibility.roots.insert(root.clone(), hidden);
-        app.world_mut().entity_mut(owner).insert(visibility.clone());
-        let expected = capture(app.world(), owner).unwrap();
+            .resource_mut::<crate::settings::ProjectPreferences>()
+            .0
+            .line_numbers = Some(false);
+        let bindings = crate::keybindings::ProjectBindings(vec![crate::keybindings::Declaration {
+            chord: KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS),
+            command: None,
+            repeat: false,
+        }]);
+        app.insert_resource(bindings.clone());
+        crate::git::restore_draft(app.world_mut(), "saved draft".into());
         settle(&mut app).unwrap();
         let path = crate::storage::workspace_path(app.world(), &root).unwrap();
-        let bytes = std::fs::read(&path).unwrap();
-        assert_eq!(decode(&bytes).unwrap(), expected);
-        assert_eq!(
-            std::fs::read_dir(path.parent().unwrap()).unwrap().count(),
-            1
-        );
-        assert!(!root.join(".bed").exists());
-        let (mut restored, owner) = host(&root, true);
+        let before = std::fs::read(&path).unwrap();
+        let stored = read_source(&path, app.world().resource::<AppTypeRegistry>())
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.version, 2);
+        assert!(!stored.graph.data.contains("ManagedWork"));
+        assert!(stored.graph.data.contains("PersistedSettings"));
+        drop(app);
+        let mut restored = host(&root, true);
         settle(&mut restored).unwrap();
+        let names: Vec<_> = layouts(restored.world())
+            .iter()
+            .map(|&e| restored.world().get::<Layout>(e).unwrap().name.as_str())
+            .collect();
+        assert_eq!(names, ["Settings layout", "Second"]);
         assert_eq!(
             restored
                 .world()
-                .get::<bedtime_filetree2::FileTreePreferences>(owner),
-            Some(&visibility)
+                .get::<Layout>(active_layout(restored.world()).unwrap())
+                .unwrap()
+                .name,
+            "Second"
+        );
+        assert_eq!(crate::git::commit_draft(restored.world()), "saved draft");
+        assert_eq!(
+            restored
+                .world()
+                .resource::<crate::keybindings::ProjectBindings>(),
+            &bindings
         );
         assert_eq!(
             restored
                 .world()
-                .get::<crate::settings::WorkspacePreferences>(owner)
-                .unwrap()
+                .resource::<crate::settings::ProjectPreferences>()
                 .0
                 .line_numbers,
             Some(false)
         );
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
-        let settings = &restored
-            .world()
-            .get::<crate::settings::WorkspacePreferences>(owner)
-            .unwrap()
-            .0;
-        assert_eq!(settings.effects_enabled, Some(true));
-        assert_eq!(settings.curvature_intensity, Some(0.7));
-        assert_eq!(settings.bloom_intensity, None);
+        assert_eq!(
+            restored
+                .world_mut()
+                .query::<&crate::settings::SettingsPanel>()
+                .iter(restored.world())
+                .count(),
+            1
+        );
+        assert_eq!(std::fs::read(path).unwrap(), before);
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn late_workspace_read_merges_individual_settings_and_visibility_roots() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        let mut disk = capture(app.world(), owner).unwrap();
-        disk.settings.line_numbers = Some(false);
-        disk.settings.smart_indentation = Some(false);
-        disk.visibility.roots.insert(
-            root.join("untouched"),
+    fn rejected_old_or_malformed_project_data_is_preserved_and_new_mutations_block_flush() {
+        let root = fixture();
+        let mut app = host(&root, true);
+        let path = crate::storage::workspace_path(app.world(), &root).unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let old = b"(version:1,root:None,layouts:[])";
+        std::fs::write(&path, old).unwrap();
+        // Clean rejected startup storage alone has nothing new to flush.
+        settle(&mut app).unwrap();
+        assert!(!preferences_ready(app.world()));
+        settings_panel(app.world_mut());
+        assert!(settle(&mut app).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), old);
+        assert_eq!(
+            app.world_mut()
+                .query::<&crate::settings::SettingsPanel>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn unknown_live_panels_cannot_silently_replace_a_good_snapshot() {
+        let root = fixture();
+        let mut app = host(&root, true);
+        settle(&mut app).unwrap();
+        let panel = settings_panel(app.world_mut());
+        settle(&mut app).unwrap();
+        let path = crate::storage::workspace_path(app.world(), &root).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let area = app.world().get::<InArea>(panel).unwrap().0;
+        app.world_mut()
+            .spawn((PanelInstance::new("unpersisted.plugin"), InArea(area)));
+        assert!(flush(app.world_mut()).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), before);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn restore_rejects_live_documents_and_invalid_graph_before_retiring_anything() {
+        let root = fixture();
+        let mut source = host(&root, false);
+        settings_panel(source.world_mut());
+        let stored = capture(source.world_mut()).unwrap();
+        let mut target = host(&root, false);
+        let live = settings_panel(target.world_mut());
+        let document = open_document(
+            target.world_mut(),
+            "unsaved".to_owned(),
+            DocumentOptions::unsaved("Draft"),
+        )
+        .unwrap();
+        assert!(restore(target.world_mut(), &stored).is_err());
+        assert!(target.world().get::<PanelInstance>(live).is_some());
+        assert_eq!(read_document(target.world(), document).unwrap(), "unsaved");
+        let mut invalid = stored;
+        invalid.graph.version += 1;
+        assert!(restore(target.world_mut(), &invalid).is_err());
+        assert!(target.world().get::<PanelInstance>(live).is_some());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn resource_partitions_and_numbered_slots_reject_entities_before_live_retirement() {
+        let root = fixture();
+        let mut app = host(&root, false);
+        let panel = settings_panel(app.world_mut());
+        let mut session = capture(app.world_mut()).unwrap();
+        app.world_mut().spawn(crate::layouts::LayoutSlot::Two);
+        let graph = crate::persistence::capture_graph(app.world_mut()).unwrap();
+        session.local = graph.clone();
+        assert!(restore(app.world_mut(), &session).is_err());
+        assert!(app.world().get::<PanelInstance>(panel).is_some());
+
+        assert!(
+            crate::persistence::prepare_graph(&graph, app.world().resource::<AppTypeRegistry>())
+                .is_err()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn late_reads_merge_individual_project_values_and_keep_newer_visibility_roots() {
+        let root = fixture();
+        let mut app = host(&root, false);
+        let baseline = capture(app.world_mut()).unwrap();
+        let chord = KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS);
+        app.world_mut()
+            .insert_resource(crate::keybindings::ProjectBindings(vec![
+                crate::keybindings::Declaration {
+                    chord,
+                    command: None,
+                    repeat: false,
+                },
+            ]));
+        let mut visibility = bedtime_filetree2::FileTreePreferences::default();
+        visibility.roots.insert(
+            root.clone(),
+            bedtime_filetree2::FileTreeVisibility {
+                hide_hidden: false,
+                ..default()
+            },
+        );
+        app.world_mut().insert_resource(visibility);
+        app.world_mut()
+            .resource_mut::<crate::settings::ProjectPreferences>()
+            .0
+            .font_size = Some(22.0);
+        let live = capture(app.world_mut()).unwrap();
+        app.world_mut()
+            .resource_mut::<crate::settings::ProjectPreferences>()
+            .0 = crate::settings::SettingsOverrides {
+            line_numbers: Some(false),
+            ..default()
+        };
+        app.world_mut()
+            .insert_resource(crate::keybindings::ProjectBindings::default());
+        let mut visibility = bedtime_filetree2::FileTreePreferences::default();
+        visibility.roots.insert(
+            root.clone(),
             bedtime_filetree2::FileTreeVisibility::default(),
         );
-        let path = crate::storage::workspace_path(app.world(), &root).unwrap();
-        crate::storage::atomic_write(&path, &crate::storage::encode(&disk).unwrap()).unwrap();
-        assert!(!flush(app.world_mut()).unwrap());
-        app.world_mut()
-            .entity_mut(owner)
-            .insert(crate::settings::WorkspacePreferences(
-                crate::settings::SettingsOverrides {
-                    line_numbers: Some(true),
-                    ..default()
-                },
-            ));
-        settle(&mut app).unwrap();
-        let restored = app
-            .world()
-            .get::<crate::settings::WorkspacePreferences>(owner)
+        visibility.roots.insert(
+            root.join("other"),
+            bedtime_filetree2::FileTreeVisibility::default(),
+        );
+        app.world_mut().insert_resource(visibility);
+        let disk = capture(app.world_mut()).unwrap();
+        let merged = merge_loaded(app.world(), &baseline, &live, &disk).unwrap();
+        let prepared =
+            crate::persistence::prepare_local(&merged, app.world().resource::<AppTypeRegistry>())
+                .unwrap();
+        let settings = prepared
+            .resource::<crate::settings::ProjectPreferences>()
             .unwrap();
-        assert_eq!(restored.0.line_numbers, Some(true));
-        assert_eq!(restored.0.smart_indentation, Some(false));
+        assert_eq!(settings.0.font_size, Some(22.0));
+        assert_eq!(settings.0.line_numbers, Some(false));
+        let visibility = prepared
+            .resource::<crate::files::PersistedVisibility>()
+            .unwrap()
+            .0;
+        assert!(!visibility.roots[&root].hide_hidden);
+        assert!(visibility.roots.contains_key(&root.join("other")));
         assert!(
-            app.world()
-                .get::<bedtime_filetree2::FileTreePreferences>(owner)
+            prepared
+                .resource::<crate::keybindings::ProjectBindings>()
                 .unwrap()
-                .roots
-                .contains_key(&root.join("untouched"))
+                .0[0]
+                .command
+                .is_none()
         );
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
-    fn workspace_identity_and_write_failures_preserve_the_previous_file() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
+    fn failed_write_preserves_previous_file_and_retries_after_repair() {
+        let root = fixture();
+        let mut app = host(&root, true);
         settle(&mut app).unwrap();
-        app.world_mut().get_mut::<Workspace>(owner).unwrap().name = "First".into();
+        settings_panel(app.world_mut());
         settle(&mut app).unwrap();
         let path = crate::storage::workspace_path(app.world(), &root).unwrap();
-        let original = std::fs::read(&path).unwrap();
-        let directory = path.parent().unwrap();
-        let backup = root.join("backup");
-        std::fs::rename(directory, &backup).unwrap();
-        std::fs::write(directory, "not a directory").unwrap();
-        app.world_mut().get_mut::<Workspace>(owner).unwrap().name = "Pending".into();
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while flush(app.world_mut()).is_ok() {
-            assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        assert_eq!(
-            std::fs::read(backup.join(path.file_name().unwrap())).unwrap(),
-            original
-        );
-        std::fs::remove_file(directory).unwrap();
-        std::fs::rename(backup, directory).unwrap();
-        retry(app.world_mut(), owner).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        std::fs::write(&path, b"malformed replacement").unwrap();
+        app.world_mut().resource_mut::<ProjectTitle>().0 = "pending".into();
+        assert!(settle(&mut app).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"malformed replacement");
+        std::fs::write(&path, before).unwrap();
+        retry(app.world_mut()).unwrap();
         settle(&mut app).unwrap();
-        assert_eq!(
-            decode(&std::fs::read(&path).unwrap()).unwrap().name,
-            "Pending"
-        );
-        let mut wrong = decode(&std::fs::read(&path).unwrap()).unwrap();
-        wrong.root = Some(root.join("different"));
-        let bytes = crate::storage::encode(&wrong).unwrap();
-        std::fs::write(&path, &bytes).unwrap();
-        let (mut reopened, owner) = host(&root, true);
-        settle(&mut reopened).unwrap();
-        assert!(!preferences_ready(reopened.world(), owner));
-        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        let stored = read_source(&path, app.world().resource::<AppTypeRegistry>())
+            .unwrap()
+            .unwrap();
+        let prepared = crate::persistence::prepare_local(
+            &stored.local,
+            app.world().resource::<AppTypeRegistry>(),
+        )
+        .unwrap();
+        assert_eq!(prepared.resource::<ProjectTitle>().unwrap().0, "pending");
         std::fs::remove_dir_all(root).unwrap();
     }
-    #[test]
-    fn layout_defaults_wait_for_restore_and_missing_files_do_not_save_startup() {
-        for existing in [false, true] {
-            let root = root();
-            let (mut app, owner) = host(&root, true);
-            app.add_plugins(crate::layouts::LayoutsPlugin);
-            let path = crate::storage::workspace_path(app.world(), &root).unwrap();
-            if existing {
-                let mut disk = capture(app.world(), owner).unwrap();
-                disk.layouts[0].slot = Some(crate::layouts::LayoutSlot::One);
-                crate::storage::atomic_write(&path, &crate::storage::encode(&disk).unwrap())
-                    .unwrap();
-            }
-            app.update();
-            assert_eq!(
-                app.world_mut()
-                    .query::<&bedtime_terminal2::TerminalPanel>()
-                    .iter(app.world())
-                    .count(),
-                0,
-                "a starter shell must not be composed before the saved workspace is resolved"
-            );
-            settle(&mut app).unwrap();
-            app.update();
-            settle(&mut app).unwrap();
-            if existing {
-                assert_eq!(
-                    app.world_mut()
-                        .query::<&bedtime_terminal2::TerminalPanel>()
-                        .iter(app.world())
-                        .count(),
-                    0
-                );
-            } else {
-                assert_eq!(
-                    app.world_mut()
-                        .query::<&bedtime_terminal2::TerminalPanel>()
-                        .iter(app.world())
-                        .count(),
-                    1
-                );
-                assert!(
-                    !path.exists(),
-                    "applying built-in defaults is not a user mutation"
-                );
-                let terminal = app
-                    .world_mut()
-                    .query_filtered::<Entity, With<bedtime_terminal2::TerminalPanel>>()
-                    .single(app.world())
-                    .unwrap();
-                app.world_mut()
-                    .get_mut::<PanelInstance>(terminal)
-                    .unwrap()
-                    .title = "observed foreground process".into();
-                app.update();
-                settle(&mut app).unwrap();
-                assert!(
-                    !path.exists(),
-                    "derived roots and process labels are not user mutations"
-                );
-            }
-            std::fs::remove_dir_all(root).unwrap();
-        }
-    }
-    #[test]
-    fn reopening_a_retired_workspace_joins_its_pending_writer() {
-        let root = root();
-        let (mut app, owner) = host(&root, true);
-        settle(&mut app).unwrap();
-        app.world_mut().get_mut::<Workspace>(owner).unwrap().name = "Pending name".into();
-        app.world_mut()
-            .entity_mut(owner)
-            .insert(crate::settings::WorkspacePreferences(
-                crate::settings::SettingsOverrides {
-                    panel_gap: Some(18.0),
-                    ..default()
-                },
-            ));
-        app.update();
-        app.world_mut().despawn(owner);
-        let reopened = Workspaces::new(app.world_mut())
-            .open("Fresh startup")
-            .entity();
-        app.world_mut().entity_mut(reopened).insert((
-            crate::files::WorkspaceRoot(root.clone()),
-            crate::files::FolderWorkspace,
-        ));
-        remember_initial_state(app.world_mut(), reopened).unwrap();
-        settle(&mut app).unwrap();
-        assert_eq!(
-            app.world().get::<Workspace>(reopened).unwrap().name,
-            "Pending name"
-        );
-        assert_eq!(
-            app.world()
-                .get::<crate::settings::WorkspacePreferences>(reopened)
-                .unwrap()
-                .0
-                .panel_gap,
-            Some(18.0)
-        );
-        assert_eq!(app.world().resource::<Sessions>().0.len(), 1);
-        let path = crate::storage::workspace_path(app.world(), &root).unwrap();
-        assert_eq!(
-            decode(&std::fs::read(path).unwrap()).unwrap().name,
-            "Pending name"
-        );
-        std::fs::remove_dir_all(root).unwrap();
-    }
-}
-
-#[cfg(feature = "automation")]
-pub fn inspect_storage(world: &World) -> Vec<serde_json::Value> {
-    world
-        .get_resource::<Sessions>()
-        .map(|s| {
-            s.0.iter().map(|(owner, f)| serde_json::json!({
-        "workspace": owner.to_bits().to_string(), "root": f.desired.root,
-        "path": f.path, "loaded": f.loaded, "pending": f.job.is_some() || f.pending_restore.is_some() || f.desired != f.saved, "error": f.error,
-    })).collect()
-        })
-        .unwrap_or_default()
 }

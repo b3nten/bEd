@@ -3,15 +3,14 @@ use super::*;
 fn host() -> (App, DocumentHandle<TextBuffer>, Entity, Entity) {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin);
-    let workspace = Workspaces::new(app.world_mut()).open("Editor");
+    let _workspace = crate::test_layout(app.world_mut());
     let document = open_document(
         app.world_mut(),
-        workspace.entity(),
         TextBuffer::from("original"),
         DocumentOptions::loaded("Text"),
     )
     .unwrap();
-    let mut workbench = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
+    let mut workbench = Workbench::new(app.world_mut());
     let layout = workbench.active_layout();
     let first = workbench.create_panel(layout, "First").unwrap();
     let second = workbench.create_panel(layout, "Second").unwrap();
@@ -99,7 +98,6 @@ fn adapters_share_canonical_history_and_keep_navigation_per_view() {
 #[test]
 fn composition_blocks_save_history_rebind_and_retirement_until_cleared() {
     let (mut app, document, first, second) = host();
-    let workspace = app.world().get::<InWorkspace>(first).unwrap().0;
     let mut group = None;
     let mut session = WorkbenchTextSession {
         world: app.world_mut(),
@@ -121,9 +119,7 @@ fn composition_blocks_save_history_rebind_and_retirement_until_cleared() {
         save_document(app.world_mut(), document.id()),
         Err(DocumentError::Drafts)
     );
-    assert!(
-        preflight_workspace_close(app.world(), workspace, WorkspaceCloseMode::Discard).is_err()
-    );
+    assert!(preflight_session_close(app.world(), SessionCloseMode::Discard).is_err());
     assert!(unbind_text_editor(app.world_mut(), first).is_err());
     let mut other_group = None;
     let mut other = WorkbenchTextSession {

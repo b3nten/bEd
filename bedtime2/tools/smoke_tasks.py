@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise workspace-owned tasks and processes through the real bed2 UI."""
+"""Exercise session-owned tasks and processes through the real bed2 UI."""
 import argparse
 import json
 import re
@@ -44,10 +44,9 @@ def send(app, panel, text):
     assert state(app, panel)["input"] == text
 
 
-def jobs(app, workspace):
-    # Application preference workers are workspace-owned, not task-panel work.
-    return [job for job in next(w["jobs"] for w in app.request("app.inspect_tasks")["workspaces"]
-                if w["entity"] == workspace) if job["owner"] is not None]
+def jobs(app):
+    # Session preference I/O is independent of panel-owned tasks.
+    return [job for job in app.request("app.inspect_tasks")["jobs"] if job["owner"] is not None]
 
 
 def main():
@@ -63,7 +62,7 @@ def main():
         prepare_demo_layout(app, viewport=True)
         app.request("configure", fixed_dt=1 / 60, clipboard="")
         snapshot = app.wait_until(lambda s: bool(s["viewports"]))
-        workspace = snapshot["workbench"]["workspaces"][0]["entity"]
+        layout = next(l["entity"] for l in snapshot["workbench"]["layouts"] if l["active"])
         cube = snapshot["viewports"][0]["entity"]
         app.request("panel.close", panel=cube)
 
@@ -81,8 +80,8 @@ def main():
         value = wait_state(app, panel, lambda p: p["task"]["progress"] > 0
                            and "Ready." in p["process"]["stdout"])
         assert value["process"]["status"] == "Running"
-        assert all(j["owner"] == panel for j in jobs(app, workspace))
-        assert len(jobs(app, workspace)) == 2
+        assert all(j["owner"] == panel for j in jobs(app))
+        assert len(jobs(app)) == 2
         app.click_text("Send")
         wait_state(app, panel, lambda p: "echo: Hello from bEd\n" in p["process"]["stdout"])
         send(app, panel, "stderr")
@@ -142,34 +141,35 @@ def main():
         before = state(app, panel)["task"]["progress"]
         open_panel(app, "Settings")
         wait_state(app, panel, lambda p: p["task"]["progress"] > before)
-        fresh = app.request("workspace.create", name="Fresh tasks", activate=True)
+        fresh = app.request("layout.create", name="Fresh tasks", activate=True)
         fresh_panel = open_panel(app, "Tasks & Processes")
         assert state(app, fresh_panel)["task"] is None and state(app, fresh_panel)["process"] is None
-        assert not jobs(app, fresh["workspace"])
-        app.request("workspace.close", workspace=fresh["workspace"], replacement=workspace)
+        assert not any(j["owner"] == fresh_panel for j in jobs(app))
+        app.request("layout.delete", layout=fresh["layout"])
+        app.request("layout.activate", layout=layout)
 
-        # Workspace query markers do not suspend worker threads or panel polling.
-        app.request("workspace.configure", workspace=workspace, background_updates=False)
-        other = app.request("workspace.create", name="Other", activate=True)
+        # Hidden layouts do not suspend worker threads or panel polling.
+        other = app.request("layout.create", name="Other", activate=True)
         before = state(app, panel)["task"]["progress"]
         wait_state(app, panel, lambda p: p["task"]["progress"] > before)
         app.request("panel.close", panel=panel)
         for _ in range(120):
-            if not jobs(app, workspace):
+            if not jobs(app):
                 break
             app.request("wait_frames", frames=2)
-        assert not jobs(app, workspace), "Closing the inactive panel left owned work alive"
+        assert not jobs(app), "Closing the inactive panel left owned work alive"
 
-        # Closing the whole workspace waits for both workers without stalling UI.
-        app.request("workspace.activate", workspace=workspace)
+        # Retiring the layout waits for both workers without stalling UI.
+        app.request("layout.activate", layout=layout)
         panel = open_panel(app, "Tasks & Processes")
         app.click_text("Start task")
         app.click_text("Start process")
         wait_state(app, panel, lambda p: p["task"]["progress"] > 0
                    and "Ready." in p["process"]["stdout"])
-        app.request("workspace.close", workspace=workspace, replacement=other["workspace"])
+        app.request("layout.delete", layout=layout)
+        app.request("layout.activate", layout=other["layout"])
         snapshot = app.inspect()
-        assert [w["entity"] for w in snapshot["workbench"]["workspaces"]] == [other["workspace"]]
+        assert all(l["entity"] != layout for l in snapshot["workbench"]["layouts"])
         assert app.request("app.inspect_tasks")["panels"] == []
 
         open_panel(app, "Tasks & Processes")

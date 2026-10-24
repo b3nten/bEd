@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 
 from automation import Application, AutomationError
-from smoke_bed2 import ready, workspace, open_panel
+from smoke_bed2 import ready, session, open_panel
 from smoke_terminal import wait_state, capture_checked
 from smoke_workspace_policy import clean_quit
 
@@ -46,7 +46,6 @@ def main():
             os.environ.update(XDG_CONFIG_HOME=config, HOME=str(home), SHELL="/bin/sh")
             with Application([binary, str(project)], output=output / "first", timeout=60) as app:
                 snapshot = ready(app)
-                owner = workspace(snapshot)["entity"]
                 settings = settled(app)
                 assert settings["global"]["font_family"] == "Bedfont"
                 assert settings["global"]["font_size"] == 15.5
@@ -77,21 +76,21 @@ def main():
                                      (p["grid"]["cols"], p["grid"]["rows"]) != grid)
                 assert resized["pid"] == pid
                 captures.append(capture_checked(app, "03-larger-terminal.png"))
-                app.request("app.set_settings", workspace=owner,
+                app.request("app.set_settings", scope="project",
                             values={"font_family": "Bedfont", "font_size": 18.0})
                 settings = settled(app)
                 assert_font(settings, "Bedfont", "Bedfont")
-                local = next(w for w in settings["workspaces"] if w["workspace"] == owner)
+                local = settings["project"]
                 assert local["effective"]["font_size"] == 18.0
                 assert settings["global"]["font_family"] == family
                 assert settings["global"]["font_size"] == 22.0
 
-                app.request("app.set_settings", workspace=owner, values={"font_family": None})
+                app.request("app.set_settings", scope="project", values={"font_family": None})
                 assert_font(settled(app), family, family)
-                app.request("app.set_settings", workspace=owner,
+                app.request("app.set_settings", scope="project",
                             values={"font_family": "Missing bEd2 smoke font"})
                 assert_font(settled(app), "Missing bEd2 smoke font", "Bedfont")
-                app.request("app.set_settings", workspace=owner, values={"font_family": "Bedfont"})
+                app.request("app.set_settings", scope="project", values={"font_family": "Bedfont"})
                 for values in [{"font_size": 0}, {"font_family": ""}]:
                     try:
                         app.request("app.set_settings", values=values)
@@ -105,15 +104,14 @@ def main():
 
             with Application([binary, str(project)], output=output / "restored", timeout=60) as app:
                 snapshot = ready(app)
-                owner = workspace(snapshot)["entity"]
                 settings = settled(app)
                 assert settings["global"]["font_family"] == family
                 assert settings["global"]["font_size"] == 22.0
-                local = next(w for w in settings["workspaces"] if w["workspace"] == owner)
+                local = settings["project"]
                 assert local["overrides"]["font_family"] == "Bedfont"
                 assert local["effective"]["font_size"] == 18.0
                 assert_font(settings, "Bedfont", "Bedfont")
-                app.request("app.set_settings", workspace=owner,
+                app.request("app.set_settings", scope="project",
                             values={"font_family": None, "font_size": None})
                 assert_font(settled(app), family, family)
                 clean_quit(app)

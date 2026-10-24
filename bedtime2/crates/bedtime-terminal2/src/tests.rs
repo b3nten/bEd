@@ -1,22 +1,19 @@
 use super::*;
-use bedtime_workbench2::{
-    InArea, Workbench, WorkbenchCorePlugin, WorkspaceId, WorkspaceWork, Workspaces,
-};
+use bedtime_workbench2::{InArea, ManagedWork, Workbench, WorkbenchCorePlugin};
+use bedtime_workbench2::{shutdown_work, work_finished};
 use std::time::{Duration, Instant};
 
-fn host() -> (App, WorkspaceId) {
+fn host() -> (App, Entity) {
     let mut app = App::new();
     // Capability installation does not require a workspace or a UI/GPU context.
     app.add_plugins((TerminalPlugin, WorkbenchCorePlugin));
-    let workspace = Workspaces::new(app.world_mut()).open("Terminals");
+    let workspace = crate::test_layout(app.world_mut());
     (app, workspace)
 }
 
-fn panel(app: &mut App, workspace: WorkspaceId, options: TerminalOptions) -> Entity {
-    let workbench = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
-    let area = workbench
-        .destination_area(workbench.active_layout())
-        .unwrap();
+fn panel(app: &mut App, workspace: Entity, options: TerminalOptions) -> Entity {
+    let workbench = Workbench::new(app.world_mut());
+    let area = workbench.destination_area(workspace).unwrap();
     app.world_mut()
         .spawn((TerminalPanel::new(options), InArea(area)))
         .id()
@@ -69,8 +66,8 @@ fn eventually(app: &mut App, mut condition: impl FnMut(&mut App) -> bool) {
 }
 
 fn finish(app: &mut App) {
-    Workspaces::new(app.world_mut()).shutdown_work().unwrap();
-    eventually(app, |app| Workspaces::new(app.world_mut()).work_finished());
+    shutdown_work(app.world_mut()).unwrap();
+    eventually(app, |app| work_finished(app.world_mut()));
     app.update();
 }
 
@@ -89,7 +86,7 @@ fn concrete_composition_preserves_options_and_does_not_start_unseen_shells() {
     assert!(terminal.process_id().is_none());
     assert!(
         app.world()
-            .get::<WorkspaceWork>(workspace.entity())
+            .get_resource::<ManagedWork>()
             .unwrap()
             .list()
             .is_empty()
@@ -361,11 +358,7 @@ fn real_pty_input_resize_exit_selection_and_restart() {
         .process_id()
         .unwrap();
     assert!(alive(first_pid));
-    let work = app
-        .world()
-        .get::<WorkspaceWork>(workspace.entity())
-        .unwrap()
-        .list();
+    let work = app.world().get_resource::<ManagedWork>().unwrap().list();
     assert_eq!(
         work.len(),
         1,
@@ -409,7 +402,7 @@ fn real_pty_input_resize_exit_selection_and_restart() {
     assert!(!alive(first_pid));
     assert_eq!(
         app.world()
-            .get::<WorkspaceWork>(workspace.entity())
+            .get_resource::<ManagedWork>()
             .unwrap()
             .list()
             .len(),
@@ -468,11 +461,10 @@ fn hidden_inactive_terminals_keep_parsing_and_raw_despawn_reaps_the_child() {
         .unwrap()
         .process_id()
         .unwrap();
-    Workspaces::new(app.world_mut())
-        .set_background_updates(workspace, false)
+    let other = crate::test_layout(app.world_mut());
+    Workbench::new(app.world_mut())
+        .activate_layout(other)
         .unwrap();
-    let other = Workspaces::new(app.world_mut()).open("Other");
-    Workspaces::new(app.world_mut()).activate(other).unwrap();
     input(
         &mut app,
         panel,
@@ -484,8 +476,8 @@ fn hidden_inactive_terminals_keep_parsing_and_raw_despawn_reaps_the_child() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(alive(pid));
-    Workspaces::new(app.world_mut())
-        .activate(workspace)
+    Workbench::new(app.world_mut())
+        .activate_layout(workspace)
         .unwrap();
     eventually(&mut app, |app| {
         observe(app, panel);
@@ -494,7 +486,7 @@ fn hidden_inactive_terminals_keep_parsing_and_raw_despawn_reaps_the_child() {
     app.world_mut().despawn(panel);
     eventually(&mut app, |app| {
         app.world()
-            .get::<WorkspaceWork>(workspace.entity())
+            .get_resource::<ManagedWork>()
             .unwrap()
             .list()
             .is_empty()
@@ -518,13 +510,9 @@ fn workspace_close_finishes_terminal_cleanup_before_retiring_its_entities() {
         .unwrap()
         .process_id()
         .unwrap();
-    Workspaces::new(app.world_mut())
-        .close(workspace, None)
-        .unwrap();
-    eventually(&mut app, |app| {
-        app.world().get_entity(workspace.entity()).is_err()
-    });
-    assert!(app.world().get_entity(panel).is_err());
+    shutdown_work(app.world_mut()).unwrap();
+    eventually(&mut app, |app| work_finished(app.world()));
+    assert!(app.world().get_entity(panel).is_ok());
     assert!(!alive(pid));
 }
 
@@ -582,14 +570,14 @@ fn shutdown_refuses_new_terminals_without_starting_a_child() {
     let (mut app, workspace) = host();
     let panel = panel(&mut app, workspace, script("sleep 30"));
     observe(&mut app, panel);
-    Workspaces::new(app.world_mut()).shutdown_work().unwrap();
+    shutdown_work(app.world_mut()).unwrap();
     app.update();
     let terminal = app.world().get::<TerminalPanel>(panel).unwrap();
     assert!(
         matches!(terminal.status(), TerminalStatus::Failed(error) if error.contains("closing"))
     );
     assert!(terminal.process_id().is_none());
-    assert!(Workspaces::new(app.world_mut()).work_finished());
+    assert!(work_finished(app.world_mut()));
 }
 
 #[cfg(unix)]
@@ -674,7 +662,7 @@ fn queue_backpressure_retains_ordered_key_release_and_focus_cleanup_until_delive
     let start_worker = start.clone();
     let task = app
         .world_mut()
-        .get_mut::<WorkspaceWork>(workspace.entity())
+        .get_resource_mut::<ManagedWork>()
         .unwrap()
         .spawn_task(Some(panel), "Delayed terminal", move |cancel| {
             while !start_worker.load(Ordering::Acquire) && !cancel.wait(Duration::from_millis(1)) {}
@@ -750,7 +738,7 @@ fn restart_requires_confirmed_cleanup_even_when_cancelled_task_results_are_disca
         TerminalPty::prepare_terminal(options, size, Terminal::new_text_only(80, 24)).unwrap();
     let task = app
         .world_mut()
-        .get_mut::<WorkspaceWork>(workspace.entity())
+        .get_resource_mut::<ManagedWork>()
         .unwrap()
         .spawn_task(Some(panel), "Panicking terminal owner", move |_| {
             let checks = AtomicUsize::new(0);
@@ -838,7 +826,7 @@ fn stop_bypasses_an_input_byte_budget_blocked_write_without_waiting_for_the_chil
     let start_worker = start.clone();
     let task = app
         .world_mut()
-        .get_mut::<WorkspaceWork>(workspace.entity())
+        .get_resource_mut::<ManagedWork>()
         .unwrap()
         .spawn_task(Some(panel), "Delayed terminal", move |cancel| {
             while !start_worker.load(Ordering::Acquire) && !cancel.wait(Duration::from_millis(1)) {}
@@ -989,8 +977,10 @@ fn shell_commands_preserve_bytes_origin_and_defer_acknowledgement() {
             .is_empty(),
         "Bridge environment is applied to the child launch, not saved options"
     );
-    let other = Workspaces::new(app.world_mut()).open("Other");
-    Workspaces::new(app.world_mut()).activate(other).unwrap();
+    let other = crate::test_layout(app.world_mut());
+    Workbench::new(app.world_mut())
+        .activate_layout(other)
+        .unwrap();
     let mut client = shell_client(&app, "+alias", &token);
     eventually(&mut app, |app| {
         !app.world().resource::<ShellObservations>().0.is_empty()
@@ -1002,7 +992,7 @@ fn shell_commands_preserve_bytes_origin_and_defer_acknowledgement() {
         .pop()
         .unwrap();
     assert_eq!(invocation.panel, panel);
-    assert_eq!(invocation.workspace, workspace.entity());
+
     assert_eq!(invocation.alias, "+alias");
     assert_eq!(invocation.directory.as_os_str().as_bytes(), b"/tmp\xff");
     assert_eq!(invocation.arguments[0].as_os_str().as_bytes(), b"a\xff");

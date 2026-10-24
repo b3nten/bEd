@@ -275,95 +275,71 @@ mod workbench {
         app
     }
     #[test]
-    fn moving_a_document_view_to_another_workspace_is_rejected_before_reparenting() {
+    fn moving_a_document_view_between_layouts_retains_the_canonical_document() {
         let mut app = app();
         let first = call(
             &mut app,
-            json!({"id":1,"op":"workspace.create","name":"One","activate":true}),
+            json!({"id":1,"op":"layout.create","name":"One","activate":true}),
         )["result"]
             .clone();
-        let second = call(
-            &mut app,
-            json!({"id":2,"op":"workspace.create","name":"Two","with_layout":false}),
-        )["result"]
-            .clone();
-        let workspace = entity(app.world(), &first, "workspace").unwrap();
-        let layout = entity(app.world(), &first, "layout").unwrap();
-        let area = entity(app.world(), &first, "area").unwrap();
-        let panel = app.world_mut().spawn((TestPanel, InArea(area))).id();
+        let second =
+            call(&mut app, json!({"id":2,"op":"layout.create","name":"Two"}))["result"].clone();
+        let first_layout = entity(app.world(), &first, "layout").unwrap();
+        let second_layout = entity(app.world(), &second, "layout").unwrap();
+        let first_area = Workbench::new(app.world_mut())
+            .destination_area(first_layout)
+            .unwrap();
+        let second_area = Workbench::new(app.world_mut())
+            .destination_area(second_layout)
+            .unwrap();
+        let panel = app.world_mut().spawn((TestPanel, InArea(first_area))).id();
         let document = open_document(
             app.world_mut(),
-            workspace,
-            String::from("Shared"),
+            "Shared".to_owned(),
             DocumentOptions::loaded("Notes"),
         )
         .unwrap();
         bind_document_view(app.world_mut(), panel, document).unwrap();
         let result = call(
             &mut app,
-            json!({"id":4,"op":"layout.move","layout":first["layout"],"workspace":second["workspace"]}),
+            json!({"id":3,"op":"panel.move","panel":entity_id(panel),"area":entity_id(second_area)}),
         );
-        assert!(result.get("error").is_some(), "{result}");
-        assert_eq!(app.world().get::<InWorkspace>(layout).unwrap().0, workspace);
-        assert_eq!(app.world().get::<InWorkspace>(panel).unwrap().0, workspace);
+        assert!(result.get("result").is_some(), "{result}");
+        assert_eq!(app.world().get::<InArea>(panel).unwrap().0, second_area);
+        assert_eq!(
+            app.world().get::<DocumentView>(panel).unwrap().document(),
+            document.id()
+        );
         assert_eq!(read_document(app.world(), document).unwrap(), "Shared");
-        assert!(
-            call(&mut app, json!({"id":5,"op":"inspect"}))
-                .get("result")
-                .is_some()
-        );
     }
 
     #[test]
-    fn workspace_layout_moves_and_teardown_use_live_application_entities() {
+    fn layout_inspection_and_teardown_use_live_application_entities() {
         let mut app = app();
         let first = call(
             &mut app,
-            json!({"id":1,"op":"workspace.create","name":"One","activate":true}),
+            json!({"id":1,"op":"layout.create","name":"One","activate":true}),
         )["result"]
             .clone();
-        let second = call(
-            &mut app,
-            json!({"id":2,"op":"workspace.create","name":"Two","with_layout":false}),
-        )["result"]
-            .clone();
-        let area = entity(app.world(), &first, "area").unwrap();
-        let e = app.world_mut().spawn((TestPanel, InArea(area))).id();
-        assert_eq!(
-            app.world().get::<Area>(area).unwrap().selected_panel(),
-            Some(e)
-        );
-        let inspected = call(&mut app, json!({"id":3,"op":"inspect"}));
-        let inspected_workspace = inspected["result"]["workbench"]["workspaces"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|workspace| workspace["entity"] == first["workspace"])
+        let layout = entity(app.world(), &first, "layout").unwrap();
+        let area = Workbench::new(app.world_mut())
+            .destination_area(layout)
             .unwrap();
-        let inspected_panel = &inspected_workspace["layouts"][0]["areas"][0]["panels"][0];
-        assert_eq!(inspected_panel["entity"], entity_id(e));
-        assert_eq!(inspected_panel["key"], TestPanel::KEY);
-        assert_eq!(inspected_panel["title"], TestPanel::LABEL);
-        let moved = call(
+        let panel = app.world_mut().spawn((TestPanel, InArea(area))).id();
+        let snapshot = call(&mut app, json!({"id":2,"op":"inspect"}));
+        let observed = &snapshot["result"]["workbench"]["layouts"][0]["areas"][0]["panels"][0];
+        assert_eq!(observed["entity"], entity_id(panel));
+        assert_eq!(observed["key"], TestPanel::KEY);
+        let result = call(
             &mut app,
-            json!({"id":7,"op":"layout.move","layout":first["layout"],"workspace":second["workspace"]}),
+            json!({"id":3,"op":"layout.delete","layout":entity_id(layout)}),
         );
-        assert!(moved.get("result").is_some(), "{moved}");
-        call(
-            &mut app,
-            json!({"id":8,"op":"workspace.close","workspace":first["workspace"]}),
-        );
-        let owner = entity(
-            app.world(),
-            &json!({"workspace":second["workspace"]}),
-            "workspace",
-        )
-        .unwrap();
-        assert_eq!(app.world().get::<InWorkspace>(e).unwrap().0, owner);
+        assert!(result.get("result").is_some(), "{result}");
+        assert!(app.world().get_entity(panel).is_err());
         assert!(
             call(
                 &mut app,
-                json!({"id":9,"op":"panel.focus","panel":"18446744073709551615"})
+                json!({"id":4,"op":"panel.focus","panel":entity_id(panel)})
             )
             .get("error")
             .is_some()
@@ -377,10 +353,7 @@ mod workbench {
             const LABEL: &'static str = "Fail";
         }
         let mut app = app();
-        call(
-            &mut app,
-            json!({"id":1,"op":"workspace.create","name":"Commands","activate":true}),
-        );
+
         register_context_command::<Failing>(app.world_mut()).unwrap();
         Workbench::new(app.world_mut())
             .register_handler::<Failing, _>(
@@ -426,7 +399,7 @@ mod workbench {
         }
     }
     #[test]
-    fn world_command_invocation_needs_no_workspace_and_retains_context() {
+    fn world_command_invocation_needs_no_layout_and_retains_context() {
         struct Global;
         impl ContextCommand for Global {
             const KEY: &'static str = "automation.global";
@@ -437,7 +410,6 @@ mod workbench {
         install_global_handler::<Global, _>(
             app.world_mut(),
             |In(invocation): In<ContextCommandInvocation>| -> ContextCommandResult {
-                assert_eq!(invocation.workspace, None);
                 assert_eq!(invocation.context, InvocationContext::Global);
                 assert_eq!(invocation.panel, None);
                 Ok(())

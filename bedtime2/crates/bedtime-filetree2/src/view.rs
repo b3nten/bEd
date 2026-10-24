@@ -99,7 +99,6 @@ impl TreeView {
 #[derive(Clone)]
 struct FileDrag {
     panel: Entity,
-    workspace: Entity,
     generation: u64,
     root: PathBuf,
     paths: Vec<PathBuf>,
@@ -242,9 +241,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
                     source.generation == payload.generation && source.snapshot.root == payload.root
                 })
         };
-        current
-            && state.workspace == Some(payload.workspace)
-            && !payload.paths.iter().any(|path| path == &payload.root)
+        current && !payload.paths.iter().any(|path| path == &payload.root)
     });
     let copy_drag = ui.input(|i| i.modifiers.alt || i.modifiers.command)
         || payload.as_ref().is_some_and(|payload| {
@@ -452,7 +449,6 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
                 }
                 let drag = FileDrag {
                     panel,
-                    workspace: state.workspace.unwrap(),
                     generation: state.generation,
                     root: snapshot.root.clone(),
                     paths: operations::top_level_paths(

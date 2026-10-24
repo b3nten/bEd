@@ -1,5 +1,5 @@
 //! Contextual document operations. UI bindings are opt-in so hosts retain their
-//! own shortcut policy; command handlers always use the admitted panel/workspace.
+//! own shortcut policy; command handlers always use the admitted panel.
 use crate::*;
 use bevy::prelude::*;
 
@@ -74,13 +74,10 @@ pub fn register_document_shortcuts(world: &mut World) {
     ];
     for (command, chord) in bindings {
         let exists = world
-            .query::<(&Binding, Option<&InPanel>, Option<&InWorkspace>)>()
+            .query::<(&Binding, Option<&InPanel>)>()
             .iter(world)
-            .any(|(binding, panel, workspace)| {
-                panel.is_none()
-                    && workspace.is_none()
-                    && binding.command == command
-                    && binding.chord == chord
+            .any(|(binding, panel)| {
+                panel.is_none() && binding.command == command && binding.chord == chord
             });
         if !exists {
             world.spawn(Binding {
@@ -93,23 +90,14 @@ pub fn register_document_shortcuts(world: &mut World) {
 }
 
 fn target(world: &World, invocation: &ContextCommandInvocation) -> Result<DocumentId, String> {
-    let workspace = invocation
-        .workspace
-        .ok_or("No document workspace is available")?;
     let panel = invocation.panel.ok_or("No document viewer is focused")?;
-    if world.get::<PanelInstance>(panel).is_none()
-        || world.get::<InWorkspace>(panel).map(|owner| owner.0) != Some(workspace.entity())
-    {
+    if world.get::<PanelInstance>(panel).is_none() {
         return Err("The admitted document viewer is no longer available".into());
     }
     let document = world
         .get::<DocumentView>(panel)
         .ok_or("The admitted panel is not a document viewer")?
         .document();
-    let info = inspect_document(world, document).map_err(|error| error.to_string())?;
-    if info.workspace != workspace.entity() {
-        return Err("The admitted document belongs to a different workspace".into());
-    }
     Ok(document)
 }
 

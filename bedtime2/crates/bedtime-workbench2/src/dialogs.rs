@@ -49,7 +49,7 @@ impl QueuedDialog {
 /// Pending error dialogs, including the currently presented dialog.
 ///
 /// Created lazily by [`request_error_dialog`], without requiring any installed
-/// plugin, workspace, panel, window or egui context. Requests remain here until
+/// plugin, panel, window or egui context. Requests remain here until
 /// a workbench surface can present them. At most 16 entries are retained.
 #[derive(Resource, Default)]
 pub struct ErrorDialogs {
@@ -111,7 +111,7 @@ impl ErrorDialogs {
     }
 }
 
-/// Queue an error independently of its originating panel or workspace.
+/// Queue an error independently of its originating panel.
 ///
 /// Identical active/pending dialogs are deduplicated. After dismissal an
 /// identical request is accepted again, so callers must edge-detect persistent

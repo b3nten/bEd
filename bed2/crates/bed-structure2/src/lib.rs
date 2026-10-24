@@ -24,7 +24,7 @@ pub struct SourceBinding {
     pub panel: Entity,
     pub document: DocumentId,
 }
-#[derive(Component, Default)]
+#[derive(Resource, Default)]
 pub struct StructureSource {
     pub source: Option<SourceBinding>,
 }
@@ -92,37 +92,23 @@ impl StructurePanel {
 }
 
 pub fn refresh_sources(world: &mut World) {
-    let workspaces: Vec<Entity> = world
-        .query_filtered::<Entity, With<Workspace>>()
-        .iter(world)
-        .collect();
-    for workspace in workspaces {
-        refresh_source(world, workspace);
-    }
+    refresh_source(world);
 }
-pub fn refresh_source(world: &mut World, workspace: Entity) -> Option<SourceBinding> {
-    if world.get::<Workspace>(workspace).is_none() {
-        return None;
-    }
-    let focused = Workbench::for_entity(world, workspace).ok().and_then(|w| {
-        let layout = active_layout(w.world(), workspace)?;
-        w.focused_panel(layout)
-    });
+pub fn refresh_source(world: &mut World) -> Option<SourceBinding> {
+    let focused =
+        active_layout(world).and_then(|layout| Workbench::new(world).focused_panel(layout));
     let current = focused.and_then(|panel| {
         code_document_for_panel(world, panel).map(|document| SourceBinding { panel, document })
     });
     let remembered = world
-        .get::<StructureSource>(workspace)
+        .get_resource::<StructureSource>()
         .and_then(|state| state.source)
         .filter(|source| {
             code_document_for_panel(world, source.panel) == Some(source.document)
-                && inspect_document(world, source.document)
-                    .is_ok_and(|info| info.workspace == workspace)
+                && inspect_document(world, source.document).is_ok()
         });
     let source = current.or(remembered);
-    world
-        .entity_mut(workspace)
-        .insert(StructureSource { source });
+    world.insert_resource(StructureSource { source });
     source
 }
 /// Reject obsolete clicks before changing layout, focus or editor selection.
@@ -169,11 +155,10 @@ impl Panel for StructurePanel {
     const KEY: &'static str = "bed.structure";
     const LABEL: &'static str = "Structure";
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let Ok(workbench) = Workbench::for_entity(world, panel) else {
+        let Ok(_workbench) = Workbench::for_entity(world, panel) else {
             return;
         };
-        let workspace = workbench.workspace_id().entity();
-        let source = refresh_source(world, workspace);
+        let source = refresh_source(world);
         let mut state = world.entity_mut(panel).take::<Self>().unwrap_or_default();
         let mut activation = None;
         if let Some((source, observation)) = state.refresh_outline(world, source) {
@@ -322,3 +307,13 @@ impl Panel for StructurePanel {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn test_layout(world: &mut bevy::prelude::World) -> bevy::prelude::Entity {
+    use bedtime_workbench2::*;
+    let layout = Workbench::new(world).create_layout("Test").unwrap();
+    if active_layout(world).is_none() {
+        world.entity_mut(layout).insert(ActiveLayout);
+    }
+    layout
+}

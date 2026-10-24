@@ -1,6 +1,6 @@
 //! Application-owned opening policy. Producers supply intent; this module
 //! chooses viewers, tab reuse and destination areas independently of Files UI.
-use crate::files::{FilePreviewPanel, FolderWorkspace, WorkspaceRoot};
+use crate::files::{FilePreviewPanel, ProjectRoot};
 use bedtime_filetree2::FileTreePanel;
 use bedtime_workbench2::*;
 use bevy::prelude::*;
@@ -58,7 +58,11 @@ struct ViewerAssociation {
     priority: i32,
 }
 const ASSOCIATIONS: &[ViewerAssociation] = &[
-    ViewerAssociation { viewer: ViewerId::Model, extensions: bedtime_model2::SUPPORTED_EXTENSIONS, priority: 100 },
+    ViewerAssociation {
+        viewer: ViewerId::Model,
+        extensions: bedtime_model2::SUPPORTED_EXTENSIONS,
+        priority: 100,
+    },
     ViewerAssociation {
         viewer: ViewerId::Hex,
         extensions: &[],
@@ -155,7 +159,7 @@ pub fn open_file_with(
         return Err("File source path must be absolute".into());
     }
     let mut workbench = Workbench::for_entity(world, layout)?;
-    if !crate::storage::ready(workbench.world(), workbench.workspace_id().entity()) {
+    if !crate::storage::ready(workbench.world()) {
         return Err("The workspace is still loading or has a settings error".into());
     }
     let panels = workbench.panels(layout);
@@ -351,11 +355,25 @@ pub fn viewer_menu(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, panel: Ent
     });
 }
 
-pub type FolderOpenResult = Mutex<mpsc::Receiver<Result<Entity, String>>>;
+#[derive(Clone, Debug)]
+pub enum FolderOpened {
+    Reused,
+    Launched(
+        #[cfg_attr(
+            not(feature = "automation"),
+            expect(
+                dead_code,
+                reason = "Only optional automation inspects the child PID; shell helpers acknowledge launch"
+            )
+        )]
+        u32,
+    ),
+}
+pub type FolderOpenResult = Mutex<mpsc::Receiver<Result<FolderOpened, String>>>;
 
 struct FolderOpen {
     validation: std::thread::JoinHandle<Result<PathBuf, String>>,
-    reply: mpsc::SyncSender<Result<Entity, String>>,
+    reply: mpsc::SyncSender<Result<FolderOpened, String>>,
 }
 
 #[derive(Resource, Default)]
@@ -404,19 +422,30 @@ pub(crate) fn poll_folder_opens(world: &mut World) {
     };
     for (result, reply) in completed {
         let result = result.and_then(|root| {
-            let existing = world.query_filtered::<(Entity, &WorkspaceRoot), (With<Workspace>, With<FolderWorkspace>)>()
-                .iter(world).find_map(|(workspace, current)| (current.0 == root).then_some(workspace));
-            if let Some(existing) = existing {
-                let id = Workbench::for_entity(world, existing)?.workspace_id();
-                Workspaces::new(world).activate(id)?;
-                return Ok(existing);
+            if world
+                .get_resource::<ProjectRoot>()
+                .is_some_and(|current| current.0 == root)
+                && world.contains_resource::<crate::files::ProjectFolder>()
+            {
+                return Ok(FolderOpened::Reused);
             }
-            let name = root.file_name().unwrap_or(root.as_os_str()).to_string_lossy().into_owned();
-            let workspace = Workspaces::new(world).open(name);
-            world.entity_mut(workspace.entity()).insert((WorkspaceRoot(root), FolderWorkspace));
-            Workspaces::new(world).activate(workspace)?;
-            crate::session::remember_initial_state(world, workspace.entity())?;
-            Ok(workspace.entity())
+            // Reject an already-open project before launching; the child must
+            // independently acquire admission too, to resolve simultaneous opens.
+            let claim = crate::project::ProjectLock::acquire(&root)?;
+            drop(claim);
+            let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+            let mut child = std::process::Command::new(executable)
+                .arg(root)
+                .arg("--no-automation")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| e.to_string())?;
+            let pid = child.id();
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+            Ok(FolderOpened::Launched(pid))
         });
         if let Err(error) = &result {
             request_error_dialog(

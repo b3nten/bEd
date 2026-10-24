@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 pub const EXTENT: i32 = 10_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "persistence", derive(bevy::prelude::Reflect))]
 pub struct Rect {
     pub min: [i32; 2],
     pub max: [i32; 2],

@@ -10,7 +10,7 @@ import tempfile
 import zlib
 
 from automation import Application
-from smoke_bed2 import center, open_panel, ready, workspace
+from smoke_bed2 import center, open_panel, ready, session
 from smoke_editor import primary
 from smoke_filetree import inspection, wait_value
 from smoke_images import choose, current

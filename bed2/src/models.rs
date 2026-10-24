@@ -95,7 +95,7 @@ fn prepare(bytes: &[u8], path: &Path, cancelled: impl Fn() -> bool) -> LoadedMod
 
 struct Preparation {
     stamp: (DocumentId, u64),
-    task: WorkspaceTask<LoadedModel>,
+    task: ManagedTask<LoadedModel>,
 }
 #[derive(Component, Default)]
 pub(crate) struct ModelPreview {
@@ -105,7 +105,7 @@ pub(crate) struct ModelPreview {
     changed: Option<Instant>,
     job: Option<Preparation>,
     dependencies: Vec<Dependency>,
-    check: Option<WorkspaceTask<bool>>,
+    check: Option<ManagedTask<bool>>,
     checked: Option<Instant>,
     pub error: Option<String>,
 }
@@ -193,12 +193,9 @@ pub(crate) fn update(world: &mut World) {
         .iter(world)
         .collect();
     for panel in panels {
-        let Some(workspace) = world.get::<InWorkspace>(panel).map(|w| w.0) else {
-            continue;
-        };
         if world
-            .get::<WorkspaceWork>(workspace)
-            .is_none_or(WorkspaceWork::is_closing)
+            .get_resource::<ManagedWork>()
+            .is_none_or(ManagedWork::is_closing)
         {
             continue;
         }
@@ -277,7 +274,7 @@ pub(crate) fn update(world: &mut World) {
             let dependencies = state.dependencies.clone();
             state.checked = Some(Instant::now());
             state.check = world
-                .get_mut::<WorkspaceWork>(workspace)
+                .get_resource_mut::<ManagedWork>()
                 .unwrap()
                 .spawn_task(Some(panel), "Check model resources", move |_| {
                     dependencies.iter().any(|d| stamp(&d.path) != d.stamp)
@@ -300,14 +297,15 @@ pub(crate) fn update(world: &mut World) {
                     .cloned();
                 if let Some(text) = text {
                     let source = path.clone();
-                    match world
-                        .get_mut::<WorkspaceWork>(workspace)
-                        .unwrap()
-                        .spawn_task(Some(panel), "Prepare model", move |cancel| {
+                    match world.get_resource_mut::<ManagedWork>().unwrap().spawn_task(
+                        Some(panel),
+                        "Prepare model",
+                        move |cancel| {
                             prepare(text.to_string().as_bytes(), &source, || {
                                 cancel.is_cancelled()
                             })
-                        }) {
+                        },
+                    ) {
                         Ok(task) => {
                             state.job = Some(Preparation {
                                 stamp: revision,

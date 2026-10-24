@@ -5,7 +5,7 @@ Build bed2 with --features automation, then pass --binary to a pinned executable
 (or set BED2_FILETREE_BINARY / BED2_BINARY). A private executable copy also protects
 this run from concurrent builds replacing target/debug/bed2. No repository/project
 file is used as a mutation fixture. Protocol exit is not used to test managed
-shutdown: workspace.close must drain workers and flush preferences first.
+shutdown: application quit must drain workers and flush preferences first.
 Clipboard cases use the application's ordinary native clipboard (overwriting its
 contents with fixture paths); injected external-drop messages are explicitly NOT
 an OS Finder/Explorer drag. Internal drag and clipboard commands use real UI input.
@@ -149,14 +149,12 @@ def preview(app, path, *, layout=None, pinned=None, content=None, kind=None):
     return next(preview for preview in value["previews"] if matches(preview))
 
 
-def preference(value, workspace, root):
-    return next((record for preferences in value["preferences"]
-                 if preferences["workspace"] == workspace
-                 for record in preferences["roots"] if record["root"] == str(root)), None)
+def preference(value, root):
+    return next((record for record in value["preferences"] if record["root"] == str(root)), None)
 
 
-def storage(value, workspace):
-    return next((record for record in value["storage"] if record["workspace"] == workspace), None)
+def storage(value):
+    return next(iter(value["storage"]), None)
 
 
 def capture(app, filename, *, different_from=None, validate=True):
@@ -172,7 +170,7 @@ def capture(app, filename, *, different_from=None, validate=True):
 
 
 def open_native(app):
-    snapshot = app.wait_until(lambda snapshot: bool(snapshot["workbench"]["workspaces"])
+    snapshot = app.wait_until(lambda snapshot: bool(snapshot["workbench"]["layouts"])
                              and snapshot["render"]["pending_pipelines"] == 0
                              and bool(snapshot["ui"]["surfaces"]))
     render_frame = snapshot["render"]["frames"]
@@ -180,22 +178,22 @@ def open_native(app):
     snapshot = app.wait_until(lambda snapshot: snapshot["windows"][0]["focused"]
                              and snapshot["render"]["frames"] >= render_frame + 2
                              and snapshot["render"]["pending_pipelines"] == 0)
-    wait_value(app, lambda value: any(root["session_ready"] for root in value["workspace_roots"]))
+    wait_value(app, lambda value: value["project"] and value["project"]["session_ready"])
     snapshot = app.inspect()
-    workspace = next(workspace for workspace in snapshot["workbench"]["workspaces"] if workspace["active"])
+    workspace = snapshot["workbench"]
     # A restarted folder can now restore its previous panels. Give this focused
     # preferences scenario its own fresh layout instead of assuming no session.
     if inspection(app)["panels"]:
         app.request("layout.create", name="Files preference check", activate=True)
         snapshot = app.inspect()
-        workspace = next(workspace for workspace in snapshot["workbench"]["workspaces"] if workspace["active"])
+        workspace = snapshot["workbench"]
     layout = next(layout for layout in workspace["layouts"] if layout["active"])
     # The application's native View menu opens the scenario's tree.
     for viewport in snapshot["viewports"]:
         app.request("panel.close", panel=viewport["entity"])
     panel = open_panel(app, "Files")
     value = wait_value(app, lambda value: any(tree["entity"] == panel for tree in value["panels"]))
-    return workspace["entity"], layout["entity"], panel
+    return layout["entity"], panel
 
 
 def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
@@ -253,8 +251,8 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         # Do not install configure.clipboard: on macOS these cases must exercise
         # the actual system backend and its native cut-ownership observation.
         app.request("configure", fixed_dt=1 / 60)
-        workspace, layout, first = open_native(app)
-        project_preferences = Path(storage(wait_value(app, lambda value: storage(value, workspace) is not None), workspace)["path"])
+        layout, first = open_native(app)
+        project_preferences = Path(storage(wait_value(app, lambda value: storage(value) is not None))["path"])
         initial = wait_tree(app, first, lambda tree: tree["root"] == str(root)
                             and not tree["loading"] and str(root / "a.txt") in paths(tree))
         assert str(root / ".hidden.txt") not in paths(initial), initial
@@ -495,12 +493,12 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         wait_tree(app, first, lambda tree: str(root / ".hidden.txt") in paths(tree))
         menu(app, first, renamed_external, "Hide Selected")
         wait_tree(app, first, lambda tree: str(renamed_external) not in paths(tree))
-        value = wait_value(app, lambda value: preference(value, workspace, root) is not None
-                           and preference(value, workspace, root)["hide_hidden"] is False
-                           and "watch-renamed.txt" in preference(value, workspace, root)["hidden_paths"])
-        assert storage(value, workspace)["root"] == str(root), value
-        wait_value(app, lambda value: not storage(value, workspace)["pending"]
-                   and storage(value, workspace)["error"] is None)
+        value = wait_value(app, lambda value: preference(value, root) is not None
+                           and preference(value, root)["hide_hidden"] is False
+                           and "watch-renamed.txt" in preference(value, root)["hidden_paths"])
+        assert storage(value)["root"] == str(root), value
+        wait_value(app, lambda value: not storage(value)["pending"]
+                   and storage(value)["error"] is None)
         assert project_preferences.is_file()
         assert "version: 1" in project_preferences.read_text(encoding="utf-8")
         captures.append(take_capture(app, "04-visibility.png", different_from=captures[-1]))
@@ -567,13 +565,9 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         assert state(app, second)["generation"] == independent["generation"]
         captures.append(take_capture(app, "06-root-switch.png", different_from=captures[-1]))
 
-        # Admitted preferences survive native Workbench workspace shutdown and all
-        # tree/preview components retire. Transport exit is only final process cleanup.
-        app.request("workspace.close", workspace=workspace)
-        value = inspection(app)
-        assert not any(tree["workspace"] == workspace for tree in value["panels"]), value
-        assert not any(viewer["workspace"] == workspace for viewer in value["previews"]), value
-        wait_value(app, lambda value: all(not record["pending"] for record in value["storage"]))
+        # The application quit barrier flushes metadata and drains managed work.
+        from smoke_workspace_policy import clean_quit
+        clean_quit(app)
         saved_bytes = project_preferences.read_bytes()
         assert saved_bytes
 
@@ -582,27 +576,26 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
     before_mtime = project_preferences.stat().st_mtime_ns
     with Application([str(binary), str(root)], output=output / "restored", timeout=60) as app:
         app.request("configure", fixed_dt=1 / 60, clipboard="")
-        workspace, _, panel = open_native(app)
-        wait_value(app, lambda value: storage(value, workspace) is not None and storage(value, workspace)["loaded"])
+        _, panel = open_native(app)
+        wait_value(app, lambda value: storage(value) is not None and storage(value)["loaded"])
         restored = wait_tree(app, panel, lambda tree: tree["root"] == str(root)
                             and str(root / ".hidden.txt") in paths(tree)
                             and str(root / "watch-renamed.txt") not in paths(tree) and not tree["loading"])
         value = inspection(app)
-        preferences = preference(value, workspace, root)
+        preferences = preference(value, root)
         assert preferences["hide_hidden"] is False and "watch-renamed.txt" in preferences["hidden_paths"], value
-        assert storage(value, workspace)["error"] is None, value
+        assert storage(value)["error"] is None, value
         # Opening/focusing a new Files panel legitimately updates the workspace
         # arrangement. Visibility must remain intact, and an idle arrangement
         # must stop writing after its buffered mutation is acknowledged.
-        wait_value(app, lambda value: not storage(value, workspace)["pending"])
+        wait_value(app, lambda value: not storage(value)["pending"])
         idle_bytes = project_preferences.read_bytes()
         idle_mtime = project_preferences.stat().st_mtime_ns
         app.request("wait_frames", frames=30)
         assert project_preferences.read_bytes() == idle_bytes
         assert project_preferences.stat().st_mtime_ns == idle_mtime, "Idle workspace kept rewriting storage"
         captures.append(take_capture(app, "07-restored-preferences.png"))
-        app.request("workspace.close", workspace=workspace)
-        assert not inspection(app)["panels"]
+        clean_quit(app)
     return {"captures": captures, "capture_validation": not functional_only,
             "wide_root": wide_observation, "restored_root_rows": len(restored["rows"]),
             "external_drop_evidence": drop,
@@ -613,7 +606,7 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
                        "native inline rename/create", "human-readable error dialog with retained rename draft", "native internal drag move",
                        "injected Bevy external-drop events copy file/folder exactly once, root and enclosing-folder routing (not OS Finder drag)",
                        "context-menu duplicate/copy/paste", "moved preview path", "hidden preferences disk roundtrip",
-                       "external deletion closes sibling tabs and unloads sole viewers, including inactive layouts", "independent panel roots", "stale root generations", "managed workspace cleanup"],
+                       "external deletion closes sibling tabs and unloads sole viewers, including inactive layouts", "independent panel roots", "stale root generations", "managed session cleanup"],
             "fixture_cleanup": "TemporaryDirectory removes every mutation fixture after process shutdown"}
 
 

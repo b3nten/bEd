@@ -89,13 +89,13 @@ def bootstrap(app, panel, marker):
     return wait_state(app, panel, lambda p: marker in p["text"])
 
 
-def jobs(value, workspace):
-    return next((w["jobs"] for w in value["workspaces"] if w["entity"] == workspace), [])
+def jobs(value):
+    return value["jobs"]
 
 
-def assert_owned(app, workspace, panels):
-    # Workspace-owned preference I/O is independent of panel-owned PTY work.
-    owned = [job for job in jobs(inspection(app), workspace) if job["owner"] is not None]
+def assert_owned(app, panels):
+    # Session-owned preference I/O is independent of panel-owned PTY work.
+    owned = [job for job in jobs(inspection(app)) if job["owner"] is not None]
     assert {j["owner"] for j in owned} == set(panels), owned
     assert len(owned) == len(panels) and all(j["status"] == "Running" for j in owned), owned
 
@@ -105,7 +105,7 @@ def tick(value):
                default=-1)
 
 
-def observe_hidden(app, panel, pid, *, inactive=False):
+def observe_hidden(app, panel, pid):
     # Keep the normal app updating for actual wall time while a shell emits output.
     # Hidden snapshots may be stale; assert the transcript only after showing it.
     deadline = time.monotonic() + 2.2
@@ -113,16 +113,14 @@ def observe_hidden(app, panel, pid, *, inactive=False):
         value = state(app, panel)
         assert value["status"] == "Running" and value["pid"] == pid, value
         assert value["error"] is None and not value["presentation"]["visible"], value
-        if inactive:
-            assert not value["active_workspace"] and not value["running_workspace"], value
-        owned = jobs(inspection(app), value["workspace"])
+        owned = jobs(inspection(app))
         assert any(j["owner"] == panel and j["status"] == "Running" for j in owned), owned
         app.request("wait_frames", frames=6)
 
 
 def process_exists(pid):
     # Signal zero is an existence probe only. The scenario never kills children;
-    # their normal Terminal/WorkspaceWork owner must do all process cleanup.
+    # their normal Terminal/ManagedWork owner must do all process cleanup.
     try:
         os.kill(pid, 0)
         return True
@@ -132,12 +130,12 @@ def process_exists(pid):
         return True
 
 
-def wait_retired(app, workspace, panels, pids):
+def wait_retired(app, panels, pids):
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         value = inspection(app)
         remaining = [p["entity"] for p in value["panels"] if p["entity"] in panels]
-        owned = [j for j in jobs(value, workspace) if j["owner"] in panels]
+        owned = [j for j in jobs(value) if j["owner"] in panels]
         alive = [pid for pid in pids if process_exists(pid)]
         if not remaining and not owned and not alive:
             return
@@ -194,8 +192,7 @@ def capture_checked(app, filename, *, different_from=None):
                    "before": render_observation(before)}
     control_layout = None
     previous_layout = next((layout["entity"]
-                            for workspace in before["workbench"]["workspaces"] if workspace["active"]
-                            for layout in workspace["layouts"] if layout["active"]), None)
+                            for layout in before["workbench"]["layouts"] if layout["active"]), None)
     try:
         diagnostics["after"] = render_observation(app.inspect())
         panels = inspection(app)["panels"]
@@ -274,8 +271,7 @@ def main():
         # If this is transparent, no Terminal panel has been opened yet: isolate
         # a window/render/capture problem instead of blaming terminal output.
         captures.append(capture_checked(app, "00-workbench-control.png"))
-        workspace = snapshot["workbench"]["workspaces"][0]
-        workspace_id = workspace["entity"]
+        workspace = snapshot["workbench"]
         layout = workspace["layouts"][0]["entity"]
         area = workspace["layouts"][0]["areas"][0]["entity"]
         app.request("panel.close", panel=snapshot["viewports"][0]["entity"])
@@ -287,7 +283,7 @@ def main():
         initial = bootstrap(app, first, "BED2_READY")
         first_pid = initial["pid"]
         assert initial["grid"]["cols"] > 0 and initial["grid"]["rows"] > 0
-        assert_owned(app, workspace_id, [first])
+        assert_owned(app, [first])
         wait_state(app, first, lambda p: p["tab_title"] not in ("", "Terminal"))
         texts = [t["text"] for t in app.inspect()["ui"]["texts"]]
         assert "Terminal" not in texts and "Stop" not in texts and "Shell" not in texts, texts
@@ -430,11 +426,10 @@ def main():
         wait_state(app, second, lambda p: "BED2_IDENTITY:two" in p["text"])
         command(app, first, "printf '\\n%s%s:%s\\n' 'BED2_' 'IDENTITY' \"$BED2_ID\"")
         wait_state(app, first, lambda p: "BED2_IDENTITY:one" in p["text"])
-        assert_owned(app, workspace_id, [first, second])
+        assert_owned(app, [first, second])
         captures.append(capture_checked(app, "04-independent.png", different_from=captures[-1]))
 
-        # Output continues while a tab is hidden and while its workspace is
-        # inactive with background_updates disabled. Repaint before reading text.
+        # Output continues while a tab is hidden and while its layout is hidden. Repaint before reading text.
         command(app, first,
                 "i=0; while [ \"$i\" -lt 60 ]; do printf '\\n%s%s:%s\\n' 'BED2_' 'TICK' \"$i\"; "
                 "i=$((i + 1)); sleep 1; done")
@@ -445,11 +440,11 @@ def main():
         app.request("panel.focus", panel=first)
         shown = wait_state(app, first, lambda p: p["presentation"]["visible"] and tick(p) >= before + 2)
         before = tick(shown)
-        app.request("workspace.configure", workspace=workspace_id, background_updates=False)
-        other = app.request("workspace.create", name="Other", activate=True)
-        observe_hidden(app, first, first_pid, inactive=True)
-        assert_owned(app, workspace_id, [first, second])
-        app.request("workspace.activate", workspace=workspace_id)
+        app.request("app.select_layout", slot=3)
+        other = {"layout":next(l["layout"] for l in app.request("app.inspect_layouts")["layouts"] if l["active"])}
+        observe_hidden(app, first, first_pid)
+        assert_owned(app, [first, second])
+        app.request("layout.activate", layout=layout)
         wait_state(app, first, lambda p: p["presentation"]["visible"] and tick(p) >= before + 2)
         control(app, first, "KeyC")
         command(app, first, print_marker("BED2_INTERRUPTED"))
@@ -477,8 +472,7 @@ def main():
         fresh = app.request("layout.create", name="Fresh terminals", activate=True)
         fresh_ids = [open_panel(app, "Terminal")]
         snapshot = app.inspect()
-        fresh_area = next(a["entity"] for w in snapshot["workbench"]["workspaces"]
-                          for l in w["layouts"] if l["entity"] == fresh["layout"] for a in l["areas"])
+        fresh_area = next(a["entity"] for l in snapshot["workbench"]["layouts"] if l["entity"] == fresh["layout"] for a in l["areas"])
         fresh_split = app.request("area.split", area=fresh_area, axis="horizontal", fraction=0.5)
         fresh_ids.append(open_panel(app, "Terminal", area=fresh_split["area"]))
         fresh_pids = [wait_state(app, p, lambda v: v["status"] == "Running" and v["pid"] is not None)["pid"]
@@ -486,25 +480,26 @@ def main():
         assert len(set(fresh_pids + [first_pid, second_pid])) == 4, fresh_pids
         assert all("BED2_RESTARTED" not in state(app, p)["text"] and "BED2_SECOND_ONLY" not in state(app, p)["text"]
                    for p in fresh_ids)
-        assert_owned(app, workspace_id, [first, second] + fresh_ids)
+        assert_owned(app, [first, second] + fresh_ids)
         bootstrap(app, fresh_ids[0], "BED2_NEW_LAYOUT_FRESH")
         captures.append(capture_checked(app, "08-fresh-layout.png"))
         app.request("layout.delete", layout=fresh["layout"])
-        wait_retired(app, workspace_id, fresh_ids, fresh_pids)
+        wait_retired(app, fresh_ids, fresh_pids)
         app.request("layout.activate", layout=layout)
         assert state(app, first)["pid"] == first_pid
 
-        # Close without pressing Stop: normal panel despawn and workspace close
+        # Close without pressing Stop: normal panel despawn and layout retirement
         # must cancel/reap both the shell and a live foreground process.
         second_pids = foreground_child(app, second, "PANEL_CHILD")
         app.request("panel.close", panel=second)
-        wait_retired(app, workspace_id, [second], second_pids)
+        wait_retired(app, [second], second_pids)
         assert state(app, first)["status"] == "Running"
         first_pids = foreground_child(app, first, "WORKSPACE_CHILD")
-        app.request("workspace.close", workspace=workspace_id, replacement=other["workspace"])
-        wait_retired(app, workspace_id, [first], first_pids)
+        app.request("layout.delete", layout=layout)
+        app.request("layout.activate", layout=other["layout"])
+        wait_retired(app, [first], first_pids)
         snapshot = app.inspect()
-        assert [w["entity"] for w in snapshot["workbench"]["workspaces"]] == [other["workspace"]]
+        assert all(l["entity"] != layout for l in snapshot["workbench"]["layouts"])
         assert inspection(app)["panels"] == []
 
         # Rebuilding after cleanup still uses the ordinary panel lifecycle.
@@ -513,9 +508,9 @@ def main():
         captures.append(capture_checked(app, "09-rebuilt.png"))
         assert all(s["diagnostics"]["error"] is None for s in app.inspect()["ui"]["surfaces"])
         rebuilt_pid = state(app, rebuilt)["pid"]
-        app.request("workspace.close", workspace=other["workspace"])
-        wait_retired(app, other["workspace"], [rebuilt], [rebuilt_pid])
-        assert inspection(app)["panels"] == []
+        from smoke_workspace_policy import clean_quit
+        clean_quit(app)
+        assert not process_exists(rebuilt_pid), "Orderly quit left its terminal process alive"
 
     log = re.sub(r"\x1b\[[0-9;]*m", "", (output / "stderr.log").read_text())
     assert " ERROR " not in log and "panicked at" not in log, log

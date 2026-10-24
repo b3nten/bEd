@@ -14,7 +14,7 @@ const ERROR_DURATION: Duration = Duration::from_secs(8);
 
 /// Keep the observed error after dismissal so unchanged source state cannot
 /// recreate its notification every frame. Document failures remain authoritative.
-#[derive(Component, Default)]
+#[derive(Resource, Default)]
 struct ErrorNotice {
     observed: Option<(Option<DocumentId>, String, Instant)>,
     reported_at: Option<Instant>,
@@ -73,9 +73,9 @@ impl Plugin for StatusBarPlugin {
         {
             use bedtime_automation2::AutomationAppExt;
             app.register_automation_command("app.inspect_status_bar",|world,_| {
-                let bars:Vec<_>=world.query::<(Entity,&StatusBar,&InWorkspace)>().iter(world).map(|(entity,bar,owner)| {
+                let bars:Vec<_>=world.query::<(Entity,&StatusBar)>().iter(world).map(|(entity,bar)| {
                     let s=&bar.snapshot;
-                    serde_json::json!({"entity":entity.to_bits().to_string(),"workspace":owner.0.to_bits().to_string(),"panel":s.panel.map(|p|p.to_bits().to_string()),"document":s.document.map(|d|d.0.to_bits().to_string()),"title":s.title,"lsp":s.lsp,"server_errors":s.server_errors,"errors":s.errors,"warnings":s.warnings,"stale_diagnostics":s.stale_diagnostics,"no_report":s.no_report,"work":s.work,"unversioned":s.unversioned,"document_error":s.document_error,"details":s.details,"menu_rect":bar.menu_rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})),"rect":bar.rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]}))})
+                    serde_json::json!({"entity":entity.to_bits().to_string(),"panel":s.panel.map(|p|p.to_bits().to_string()),"document":s.document.map(|d|d.0.to_bits().to_string()),"title":s.title,"lsp":s.lsp,"server_errors":s.server_errors,"errors":s.errors,"warnings":s.warnings,"stale_diagnostics":s.stale_diagnostics,"no_report":s.no_report,"work":s.work,"unversioned":s.unversioned,"document_error":s.document_error,"details":s.details,"menu_rect":bar.menu_rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})),"rect":bar.rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]}))})
                 }).collect();Ok(serde_json::json!({"bars":bars}))
             });
         }
@@ -83,16 +83,9 @@ impl Plugin for StatusBarPlugin {
 }
 
 fn install(world: &mut World) {
-    let workspaces: Vec<_> = world
-        .query_filtered::<Entity, With<WorkspaceUi>>()
-        .iter(world)
-        .collect();
-    for workspace in workspaces {
-        let mut state = snapshot(world, workspace);
-        let mut notice = world
-            .entity_mut(workspace)
-            .take::<ErrorNotice>()
-            .unwrap_or_default();
+    {
+        let mut state = snapshot(world);
+        let mut notice = world.remove_resource::<ErrorNotice>().unwrap_or_default();
         if notice.reported_at != state.document_error_at {
             notice.observed = None;
             notice.reported_at = state.document_error_at;
@@ -104,11 +97,9 @@ fn install(world: &mut World) {
         ) {
             state.document_error = None;
         }
-        world.entity_mut(workspace).insert(notice);
+        world.insert_resource(notice);
         let show = !state.lsp.is_empty() || state.document_error.is_some();
-        let Ok(mut workbench) = Workbench::for_entity(world, workspace) else {
-            continue;
-        };
+        let mut workbench = Workbench::new(world);
         if !show {
             if workbench
                 .status_bar()
@@ -116,7 +107,7 @@ fn install(world: &mut World) {
             {
                 workbench.remove_status_bar();
             }
-            continue;
+            return;
         }
         if workbench.status_bar().is_none() {
             let renderer = workbench.register_status_bar(draw);
@@ -137,24 +128,17 @@ fn install(world: &mut World) {
     }
 }
 
-fn snapshot(world: &mut World, workspace: Entity) -> StatusSnapshot {
+fn snapshot(world: &mut World) -> StatusSnapshot {
     // Startup/restore may intentionally have a workspace without any layout.
-    let layout = world
-        .query_filtered::<(Entity, &InWorkspace), With<ActiveLayout>>()
-        .iter(world)
-        .find_map(|(layout, owner)| (owner.0 == workspace).then_some(layout));
-    let focused = layout.and_then(|layout| {
-        Workbench::for_entity(world, workspace)
-            .ok()
-            .and_then(|w| w.focused_panel(layout))
-    });
+    let focused =
+        active_layout(world).and_then(|layout| Workbench::new(world).focused_panel(layout));
     let panel = focused
         .filter(|p| {
             world.get::<WorkbenchEditor>(*p).is_some() && world.get::<DocumentView>(*p).is_some()
         })
         .or_else(|| {
             world
-                .get::<bed_structure2::StructureSource>(workspace)
+                .get_resource::<bed_structure2::StructureSource>()
                 .and_then(|s| s.source)
                 .filter(|s| {
                     world
@@ -167,7 +151,7 @@ fn snapshot(world: &mut World, workspace: Entity) -> StatusSnapshot {
         panel,
         ..Default::default()
     };
-    let servers = workbench::workspace_servers(world, workspace);
+    let servers = workbench::session_servers(world);
     for server in &servers {
         if server.retiring {
             continue;
@@ -293,9 +277,6 @@ fn snapshot(world: &mut World, workspace: Entity) -> StatusSnapshot {
 }
 
 fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
-    let Some(workspace) = world.get::<InWorkspace>(context.view).map(|w| w.0) else {
-        return;
-    };
     let Some(state) = world
         .get::<StatusBar>(context.view)
         .map(|bar| bar.snapshot.clone())
@@ -322,17 +303,13 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
         );
     }
     egui::Popup::menu(&menu).show(|ui| {
-        let servers = workbench::workspace_servers(world, workspace);
+        let servers = workbench::session_servers(world);
         if ui.button("Open Language Servers").clicked() {
-            if let Some(layout) = world
-                .query_filtered::<(Entity, &InWorkspace), With<ActiveLayout>>()
-                .iter(world)
-                .find_map(|(e, o)| (o.0 == workspace).then_some(e))
-            {
-                let _ = crate::layouts::open_or_focus(
+            if let Some(layout) = active_layout(world) {
+                let _ = crate::menus::open_or_focus(
                     world,
                     layout,
-                    crate::layouts::ToolKind::LanguageServers,
+                    <crate::lsp_panel::LspPanel as bedtime_workbench2::Panel>::KEY,
                 );
             }
             ui.close();
@@ -389,7 +366,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
         .on_hover_text(state.work.join("\n"));
     }
     if state.server_errors > 0 {
-        let details = workbench::workspace_servers(world, workspace)
+        let details = workbench::session_servers(world)
             .into_iter()
             .filter_map(|server| match server.status {
                 ServerStatus::Failed(error) if !server.retiring => {
@@ -440,7 +417,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
         }
         if let Some(error) = &state.document_error {
             if let Some((_, _, since)) = world
-                .get::<ErrorNotice>(workspace)
+                .get_resource::<ErrorNotice>()
                 .and_then(|n| n.observed.as_ref())
             {
                 ui.ctx()
@@ -503,8 +480,8 @@ mod tests {
     fn missing_lsp_reserves_no_status_row_in_either_workspace() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        let a = Workspaces::new(app.world_mut()).open("A").entity();
-        let b = Workspaces::new(app.world_mut()).open("B").entity();
+        let a = crate::test_layout(app.world_mut());
+        let b = crate::test_layout(app.world_mut());
         install(app.world_mut());
         install(app.world_mut());
         assert_eq!(
@@ -532,20 +509,19 @@ mod tests {
     fn empty_workspaces_render_before_session_restoration_creates_a_layout() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        let workspace = app.world_mut().spawn(Workspace::default()).id();
+        let _workspace = app.world_mut().spawn_empty().id();
         install(app.world_mut());
-        assert_eq!(snapshot(app.world_mut(), workspace).document, None);
-        assert_eq!(snapshot(app.world_mut(), workspace).lsp, "");
+        assert_eq!(snapshot(app.world_mut()).document, None);
+        assert_eq!(snapshot(app.world_mut()).lsp, "");
     }
 
     #[test]
     fn status_uses_the_focused_document_and_reports_save_errors_without_lsp() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        let w = Workspaces::new(app.world_mut()).open("Code").entity();
+        let w = crate::test_layout(app.world_mut());
         let document = open_document(
             app.world_mut(),
-            w,
             TextBuffer::from("text"),
             DocumentOptions::loaded("notes.txt"),
         )
@@ -572,7 +548,7 @@ mod tests {
         let until = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
             app.update();
-            let state = snapshot(app.world_mut(), w);
+            let state = snapshot(app.world_mut());
             if let Some(error) = state.document_error {
                 assert!(error.contains("Disk is unavailable"));
                 assert_eq!(state.document, Some(document.id()));
@@ -594,7 +570,7 @@ mod tests {
                 .status_bar(),
             Some(bar)
         );
-        assert_eq!(app.world().get::<InWorkspace>(bar).unwrap().0, w);
+        assert_eq!(Workbench::new(app.world_mut()).status_bar(), Some(bar));
         app.world_mut().despawn(panel);
         install(app.world_mut());
         assert_eq!(
@@ -603,6 +579,6 @@ mod tests {
                 .status_bar(),
             None
         );
-        assert_eq!(snapshot(app.world_mut(), w).document, None);
+        assert_eq!(snapshot(app.world_mut()).document, None);
     }
 }

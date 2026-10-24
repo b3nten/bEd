@@ -147,7 +147,7 @@ normally, and attach `CodeLanguage` to the document entity (`DocumentId.0`).
 `DocumentAnalysis` owns one managed worker/session per document with open editor
 viewers, including hidden tabs. Its ordinary Update system submits cheap roots,
 polls results and retires attachments after the last viewer detaches; Workbench
-owns worker shutdown across document/workspace closure. Drawing attaches the
+owns worker shutdown across document/session closure. Drawing attaches the
 document's analysis before temporarily removing the view component.
 `analysis_for_panel` validates the panel binding, current revision and language
 before returning it.

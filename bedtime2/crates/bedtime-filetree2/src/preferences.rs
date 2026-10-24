@@ -3,7 +3,7 @@
 //! No filesystem access is performed here: roots may be temporarily unavailable.
 //! Native path units are persisted, not display strings, and records from another
 //! platform are rejected rather than converted lossily.
-use bevy::prelude::Component;
+use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -53,7 +53,7 @@ impl FileTreeVisibility {
 
 /// Application-owned preferences shared by all panels using the same root.
 /// The application owns storage I/O and decides when to encode or decode them.
-#[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileTreePreferences {
     pub roots: BTreeMap<PathBuf, FileTreeVisibility>,
 }
@@ -163,7 +163,7 @@ fn validate_root(path: &Path) -> Result<(), String> {
 }
 
 fn validate_normalized(path: &Path) -> Result<(), String> {
-    // Components elides interior '.', repeated separators and trailing separators.
+    // Resources elides interior '.', repeated separators and trailing separators.
     // Compare native strings, not Path equality (which also elides those spellings).
     let normalized: PathBuf = path.components().collect();
     if path.as_os_str() != normalized.as_os_str()

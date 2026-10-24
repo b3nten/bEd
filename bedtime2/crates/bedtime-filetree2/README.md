@@ -2,7 +2,7 @@
 
 Concrete local filesystem panels for Workbench2. The application supplies a root
 **on each panel**, chooses what an activation opens, and owns preference storage.
-There is no implicit workspace root, document-backed filesystem, recursive finder
+There is no implicit project root, document-backed filesystem, recursive finder
 index, Git installation, or generic decoration/provider framework.
 
 ## Application contract
@@ -24,7 +24,7 @@ let panel = world.spawn((
 
 - Missing `FileTreeRoot` means **unconfigured**, not cwd. A supplied relative path
   is resolved on work. An inaccessible/non-directory root is an explicit error.
-- Changing/removing the root, or moving a panel to another workspace, starts a new
+- Changing/removing the root starts a new
   browsing generation. Expansion, selection, drafts and stale intentions reset.
 - `FileTreeSettings` is per-panel runtime configuration (not hidden-path storage).
   `read_only` blocks filesystem mutations at admission, including incoming drops,
@@ -32,14 +32,13 @@ let panel = world.spawn((
   a read-only panel to a writable one copies rather than moves. This does not
   constrain document loading/editability; those are application policy. Indentation
   defaults to 16 UI points, clamps to `0..=64`, and nonfinite values use 16.
-- Panels in one workspace share filesystem observations and work, but have
-  independent roots, expansion, selection, scrolling and inline edits. Different
-  workspaces have separate runtimes. Hiding a panel or disabling background UI
-  updates does not stop watching or result reconciliation.
+- Panels in the World share filesystem observations and work, with independent
+  roots, expansion, selection, scrolling and inline edits. Hiding tabs/layouts
+  does not stop watching or result reconciliation.
 - Files emit buffered Bevy `FileTreeOpenRequested` messages with the originating
-  `panel`, `workspace`, actual native `PathBuf`, and `FileTreeActivation`.
+  `panel`, actual native `PathBuf`, and `FileTreeActivation`.
   Consume these after `FileTreeSystems::Update`; do not infer the destination from
-  whichever workspace happens to be active at delivery.
+  whichever panel/layout happens to be selected at delivery.
 - The first single click is delivered immediately. A double click's second click
   produces `DoubleClick`, **not another `SingleClick`**. Applications can reuse a
   preview on single clicks and promote it on double/keyboard/context activation.
@@ -57,7 +56,7 @@ Hosts may install `FileTreeOpenWith` to supply labeled opaque opening choices
 for a captured leaf path. The provider runs during drawing and must perform no
 I/O. Menus retain the ordinary root/generation capture rules; admission rechecks
 the visible leaf and current provider choices before emitting
-`FileTreeOpenWithRequested { panel, workspace, path, choice }`. The host owns
+`FileTreeOpenWithRequested { panel, path, choice }`. The host owns
 viewer interpretation and placement. Directory/background menus omit these
 choices; multiple selection still targets the right-clicked leaf. Without the
 resource, the ordinary context menu is unchanged.
@@ -94,7 +93,7 @@ resource, the ordinary context menu is unchanged.
   the folder's entire visible subtree. Extents are indexed off-thread; rendering
   does not scan all descendants. Closed folders expand after continuous hover,
   and only the hovered viewport autoscrolls.
-- Self/descendant drops, same-parent moves, stale/cross-workspace payloads and
+- Self/descendant drops, same-parent moves, stale payloads and
   read-only destinations have no overlay and are silent no-ops. The eligibility
   decision is shared by feedback and release. Real I/O failures still report.
 - Only the pointer-owning panel consumes native drops, exactly once, without
@@ -114,7 +113,7 @@ create error dialogs, and partial completed changes are never called a rollback.
 
 ## Work, observations and responsiveness
 
-One workspace-managed filesystem worker owns directory reads, sorting, flattened
+One world-managed filesystem worker owns directory reads, sorting, flattened
 row projection, native watch management and serialized mutations. Initial opening
 reads the root only; expanded directories are loaded lazily. Symlinks are rows,
 never recursively traversed. Sorting is directories first, case-insensitive display
@@ -130,7 +129,7 @@ does not erase selection or an unfinished rename. Loading observations are not
 proof of deletion.
 
 Latest-value requests/snapshots coalesce. Limits are 64 views, 512 cached/expanded
-directories, and 16 queued/running/undrained mutations per workspace; exceeding a
+directories, and 16 queued/running/undrained mutations per World; exceeding a
 limit reports an error rather than silently omitting expanded branches. Native
 notification intake is bounded, and overflow requests reconciliation. Directory
 count is bounded, not the total number of entries in a very wide directory.
@@ -180,26 +179,24 @@ but new directory reads/watch reconciliation wait until it finishes or is cancel
 `FileTreeOperationFinished` carries actual completed changes, per-path errors and
 cancellation—even after the origin closes or changes root. Cancellation is not
 rollback. Outcomes have reserved queue slots and an application-World archive
-independent of workspace entity lifetime. A failed worker without a final result
+independent of the originating panel lifetime. A failed worker without a final result
 reports that effects are unknown rather than claiming nothing happened.
 
-Hosts needing to persist move-related state before destructive workspace closure
-can use `filetree_operation_count(world, workspace)`: this includes admitted work
-whose panel has closed. Defer close until outcomes are reconciled, then admit the
-host's preference save before cancelling its storage worker. Direct Workbench
-close still cancels/drains work and reports outcomes; it cannot preserve custom
-components of an already-retired workspace for the application.
+Hosts needing to persist move-related state before session shutdown can use
+`filetree_operation_count(world)`, including admitted work whose panel has closed.
+Reconcile outcomes and admit preference saves before cancelling storage workers.
+`shutdown_work` cancels/drains work; dropping the World alone is not the host's
+persistence protocol.
 
 ## Visibility and persistence
 
-`FileTreePreferences` is workspace-owned data, keyed by each canonical absolute
+`FileTreePreferences` is a world resource, keyed by each canonical absolute
 root. `FileTreeVisibility` combines the hidden-file policy with explicit
 root-relative hidden paths; hiding a directory hides descendants too. Reveal
 Hidden Entries temporarily bypasses both filters and dims hidden rows. Unhide and
 Clear Explicitly Hidden Entries provide recovery. Temporary reveal is not saved.
 
-`FileTreePreferencesChanged` tells the application to persist its custom component;
-there are no core Workbench layout snapshots or snapshot change notifications.
+`FileTreePreferencesChanged` tells the application to persist this resource; storage destinations remain application-owned.
 `encode`/`decode`
 provide a strict versioned JSON format, losslessly encoding Unix bytes or Windows
 wide path units. Unsupported versions/platforms, duplicates, malformed paths and
@@ -224,9 +221,9 @@ cargo test --offline --locked -p bedtime-filetree2 -p bedtime-clipboard2
 ```
 
 bEd2 installs Files and routes activations to file-backed editors with optional
-Tree-sitter analysis and Structure. Its application policy chooses home for the temporary workspace or an explicitly
+Tree-sitter analysis and Structure. Its application policy chooses home for the temporary home session or an explicitly
 opened folder, background loading, source-checked saving and centralized RON
-visibility storage alongside the workspace's settings/layouts. The library's explicit per-panel-root/activation contract is unchanged.
+visibility storage alongside the project's settings/layouts. The library's explicit per-panel-root/activation contract is unchanged.
 The application scenarios use temporary projects:
 
 ```sh

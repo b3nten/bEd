@@ -15,7 +15,7 @@ commands.spawn((TerminalPanel::default(), InArea(area)));
 The descriptive key is `bedtime.terminal`, with label **Terminal**; it is not a
 construction-registry entry. The component requires `PanelInstance::of::<Self>()`,
 so metadata and drawing exist as soon as the spawn applies. The plugin creates no
-workspace, window, camera or renderer. No panel registration is needed.
+window, camera or renderer. No panel registration is needed.
 
 Instance tab labels follow the local foreground process, falling back to the
 launched shell name and then **Terminal** before a runtime exists. The shared PTY
@@ -88,8 +88,7 @@ origins are removed, including when commands are disabled in a nested applicatio
 
 Handlers run during `TerminalSystems::Update`, after terminal observations. The
 invocation contains native `OsString` arguments, the helper's current directory,
-and the validated originating panel/workspace, independent of current focus or
-workspace activation. Restarted, stopped or closed origins are rejected. Command
+and the validated originating panel/runtime token, independent of current focus. Restarted, stopped or closed origins are rejected. Command
 semantics, file/viewer routing and quit/readiness policy belong to the application.
 Workbench's argument-free contextual command API is unchanged.
 
@@ -105,26 +104,26 @@ no system-wide helper installation or separate executable build is needed.
 ## Ownership and lifecycle
 
 - An unshown panel is `Pending`. Its first content-size observation allows the
-  ordinary Update system to admit a panel-owned `WorkspaceWork` task.
+  ordinary Update system to admit a panel-owned `ManagedWork` task.
 - That single worker creates and owns the PTY, child, parser and terminal model.
   No second supervisor thread or application-global session registry is installed.
   A bounded ordered input handoff retries backend backpressure, including key/
   mouse release and focus cleanup. New process input pauses while it is backed up;
   exceeding its 512-entry/4 MiB limit or permanently rejecting input explicitly
   stops the runtime rather than leaving held input or executing a partial line.
-- The worker reads and parses output in hidden panels and inactive workspaces,
+- The worker reads and parses output in hidden panels and layouts,
   independently of `background_updates`. Only drawn views request fresh viewport
   snapshots and prepare text. A hidden panel's inspected viewport may be stale
   until it is shown again; this does not pause terminal I/O.
-- Moving tabs within a workspace retains the same session. Work is owned by the
-  workspace in which it was admitted, with the panel as its shorter-lived owner.
+- Moving tabs between layouts retains the same terminal session. Work belongs to
+  the world ManagedWork resource, with the panel as its shorter-lived owner.
 - The application-facing `stop()` terminates the child and keeps the transcript;
   there is no Stop button in the canvas. Shell exit exposes its status and also
   retains scrollback, selection and copying. **Restart** finishes
   the old runtime before admitting a fresh one, with a fresh transcript. Restart
   requires positively confirmed child cleanup, not merely a cancelled task result.
 - Closing/despawning a panel requests cleanup without waiting on the UI thread.
-  Workspace closure and `Workspaces::shutdown_work()` track actual completion.
+  `shutdown_work(world)` and `work_finished(world)` track actual completion.
   The application's existing save/discard/quit policy remains authoritative; it
   must keep updating until `work_finished()` before exiting.
 - Session persistence and restore recipes are application-owned; core Workbench
@@ -229,7 +228,7 @@ python3 bedtime2/tools/smoke_open.py
 
 The test suite targets concrete composition/lazy startup, actual local PTY I/O,
 resize, exit/transcript selection, restart, hidden/inactive operation, failed
-startup, panel despawn, workspace closure and shutdown admission. The native smoke
+startup, panel despawn, layout retirement and shutdown admission. The native smoke
 uses application-owned panel creation and injected input rather than a test-only terminal
 write endpoint. Its appearance scenario covers dark/light/custom ANSI palettes,
 normal/bright colors, live font-size changes, retained sessions/transcripts,
@@ -240,7 +239,7 @@ have passed on every platform.
 
 Shell commands were verified on 2026-10-22 on macOS: all 47 Terminal2 tests and
 11 shared transport tests passed. The new tests exercise deferred/error replies,
-native argument/cwd bytes, inactive-workspace origins, restart/close rejection,
+native argument/cwd bytes, hidden-layout origins, restart/close rejection,
 abandoned handlers and atomic registration. Unix socket tests require execution
 outside the macOS filesystem sandbox. `smoke_open.py` passed against the native
 automation application, including pre-GUI helper failure and saved-session loading

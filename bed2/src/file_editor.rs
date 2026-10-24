@@ -151,24 +151,18 @@ fn navigate(
     Ok(serde_json::json!({"panel": panel.to_bits().to_string()}))
 }
 
-fn find_source(
-    world: &mut World,
-    workspace: Entity,
-    path: &Path,
-) -> Option<DocumentHandle<TextBuffer>> {
+fn find_source(world: &mut World, path: &Path) -> Option<DocumentHandle<TextBuffer>> {
     let id = world
-        .query::<(Entity, &FileSource, &InWorkspace)>()
+        .query::<(Entity, &FileSource)>()
         .iter(world)
-        .find_map(|(entity, source, owner)| {
-            (owner.0 == workspace && source.path.as_deref() == Some(path))
-                .then_some(DocumentId(entity))
+        .find_map(|(entity, source)| {
+            (source.path.as_deref() == Some(path)).then_some(DocumentId(entity))
         })?;
     cast_document(world, id).ok()
 }
 
-pub fn load_stamp(world: &mut World, panel: Entity, path: &Path) -> Option<(DocumentId, u64)> {
-    let workspace = world.get::<InWorkspace>(panel)?.0;
-    let handle = find_source(world, workspace, path)?;
+pub fn load_stamp(world: &mut World, _panel: Entity, path: &Path) -> Option<(DocumentId, u64)> {
+    let handle = find_source(world, path)?;
     Some((
         handle.id(),
         inspect_document(world, handle.id()).ok()?.source_generation,
@@ -177,11 +171,8 @@ pub fn load_stamp(world: &mut World, panel: Entity, path: &Path) -> Option<(Docu
 
 /// Equality against large source/canonical snapshots is resolved on the loader
 /// worker. Reusing an equal root makes main-world reconciliation constant-time.
-pub fn load_snapshots(world: &mut World, panel: Entity, path: &Path) -> Vec<TextBuffer> {
-    let Some(workspace) = world.get::<InWorkspace>(panel).map(|owner| owner.0) else {
-        return Vec::new();
-    };
-    let Some(handle) = find_source(world, workspace, path) else {
+pub fn load_snapshots(world: &mut World, _panel: Entity, path: &Path) -> Vec<TextBuffer> {
+    let Some(handle) = find_source(world, path) else {
         return Vec::new();
     };
     let mut snapshots = vec![read_document(world, handle).unwrap().clone()];
@@ -204,11 +195,7 @@ pub fn bind_loaded(
     text: &TextBuffer,
     stamp: Option<(DocumentId, u64)>,
 ) -> Result<(), String> {
-    let workspace = world
-        .get::<InWorkspace>(panel)
-        .ok_or("Editor has no workspace")?
-        .0;
-    let handle = if let Some(handle) = find_source(world, workspace, path) {
+    let handle = if let Some(handle) = find_source(world, path) {
         if let Some((document, generation)) = stamp.filter(|(document, _)| *document == handle.id())
         {
             match offer_document_external_update(
@@ -240,8 +227,7 @@ pub fn bind_loaded(
         let mut options = DocumentOptions::loaded(title);
         options.initial_state =
             DocumentInitialState::Loaded(Some(SourceVersion(text.fingerprint())));
-        let handle =
-            open_document(world, workspace, text.clone(), options).map_err(|e| e.to_string())?;
+        let handle = open_document(world, text.clone(), options).map_err(|e| e.to_string())?;
         world.entity_mut(handle.id().entity()).insert(FileSource {
             path: Some(path.to_owned()),
             pending_binding: true,
@@ -254,7 +240,12 @@ pub fn bind_loaded(
     };
     if world
         .get::<crate::files::FilePreviewPanel>(panel)
-        .is_some_and(|p| matches!(p.viewer, crate::opening::ViewerId::Image | crate::opening::ViewerId::Model))
+        .is_some_and(|p| {
+            matches!(
+                p.viewer,
+                crate::opening::ViewerId::Image | crate::opening::ViewerId::Model
+            )
+        })
     {
         bind_document_view(world, panel, handle).map_err(|e| e.to_string())?;
         return Ok(());
@@ -284,9 +275,10 @@ pub fn bind_loaded(
 }
 
 /// A disk viewer never serializes the canonical editor's unsaved contents.
-pub(crate) fn disk_view_has_unsaved(world: &mut World, workspace: Entity, path: &Path) -> bool {
-    find_source(world, workspace, path).is_some_and(|handle| {
-        inspect_document(world, handle.id()).is_ok_and(|info| info.dirty || info.has_drafts || info.saving)
+pub(crate) fn disk_view_has_unsaved(world: &mut World, path: &Path) -> bool {
+    find_source(world, path).is_some_and(|handle| {
+        inspect_document(world, handle.id())
+            .is_ok_and(|info| info.dirty || info.has_drafts || info.saving)
     })
 }
 

@@ -1,6 +1,6 @@
 use bedtime_ui2::{UiContext, egui};
 use bedtime_workbench2::{
-    Panel, PanelInstance, ProcessSpec, WorkStatus, Workbench, WorkspaceProcess, WorkspaceTask,
+    ManagedProcess, ManagedTask, Panel, PanelInstance, ProcessSpec, WorkStatus, Workbench,
 };
 use bevy::prelude::*;
 use std::{
@@ -15,6 +15,7 @@ pub struct TasksPlugin;
 
 impl Plugin for TasksPlugin {
     fn build(&self, app: &mut App) {
+        register_menu(app);
         app.add_systems(Update, poll_work);
 
         #[cfg(feature = "automation")]
@@ -48,13 +49,13 @@ impl Default for TasksPanel {
 }
 
 struct CountingTask {
-    handle: WorkspaceTask<u64>,
+    handle: ManagedTask<u64>,
     progress: Arc<AtomicU32>,
     result: Option<u64>,
 }
 
 struct EchoProcess {
-    handle: WorkspaceProcess,
+    handle: ManagedProcess,
     stdin_closed: bool,
     stdout: Vec<u8>,
     stderr: Vec<u8>,
@@ -285,15 +286,11 @@ fn apply_action(world: &mut World, panel: Entity, action: Action) -> Result<(), 
             });
         }
         Action::StartProcess => {
-            let workspace = world
-                .get::<bedtime_workbench2::InWorkspace>(panel)
-                .ok_or("Tasks panel has no workspace")?
-                .0;
-            if !crate::files::root_ready(world, workspace) {
+            if !crate::files::root_ready(world) {
                 return Err("Workspace root is still loading".into());
             }
             let mut spec = echo_spec();
-            spec.directory = crate::files::workspace_directory(world, workspace);
+            spec.directory = crate::files::project_directory(world);
             let handle = Workbench::for_entity(world, panel)?.work().spawn_process(
                 Some(panel),
                 "Interactive echo",
@@ -385,7 +382,7 @@ while ($null -ne ($line = [Console]::ReadLine())) {
 }
 
 // Poll every panel, including hidden tabs and inactive/suspended workspaces.
-// Only WorkspaceWork owns worker lifetime; these components own observations.
+// Only ManagedWork owns worker lifetime; these components own observations.
 fn poll_work(mut panels: Query<&mut TasksPanel>) {
     for mut panel in &mut panels {
         if let Some(task) = &mut panel.task
@@ -411,11 +408,11 @@ fn poll_work(mut panels: Query<&mut TasksPanel>) {
 
 #[cfg(feature = "automation")]
 fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::AutomationResult {
-    use bedtime_workbench2::{InWorkspace, WorkspaceWork};
+    use bedtime_workbench2::ManagedWork;
     use serde_json::json;
-    let panels: Vec<_> = world.query::<(Entity, &TasksPanel, &InWorkspace)>().iter(world)
-        .map(|(entity, state, workspace)| json!({
-            "entity": entity.to_bits().to_string(), "workspace": workspace.0.to_bits().to_string(),
+    let panels: Vec<_> = world.query::<(Entity, &TasksPanel)>().iter(world)
+        .map(|(entity, state)| json!({
+            "entity": entity.to_bits().to_string(),
             "seconds": state.seconds, "input": state.input, "error": state.error,
             "task": state.task.as_ref().map(|t| json!({
                 "id": t.handle.id.0, "status": status_text(&t.handle.status()),
@@ -429,18 +426,47 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
                 "stdout": String::from_utf8_lossy(&p.stdout), "stderr": String::from_utf8_lossy(&p.stderr),
             })),
         })).collect();
-    let workspaces: Vec<_> = world
-        .query::<(Entity, &WorkspaceWork)>()
+    let jobs: Vec<_> = world.resource::<ManagedWork>().list().into_iter().map(|job| json!({"id":job.id.0,"label":job.label,"owner":job.owner.map(|e|e.to_bits().to_string()),"status":status_text(&job.status)})).collect();
+    Ok(json!({"panels":panels,"jobs":jobs}))
+}
+
+use bedtime_workbench2::persistence::ReflectWorkbenchPersist;
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, WorkbenchPersist)]
+#[require(TasksPanel)]
+pub(crate) struct PersistedTasks;
+
+pub(crate) fn register_persistence(app: &mut App) {
+    app.register_type::<PersistedTasks>();
+}
+pub(crate) fn project_persistence(
+    world: &mut World,
+    captured: &mut bedtime_workbench2::persistence::CapturedWorld,
+) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<TasksPanel>>()
         .iter(world)
-        .map(|(entity, work)| {
-            json!({
-                "entity": entity.to_bits().to_string(),
-                "jobs": work.list().into_iter().map(|job| json!({
-                    "id": job.id.0, "owner": job.owner.map(|e| e.to_bits().to_string()),
-                    "label": job.label, "status": status_text(&job.status),
-                })).collect::<Vec<_>>(),
-            })
-        })
         .collect();
-    Ok(json!({ "panels": panels, "workspaces": workspaces }))
+    for panel in panels {
+        captured.insert_component(panel, PersistedTasks);
+    }
+}
+pub(crate) fn clear_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedTasks>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        world.entity_mut(panel).remove::<PersistedTasks>();
+    }
+}
+
+pub(crate) fn register_menu(app: &mut App) {
+    crate::menus::register_panel::<TasksPanel>(
+        app,
+        Some(70),
+        bedtime_workbench2::PanelFactory::of::<TasksPanel>(),
+        crate::storage::ready,
+    );
 }

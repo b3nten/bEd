@@ -1,5 +1,5 @@
 use bedtime_ui2::{UiContext, UiSystems, UiViewport, egui, viewport_image};
-use bedtime_workbench2::{InActiveWorkspace, Panel, PanelInstance};
+use bedtime_workbench2::{Panel, PanelInstance};
 use bevy::{camera::RenderTarget, core_pipeline::tonemapping::Tonemapping, prelude::*};
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -7,6 +7,7 @@ pub struct CubePlugin;
 
 impl Plugin for CubePlugin {
     fn build(&self, app: &mut App) {
+        register_menu(app);
         app.add_systems(Startup, spawn_scene)
             .add_systems(
                 Update,
@@ -231,11 +232,9 @@ fn update_camera_transforms(
     }
 }
 
-fn sync_cameras(
-    mut cameras: Query<(&UiViewport, Has<InActiveWorkspace>, &mut Camera), With<OrbitCamera>>,
-) {
-    for (viewport, active_workspace, mut camera) in &mut cameras {
-        camera.is_active = viewport.visible && active_workspace;
+fn sync_cameras(mut cameras: Query<(&UiViewport, &mut Camera), With<OrbitCamera>>) {
+    for (viewport, mut camera) in &mut cameras {
+        camera.is_active = viewport.visible;
     }
 }
 
@@ -292,4 +291,49 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
                 })
             }).collect::<Vec<_>>()
     }))
+}
+
+use bedtime_workbench2::persistence::ReflectWorkbenchPersist;
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, WorkbenchPersist)]
+#[require(CubeViewport)]
+pub(crate) struct PersistedViewport;
+
+pub(crate) fn register_persistence(app: &mut App) {
+    app.register_type::<PersistedViewport>();
+}
+pub(crate) fn project_persistence(
+    world: &mut World,
+    captured: &mut bedtime_workbench2::persistence::CapturedWorld,
+) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<CubeViewport>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        captured.insert_component(panel, PersistedViewport);
+    }
+}
+pub(crate) fn clear_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedViewport>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        world.entity_mut(panel).remove::<PersistedViewport>();
+    }
+}
+
+pub(crate) fn register_menu(app: &mut App) {
+    crate::menus::register_panel::<CubeViewport>(
+        app,
+        Some(50),
+        bedtime_workbench2::PanelFactory::new("3D Viewport", |world, area| {
+            world
+                .spawn((CubeViewport, bedtime_workbench2::InArea(area)))
+                .id()
+        }),
+        crate::storage::ready,
+    );
 }

@@ -1,7 +1,7 @@
 //! Local helpers call application-owned handlers with a captured terminal origin.
 use crate::{TerminalOptions, TerminalPanel};
 use bedtime_terminal::shell_bridge::{self, Bridge};
-use bedtime_workbench2::{InWorkspace, WorkspaceWork};
+use bedtime_workbench2::ManagedWork;
 use bevy::prelude::*;
 use std::{
     collections::BTreeMap,
@@ -48,7 +48,6 @@ pub struct ShellInvocation {
     pub arguments: Vec<OsString>,
     pub directory: PathBuf,
     pub panel: Entity,
-    pub workspace: Entity,
     pub reply: ShellReply,
 }
 
@@ -219,10 +218,10 @@ pub(crate) fn poll(world: &mut World) {
                     .pane
                     .as_deref()
                     .ok_or("Shell command has no originating terminal")?;
-                let (panel, workspace) = world
-                    .query::<(Entity, &TerminalPanel, &InWorkspace)>()
+                let panel = world
+                    .query::<(Entity, &TerminalPanel)>()
                     .iter(world)
-                    .find_map(|(panel, terminal, owner)| {
+                    .find_map(|(panel, terminal)| {
                         terminal
                             .runtime
                             .as_ref()
@@ -235,12 +234,12 @@ pub(crate) fn poll(world: &mut World) {
                                             | crate::TerminalStatus::Running
                                     )
                             })
-                            .map(|_| (panel, owner.0))
+                            .map(|_| panel)
                     })
                     .ok_or("The originating terminal has closed or restarted")?;
                 if world
-                    .get::<WorkspaceWork>(workspace)
-                    .is_none_or(WorkspaceWork::is_closing)
+                    .get_resource::<ManagedWork>()
+                    .is_none_or(ManagedWork::is_closing)
                 {
                     return Err("The originating workspace is closing".into());
                 }
@@ -259,7 +258,6 @@ pub(crate) fn poll(world: &mut World) {
                             .collect(),
                         directory: request.directory,
                         panel,
-                        workspace,
                         reply: ShellReply(completion),
                     },
                 );

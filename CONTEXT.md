@@ -1,384 +1,144 @@
 # Project context
 
-Last reviewed: 2026-10-24. This is the entry point for current project knowledge;
-keep detailed contracts and decision history in the linked documents.
+Last reviewed: 2026-10-24. Read this entry point, the affected crate README and
+applicable `.skills/` engineering guides before changing implementation.
 
 ## Direction and code map
 
-bEd is an IDE built on the reusable Bedtime desktop foundation. Bedtime 2 is
-being developed alongside v1; `bed` remains Cargo's default application, so use
-an explicit package when working on v2.
+bEd is an IDE on the reusable Bedtime desktop foundation. Bedtime 2 develops
+alongside v1; `bed` remains Cargo's default application. Select v2 packages explicitly.
 
-| Area | Entry point |
+| Area | Current contract |
 | --- | --- |
-| v1 IDE, reusable crates, examples and test commands | [Root README](README.md) |
-| v2 foundation and crate boundaries | [Bedtime 2](bedtime2/README.md) |
-| v2 application: Files, code/Structure, viewports, tasks, terminal, settings and quit policy | [bEd 2](bed2/README.md), [main.rs](bed2/src/main.rs), [close.rs](bed2/src/close.rs), [files.rs](bed2/src/files.rs) |
-| v2 drawing, themes, input, components and viewports | [UI2](bedtime2/crates/bedtime-ui2/README.md) |
-| v2 virtualized text editor, buffer and optional document adapter | [Editor2](bedtime2/crates/bedtime-editor2/README.md) |
-| v2 shared Tree-sitter analysis, bundled grammars and code Structure | [Analysis](bedtime2/crates/bedtime-treesitter2/README.md), [grammar bundle](bedtime2/crates/bedtime-grammars2/README.md), [Structure](bed2/crates/bed-structure2/README.md) |
-| v2 local language servers, diagnostics and definition navigation | [LSP2](bedtime2/crates/bedtime-lsp2/README.md), [application bridge and status](bed2/README.md#language-servers-and-status-bar) |
-| v2 workspaces, layouts, concrete panels, commands and documents | [Workbench2](bedtime2/crates/bedtime-workbench2/README.md) |
-| v2 lazy local filetree, watching, operations and visibility | [Filetree2](bedtime2/crates/bedtime-filetree2/README.md) |
-| v2 local terminal plugin and lifecycle | [Terminal2](bedtime2/crates/bedtime-terminal2/README.md) |
-| v2 Git panel, file-tree presentation and workspace preferences | [Git contract](bed2/README.md#git-panel), [coordinator](bed2/src/git.rs), [presentation](bed2/src/git/presentation.rs) |
-| Engineering guidance by task | [Engineering index](ENGINEERING.md) |
+| v1 application/crates/examples | [Root README](README.md) |
+| v2 foundation and boundaries | [Bedtime 2](bedtime2/README.md) |
+| bEd2 opening, settings, sessions, Git, tools and quit | [bEd2](bed2/README.md) |
+| Drawing, themes, input, fonts, widgets and viewports | [UI2](bedtime2/crates/bedtime-ui2/README.md) |
+| Layouts, panels, world services, commands, documents and optional persistence | [Workbench2](bedtime2/crates/bedtime-workbench2/README.md) |
+| Files, watching, operations and visibility | [Filetree2](bedtime2/crates/bedtime-filetree2/README.md) |
+| Local terminals, managed PTY lifecycle and shell helpers | [Terminal2](bedtime2/crates/bedtime-terminal2/README.md) |
+| Virtualized editor, canonical document adapter and optional syntax/diff | [Editor2](bedtime2/crates/bedtime-editor2/README.md) |
+| Analysis, bundled grammars and Structure | [Tree-sitter](bedtime2/crates/bedtime-treesitter2/README.md), [grammars](bedtime2/crates/bedtime-grammars2/README.md), [Structure](bed2/crates/bed-structure2/README.md) |
+| Language servers and robustness decisions | [LSP2](bedtime2/crates/bedtime-lsp2/README.md), [investigation](MIGRATION/lsp2-investigation.md) |
+| Models and mascots | [Model2](bedtime2/crates/bedtime-model2/README.md), [Mascots2](bedtime2/crates/bedtime-mascots2/README.md) |
+| Engineering guidance | [Index](ENGINEERING.md) |
 
-## Accepted next direction — not yet implemented
+## Implemented ownership and persistence direction
 
-On 2026-10-24, accepted **one editing session per Bevy World**: remove Workbench's
-workspace entities/activation/membership and execution scope first; the host owns
-opening/closing sessions. Do not replace the scope with an equivalent mandatory
-Session entity. Layouts, panels, shared documents, managed work and checked close/
-save/shutdown guarantees remain. bEd2's initial folder-open policy should launch
-another application instance/window; the inspected production route still opens
-and activates a workspace in-place. Native App teardown/restart is not a prerequisite
-or a verified cross-platform capability.
+The [world/session decision](MIGRATION/workbench-world-session-plan.md) supersedes
+older workspace-scope and application-only serialization statements. Workbench now
+owns **one editing session per Bevy World**, with no Workspace entity, membership,
+activation/running markers, workspace facade or replacement mandatory Session entity.
+Layouts/panels/documents retain identities; world resources own work, queues and
+shell state. There may be no selected layout. Commands resolve panel → world.
+Moving a viewer across layouts retains its canonical document and owned work.
 
-Then add **opt-in reflected world persistence** using Bevy 0.20 `DynamicWorld`.
-Workbench owns durable graph capture/validation/remapping and controlled structural
-restore, not storage I/O or a panel factory registry. bEd2 owns global/local routing,
-settings inheritance, files, write coordination, external loading and recovery.
-Separate `GlobalSettings`/`WorkspaceSettings` types may both be resources; runtime
-world scope does not determine persistence destination. The prototype demonstrates
-marked data and required-component restoration but still uses workspaces, and its
-synchronous/non-atomic storage is not production policy.
+The host owns session admission/replacement and orderly exit: complete admitted
+writes/drafts, flush storage, preflight documents, cancel managed work, continue
+updating until cleanup finishes, then exit. World drop is only fallback cleanup.
+[Document history/source/save invariants](MIGRATION/workbench-documents.md) remain
+in force; that record's old workspace ownership is superseded.
 
-The [decision and ordered implementation plan](MIGRATION/workbench-world-session-plan.md)
-covers both tasks, preservation requirements, prototype evidence, open implementation
-choices and verification gates. It supersedes older future-direction statements
-about workspace scopes and blanket application-only persistence, **not current APIs**.
-No production migration has been implemented by recording this decision.
+bEd2 opens a different folder in a separate instance. **Independent sessions editing
+the same canonical project are unsupported**, enforced by a lifetime OS lock before
+restore/editing. Lock identity is independent of config directory overrides.
+Same-root opening reuses the current session; errors preserve it and unsaved work.
+Global preference writers lock/read/merge/atomically replace and periodically refresh
+untouched values across instances. Project files have one admitted writer.
 
-## Current implementation and decision records
+Optional Workbench `persistence` uses Bevy 0.20 DynamicWorld and an explicit reflected
+marker selected by `Workbench::capture_world::<M>`, with editable detached captures,
+bounded validation, reference closure/remapping and ordered structural restore.
+Workbench components and existing ordered relationship collections capture directly.
+`register_persisted_relationship::<R>` shares typed membership/order/payload restoration
+with application pairs; markers remain the allowlist. Generic checks reject conflicting
+membership/cardinality, disallowed self-links and linked ownership cycles before commit.
+Encode/load/restore validate edits before committing. Required defaults rebuild
+runtime; validation does not insert components. Trusted Serde/FromReflect remain pure;
+hooks preserve restored membership and external activation follows graph restoration.
+Hosts permanently seal world restoration after startup loading. Scoped reflected layout
+capture/replacement supports runtime defaults/Reset without replacing session resources;
+replacement recreates panel identities and follows ordinary panel cleanup. No panel
+factory catalog exists.
+See the [library contract](bedtime2/crates/bedtime-workbench2/README.md#optional-reflected-persistence).
 
-- Applications own Bevy setup, windows, cameras and the renderer. UI2 remains
-  independent of Workbench; Workbench's native and UI capabilities are optional.
-- UI drawing uses ordinary sequential functions and borrowed component props.
-  Application state belongs in ECS data; egui IDs hold presentation state.
-  egui owns widget input, and Workbench consumes eligible shortcuts after drawing.
-- Workspaces, layouts, areas and panels compose in the application's World.
-  Active markers select workspaces/layouts; empty workbenches are valid. Required
-  components supply missing defaults and panel metadata/drawing immediately;
-  lifecycle hooks maintain ownership and selection/focus fallback. Reconciliation
-  validates the graph, not initialization. Concrete panel spawns select the
-  destination tab without changing area focus; selection and focus are separate.
-- The entity-first application-composition refactor removes panel type registration,
-  the built-in type picker and core workspace/layout snapshots/restoration/templates
-  and snapshot notifications. Applications own creation discovery and persistence.
-  Command definitions and handlers are independent; bindings and handlers resolve
-  panel → workspace → world. Document handlers are explicitly installed.
-  An isolated [reflected persistence prototype](bed2/README.md#reflected-persistence-prototype)
-  now explores marked types and Bevy 0.20 `DynamicWorld` partitions in `bed2/examples`;
-  it does not change this production ownership contract or session format.
-  Destructive UI intentions use `PanelCloseRequested` and application-approved
-  `commit_close`; raw despawn cleans up but cannot be vetoed. See the
-  [accepted design and phase checklist](MIGRATION/application-composition.md).
-- Workspace-owned typed/text documents share canonical content, transactions,
-  history and save/source checkpoints across panel viewers and layouts. Async
-  saves and external observations are generation-gated; conflicts require
-  explicit resolution. Controlled workspace close rejects pending writes/drafts;
-  closing the last viewer retains its document. Checked cross-workspace relocation
-  rejects drafts/owned work and detaches its document view; raw bound reparenting is
-  unsupported. See the [document contract](MIGRATION/workbench-documents.md).
-  Storage I/O, source ordering/CAS, merge algorithms and restore descriptors stay
-  application-owned; bEd2 opens file-backed code viewers through its shared opening route, with
-  canonical history and a source-checked save backend.
+bEd2 uses application schema 2 global/project envelopes and library snapshot schema 2.
+Previous library schema-1 snapshots are rejected and preserved. Independent reflected
+global/project markers route resources; feature descriptors are added to detached
+captures without temporary live-world insertion. Checked file reopening
+recreates shared canonical documents. Legacy global value/tool-recipe defaults migrate
+to reflected layout snapshots on an actual edit, without startup rewriting. Old project
+sessions/unknown types are rejected and preserved with visible errors. Storage retains bounded reads, readiness/late-load gates, debounce/retry,
+atomic writes and quit flushing. Global layout defaults exclude document viewers,
+Git comparisons and project paths.
+Feature plugins own creation commands/View contributions; live reconstruction has no
+ToolKind/constructor catalog. Reset is destructive to panels and retains canonical
+documents, other layouts and session services.
+[Compatibility and routing](bed2/README.md#settings-layouts-and-persistence) are
+application policy. Unsaved-content/history recovery, Save As and New/Untitled remain
+separate work; reopening file descriptors is not recovery.
 
-Read the current crate README and relevant implementation for the contract.
-[Application composition](MIGRATION/application-composition.md) is the current
-entity-first decision record and unfinished-work checklist.
-[Workbench composition](MIGRATION/workbench-composition-plan.md) is historical;
-its registry, initialization and core snapshot decisions are superseded by that
-record.
-[Migration overview](MIGRATION/overview.md) explains the broader goals, including
-planned document/settings work. Its older input-routing description and
-[stage 4](MIGRATION/step-4-egui.md) predate the current shortcut-consumption model.
-Distinguish those plans and historical notes from implemented capabilities.
+## Other boundaries worth preserving
 
-## Work status
+- Applications own Bevy setup/windows/cameras/rendering. UI2 is independent of
+  Workbench; Workbench UI/native/persistence features are optional. Concrete panel
+  composition needs no registry. Hooks maintain relationships and selection/focus;
+  reconciliation validates, not initializes. Destructive UI requests use checked
+  `commit_close`; raw despawn cannot prompt or veto.
+- Canonical documents own content, revision/history and save/source checkpoints.
+  Independent viewers share transactions and analysis. Source observations, save
+  receipts and navigation results retain generation/revision checks. Closing the
+  last viewer retains its document. Widget-private undo must not replace canonical
+  history. External I/O, CAS, merging and recovery belong to the host.
+- Filetree owns one world filesystem worker with independent panel roots and
+  generation validation. Native paths retain their original units; visibility's
+  validated codec is separate from storage. Operation outcomes survive panel close.
+- LSP uses lazy local stdio processes shared by launch identity/root. Hidden views
+  continue syncing; observer closure preserves workers. Stop suppresses relaunch
+  until Restart/config change. Real-server latency is distinct from deterministic
+  protocol tests; native Linux behavior remains unverified here.
+- Models use local bounded sidecar loading, canonical textual glTF and per-tab
+  camera/appearance descriptors. Remote/absolute URI resources are rejected;
+  relative parent paths are permitted. Model animation is deferred. Hidden model/
+  mascot/cube views suspend cameras. Mascot audible output remains unverified.
+- Application Settings keeps Global/Workspace user vocabulary, per-value resets,
+  asynchronous font discovery and defaults. Keybinding declarations support inherit/
+  override/unbind; the binding editor remains deferred. Autosave uses checked saves.
+  Package scripts and platform-specific limitations are documented in bEd2's README.
 
-The [model viewer](bedtime2/crates/bedtime-model2/README.md) ports bed1's
-GLTF/GLB/STL preparation, inspection and appearance controls to main-world Bevy
-scenes and UI2. bEd2 owns associations, managed loading, canonical `.gltf` text
-refresh, local sidecar observation and per-tab camera/appearance persistence.
-Relative sidecars may reach parent directories; remote/absolute URIs are rejected.
-Animation playback remains deferred. See the crate/application READMEs for the
-asset-source registration order and verification commands. Current implementation
-verification is recorded there after running the native and feature checks.
+## Verification recipes and evidence
 
-The optional [mascots crate](bedtime2/crates/bedtime-mascots2/README.md) ports Bed
-and Ducky to main-world Bevy scenes with UI2 image viewports, per-instance state,
-linked cleanup, lazy click audio and an optional Workbench panel adapter. bEd2
-owns Bed's View creation, session/layout-default restoration and the origin-scoped,
-undocumented `+ducky` easter egg; Ducky has no menu creation entry.
-Hidden views suspend cameras and animation. Welcome/idle scenes
-remain unported. See the crate README for embedding, render-layer ownership and
-verification commands.
-On 2026-10-23, 142 application tests, five mascot tests with Workbench, four
-standalone mascot tests, 30 UI2 tests and 14 packaging tests passed; the standalone
-example also checked without Workbench. The nine-capture native macOS mascot
-smoke passed interactions, alpha, scene isolation, shell routing, lifecycle and
-restoration after the cleanup fix. Audible output and native Linux remain unverified.
-
-bEd2's [Git panel](bed2/README.md#git-panel) implements bed1's layout/actions in
-egui using `bedtime-git`, workspace-owned managed operations, checked document
-saves and source reconciliation. Git is available from View/titlebar and restores
-placement/shared commit drafts. Tree with tracked/untracked grouping is the
-default; the branch-adjacent menu selects List/Tree and all three grouping modes,
-and explicit saved choices persist. Files and Git share UI2's tree row painter,
-geometry and motion primitives. Folder staging and partial-file copies retain
-their group scope, and row preparation uses cached status on managed workers.
-The centered commit button's adjacent menu selects Commit, Amend or Signoff.
-Zed informed ordered work, coalesced refreshes and virtualized rows. On 2026-10-23,
-137 application tests, 100 Files tests, 30 UI2 tests, 20 backend regressions and
-eleven nonblank native Git captures passed, including real amend/signoff, all
-view/group combinations, folder actions, partial staging, discard and restoration.
-The Files native smoke also passed eleven captures, including a 10,000-entry tree.
-Diff views remain pending:
-[the comparison proposal](MIGRATION/git2-investigation.md) puts inline text diff
-presentation inside Editor2 behind an optional `diff` feature, with host-defined
-actions and later image/glTF comparisons. No diff API is installed yet.
-
-The optional [LSP2 plugin](bedtime2/crates/bedtime-lsp2/README.md) implements local
-stdio synchronization, diagnostics/progress and definition, hover and
-completion/resolve requests with
-shared text roots and managed server cleanup. bEd2 owns source/settings/save
-bridges, F12/context-menu/Cmd-click navigation into temporary previews and a conditional
-status bar with diagnostic counts, actual server progress, document/server errors
-and per-server Restart/Stop submenus. View → Language Servers opens a persistent observer panel
-with process/capability/document state, bounded messages/stderr and restart.
-Closing that panel preserves workers. The compact status row uses an icon menu,
-active work and nonzero counts; missing/stale diagnostic details remain in the
-panel and never imply background work. See the
-[Zed-informed robustness review](MIGRATION/lsp2-investigation.md#status-and-robustness-review)
-for implemented changes and remaining reliability work.
-The [important parity milestones and Rust latency probe](MIGRATION/lsp2-investigation.md#important-ide-parity-milestones)
-separate native unsaved diagnostics from Cargo-on-save latency. Installed
-rust-analyzer's experimental diagnostics improved a small `String::foo()` fixture
-but showed inconsistent syntax results; they remain opt-in and defaults are unchanged.
-The bar reserves no space without LSP state or a document error; empty startup
-workspaces need no layout. See the [application contract](bed2/README.md#language-servers-and-status-bar)
-and [original investigation](MIGRATION/lsp2-investigation.md) for limits and later
-features. No comparative speedup has been measured.
-Hover waits 200 ms while ordinary UI tooltips remain instant. Bed1-style
-wrapped documentation uses compact typography, inline styles, rules and managed
-Tree-sitter highlighting. Completion supports automatic/manual triggers, lazy
-resolve, atomic auto-import edits and snippet placeholders/mirrors. Explicit
-transient errors retry with finite backoff; empty hover results refresh on
-analysis changes. Rust-analyzer's reported project state prevents empty loading
-responses from becoming final results. See the
-[interactive editing record](MIGRATION/lsp2-investigation.md#interactive-editing-implementation--2026-10-22).
-On 2026-10-22, 29 deterministic LSP tests, the opt-in real Rust/Go intelligence
-regression, 108 application tests, 57 editor tests and 27 UI tests passed. The
-native interaction smoke passed seven rendered captures, including delayed hover,
-syntax-colored documentation, empty-result refresh, completion/resolve/snippets,
-atomic undo and actual `Vec::new` navigation into a temporary standard-library tab.
-The existing five-capture LSP smoke also passed diagnostics/progress/restart/quit.
-Native Linux LSP UI verification remains pending.
-The compact icon/menu and shorter row revisions passed the five-capture native
-smoke on the same date; the geometry regression verifies centered, unclipped
-controls despite roomy panel padding. The normal release binary was rebuilt.
-The current status menu contains only Open Language Servers and a Restart/Stop
-submenu per loaded server. Error details live on the row's message/count tooltip;
-document notices expire after eight seconds without clearing canonical failures.
-Stop retains a suppressed launch identity until Restart/configuration change.
-Documentation scroll viewports fit at least six text lines when space permits.
-See the application contract for context-action candidates and UI boundaries.
-
-bEd2 now owns centralized RON `.bed` metadata under the user config directory:
-`preferences.bed` holds global per-value settings and five layout defaults;
-`workspaces/<canonical-root-digest>.bed` combines each folder workspace's overrides,
-visibility and structural session behind one writer. No project metadata is read
-or written and no legacy JSON import runs. The default home workspace remains
-memory-only. See the [application contract](bed2/README.md#settings-layouts-and-persistence).
-
-Settings has General, Appearance, Editor and Language servers sections, a Global/Workspace
-switch and individual override reset icons. Its padded, responsive header shows the
-active config path beside the scope toggle in one truncating, copy-on-click row. Language server defaults cover Rust, Go,
-TypeScript/TSX and Python; existing saved definitions remain intact with explicit
-buttons to add missing defaults. Rows place widgets before names, use switches for
-booleans and share vertically centered control geometry; Theme precedes fonts.
-Appearance includes font family and
-8–72-point size (default 15.5); Bedfont bundles Nordwand Mono regular/bold, alongside
-installed monospace families. Both values inherit independently and update the
-UI/editor/terminal; missing families retain their preference and use Bedfont.
-Installed font discovery runs once on a background worker; Appearance shows a
-loading state and saved system-family choices apply after discovery. A 2026-10-23
-probe measured a 488 ms scan of 787 faces, previously blocking first Appearance.
-See the [font contract](bed2/README.md#settings-layouts-and-persistence).
-On 2026-10-23, all 112 ordinary application tests, the six-capture native
-settings smoke and the four-capture font smoke passed, including single-row path
-geometry, narrow navigation, alignment, font selection/persistence and switch/reset
-inheritance. The font latency probe also passed explicitly; the GPU benchmark was
-left ignored.
-Keybinding configuration is deferred;
-fixed Save/Open Folder/Quit and Primary+1–5 shortcuts remain. Document autosave
-supports Never, Change Focus and Timer (default: one second idle), using canonical
-checked saves and the existing quit gates. Numbered slots retain live entities;
-View → Layout saves global tool/geometry defaults or resets the active layout
-while preserving existing documents/workers. Initial layout composition waits
-for workspace restore. Fresh startup creates one terminal layout. General has a
-global, default-off **Open last workspace on open** option; it restores the last
-active folder and its session unless an explicit folder argument takes precedence. Titlebar Terminal/Files/Structure/Settings buttons open or
-focus on click and create via existing panel-factory drop handling on drag. The
-standalone Theme editor is retired. Single-file tree drags also use those
-area/tab/split targets to create pinned viewers sharing canonical documents;
-eligible tree folders retain move/copy priority. The three-capture native
-`smoke_filetree_drag.py` passed on 2026-10-23, including shared document identity,
-edge splitting, Escape cancellation and folder transfer priority. Application tests,
-all 100 Files tests, all 199 Workbench tests and the Workbench build without
-default features also passed. Save As, New/Untitled, crash recovery and
-broader workspace-management UI remain pending. Optional v2 automation is in
-`bedtime2/crates/bedtime-automation2`, with clients in `bedtime2/tools`.
-
-bEd2 owns native Bevy CRT effects in `effects.rs`/embedded WESL: Appearance has
-an enable toggle (default off) and per-value persisted sliders, without presets,
-jitter or chromatic aberration. Input uses the same curvature map before egui;
-rendering runs after egui and before UI2's `PrepareOutput` platform alpha phase.
-See [the application contract](bed2/README.md#settings-layouts-and-persistence)
-for history/color/input ownership and `smoke_effects.py` verification. Bloom
-uses half-width/height float textures and a separable blur; zero intensity
-releases its buffers and bypasses all bloom passes. On 2026-10-22, 97 bEd2
-tests and the opt-in native bloom GPU regression passed. Its synthetic M4 Pro
-4K median bloom + CRT GPU time fell from 2.900 ms to 0.447 ms (6.49×); this is
-not whole-app frame time or a thermal measurement. The native effects smoke
-passed 11 captures, including zero-bloom transitions, odd-size resizing, curved
-clicks/slider dragging, alpha and settings restoration. UI2's 27 tests passed
-earlier the same day. Native Linux rendering was not exercised.
-
-bEd2's `cube.rs` exercises main-world scene rendering with independent orbit
-viewports, `tasks.rs` exercises workspace/panel-owned workers and process I/O,
-and `close.rs` owns panel-close acceptance, quit decisions and managed worker
-shutdown. Files/editor is restored as the document-opening flow; memory-only Documents and Hello World
-remain removed. Settings remains available through application-owned UI.
-Local release packages use `scripts/package-bed2-macos.sh` (`--install` stages
-and replaces `/Applications/bEd2.app`) and `scripts/package-bed2-linux.sh`.
-The distinct bundle/executable identities coexist with bed1; v2 runtime assets
-are embedded and no remote helpers are built. See the bEd2 README's local
-packaging contract for overrides and artifact paths. macOS release packaging,
-signing and `--install` into an isolated test directory passed on 2026-10-21;
-all 34 script tests passed, including Linux assembly fixtures and installation
-rollback. Native Linux packaging has not been run here.
-The optional `bedtime-terminal2` plugin adds local Unix PTY panels with egui
-input/rendering and workbench-owned cleanup, plus opt-in local shell aliases and a
-pre-startup helper; no SSH or inline images. It reuses the v1 headless core/command
-transport without installing its frontend or plugin. bEd2 registers `+open`/`+o`: no
-arguments opens/reuses a folder workspace at the caller's cwd; file arguments open
-pinned viewers through the application-owned `opening.rs` route, shared with Files.
-That route owns viewer selection, safe reuse and area placement; unsupported files
-currently use the text viewer's metadata fallback. See [the opening contract](bed2/README.md#opening-from-the-terminal).
-The canvas uses the active UI2 theme's 16 ANSI colors (bed1 Everforest presets),
-real Bedfont bold and a pixel-aligned grid. Tabs follow worker-observed foreground
-process names. Theme edits preserve the session and shell OSC overrides; global
-appearance now has application-owned storage, not terminal-session persistence.
-See the application and terminal
-READMEs for controls and verification limits.
-
-`bedtime-filetree2` adds lazy watched filesystem panels with explicit per-panel
-roots, viewport-only animated rows, file operations and root-scoped hiding.
-Buffered activations capture panel/workspace/path/click type; the embedding
-application owns routing, root choice and persistence. Git is deferred. macOS
-uses directory-only kqueue (not notify's recursive-child kqueue behavior or its
-FSEvents restart path). Reloads retain last-known rows; results outlive panel and
-workspace retirement. Per-panel settings, direct file menus, native drop bridging
-and root-scoped preferences remain library capabilities. bEd2 installs the tree
-and explicitly chooses home for the default memory workspace, or an explicitly
-opened folder for a persistent workspace root.
-Its `files.rs` validates tree activations and owns the current viewer backend and
-visibility storage; `opening.rs` routes file/folder opens independently of the tree.
-`file_editor.rs` binds shared documents and checked atomic saves. The
-titlebar Files button exposes this flow. See the application/filetree contracts
-for preview safety, source reconciliation, storage and platform limits.
-
-`bedtime-editor2` implements the first plain editor slice: persistent indexed
-UTF-8 text, viewport-only line/long-line layout, selection/navigation/clipboard,
-shared history, IME drafts, line numbers and bed1 caret motion. Everyday editing
-adds indentation-aware soft rows, smart whitespace, selection indent/outdent and
-literal Find/Replace. Cancellable workers prepare wrapping/search/bulk edits;
-revision checks gate acceptance. Optional Tree-sitter contributions add syntax
-colors and per-view folds; bEd2's code-only Structure targets public revision-bound
-editor navigation, including zero-based `scroll_to_line`. The grammar bundle
-contains 30 languages plus Markdown inline, without per-language Cargo crates.
-One managed analysis session serves a viewed document, with revision-checked
-semantic actions during refresh. Editor presentation retains previous colors
-mapped through known edits, and Structure retains its last same-source outline
-until fresh analysis arrives; fold/Structure navigation still requires current
-analysis.
-See the analysis/Structure READMEs for limits and source
-selection (automatic eligible focus after closure counts). Its Workbench
-adapter uses canonical document transactions and a 128-commit change journal;
-default builds and the standalone example require no Workbench or language tools.
-The editor locks each wheel input to its dominant axis without a timed gesture
-lock, retains revision-valid wrapping during resize, reserves fold-gutter space and animates folds with bed1 smoothstep timing. Files/Structure selections
-and editor caret/active numbers share its RGB cycle; disclosure arrows share UI2
-artwork. Files and Structure use matching default row height, inset and indentation,
-with item-sized highlights. Completion rows follow bed1’s compact category/label/detail
-presentation without item tooltips. bEd2's canvas context menu has Cut/Copy/Paste and capability-gated LSP
-Go to Definition; the top control bar is removed. Folding stays in the gutter,
-and wrapping/line numbers stay in Settings. Titlebar tools use theme text ink, animate hover backgrounds and retain tooltips.
-The standalone and opt-in syntax examples provide two in-memory editor views.
-bEd2's file-backed views detect the initial language, retain explicit choices,
-and share analysis/structure through canonical documents. Opening an empty Code
-panel creates no sample document; Code is no longer a View creation choice.
-See the editor README for contracts, limits and later editing/tooling milestones.
-
-## Verification recipes
-
-For v2 library/application work, start with the affected package or test filter:
+Use cached dependencies with `--offline --locked`; choose affected packages first.
+The world/session record tracks this migration's verified results and limitations.
+The 2026-10-24 scoped-layout revision passed Workbench UI/headless suites (188/128
+tests plus doctests), bEd2 (155 passed, 2 opt-ins ignored), minimal-feature checks,
+example tests/headless round trip, and native macOS storage-policy/destructive Reset
+and example seeded/startup-load/reload smokes. See the world/session record for
+contracts and artifacts. Earlier session/helper/task/terminal and feature-smoke
+results are historical evidence, not claims about every subsequent change.
 
 ```sh
-cargo test --offline --locked -p bedtime-ui2 -p bedtime-workbench2 -p bedtime-terminal2 -p bedtime-filetree2 -p bedtime-clipboard2 -p bed2
+cargo test --offline --locked -p bedtime-workbench2 --features persistence
+cargo test --offline --locked -p bedtime-workbench2 --no-default-features --features persistence
 cargo check --offline --locked -p bedtime-workbench2 --no-default-features
-cargo test --offline --locked -p bedtime-treesitter2 -p bed-structure2
-cargo test --offline --locked -p bedtime-lsp2 --features workbench
+cargo test --offline --locked -p bed2 --features automation
 cargo test --offline --locked -p bedtime-editor2 --features workbench,treesitter
-cargo test --offline --locked -p bedtime-editor2 --features workbench,treesitter million_line_ -- --ignored --nocapture
-```
-
-When changing feature boundaries, also check the relevant `ui` and `native`
-combinations with default features disabled. For v1, use the focused commands and
-broader suites documented in the [root README](README.md).
-
-For UI changes in a desktop session, the gallery smoke covers widgets/rendering:
-
-```sh
-cargo run --offline --locked -p bedtime-ui2 --example gallery -- --smoke-dir target/ui2-egui-smoke
-```
-
-The v2 application automation smoke builds with its opt-in feature and drives the
-real executable through the stdio client. Give each scenario a fresh, isolated
-`XDG_CONFIG_HOME` under `target` so appearance/preference tests cannot modify your
-personal configuration; the application now persists settings.
-
-```sh
+cargo test --offline --locked -p bedtime-lsp2 --features workbench
+cargo test --offline --locked -p bedtime-filetree2 -p bedtime-terminal2
+cargo test --offline --locked -p bed2 --example persist_world
+cargo run --offline --locked -p bed2 --example persist_world -- --roundtrip
 cargo build --offline --locked -p bed2 --features automation
-python3 bedtime2/tools/smoke_bed2.py
-python3 bedtime2/tools/smoke_corners.py
-python3 bedtime2/tools/smoke_cube.py
-python3 bedtime2/tools/smoke_tasks.py
-python3 bedtime2/tools/smoke_terminal.py
-python3 bedtime2/tools/smoke_open.py
-python3 bedtime2/tools/smoke_fonts.py
-python3 bedtime2/tools/smoke_code.py
-python3 bedtime2/tools/smoke_editor.py
-python3 bedtime2/tools/smoke_lsp.py
-python3 bedtime2/tools/smoke_lsp_interaction.py --real-rust
-python3 bedtime2/tools/smoke_filetree.py
-python3 bedtime2/tools/smoke_workspace_policy.py
+python3 -B bedtime2/tools/smoke_session.py
+python3 -B bedtime2/tools/smoke_workspace_policy.py
 ```
 
-Editor presentation verification on 2026-10-21: editor (45 tests with
-Workbench/Tree-sitter; 33 standalone), Structure (7), UI2 (27), filetree (100)
-and bEd2 (86) passed; the two editor performance tests remain opt-in. Native
-Code/Structure smoke passed ten captures, including collapse and titlebar
-hover/tooltip. Native editor smoke passed the 112 MB million-line fixture
-(29 rendered lines, 616 laid-out bytes). Native filename fixtures required
-running filetree tests outside the filesystem sandbox.
+For native feature checks, use the focused `bedtime2/tools/smoke_*.py` route and
+an isolated XDG_CONFIG_HOME under target. Native GUI commands require desktop
+access; non-UTF8 Filetree fixtures and local socket tests may need to run outside
+the filesystem sandbox. Real-server/performance/GPU probes remain explicit opt-ins.
+Do not run every ignored test as a generic check. V1 recipes stay in the root README.
 
-These are recipes, not a claim of a passing run on the current worktree.
-Earlier workspace/menu verification (2026-10-19, including the unresolved Files
-GPU-capture/focus observations) is recorded in
-[application composition](MIGRATION/application-composition.md#follow-up-verification--2026-10-19).
-Rerun relevant checks for a new code change. Offline commands require cached
-dependencies. Documentation-only changes need link/content checks, not Rust builds.
+[Application composition](MIGRATION/application-composition.md) is historical for
+workspace scopes/snapshots, current for entity-first panels and checked close.
+[Workbench composition](MIGRATION/workbench-composition-plan.md) and older migration
+stages are historical where they disagree with the current decision/library README.

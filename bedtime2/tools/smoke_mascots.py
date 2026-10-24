@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 
 from automation import Application
-from smoke_bed2 import open_panel, panels, ready, workspace
+from smoke_bed2 import open_panel, panels, ready, session
 from smoke_cube import point
 from smoke_open import run_helper
 from smoke_terminal import bootstrap
@@ -57,8 +57,7 @@ def main():
             os.environ.update(XDG_CONFIG_HOME=str(fixture / "config"), SHELL="/bin/sh")
             with Application([binary, str(project)], output=output / "first", timeout=60) as app:
                 app.request("configure", fixed_dt=1 / 60)
-                initial = workspace(ready(app))
-                owner = initial["entity"]
+                initial = session(ready(app))
                 terminal = app.request("app.inspect_terminal")["panels"][0]["entity"]
                 bootstrap(app, terminal, "MASCOT_SHELL_READY")
                 run_helper(app, terminal, "+ducky extra", fixture, "bad-arguments", expected=1)
@@ -68,7 +67,7 @@ def main():
                 run_helper(app, terminal, "+ducky", fixture, "reuse-duck")
                 assert len(scenes(app)) == 1
                 snapshot = app.inspect()
-                layout = next(l for l in workspace(snapshot)["layouts"] if l["active"])
+                layout = next(l for l in session(snapshot)["layouts"] if l["active"])
                 first_area = layout["areas"][0]["entity"]
                 second_area = app.request("area.split", area=first_area, axis="horizontal", fraction=0.5)["area"]
                 bed = open_panel(app, "Bed", area=second_area)
@@ -105,11 +104,11 @@ def main():
                 assert all(not s["active"] for s in scenes(app))
                 app.request("layout.activate", layout=layout["entity"])
                 settle(app, bed)
-                fresh = app.request("workspace.create", name="Other", activate=True)
+                fresh = app.request("layout.create", name="Other", activate=True)
                 assert all(not s["active"] for s in scenes(app))
-                app.request("workspace.activate", workspace=owner)
+                app.request("layout.activate", layout=layout["entity"])
                 settle(app, bed)
-                app.request("workspace.close", workspace=fresh["workspace"])
+                app.request("layout.delete", layout=fresh["layout"])
                 app.request("panel.close", panel=cube)
                 captures.append(capture(app, "08-restorable.png"))
                 expected = sorted(p["key"] for p in panels(app.inspect()))
@@ -138,7 +137,7 @@ def main():
         assert "panicked at" not in text and "ERROR" not in text, log
     result = {"captures": captures, "audible_output_verified": False,
               "checked": ["Bed and Ducky", "pointer and click input", "themes", "resize", "independent instances",
-                          "hidden layouts and workspaces", "cube coexistence", "+ducky", "cleanup", "restoration"]}
+                          "hidden tabs and layouts", "cube coexistence", "+ducky", "cleanup", "restoration"]}
     (output / "summary.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2))
 

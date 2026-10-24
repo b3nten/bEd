@@ -1,6 +1,7 @@
 //! Application-owned global preferences I/O. Workspace I/O lives in session.
+mod legacy;
 use crate::{
-    layouts::{LayoutDefaults, LayoutTemplate},
+    layouts::LayoutDefaults,
     settings::{GlobalPreferences, Settings, StartupPreferences},
 };
 use bedtime_ui2::egui;
@@ -24,7 +25,9 @@ struct Document {
     settings: Settings,
     #[serde(default)]
     startup: StartupPreferences,
-    layouts: [LayoutTemplate; 5],
+    layouts: [Option<bedtime_workbench2::persistence::Snapshot>; 5],
+    #[serde(default)]
+    bindings: crate::keybindings::GlobalBindings,
 }
 impl Document {
     fn capture(world: &World) -> Self {
@@ -33,15 +36,44 @@ impl Document {
             settings: world.resource::<GlobalPreferences>().0.clone(),
             startup: world.resource::<StartupPreferences>().clone(),
             layouts: world.resource::<LayoutDefaults>().0.clone(),
+            bindings: world
+                .get_resource::<crate::keybindings::GlobalBindings>()
+                .cloned()
+                .unwrap_or_default(),
         }
+    }
+    /// Independent values changed locally win; untouched values follow disk.
+    fn merge(baseline: &Self, live: &Self, disk: &Self) -> Self {
+        let mut result = live.clone();
+        result.bindings.0 =
+            crate::keybindings::merge(&baseline.bindings.0, &live.bindings.0, &disk.bindings.0);
+        result.settings =
+            Settings::merge_loaded(&baseline.settings, &live.settings, &disk.settings);
+        if live.startup.open_last_workspace == baseline.startup.open_last_workspace {
+            result.startup.open_last_workspace = disk.startup.open_last_workspace;
+        }
+        if live.startup.last_workspace == baseline.startup.last_workspace {
+            result.startup.last_workspace = disk.startup.last_workspace.clone();
+        }
+        for i in 0..5 {
+            if live.layouts[i] == baseline.layouts[i] {
+                result.layouts[i] = disk.layouts[i].clone();
+            }
+        }
+        result
     }
     fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err("Unsupported preferences version".into());
         }
         self.settings.validate()?;
-        for template in &self.layouts {
-            template.validate()?;
+        crate::keybindings::validate(&self.bindings.0)?;
+        let registry = preference_registry();
+        for snapshot in self.layouts.iter().flatten() {
+            let captured =
+                bedtime_workbench2::persistence::CapturedLayout::deserialize(snapshot, &registry)?;
+            crate::files::validate_layout_default(&captured)?;
+            crate::git::validate_layout_default(&captured)?;
         }
         Ok(())
     }
@@ -72,15 +104,88 @@ pub fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
     }
     Ok(Some(bytes))
 }
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredPreferences {
+    version: u32,
+    values: bedtime_workbench2::persistence::Snapshot,
+}
+fn register_types(app: &mut App) {
+    crate::persistence::register(app);
+    app.register_type::<GlobalPreferences>()
+        .register_type::<StartupPreferences>()
+        .register_type::<LayoutDefaults>()
+        .register_type::<crate::keybindings::GlobalBindings>();
+}
+fn preference_registry() -> AppTypeRegistry {
+    let mut app = App::new();
+    register_types(&mut app);
+    app.world().resource::<AppTypeRegistry>().clone()
+}
+fn encode_preferences(document: &Document) -> Result<Vec<u8>, String> {
+    let mut world = World::new();
+    world.insert_resource(preference_registry());
+    world.insert_resource(GlobalPreferences(document.settings.clone()));
+    world.insert_resource(document.startup.clone());
+    world.insert_resource(LayoutDefaults(document.layouts.clone()));
+    world.insert_resource(document.bindings.clone());
+    let values = bedtime_workbench2::Workbench::capture_world::<
+        crate::persistence::ReflectGlobalPersist,
+    >(&mut world)?
+    .serialize(world.resource::<AppTypeRegistry>())?;
+    encode(&StoredPreferences { version: 2, values })
+}
 fn read(path: &Path) -> Result<Option<Document>, String> {
     read_bytes(path)?
         .map(|bytes| {
-            let document: Document = ron::de::from_bytes(&bytes).map_err(|e| e.to_string())?;
-            document.validate()?;
-            Ok(document)
+            if let Ok(stored) = ron::de::from_bytes::<StoredPreferences>(&bytes) {
+                if stored.version != 2 {
+                    return Err("Unsupported preferences version".into());
+                }
+                let prepared =
+                    bedtime_workbench2::persistence::CapturedWorld::<
+                        crate::persistence::ReflectGlobalPersist,
+                    >::deserialize(&stored.values, &preference_registry());
+                let prepared = match prepared {
+                    Ok(prepared) => prepared,
+                    Err(error) => return legacy::read_reflected(&stored.values).map_err(|_| error),
+                };
+                if prepared.has_entities() {
+                    return Err("Global preferences contain entities".into());
+                }
+                let document = Document {
+                    version: 1,
+                    settings: prepared
+                        .resource::<GlobalPreferences>()
+                        .ok_or("Missing global settings")?
+                        .0,
+                    startup: prepared
+                        .resource::<StartupPreferences>()
+                        .ok_or("Missing startup settings")?,
+                    layouts: prepared
+                        .resource::<LayoutDefaults>()
+                        .ok_or("Missing layout defaults")?
+                        .0,
+                    bindings: prepared
+                        .resource::<crate::keybindings::GlobalBindings>()
+                        .ok_or("Missing global bindings")?,
+                };
+                document.validate()?;
+                Ok(document)
+            } else {
+                // Version-1 global preferences have a deliberate value-preserving
+                // migration on the next real mutation. Rejected records stay intact.
+                let document: Document = match ron::de::from_bytes(&bytes) {
+                    Ok(document) => document,
+                    Err(_) => return legacy::read_values(&bytes),
+                };
+                document.validate()?;
+                Ok(document)
+            }
         })
         .transpose()
 }
+
 struct PreferenceFile {
     path: PathBuf,
     baseline: Document,
@@ -92,6 +197,7 @@ struct PreferenceFile {
     changed_at: Instant,
     error: Option<String>,
     reported: bool,
+    checked_at: Instant,
 }
 impl PreferenceFile {
     fn new(path: PathBuf, initial: Document) -> Self {
@@ -107,6 +213,7 @@ impl PreferenceFile {
             changed_at: Instant::now(),
             error: None,
             reported: false,
+            checked_at: Instant::now(),
         }
     }
     fn tick(&mut self, desired: Document, flush: bool) -> Result<Option<Document>, String> {
@@ -124,32 +231,19 @@ impl PreferenceFile {
                 .unwrap_or_else(|_| Err("Preferences worker panicked".into()));
             if let Some(written) = self.writing.take() {
                 match result {
-                    Ok(_) => self.saved = Some(written),
+                    Ok(Some(disk)) => {
+                        self.desired = Document::merge(&written, &self.desired, &disk);
+                        self.saved = Some(disk);
+                        loaded = Some(self.desired.clone());
+                    }
+                    Ok(None) => unreachable!("Preference writes return their committed snapshot"),
                     Err(e) => self.error = Some(e),
                 }
             } else {
                 self.loaded = true;
                 match result {
                     Ok(Some(disk)) => {
-                        let mut merged = self.desired.clone();
-                        merged.settings = Settings::merge_loaded(
-                            &self.baseline.settings,
-                            &merged.settings,
-                            &disk.settings,
-                        );
-                        if merged.startup.open_last_workspace
-                            == self.baseline.startup.open_last_workspace
-                        {
-                            merged.startup.open_last_workspace = disk.startup.open_last_workspace;
-                        }
-                        if merged.startup.last_workspace == self.baseline.startup.last_workspace {
-                            merged.startup.last_workspace = disk.startup.last_workspace.clone();
-                        }
-                        for i in 0..5 {
-                            if merged.layouts[i] == self.baseline.layouts[i] {
-                                merged.layouts[i] = disk.layouts[i].clone();
-                            }
-                        }
+                        let merged = Document::merge(&self.baseline, &self.desired, &disk);
                         self.saved = Some(disk);
                         self.desired = merged.clone();
                         loaded = Some(merged);
@@ -168,14 +262,39 @@ impl PreferenceFile {
             && (flush || self.changed_at.elapsed() >= Duration::from_millis(250))
         {
             self.desired.validate()?;
-            let bytes = encode(&self.desired)?;
+            let candidate = self.desired.clone();
+            let baseline = self.saved.clone().unwrap_or_else(|| self.baseline.clone());
             let path = self.path.clone();
-            self.writing = Some(self.desired.clone());
+            self.writing = Some(candidate.clone());
             self.job = Some(std::thread::spawn(move || {
-                // Never silently replace newly introduced malformed/newer data.
-                read(&path)?;
-                atomic_write(&path, &bytes).map(|_| None)
+                // Serialize read/merge/replace across instances. Atomic replacement
+                // alone cannot prevent a valid but stale writer losing other edits.
+                let parent = path.parent().ok_or("Preferences have no parent")?;
+                std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                let lock = std::fs::OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create(true)
+                    .truncate(false)
+                    .open(parent.join("preferences.lock"))
+                    .map_err(|e| e.to_string())?;
+                lock.lock().map_err(|e| e.to_string())?;
+                let disk = read(&path)?.unwrap_or_else(|| baseline.clone());
+                let merged = Document::merge(&baseline, &candidate, &disk);
+                merged.validate()?;
+                atomic_write(&path, &encode_preferences(&merged)?)?;
+                Ok(Some(merged))
             }));
+            self.checked_at = Instant::now();
+        } else if self.loaded
+            && self.job.is_none()
+            && !flush
+            && self.checked_at.elapsed() >= Duration::from_secs(1)
+        {
+            self.baseline = self.saved.clone().unwrap_or_else(|| self.baseline.clone());
+            let source = self.path.clone();
+            self.job = Some(std::thread::spawn(move || read(&source)));
+            self.checked_at = Instant::now();
         }
         Ok(loaded)
     }
@@ -198,6 +317,8 @@ impl PreferenceFile {
 #[derive(Resource, Default)]
 struct PreferencesFile(Option<PreferenceFile>);
 pub fn install(app: &mut App) {
+    register_types(app);
+    app.init_resource::<crate::keybindings::GlobalBindings>();
     app.init_resource::<PreferencesFile>()
         .init_resource::<LayoutDefaults>()
         .init_resource::<StartupPreferences>();
@@ -235,10 +356,10 @@ pub fn global_ready(world: &World) -> bool {
         .and_then(|f| f.0.as_ref())
         .is_none_or(|file| file.loaded && file.saved.is_some() && file.error.is_none())
 }
-pub fn ready(world: &World, workspace: Entity) -> bool {
-    crate::files::root_ready(world, workspace)
+pub fn ready(world: &World) -> bool {
+    crate::files::root_ready(world)
         && global_ready(world)
-        && crate::session::preferences_ready(world, workspace)
+        && crate::session::preferences_ready(world)
 }
 pub fn update(world: &mut World) {
     let _ = drive(world, false);
@@ -258,6 +379,7 @@ fn drive(world: &mut World, flush: bool) -> Result<bool, String> {
                 world.resource_mut::<GlobalPreferences>().0 = loaded.settings.clone();
                 world.resource_mut::<LayoutDefaults>().0 = loaded.layouts.clone();
                 *world.resource_mut::<StartupPreferences>() = loaded.startup.clone();
+                *world.resource_mut::<crate::keybindings::GlobalBindings>() = loaded.bindings.clone();
             }
             Err(ref error) if !file.reported => {
                 request_error_dialog(world, ErrorDialog { title: "Settings".into(), message: "Preferences couldn't be read or saved. Repair the file or access problem, then retry in Settings.".into(), details: Some(error.clone()) });
@@ -331,7 +453,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
-    fn host() -> (App, PathBuf) {
+    pub(super) fn host() -> (App, PathBuf) {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "bed2-config-{}-{}",
@@ -345,7 +467,7 @@ mod tests {
         install(&mut app);
         (app, root)
     }
-    fn settle(app: &mut App) -> Result<(), String> {
+    pub(super) fn settle(app: &mut App) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             if flush(app.world_mut())? {
@@ -354,6 +476,53 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+    #[test]
+    fn separate_instances_merge_independent_values_and_refresh_without_rewriting() {
+        let (mut first, root) = host();
+        let (mut second, unused) = host();
+        configure_directory(&mut first, root.clone());
+        configure_directory(&mut second, root.clone());
+        settle(&mut first).unwrap();
+        settle(&mut second).unwrap();
+        first
+            .world_mut()
+            .resource_mut::<GlobalPreferences>()
+            .0
+            .font_size = 24.0;
+        second
+            .world_mut()
+            .resource_mut::<GlobalPreferences>()
+            .0
+            .panel_gap = 13.0;
+        // Both instances read the same baseline before either writes.
+        settle(&mut first).unwrap();
+        settle(&mut second).unwrap();
+        let disk = read(&root.join("preferences.bed")).unwrap().unwrap();
+        assert_eq!(disk.settings.font_size, 24.0);
+        assert_eq!(disk.settings.panel_gap, 13.0);
+        assert_eq!(
+            second.world().resource::<GlobalPreferences>().0.font_size,
+            24.0
+        );
+        let bytes = std::fs::read(root.join("preferences.bed")).unwrap();
+        first
+            .world_mut()
+            .resource_mut::<PreferencesFile>()
+            .0
+            .as_mut()
+            .unwrap()
+            .checked_at = Instant::now() - Duration::from_secs(2);
+        update(first.world_mut());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while first.world().resource::<GlobalPreferences>().0.panel_gap != 13.0 {
+            update(first.world_mut());
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(std::fs::read(root.join("preferences.bed")).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
+        std::fs::remove_dir_all(unused).unwrap();
     }
     #[test]
     fn global_ron_roundtrip_merges_late_values_and_does_not_write_on_startup() {
@@ -411,7 +580,7 @@ mod tests {
         struct OlderPreferences {
             version: u32,
             settings: Settings,
-            layouts: [LayoutTemplate; 5],
+            layouts: [Option<bedtime_workbench2::persistence::Snapshot>; 5],
         }
         let value = Document::capture(app.world());
         let bytes = encode(&OlderPreferences {
@@ -461,12 +630,10 @@ mod tests {
         let (mut app, root) = host();
         app.add_plugins(crate::session::SessionPlugin);
         configure_directory(&mut app, root.join("config"));
-        let workspace = bedtime_workbench2::Workspaces::new(app.world_mut())
-            .open("Temporary")
-            .entity();
+        let workspace = crate::test_layout(app.world_mut()).entity();
         app.world_mut().entity_mut(workspace).insert((
-            crate::files::WorkspaceRoot(root.join("home")),
-            crate::settings::WorkspacePreferences(crate::settings::SettingsOverrides {
+            crate::files::ProjectRoot(root.join("home")),
+            crate::settings::ProjectPreferences(crate::settings::SettingsOverrides {
                 panel_gap: Some(25.0),
                 ..default()
             }),

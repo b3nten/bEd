@@ -7,12 +7,12 @@ import tempfile
 from pathlib import Path
 
 from automation import Application
-from smoke_bed2 import center, prepare_demo_layout, workspace
+from smoke_bed2 import center, prepare_demo_layout, session
 from smoke_filetree import capture, inspection, open_native, row_position, wait_tree, wait_value
 
 
 def areas(app):
-    return next(layout for layout in workspace(app.inspect())["layouts"] if layout["active"])["areas"]
+    return next(layout for layout in session(app.inspect())["layouts"] if layout["active"])["areas"]
 
 
 def main():

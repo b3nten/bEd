@@ -31,7 +31,7 @@ pub(super) struct Documentation {
     markdown: bool,
     language: String,
     blocks: Vec<Block>,
-    analysis: Option<(AnalysisSession, WorkspaceTask<()>)>,
+    analysis: Option<(AnalysisSession, ManagedTask<()>)>,
 }
 
 fn blocks(markup: &Markup, language: &str) -> (Vec<Block>, String) {

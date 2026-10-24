@@ -1,5 +1,14 @@
 # Entity-first application composition
 
+Ownership update (2026-10-24): the implemented [world/session migration](workbench-world-session-plan.md)
+supersedes workspace entities/membership, workspace command scope and the blanket
+exclusion of reusable persistence in this record. The World owns one session;
+layouts/panels/documents and their checked save/source/close invariants remain.
+Use the current crate README for signatures and opt-in reflected persistence.
+The scoped-layout revision also supersedes the tool-recipe/default reset behavior:
+world restoration is sealed after startup, and reflected layout defaults destructively
+replace one layout while retaining canonical documents and session services.
+
 Status: in progress, reviewed against the worktree on 2026-10-21. This is the
 current decision record for panel composition and application policy. It supersedes
 the registry, delayed initialization and core snapshot/restore portions of
@@ -124,10 +133,10 @@ No workspace metadata is read/written inside a project; old JSON is not imported
 Default home workspace state stays in memory. See the maintained
 [settings/layout/persistence contract](../bed2/README.md#settings-layouts-and-persistence).
 
-Five application layout slots retain live entities. Global defaults contain tool
-placement and geometry, independently of workspace file descriptors. Reset reuses
-matching tools and gathers remaining panels in the largest area without retiring
-documents/workers. Startup resolves persistence before composing initial tools.
+Five application layout slots retain live entities. Global defaults contain a
+reflected layout graph without project paths/document viewers. Reset recreates the
+selected layout and retires its panels/workers, retaining canonical documents and
+session services. Startup resolves persistence before composing initial tools.
 Settings inherits per value, and document autosave uses canonical checked saves.
 The titlebar uses the existing concrete panel-factory drop path.
 

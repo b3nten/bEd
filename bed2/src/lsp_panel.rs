@@ -8,6 +8,7 @@ use bevy::prelude::*;
 pub struct LspPanelPlugin;
 impl Plugin for LspPanelPlugin {
     fn build(&self, app: &mut App) {
+        register_menu(app);
         app.add_plugins(crate::status_bar::StatusBarPlugin);
         #[cfg(feature = "automation")]
         {
@@ -20,14 +21,10 @@ impl Plugin for LspPanelPlugin {
 #[cfg(feature = "automation")]
 fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::AutomationResult {
     use serde_json::json;
-    let workspaces: Vec<_> = world
-        .query_filtered::<Entity, With<Workspace>>()
-        .iter(world)
-        .collect();
     let mut servers = Vec::new();
-    for workspace in workspaces {
-        for s in workspace_servers(world, workspace) {
-            servers.push(json!({"entity":s.entity.to_bits().to_string(),"workspace":workspace.to_bits().to_string(),"program":s.program,"root":s.root,"languages":s.languages,"status":status_text(&s.status),"retiring":s.retiring,"pid":s.activity.process_id,"analysis_epoch":s.activity.analysis_epoch,"project_status":s.activity.project_status.as_ref().map(|p|json!({"health":p.health,"quiescent":p.quiescent,"message":p.message})),"definition":s.activity.supports_definition,"hover":s.activity.supports_hover,"completion":s.activity.supports_completion,"completion_resolve":s.activity.supports_completion_resolve,"name":s.activity.server_name,"version":s.activity.server_version,"pending_requests":s.activity.pending_requests,"documents":s.activity.documents,"progress":s.activity.progress.iter().map(|p|json!({"token":p.token,"title":p.title,"message":p.message,"percentage":p.percentage})).collect::<Vec<_>>(),"messages":s.activity.messages.iter().map(|m|json!({"kind":format!("{:?}",m.kind),"text":m.text})).collect::<Vec<_>>(),"stderr":s.activity.stderr.as_ref()}));
+    {
+        for s in session_servers(world) {
+            servers.push(json!({"entity":s.entity.to_bits().to_string(),"program":s.program,"root":s.root,"languages":s.languages,"status":status_text(&s.status),"retiring":s.retiring,"pid":s.activity.process_id,"analysis_epoch":s.activity.analysis_epoch,"project_status":s.activity.project_status.as_ref().map(|p|json!({"health":p.health,"quiescent":p.quiescent,"message":p.message})),"definition":s.activity.supports_definition,"hover":s.activity.supports_hover,"completion":s.activity.supports_completion,"completion_resolve":s.activity.supports_completion_resolve,"name":s.activity.server_name,"version":s.activity.server_version,"pending_requests":s.activity.pending_requests,"documents":s.activity.documents,"progress":s.activity.progress.iter().map(|p|json!({"token":p.token,"title":p.title,"message":p.message,"percentage":p.percentage})).collect::<Vec<_>>(),"messages":s.activity.messages.iter().map(|m|json!({"kind":format!("{:?}",m.kind),"text":m.text})).collect::<Vec<_>>(),"stderr":s.activity.stderr.as_ref()}));
         }
     }
     let panels: Vec<_> = world
@@ -64,17 +61,13 @@ pub(crate) fn status_text(status: &ServerStatus) -> &'static str {
 impl Panel for LspPanel {
     const KEY: &'static str = "bed.lsp";
     const LABEL: &'static str = "Language Servers";
-    fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let Some(workspace) = world.get::<InWorkspace>(panel).map(|o| o.0) else {
-            return;
-        };
-        let servers = workspace_servers(world, workspace);
-        let configured = world.get::<LspWorkspace>(workspace).cloned();
+    fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, _panel: Entity) {
+        let servers = session_servers(world);
+        let configured = world.get_resource::<LspProject>().cloned();
         let docs: Vec<_> = world
-            .query::<(Entity, &LspDocument, &InWorkspace)>()
+            .query::<(Entity, &LspDocument)>()
             .iter(world)
-            .filter(|(_, _, owner)| owner.0 == workspace)
-            .map(|(entity, source, _)| (entity, source.clone()))
+            .map(|(entity, source)| (entity, source.clone()))
             .collect();
         let surface = *world.get::<WorkbenchSurface>(context.surface).unwrap();
         let mut restart = None;
@@ -226,4 +219,45 @@ mod tests {
         assert_eq!(diagnostic_state(Some(&report), 3), "Stale");
         assert_eq!(diagnostic_state(Some(&report), 2), "Current");
     }
+}
+
+use bedtime_workbench2::persistence::ReflectWorkbenchPersist;
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, WorkbenchPersist)]
+#[require(LspPanel)]
+pub(crate) struct PersistedLspPanel;
+
+pub(crate) fn register_persistence(app: &mut App) {
+    app.register_type::<PersistedLspPanel>();
+}
+pub(crate) fn project_persistence(
+    world: &mut World,
+    captured: &mut bedtime_workbench2::persistence::CapturedWorld,
+) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<LspPanel>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        captured.insert_component(panel, PersistedLspPanel);
+    }
+}
+pub(crate) fn clear_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedLspPanel>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        world.entity_mut(panel).remove::<PersistedLspPanel>();
+    }
+}
+
+pub(crate) fn register_menu(app: &mut App) {
+    crate::menus::register_panel::<LspPanel>(
+        app,
+        Some(80),
+        bedtime_workbench2::PanelFactory::of::<LspPanel>(),
+        crate::storage::ready,
+    );
 }

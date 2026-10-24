@@ -2961,6 +2961,7 @@ dependencies = [
  "bedtime-ui2",
  "bevy",
  "bevy_egui",
+ "bevy_world_serialization",
  "libc",
  "muda",
  "objc2 0.6.5",
@@ -2968,6 +2969,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "objc2-quartz-core 0.3.2",
  "raw-window-handle",
+ "ron",
  "serde",
  "serde_json",
 ]

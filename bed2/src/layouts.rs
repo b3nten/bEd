@@ -1,10 +1,14 @@
 //! Five application slots and reusable tool arrangements. Entities stay live.
-use crate::session::{AreaRecipe, LayoutRecipe, PanelKind, Session, TabRecipe};
+use crate::persistence::ReflectGlobalPersist;
 use bedtime_workbench2::*;
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Component, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Reflect,
+)]
+#[reflect(opaque)]
+#[reflect(Component, Serialize, Deserialize, WorkbenchPersist)]
 pub enum LayoutSlot {
     One,
     Two,
@@ -23,160 +27,12 @@ impl LayoutSlot {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToolKind {
-    LanguageServers,
-    Git,
-    Files,
-    Structure,
-    Terminal,
-    Viewport,
-    Bed,
-    Ducky,
-    Tasks,
-    Settings,
-}
-
-impl ToolKind {
-    pub const ALL: [Self; 10] = [
-        Self::LanguageServers,
-        Self::Git,
-        Self::Files,
-        Self::Structure,
-        Self::Terminal,
-        Self::Viewport,
-        Self::Bed,
-        Self::Ducky,
-        Self::Tasks,
-        Self::Settings,
-    ];
-    
-    pub fn key(self) -> &'static str {
-        match self {
-            Self::LanguageServers => crate::lsp_panel::LspPanel::KEY,
-            Self::Git => crate::git::GitPanel::KEY,
-            Self::Files => bedtime_filetree2::FileTreePanel::KEY,
-            Self::Structure => bed_structure2::StructurePanel::KEY,
-            Self::Terminal => bedtime_terminal2::TerminalPanel::KEY,
-            Self::Viewport => crate::cube::CubeViewport::KEY,
-            Self::Bed => bedtime_mascots2::BedPanel::KEY,
-            Self::Ducky => bedtime_mascots2::DuckPanel::KEY,
-            Self::Tasks => crate::tasks::TasksPanel::KEY,
-            Self::Settings => crate::settings::SettingsPanel::KEY,
-        }
-    }
-    
-    fn panel_kind(self) -> PanelKind {
-        match self {
-            Self::LanguageServers => PanelKind::LanguageServers,
-            Self::Git => PanelKind::Git,
-            Self::Files => PanelKind::Files,
-            Self::Structure => PanelKind::Structure,
-            Self::Terminal => PanelKind::Terminal,
-            Self::Viewport => PanelKind::Viewport,
-            Self::Bed => PanelKind::Bed,
-            Self::Ducky => PanelKind::Ducky,
-            Self::Tasks => PanelKind::Tasks,
-            Self::Settings => PanelKind::Settings,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LayoutTemplate {
-    pub areas: Vec<TemplateArea>,
-    pub focused_area: Option<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TemplateArea {
-    pub rect: AreaRect,
-    pub tools: Vec<ToolKind>,
-    pub selected: Option<usize>,
-}
-
-impl LayoutTemplate {
-    pub fn validate(&self) -> Result<(), String> {
-        if self.areas.is_empty() {
-            return Err("A layout default must contain an area".into());
-        }
-        crate::session::validate(&Session {
-            version: 1,
-            root: None,
-            settings: Default::default(),
-            visibility: Default::default(),
-            name: String::new(),
-            background_updates: true,
-            git_draft: String::new(),
-            git_panel: Default::default(),
-            active_layout: Some(0),
-            layouts: vec![LayoutRecipe {
-                slot: None,
-                name: String::new(),
-                focused_area: self.focused_area,
-                areas: self
-                    .areas
-                    .iter()
-                    .map(|area| AreaRecipe {
-                        rect: area.rect,
-                        selected_tab: area.selected,
-                        tabs: area
-                            .tools
-                            .iter()
-                            .map(|kind| TabRecipe {
-                                git_diff: None,
-                                kind: kind.panel_kind(),
-                                title: String::new(),
-                                preview: false,
-                                file: None,
-                                viewer_explicit: false,
-                                model_view: None,
-                                tree_root: None,
-                            })
-                            .collect(),
-                    })
-                    .collect(),
-            }],
-        })
-    }
-    
-    fn empty() -> Self {
-        Self {
-            areas: vec![TemplateArea {
-                rect: AreaRect {
-                    min: [0, 0],
-                    max: [LAYOUT_EXTENT; 2],
-                },
-                tools: vec![],
-                selected: None,
-            }],
-            focused_area: Some(0),
-        }
-    }
-    
-    fn terminal() -> Self {
-        let mut template = Self::empty();
-        template.areas[0].tools.push(ToolKind::Terminal);
-        template.areas[0].selected = Some(0);
-        template
-    }
-}
-
-#[derive(Resource, Clone)]
-pub struct LayoutDefaults(pub [LayoutTemplate; 5]);
-impl Default for LayoutDefaults {
-    fn default() -> Self {
-        Self([
-            LayoutTemplate::terminal(),
-            LayoutTemplate::empty(),
-            LayoutTemplate::empty(),
-            LayoutTemplate::empty(),
-            LayoutTemplate::empty(),
-        ])
-    }
-}
+/// None selects the built-in arrangement (Terminal in slot one, empty elsewhere).
+/// Saved defaults use the same reflected graph format as layout capture.
+#[derive(Resource, Clone, Default, Reflect, Debug, PartialEq, Serialize, Deserialize)]
+#[reflect(opaque)]
+#[reflect(Resource, Serialize, Deserialize, GlobalPersist)]
+pub struct LayoutDefaults(pub [Option<bedtime_workbench2::persistence::Snapshot>; 5]);
 
 pub struct LayoutsPlugin;
 impl Plugin for LayoutsPlugin {
@@ -185,14 +41,13 @@ impl Plugin for LayoutsPlugin {
         {
             use bedtime_automation2::AutomationAppExt;
             app.register_automation_command("app.inspect_layouts", |world, _| {
-                let entries: Vec<_> = world.query::<(Entity, &LayoutSlot, &InWorkspace)>().iter(world).map(|(entity, slot, workspace)|
-                    serde_json::json!({ "layout": entity.to_bits().to_string(), "workspace": workspace.0.to_bits().to_string(),
+                let entries: Vec<_> = world.query::<(Entity, &LayoutSlot)>().iter(world).map(|(entity, slot)|
+                    serde_json::json!({ "layout": entity.to_bits().to_string(),
                         "slot": slot.index()+1, "active": world.get::<ActiveLayout>(entity).is_some() })).collect();
                 Ok(serde_json::json!({ "layouts": entries, "defaults": world.resource::<LayoutDefaults>().0 }))
             }).register_automation_command("app.select_layout", |world, arguments| {
                 let number = arguments.get("slot").and_then(|v| v.as_u64()).filter(|v| (1..=5).contains(v)).ok_or("slot must be 1–5")?;
-                let workspace = world.query_filtered::<Entity, With<ActiveWorkspace>>().iter(world).next().ok_or("Open a workspace first")?;
-                switch(world, workspace, LayoutSlot::ALL[number as usize-1])?;
+                switch(world, LayoutSlot::ALL[number as usize-1])?;
                 Ok(serde_json::json!({}))
             });
         }
@@ -202,39 +57,29 @@ impl Plugin for LayoutsPlugin {
 }
 
 fn initialize(world: &mut World) {
-    // Only bEd-owned rooted workspaces receive application defaults. Bare
-    // Workbench composition stays explicit, including its existing area IDs.
-    let owners: Vec<_> = world
-        .query_filtered::<Entity, (With<Workspace>, With<crate::files::WorkspaceRoot>)>()
+    if !world.contains_resource::<crate::files::ProjectRoot>() || !crate::storage::ready(world) {
+        return;
+    }
+    let has_slot = world
+        .query_filtered::<Entity, With<LayoutSlot>>()
         .iter(world)
-        .collect();
-    for owner in owners {
-        if !crate::storage::ready(world, owner) {
-            continue;
-        }
-        let has_slot = world.get::<WorkspaceMembers>(owner).is_some_and(|members| {
-            members
-                .entities()
-                .iter()
-                .any(|&e| world.get::<LayoutSlot>(e).is_some())
-        });
-        if has_slot {
-            continue;
-        }
-        // Fresh application startup has no layout. Headless/library hosts may
-        // already have a composition; adopt it rather than replace live panels.
-        if let Some(layout) = active_layout(world, owner) {
-            world.entity_mut(layout).insert(LayoutSlot::One);
-            if Workbench::for_entity(world, layout)
-                .unwrap()
-                .panels(layout)
-                .is_empty()
-            {
-                let template = world.resource::<LayoutDefaults>().0[0].clone();
-                apply(world, layout, &template).expect("Validated initial layout");
-                crate::session::seed_initial_layout(world, owner);
+        .next()
+        .is_some();
+    if !has_slot {
+        let result = (|| {
+            if let Some(layout) = active_layout(world) {
+                world.entity_mut(layout).insert(LayoutSlot::One);
+                if Workbench::new(world).panels(layout).is_empty() {
+                    apply_default(world, layout, LayoutSlot::One)?;
+                }
+            } else {
+                let layout = create_default(world, LayoutSlot::One)?;
+                Workbench::new(world).activate_layout(layout)?;
             }
-        } else if let Err(error) = initialize_first(world, owner) {
+            crate::session::seed_initial_layout(world);
+            Ok::<_, String>(())
+        })();
+        if let Err(error) = result {
             request_error_dialog(
                 world,
                 ErrorDialog {
@@ -243,254 +88,130 @@ fn initialize(world: &mut World) {
                     details: Some(error),
                 },
             );
+            return;
         }
     }
+    // Asynchronous preference/session loading is complete. No later operation may
+    // reconstruct a world; lazy slot creation and Reset use scoped layout data.
+    Workbench::finish_world_restore(world);
 }
 
-fn initialize_first(world: &mut World, workspace: Entity) -> Result<(), String> {
-    let template = world.resource::<LayoutDefaults>().0[0].clone();
-    template.validate()?;
-    let layout = world
-        .spawn((
-            Layout {
-                name: LayoutSlot::One.label().into(),
-                focused_area: None,
-            },
-            InWorkspace(workspace),
-            LayoutSlot::One,
-            ActiveLayout,
-        ))
-        .id();
-    apply(world, layout, &template)?;
-    crate::session::seed_initial_layout(world, workspace);
-    Ok(())
-}
-
-pub fn switch(world: &mut World, workspace: Entity, slot: LayoutSlot) -> Result<(), String> {
-    if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world, workspace) {
+pub fn switch(world: &mut World, slot: LayoutSlot) -> Result<(), String> {
+    if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world) {
         return Err("Workspace settings are loading or a close decision is pending".into());
     }
     let existing = world
-        .get::<WorkspaceMembers>(workspace)
-        .and_then(|members| {
-            members
-                .entities()
-                .iter()
-                .copied()
-                .find(|&e| world.get::<LayoutSlot>(e) == Some(&slot))
-        });
-    let layout = if let Some(layout) = existing {
-        layout
-    } else {
-        let template = world.resource::<LayoutDefaults>().0[slot.index()].clone();
-        template.validate()?;
-        let layout = world
-            .spawn((
-                Layout {
-                    name: slot.label().into(),
-                    focused_area: None,
-                },
-                InWorkspace(workspace),
-                slot,
-            ))
-            .id();
-        apply(world, layout, &template)?;
-        layout
+        .query::<(Entity, &LayoutSlot)>()
+        .iter(world)
+        .find_map(|(e, current)| (*current == slot).then_some(e));
+    let layout = match existing {
+        Some(layout) => layout,
+        None => create_default(world, slot)?,
     };
-    Workbench::for_entity(world, workspace)?.activate_layout(layout)
+    Workbench::new(world).activate_layout(layout)
 }
 
-pub fn save_current(world: &mut World, workspace: Entity) -> Result<(), String> {
-    if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world, workspace) {
+pub fn save_current(world: &mut World) -> Result<(), String> {
+    if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world) {
         return Err("Finish loading or cancel quit before saving a layout default".into());
     }
-    let layout = active_layout(world, workspace).ok_or("Select a layout first")?;
+    let layout = active_layout(world).ok_or("Select a layout first")?;
     let slot = *world
         .get::<LayoutSlot>(layout)
         .ok_or("Current layout has no numbered slot")?;
-    let template = capture(world, layout)?;
-    world.resource_mut::<LayoutDefaults>().0[slot.index()] = template;
+    let registry = world.resource::<AppTypeRegistry>().clone();
+    let mut captured =
+        crate::persistence::capture_features(world)?.into_layout(layout, &registry)?;
+    // Global arrangements do not contain project source identity or file viewers.
+    let files: Vec<_> = captured
+        .components::<crate::files::PersistedFile>()
+        .into_iter()
+        .map(|(e, _)| e)
+        .collect();
+    for panel in files {
+        captured.remove_panel(panel, &registry)?;
+    }
+    crate::git::filter_layout_default(&mut captured, &registry)?;
+    for (panel, _) in captured.components::<crate::files::PersistedTree>() {
+        captured.insert_component(panel, crate::files::PersistedTree { root: None });
+    }
+    for entity in &mut captured.dynamic.entities {
+        entity.components.retain(|v| {
+            v.get_represented_type_info()
+                .is_none_or(|info| info.type_id() != std::any::TypeId::of::<LayoutSlot>())
+        });
+    }
+    let snapshot = captured.serialize(&registry)?;
+    world.resource_mut::<LayoutDefaults>().0[slot.index()] = Some(snapshot);
     Ok(())
 }
 
-pub fn reset_current(world: &mut World, workspace: Entity) -> Result<(), String> {
-    if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world, workspace) {
+pub fn reset_current(world: &mut World) -> Result<(), String> {
+    if !crate::close::accepts_user_actions(world) || !crate::storage::ready(world) {
         return Err("Finish loading or cancel quit before resetting a layout".into());
     }
-    let layout = active_layout(world, workspace).ok_or("Select a layout first")?;
+    let layout = active_layout(world).ok_or("Select a layout first")?;
     let slot = *world
         .get::<LayoutSlot>(layout)
         .ok_or("Current layout has no numbered slot")?;
-    let template = world.resource::<LayoutDefaults>().0[slot.index()].clone();
-    apply(world, layout, &template)
+    apply_default(world, layout, slot).map(|_| ())
 }
 
-fn capture(world: &World, layout: Entity) -> Result<LayoutTemplate, String> {
-    let areas = world
-        .get::<LayoutAreas>(layout)
-        .ok_or("Layout unavailable")?
-        .entities();
-    let mut recipes = Vec::new();
-    for &area in areas {
-        let data = world.get::<Area>(area).unwrap();
-        let mut tools = Vec::new();
-        let mut selected = None;
-        for &panel in panels_in_area(world, area) {
-            let key = &world.get::<PanelInstance>(panel).unwrap().key;
-            if let Some(kind) = ToolKind::ALL.into_iter().find(|kind| kind.key() == key) {
-                if data.selected == Some(panel) {
-                    selected = Some(tools.len());
-                }
-                tools.push(kind);
-            }
+fn create_default(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
+    let captured = default_capture(world, slot)?;
+    let target = Workbench::new(world).create_layout(slot.label())?;
+    let root = match Workbench::replace_layout(world, target, captured) {
+        Ok(root) => root,
+        Err(error) => {
+            world.despawn(target);
+            return Err(error);
         }
-        recipes.push(TemplateArea {
-            rect: data.rect,
-            tools,
-            selected,
-        });
-    }
-    let template = LayoutTemplate {
-        areas: recipes,
-        focused_area: world
-            .get::<Layout>(layout)
-            .unwrap()
-            .focused_area
-            .and_then(|a| areas.iter().position(|&e| e == a)),
     };
-    template.validate()?;
-    Ok(template)
+    activate_default(world, root, slot);
+    Ok(root)
 }
-
-/// Validate before changing entities; move every retained panel before retiring
-/// empty old areas. Document bindings and worker owners never change on reset.
-fn apply(world: &mut World, layout: Entity, template: &LayoutTemplate) -> Result<(), String> {
-    template.validate()?;
-    let old_areas = world
-        .get::<LayoutAreas>(layout)
-        .map(|a| a.entities().to_vec())
-        .unwrap_or_default();
-    let mut remaining: Vec<_> = old_areas
-        .iter()
-        .flat_map(|&area| panels_in_area(world, area).iter().copied())
-        .collect();
-    let mut areas = Vec::new();
-    let mut selections = Vec::new();
-    for recipe in &template.areas {
-        let area = world
-            .spawn((
-                Area {
-                    rect: recipe.rect,
-                    selected: None,
-                },
-                InLayout(layout),
-            ))
-            .id();
-        areas.push(area);
-        let mut panels = Vec::new();
-        for kind in &recipe.tools {
-            let panel = if let Some(index) = remaining.iter().position(|&panel| {
-                world
-                    .get::<PanelInstance>(panel)
-                    .is_some_and(|data| data.key == kind.key())
-            }) {
-                let panel = remaining.remove(index);
-                world.entity_mut(panel).insert(InArea(area));
-                panel
-            } else {
-                spawn_tool(world, area, *kind)
-            };
-            panels.push(panel);
-        }
-        selections.push(recipe.selected.map(|index| panels[index]));
+fn apply_default(world: &mut World, layout: Entity, slot: LayoutSlot) -> Result<Entity, String> {
+    let captured = default_capture(world, slot)?;
+    let root = Workbench::replace_layout(world, layout, captured)?;
+    activate_default(world, root, slot);
+    Ok(root)
+}
+fn default_capture(
+    world: &World,
+    slot: LayoutSlot,
+) -> Result<bedtime_workbench2::persistence::CapturedLayout, String> {
+    use bedtime_workbench2::persistence::CapturedLayout;
+    let registry = world.resource::<AppTypeRegistry>().clone();
+    if let Some(snapshot) = &world.resource::<LayoutDefaults>().0[slot.index()] {
+        let capture = CapturedLayout::deserialize(snapshot, &registry)?;
+        crate::files::validate_layout_default(&capture)?;
+        crate::git::validate_layout_default(&capture)?;
+        return Ok(capture);
     }
-    let largest = template
-        .areas
-        .iter()
-        .enumerate()
-        .max_by_key(|(index, area)| {
-            (
-                i64::from(area.rect.max[0] - area.rect.min[0])
-                    * i64::from(area.rect.max[1] - area.rect.min[1]),
-                std::cmp::Reverse(*index),
-            )
+    // Built-ins are ordinary concrete composition, captured through the same API.
+    let mut app = App::new();
+    app.add_plugins(WorkbenchCorePlugin);
+    let initial = app.world_mut();
+    initial.insert_resource(registry.clone());
+    let layout = initial
+        .spawn(Layout {
+            name: slot.label().into(),
+            ..default()
         })
-        .unwrap()
-        .0;
-    let first_extra = remaining.first().copied();
-    for panel in remaining {
-        world.entity_mut(panel).insert(InArea(areas[largest]));
+        .id();
+    let area = initial.spawn((Area::default(), InLayout(layout))).id();
+    if slot == LayoutSlot::One {
+        initial.spawn((crate::terminal::PersistedTerminal, InArea(area)));
     }
-    for area in old_areas {
-        world.despawn(area);
-    }
-    world.flush();
-    for (index, &area) in areas.iter().enumerate() {
-        world.get_mut::<Area>(area).unwrap().selected =
-            selections[index].or_else(|| if index == largest { first_extra } else { None });
-    }
-    world.get_mut::<Layout>(layout).unwrap().focused_area =
-        template.focused_area.map(|index| areas[index]);
-    reconcile_workbench(world)
+    initial.flush();
+    Workbench::capture_layout::<ReflectWorkbenchPersist>(initial, layout)
 }
-
-pub fn spawn_tool(world: &mut World, area: Entity, kind: ToolKind) -> Entity {
-    match kind {
-        ToolKind::Git => world.spawn((crate::git::GitPanel::default(), InArea(area))).id(),
-        ToolKind::LanguageServers => world.spawn((crate::lsp_panel::LspPanel, InArea(area))).id(),
-        ToolKind::Files => {
-            let workspace = world.get::<InWorkspace>(area).unwrap().0;
-            let root = world
-                .get::<crate::files::WorkspaceRoot>(workspace)
-                .map(|root| root.0.clone());
-            let panel = world
-                .spawn((bedtime_filetree2::FileTreePanel::default(), InArea(area)))
-                .id();
-            if let Some(root) = root {
-                world
-                    .entity_mut(panel)
-                    .insert(bedtime_filetree2::FileTreeRoot(root));
-            }
-            panel
-        }
-        ToolKind::Structure => world
-            .spawn((bed_structure2::StructurePanel::default(), InArea(area)))
-            .id(),
-        ToolKind::Terminal => {
-            let workspace = world.get::<InWorkspace>(area).unwrap().0;
-            let options = bedtime_terminal2::TerminalOptions {
-                working_directory: crate::files::workspace_directory(world, workspace),
-                ..Default::default()
-            };
-            world
-                .spawn((bedtime_terminal2::TerminalPanel::new(options), InArea(area)))
-                .id()
-        }
-        ToolKind::Viewport => world.spawn((crate::cube::CubeViewport, InArea(area))).id(),
-        ToolKind::Bed => world.spawn((bedtime_mascots2::BedPanel, InArea(area))).id(),
-        ToolKind::Ducky => world.spawn((bedtime_mascots2::DuckPanel, InArea(area))).id(),
-        ToolKind::Tasks => world
-            .spawn((crate::tasks::TasksPanel::default(), InArea(area)))
-            .id(),
-        ToolKind::Settings => world
-            .spawn((crate::settings::SettingsPanel, InArea(area)))
-            .id(),
-    }
-}
-
-pub fn open_or_focus(world: &mut World, layout: Entity, kind: ToolKind) -> Result<Entity, String> {
-    let panels = Workbench::for_entity(world, layout)?.panels(layout);
-    let panel = if let Some(panel) = panels.into_iter().find(|&panel| {
-        world
-            .get::<PanelInstance>(panel)
-            .is_some_and(|data| data.key == kind.key())
-    }) {
-        panel
-    } else {
-        crate::menus::open_panel(world, layout, kind.key())?
-    };
-    Workbench::for_entity(world, layout)?.focus_panel(panel)?;
-    Ok(panel)
+fn activate_default(world: &mut World, root: Entity, slot: LayoutSlot) {
+    world.entity_mut(root).insert(slot);
+    world.get_mut::<Layout>(root).unwrap().name = slot.label().into();
+    crate::terminal::activate_persistence(world);
+    crate::files::activate_persistence(world);
+    crate::persistence::clear(world);
 }
 
 pub struct UseLayout<const N: usize>;
@@ -522,28 +243,12 @@ pub fn install_menu(world: &mut World, view: Entity) {
     register_context_command::<ResetCurrentLayout>(world).unwrap();
     install_global_handler::<SaveCurrentLayout, _>(
         world,
-        |invocation: In<ContextCommandInvocation>, world: &mut World| {
-            save_current(
-                world,
-                invocation
-                    .workspace
-                    .ok_or("Open a workspace first")?
-                    .entity(),
-            )
-        },
+        |_invocation: In<ContextCommandInvocation>, world: &mut World| save_current(world),
     )
     .unwrap();
     install_global_handler::<ResetCurrentLayout, _>(
         world,
-        |invocation: In<ContextCommandInvocation>, world: &mut World| {
-            reset_current(
-                world,
-                invocation
-                    .workspace
-                    .ok_or("Open a workspace first")?
-                    .entity(),
-            )
-        },
+        |_invocation: In<ContextCommandInvocation>, world: &mut World| reset_current(world),
     )
     .unwrap();
     let menu = world
@@ -576,15 +281,8 @@ fn install_slot<const N: usize>(world: &mut World, menu: Entity, key: KeyCode) {
     register_context_command::<UseLayout<N>>(world).unwrap();
     install_global_handler::<UseLayout<N>, _>(
         world,
-        |invocation: In<ContextCommandInvocation>, world: &mut World| {
-            switch(
-                world,
-                invocation
-                    .workspace
-                    .ok_or("Open a workspace first")?
-                    .entity(),
-                LayoutSlot::ALL[N],
-            )
+        |_invocation: In<ContextCommandInvocation>, world: &mut World| {
+            switch(world, LayoutSlot::ALL[N])
         },
     )
     .unwrap();
@@ -599,234 +297,174 @@ fn install_slot<const N: usize>(world: &mut World, menu: Entity, key: KeyCode) {
     )));
 }
 
+use bedtime_workbench2::persistence::ReflectWorkbenchPersist;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bedtime_workbench2::persistence::{CapturedLayout, ReflectWorkbenchPersist};
     fn host() -> (App, Entity, Entity) {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin)
             .init_resource::<LayoutDefaults>();
-        let workspace = Workspaces::new(app.world_mut()).open("Project").entity();
-        let layout = active_layout(app.world(), workspace).unwrap();
+        crate::persistence::register(&mut app);
+        let layout = crate::test_layout(app.world_mut());
         app.world_mut().entity_mut(layout).insert(LayoutSlot::One);
-        (app, workspace, layout)
-    }
-    #[test]
-    fn bare_workbench_workspaces_keep_their_explicit_composition() {
-        let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, LayoutsPlugin));
-        let workspace = Workspaces::new(app.world_mut())
-            .open("Explicit composition")
-            .entity();
-        let layout = active_layout(app.world(), workspace).unwrap();
-        let area = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
+        let area = Workbench::new(app.world_mut())
             .destination_area(layout)
             .unwrap();
-        app.update();
-        assert!(app.world().get::<Area>(area).is_some());
-        assert!(app.world().get::<LayoutSlot>(layout).is_none());
-        assert!(
-            Workbench::for_entity(app.world_mut(), layout)
-                .unwrap()
-                .panels(layout)
-                .is_empty()
-        );
-        assert!(
-            app.world()
-                .get::<WorkspaceWork>(workspace)
-                .unwrap()
-                .list()
-                .is_empty()
-        );
+        (app, layout, area)
     }
     #[test]
-    fn switching_slots_retains_canonical_documents_and_panel_instances() {
-        let (mut app, workspace, first) = host();
-        let area = Workbench::for_entity(app.world_mut(), first)
-            .unwrap()
-            .destination_area(first)
-            .unwrap();
+    fn switching_slots_keeps_live_panels_and_documents_after_world_restore_is_closed() {
+        let (mut app, first, area) = host();
         let panel = app
             .world_mut()
             .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
             .id();
         let document = open_document(
             app.world_mut(),
-            workspace,
             "retained".to_owned(),
             DocumentOptions::loaded("Document"),
         )
         .unwrap();
         bind_document_view(app.world_mut(), panel, document).unwrap();
-        let terminal = spawn_tool(app.world_mut(), area, ToolKind::Terminal);
-        switch(app.world_mut(), workspace, LayoutSlot::Two).unwrap();
-        assert_ne!(first, active_layout(app.world(), workspace).unwrap());
-        assert!(app.world().get::<DocumentView>(panel).is_some());
-        assert!(
-            app.world()
-                .get::<bedtime_terminal2::TerminalPanel>(terminal)
-                .is_some()
-        );
-        switch(app.world_mut(), workspace, LayoutSlot::One).unwrap();
-        assert_eq!(active_layout(app.world(), workspace), Some(first));
+        Workbench::finish_world_restore(app.world_mut());
+        switch(app.world_mut(), LayoutSlot::Two).unwrap();
+        assert_ne!(active_layout(app.world()), Some(first));
+        switch(app.world_mut(), LayoutSlot::One).unwrap();
+        assert_eq!(active_layout(app.world()), Some(first));
         assert_eq!(read_document(app.world(), document).unwrap(), "retained");
-        assert_eq!(
-            app.world().get::<DocumentView>(panel).unwrap().document(),
-            document.id()
-        );
-        assert_eq!(app.world().get::<InArea>(terminal).unwrap().0, area);
+        assert_eq!(app.world().get::<InArea>(panel).unwrap().0, area);
     }
     #[test]
-    fn reset_reuses_tools_and_gathers_extra_tabs_without_losing_documents() {
-        let (mut app, workspace, layout) = host();
-        let area = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
-            .destination_area(layout)
-            .unwrap();
-        let terminal = spawn_tool(app.world_mut(), area, ToolKind::Terminal);
-        let extra_terminal = spawn_tool(app.world_mut(), area, ToolKind::Terminal);
+    fn reset_recreates_panels_and_retires_old_layout_while_retaining_canonical_documents() {
+        let (mut app, layout, area) = host();
+        let terminal = app
+            .world_mut()
+            .spawn((bedtime_terminal2::TerminalPanel::default(), InArea(area)))
+            .id();
         let editor = app
             .world_mut()
             .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
             .id();
         let document = open_document(
             app.world_mut(),
-            workspace,
             "dirty".to_owned(),
             DocumentOptions::unsaved("Draft"),
         )
         .unwrap();
         bind_document_view(app.world_mut(), editor, document).unwrap();
-        reset_current(app.world_mut(), workspace).unwrap();
-        let areas = app
-            .world()
-            .get::<LayoutAreas>(layout)
-            .unwrap()
-            .entities()
-            .to_vec();
-        assert_eq!(areas.len(), 1);
-        assert_eq!(app.world().get::<InArea>(terminal).unwrap().0, areas[0]);
-        assert_eq!(
-            app.world().get::<InArea>(extra_terminal).unwrap().0,
-            areas[0]
-        );
-        assert_eq!(app.world().get::<InArea>(editor).unwrap().0, areas[0]);
-        assert!(inspect_document(app.world(), document.id()).unwrap().dirty);
-        let before = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
-            .panels(layout);
-        reset_current(app.world_mut(), workspace).unwrap();
-        let after = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
-            .panels(layout);
-        assert_eq!(
-            before
-                .into_iter()
-                .collect::<std::collections::BTreeSet<_>>(),
-            after.into_iter().collect()
+        reset_current(app.world_mut()).unwrap();
+        let root = active_layout(app.world()).unwrap();
+        assert_ne!(root, layout);
+        assert!(app.world().get_entity(terminal).is_err());
+        assert!(app.world().get_entity(editor).is_err());
+        let panels = Workbench::new(app.world_mut()).panels(root);
+        assert_eq!(panels.len(), 1);
+        assert!(
+            app.world()
+                .get::<bedtime_terminal2::TerminalPanel>(panels[0])
+                .is_some()
         );
         assert_eq!(read_document(app.world(), document).unwrap(), "dirty");
+        assert_eq!(app.world().get::<LayoutSlot>(root), Some(&LayoutSlot::One));
     }
     #[test]
-    fn mascot_layout_defaults_preserve_both_kinds_and_create_concrete_panels() {
-        let (mut app, workspace, layout) = host();
-        let area = Workbench::for_entity(app.world_mut(), layout).unwrap().destination_area(layout).unwrap();
-        spawn_tool(app.world_mut(), area, ToolKind::Bed);
-        spawn_tool(app.world_mut(), area, ToolKind::Ducky);
-        save_current(app.world_mut(), workspace).unwrap();
-        let template = app.world().resource::<LayoutDefaults>().0[0].clone();
-        assert_eq!(template.areas[0].tools, vec![ToolKind::Bed, ToolKind::Ducky]);
-        let encoded = crate::storage::encode(&template).unwrap();
-        let decoded: LayoutTemplate = ron::de::from_bytes(&encoded).unwrap();
-        decoded.validate().unwrap();
-        assert_eq!(decoded, template);
-        let other = Workspaces::new(app.world_mut()).open("Other").entity();
-        let other_layout = active_layout(app.world(), other).unwrap();
-        app.world_mut().entity_mut(other_layout).insert(LayoutSlot::One);
-        reset_current(app.world_mut(), other).unwrap();
-        let panels = Workbench::for_entity(app.world_mut(), other).unwrap().panels(other_layout);
-        assert!(panels.iter().any(|&panel| app.world().get::<bedtime_mascots2::BedPanel>(panel).is_some()));
-        assert!(panels.iter().any(|&panel| app.world().get::<bedtime_mascots2::DuckPanel>(panel).is_some()));
-    }
-
-    #[test]
-    fn saved_defaults_exclude_paths_and_apply_only_on_creation_or_explicit_reset() {
-        let (mut app, workspace, layout) = host();
-        let area = Workbench::for_entity(app.world_mut(), layout)
-            .unwrap()
-            .destination_area(layout)
-            .unwrap();
-        let files = spawn_tool(app.world_mut(), area, ToolKind::Files);
+    fn reflected_defaults_preserve_panel_kinds_and_data_but_exclude_project_sources() {
+        let (mut app, _layout, area) = host();
         app.world_mut()
-            .entity_mut(files)
-            .insert(bedtime_filetree2::FileTreeRoot(std::path::PathBuf::from(
-                "/private-project",
-            )));
+            .spawn((bedtime_mascots2::BedPanel, InArea(area)));
+        app.world_mut()
+            .spawn((bedtime_mascots2::DuckPanel, InArea(area)));
+        app.world_mut().spawn((
+            bedtime_filetree2::FileTreePanel::default(),
+            bedtime_filetree2::FileTreeRoot("/private-project".into()),
+            InArea(area),
+        ));
+        app.world_mut()
+            .spawn((crate::files::FilePreviewPanel::default(), InArea(area)));
+        app.world_mut().spawn((
+            crate::git::diff::DiffPanel::new(crate::git::diff::Descriptor {
+                root: "/another-private-project".into(),
+                path: "file.rs".into(),
+                side: bedtime_git::DiffSide::Unstaged,
+            }),
+            InArea(area),
+        ));
+        save_current(app.world_mut()).unwrap();
+        let saved = app.world().resource::<LayoutDefaults>().0[0]
+            .clone()
+            .unwrap();
+        assert!(!saved.data.contains("private-project"));
+        assert!(!saved.data.contains("PersistedDiff"));
+        assert!(!saved.data.contains("PersistedFile\""));
+        let capture = CapturedLayout::<ReflectWorkbenchPersist>::deserialize(
+            &saved,
+            app.world().resource::<AppTypeRegistry>(),
+        )
+        .unwrap();
+        assert!(capture.components::<LayoutSlot>().is_empty());
+        assert!(
+            capture
+                .components::<crate::files::PersistedFile>()
+                .is_empty()
+        );
+        reset_current(app.world_mut()).unwrap();
+        let root = active_layout(app.world()).unwrap();
+        let panels = Workbench::new(app.world_mut()).panels(root);
+        assert_eq!(panels.len(), 3);
+        assert!(
+            panels
+                .iter()
+                .any(|&p| app.world().get::<bedtime_mascots2::BedPanel>(p).is_some())
+        );
+        assert!(
+            panels
+                .iter()
+                .any(|&p| app.world().get::<bedtime_mascots2::DuckPanel>(p).is_some())
+        );
+    }
+    #[test]
+    fn invalid_reset_and_uncommitted_drafts_preserve_the_original_layout() {
+        let (mut app, layout, area) = host();
         let editor = app
             .world_mut()
             .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
             .id();
-        save_current(app.world_mut(), workspace).unwrap();
-        let encoded =
-            crate::storage::encode(&app.world().resource::<LayoutDefaults>().0[0]).unwrap();
-        assert!(
-            !String::from_utf8(encoded)
-                .unwrap()
-                .contains("private-project")
-        );
-        let defaults = app.world().resource::<LayoutDefaults>().0[0].clone();
-        assert_eq!(defaults.areas[0].tools, vec![ToolKind::Files]);
-        let other = Workspaces::new(app.world_mut()).open("Other").entity();
-        let other_layout = active_layout(app.world(), other).unwrap();
-        app.world_mut()
-            .entity_mut(other_layout)
-            .insert(LayoutSlot::One);
-        let other_area = Workbench::for_entity(app.world_mut(), other)
-            .unwrap()
-            .destination_area(other_layout)
-            .unwrap();
-        let settings = spawn_tool(app.world_mut(), other_area, ToolKind::Settings);
-        assert_eq!(app.world().get::<InArea>(settings).unwrap().0, other_area);
-        reset_current(app.world_mut(), other).unwrap();
-        assert!(app.world().get::<InArea>(settings).is_some());
-        assert!(app.world().get::<InArea>(editor).is_some());
-        assert_eq!(
-            app.world_mut()
-                .query_filtered::<Entity, With<bedtime_filetree2::FileTreePanel>>()
-                .iter(app.world())
-                .count(),
-            2
-        );
+        let document = open_document(
+            app.world_mut(),
+            String::new(),
+            DocumentOptions::unsaved("Draft"),
+        )
+        .unwrap();
+        bind_document_view(app.world_mut(), editor, document).unwrap();
+        app.world_mut().entity_mut(editor).insert(DocumentDraft);
+        assert!(reset_current(app.world_mut()).is_err());
+        assert!(app.world().get::<DocumentDraft>(editor).is_some());
+        app.world_mut().entity_mut(editor).remove::<DocumentDraft>();
+        app.world_mut().resource_mut::<LayoutDefaults>().0[0] =
+            Some(bedtime_workbench2::persistence::Snapshot {
+                version: 2,
+                data: "invalid".into(),
+            });
+        assert!(reset_current(app.world_mut()).is_err());
+        assert_eq!(active_layout(app.world()), Some(layout));
+        assert_eq!(app.world().get::<InArea>(editor).unwrap().0, area);
     }
     #[test]
-    fn invalid_reset_is_rejected_before_geometry_or_panels_change() {
-        let (mut app, workspace, layout) = host();
-        let before = capture(app.world(), layout).unwrap();
-        app.world_mut().resource_mut::<LayoutDefaults>().0[0].areas[0]
-            .rect
-            .max[0] = -1;
-        assert!(reset_current(app.world_mut(), workspace).is_err());
-        assert_eq!(capture(app.world(), layout).unwrap(), before);
-    }
-    #[test]
-    fn titlebar_click_reuses_current_layout_tools_and_drag_factory_creates_another() {
-        let (mut app, _, layout) = host();
-        let first = open_or_focus(app.world_mut(), layout, ToolKind::Settings).unwrap();
+    fn titlebar_creation_and_drag_use_the_feature_factory() {
+        let (mut app, layout, _) = host();
+        crate::settings::register_menu(&mut app);
+        let key = crate::settings::SettingsPanel::KEY;
+        let first = crate::menus::open_or_focus(app.world_mut(), layout, key).unwrap();
         assert_eq!(
-            open_or_focus(app.world_mut(), layout, ToolKind::Settings).unwrap(),
+            crate::menus::open_or_focus(app.world_mut(), layout, key).unwrap(),
             first
         );
         let area = app.world().get::<InArea>(first).unwrap().0;
-        let factory = PanelFactory::of::<crate::settings::SettingsPanel>();
+        let factory = crate::menus::panel_menu(app.world(), key).unwrap().factory;
         let second = (factory.create)(app.world_mut(), area);
         assert_ne!(first, second);
-        assert_eq!(
-            Workbench::for_entity(app.world_mut(), layout)
-                .unwrap()
-                .panels(layout)
-                .len(),
-            2
-        );
     }
 }

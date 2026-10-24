@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 
 from automation import Application
-from smoke_bed2 import ready, workspace, center, prepare_demo_layout
+from smoke_bed2 import ready, session, center, prepare_demo_layout
 from smoke_filetree import key, primary, capture, wait_value
 from smoke_workspace_policy import clean_quit, wait_for
 
@@ -17,7 +17,7 @@ def state(app, panel):
 
 
 def open_file(app, path, viewer=None):
-    layout = next(l["entity"] for l in workspace(app.inspect())["layouts"] if l["active"])
+    layout = next(l["entity"] for l in session(app.inspect())["layouts"] if l["active"])
     args = {"layout": layout, "path": str(path)}
     if viewer:
         args["viewer"] = viewer

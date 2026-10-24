@@ -89,8 +89,6 @@ def main():
         with Application([str(Path(args.binary).resolve()), str(root)], output=output, timeout=90) as app:
             prepare_demo_layout(app, viewport=True)
             app.request("configure", fixed_dt=1 / 60, clipboard="")
-            initial = app.wait_until(lambda state: bool(state["workbench"]["workspaces"]))
-            workspace = initial["workbench"]["workspaces"][0]["entity"]
             open_panel(app, "Files")
             wait(app, lambda state: any(any(row["path"] == str(small) for row in tree["rows"]) for tree in state["panels"]))
             app.click_text("small.txt")
@@ -219,7 +217,8 @@ def main():
             state = wait(app, lambda state: viewer(state, big)["byte_len"] == large_size + 1 and not viewer(state, big)["document_info"]["dirty"])
             current = viewer(state, big)
             captures.append(app.capture("03-million-line-editor.png"))
-            app.request("workspace.close", workspace=workspace)
+            from smoke_workspace_policy import clean_quit
+            clean_quit(app)
             summary = {"passed": True, "large_file_bytes": large_size, "line_count": 1000001,
                        "rendered_lines": current["rendered_lines"], "laid_out_bytes": current["laid_out_bytes"],
                        "captures": captures}

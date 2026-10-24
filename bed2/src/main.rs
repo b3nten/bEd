@@ -1,7 +1,7 @@
 use bedtime_ui2::{BuiltinIcon, UiContext, UiPlugin, egui};
 use bedtime_workbench2::{
-    ActiveLayout, ActiveWorkspace, Area, InActiveWorkspace, InLayout, InWorkspace, Layout,
-    Titlebar, WindowBlur, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface, Workspace,
+    ActiveLayout, Area, InLayout, Layout, Panel, Titlebar, WindowBlur, WorkbenchCamera,
+    WorkbenchPlugin, WorkbenchSurface,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 
@@ -14,15 +14,18 @@ mod file_editor;
 mod files;
 mod fonts;
 mod git;
-mod images;
-mod models;
 mod hex;
+mod images;
 mod keybindings;
 mod layouts;
 mod lsp;
 mod lsp_panel;
+mod mascots;
 mod menus;
+mod models;
 mod opening;
+mod persistence;
+mod project;
 mod session;
 mod settings;
 mod status_bar;
@@ -61,7 +64,7 @@ fn main() -> AppExit {
         WorkbenchPlugin,
         effects::EffectsPlugin,
         cube::CubePlugin,
-        (bedtime_mascots2::MascotPlugin, bedtime_model2::ModelPlugin),
+        (mascots::MascotsPlugin, bedtime_model2::ModelPlugin),
         code::CodePlugin,
         files::FilesPlugin,
         tasks::TasksPlugin,
@@ -70,7 +73,7 @@ fn main() -> AppExit {
         layouts::LayoutsPlugin,
         autosave::AutosavePlugin,
         session::SessionPlugin,
-        (close::ClosePlugin, bedtime_terminal2::TerminalPlugin),
+        (close::ClosePlugin, terminal::TerminalPlugin),
     ))
     .add_systems(Startup, setup);
     bedtime_workbench2::register_document_handlers(app.world_mut())
@@ -78,11 +81,12 @@ fn main() -> AppExit {
 
     menus::install(&mut app);
     settings::configure(&mut app);
-    terminal::install(&mut app);
     files::configure_startup(&mut app);
 
     #[cfg(feature = "automation")]
-    {
+    app.init_resource::<ToolbarRects>();
+    #[cfg(feature = "automation")]
+    if !std::env::args_os().any(|argument| argument == "--no-automation") {
         use bedtime_automation2::AutomationAppExt;
         app.add_plugins(bedtime_automation2::AutomationPlugin::stdio())
             .init_resource::<ToolbarRects>();
@@ -137,19 +141,8 @@ fn setup(mut commands: Commands, window: Single<Entity, With<PrimaryWindow>>) {
 
     commands.spawn((Camera2d, WorkbenchCamera));
 
-    let workspace = commands
-        .spawn((
-            Workspace {
-                name: "Default".into(),
-                ..default()
-            },
-            ActiveWorkspace,
-        ))
-        .id();
-
-    commands.queue(move |world: &mut World| {
-        session::remember_initial_state(world, workspace)
-            .expect("Valid application startup composition");
+    commands.queue(|world: &mut World| {
+        session::remember_initial_state(world).expect("Valid application startup composition");
     });
 }
 
@@ -158,7 +151,7 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
     // Native presentation suppresses this shared-definition fallback row.
     menus::draw_application_menu(ui, world, context);
     let layout = world
-        .query_filtered::<Entity, (With<ActiveLayout>, With<InActiveWorkspace>)>()
+        .query_filtered::<Entity, With<ActiveLayout>>()
         .single(world)
         .ok();
 
@@ -175,21 +168,16 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
         // The workbench titlebar already reserves 6pt at the window edge.
         ui.spacing_mut().button_padding = egui::vec2(5.0, 3.0);
         ui.add_space(4.0);
-        for (icon, kind) in [
-            (BuiltinIcon::Settings, layouts::ToolKind::Settings),
-            (BuiltinIcon::Structure, layouts::ToolKind::Structure),
-            (BuiltinIcon::Files, layouts::ToolKind::Files),
-            (BuiltinIcon::GitBranch, layouts::ToolKind::Git),
-            (BuiltinIcon::Terminal, layouts::ToolKind::Terminal),
+        for (icon, key) in [
+            (BuiltinIcon::Settings, settings::SettingsPanel::KEY),
+            (BuiltinIcon::Structure, bed_structure2::StructurePanel::KEY),
+            (BuiltinIcon::Files, bedtime_filetree2::FileTreePanel::KEY),
+            (BuiltinIcon::GitBranch, git::GitPanel::KEY),
+            (BuiltinIcon::Terminal, bedtime_terminal2::TerminalPanel::KEY),
         ] {
-            let workspace = world
-                .query_filtered::<Entity, With<ActiveWorkspace>>()
-                .iter(world)
-                .next();
-            let ready = workspace.is_some_and(|w| storage::ready(world, w));
-            let enabled = close::accepts_user_actions(world)
-                && workspace.is_some()
-                && (ready || kind == layouts::ToolKind::Settings);
+            let entry = menus::panel_menu(world, key).expect("Installed toolbar feature");
+            let ready = storage::ready(world);
+            let enabled = close::accepts_user_actions(world) && (entry.available)(world);
             ui.add_enabled_ui(enabled, |ui| {
                 ui.visuals_mut().button_frame = false;
                 let mut frame = context.frame(ui);
@@ -198,39 +186,12 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
                     .icon_button_sized(icon, 16.0)
                     .interact(egui::Sense::click_and_drag());
                 #[cfg(feature = "automation")]
-                tool_rects.push((kind.key(), response.rect));
-                context.frame(ui).tooltip(
-                    &response,
-                    match kind {
-                        layouts::ToolKind::Terminal => "Terminal",
-                        layouts::ToolKind::Files => "Files",
-                        layouts::ToolKind::Structure => "Structure",
-                        layouts::ToolKind::Git => "Git",
-                        _ => "Settings",
-                    },
-                );
+                tool_rects.push((key, response.rect));
+                context.frame(ui).tooltip(&response, entry.factory.label);
                 if ready {
-                    bedtime_workbench2::panel_drag_source(
-                        &response,
-                        match kind {
-                            layouts::ToolKind::Terminal => {
-                                bedtime_workbench2::PanelFactory::new("Terminal", |w, a| {
-                                    layouts::spawn_tool(w, a, layouts::ToolKind::Terminal)
-                                })
-                            }
-                            layouts::ToolKind::Git => bedtime_workbench2::PanelFactory::of::<git::GitPanel>(),
-                            layouts::ToolKind::Files => bedtime_workbench2::PanelFactory::of::<
-                                bedtime_filetree2::FileTreePanel,
-                            >(),
-                            layouts::ToolKind::Structure => bedtime_workbench2::PanelFactory::of::<
-                                bed_structure2::StructurePanel,
-                            >(),
-                            _ => bedtime_workbench2::PanelFactory::of::<settings::SettingsPanel>(),
-                        },
-                    );
+                    bedtime_workbench2::panel_drag_source(&response, entry.factory.clone());
                 }
                 if response.clicked() {
-                    let workspace = workspace.unwrap();
                     let target = layout.unwrap_or_else(|| {
                         let layout = world
                             .spawn((
@@ -238,7 +199,6 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
                                     name: "Layout 1".into(),
                                     ..default()
                                 },
-                                InWorkspace(workspace),
                                 ActiveLayout,
                                 layouts::LayoutSlot::One,
                             ))
@@ -246,7 +206,7 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
                         world.spawn((Area::default(), InLayout(layout)));
                         layout
                     });
-                    if let Err(error) = layouts::open_or_focus(world, target, kind) {
+                    if let Err(error) = menus::open_or_focus(world, target, key) {
                         bevy::log::warn!("Cannot open tool: {error}");
                     }
                 }
@@ -263,3 +223,13 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
 #[cfg(feature = "automation")]
 #[derive(Resource, Default)]
 struct ToolbarRects(Vec<(&'static str, egui::Rect)>);
+
+#[cfg(test)]
+pub(crate) fn test_layout(world: &mut bevy::prelude::World) -> bevy::prelude::Entity {
+    use bedtime_workbench2::*;
+    let layout = Workbench::new(world).create_layout("Test").unwrap();
+    if active_layout(world).is_none() {
+        world.entity_mut(layout).insert(ActiveLayout);
+    }
+    layout
+}

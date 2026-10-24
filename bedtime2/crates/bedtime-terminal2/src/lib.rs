@@ -10,8 +10,7 @@ use bedtime_terminal::{
 };
 use bedtime_ui2::{Theme, UiContext, egui};
 use bedtime_workbench2::{
-    Binding, InPanel, InWorkspace, Panel, PanelInstance, PanelPresentation, WorkStatus,
-    WorkspaceTask, WorkspaceWork,
+    Binding, InPanel, ManagedTask, ManagedWork, Panel, PanelInstance, PanelPresentation, WorkStatus,
 };
 use bevy::prelude::*;
 use std::{collections::VecDeque, io, process::ExitStatus, sync::Arc};
@@ -88,7 +87,7 @@ struct Runtime {
     shell_token: Option<String>,
     pty: TerminalPty,
     pending_inputs: VecDeque<TerminalInput>,
-    task: WorkspaceTask<Result<(), String>>,
+    task: ManagedTask<Result<(), String>>,
     size: WindowSize,
     theme: Option<TerminalTheme>,
 }
@@ -337,16 +336,13 @@ fn send_inputs(state: &mut TerminalPanel, inputs: Vec<TerminalInput>) {
 }
 
 /// One visible execution point for startup, restart, status and snapshot handoff.
-/// Deliberately not gated by InActiveWorkspace/InRunningWorkspace.
+/// Polls world-owned PTY work regardless of selected layout.
 fn update_terminals(
-    mut panels: Query<(Entity, &InWorkspace, &mut TerminalPanel, &mut PanelInstance)>,
-    mut scopes: Query<&mut WorkspaceWork>,
+    mut panels: Query<(Entity, &mut TerminalPanel, &mut PanelInstance)>,
+    mut scope: ResMut<ManagedWork>,
     shell: Res<shell::ShellCommands>,
 ) {
-    for (panel, workspace, mut state, mut instance) in &mut panels {
-        let mut scope = scopes
-            .get_mut(workspace.0)
-            .expect("Terminal workspace work scope");
+    for (panel, mut state, mut instance) in &mut panels {
         update_terminal(panel, &mut state, &mut scope, &shell);
 
         // The PTY worker owns OS process queries, including quiet/hidden jobs.
@@ -379,7 +375,7 @@ fn update_terminals(
 fn update_terminal(
     panel: Entity,
     state: &mut TerminalPanel,
-    scope: &mut WorkspaceWork,
+    scope: &mut ManagedWork,
     shell: &shell::ShellCommands,
 ) {
     if !state.drawn {
@@ -483,7 +479,7 @@ fn update_terminal(
             )
         })
     {
-        // Cancellation discards WorkspaceTask's return value. Re-read the
+        // Cancellation discards ManagedTask's return value. Re-read the
         // terminal mailbox after completion and require positive cleanup proof.
         // WorkStatus::Cancelled alone must never admit an overlapping child.
         let cleanup_confirmed = state.runtime.as_mut().is_none_or(|runtime| {
@@ -523,7 +519,7 @@ fn start_terminal(
     panel: Entity,
     state: &mut TerminalPanel,
     size: WindowSize,
-    scope: &mut WorkspaceWork,
+    scope: &mut ManagedWork,
     shell: &shell::ShellCommands,
 ) -> Result<(), String> {
     let mut terminal = Terminal::new_text_only(size.num_cols as usize, size.num_lines as usize);
@@ -562,17 +558,11 @@ fn start_terminal(
 /// bindings: Workbench owns resolution after drawing. A terminal otherwise owns
 /// its raw control/navigation keys instead of using text-editor key policy.
 fn reserved_shortcuts(world: &mut World, panel: Entity) -> Vec<egui::KeyboardShortcut> {
-    let Some(workspace) = world.get::<InWorkspace>(panel).map(|owner| owner.0) else {
-        return Vec::new();
-    };
     world
-        .query::<(&Binding, Option<&InPanel>, Option<&InWorkspace>)>()
+        .query::<(&Binding, Option<&InPanel>)>()
         .iter(world)
-        .filter(|(_, scope, owner)| {
-            scope.is_none_or(|scope| scope.0 == panel)
-                && owner.is_none_or(|owner| owner.0 == workspace)
-        })
-        .filter_map(|(binding, _, _)| {
+        .filter(|(_, scope)| scope.is_none_or(|scope| scope.0 == panel))
+        .filter_map(|(binding, _)| {
             let key = bevy_egui::helpers::bevy_to_egui_physical_key(&binding.chord.key)?;
             let flags = binding.chord.modifiers.resolved();
             use bedtime_workbench2::Modifiers;
@@ -608,3 +598,13 @@ fn terminal_theme(theme: &Theme) -> TerminalTheme {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn test_layout(world: &mut bevy::prelude::World) -> bevy::prelude::Entity {
+    use bedtime_workbench2::*;
+    let layout = Workbench::new(world).create_layout("Test").unwrap();
+    if active_layout(world).is_none() {
+        world.entity_mut(layout).insert(ActiveLayout);
+    }
+    layout
+}

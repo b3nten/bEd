@@ -48,17 +48,13 @@ fn collect(world: &mut World) {
     {
         return;
     }
-    let workspace = crate::workspaces::selected(world);
     let panel = crate::commands::focused_panel(world);
     let text = capture.text || ctx.text_edit_focused();
     let mut seen = HashSet::new();
     let mut chords: Vec<_> = world
         .query::<(Entity, &Binding, Option<&InPanel>)>()
         .iter(world)
-        .filter(|(entity, _, scope)| {
-            crate::workspaces::owner(world, *entity).is_none_or(|owner| Some(owner) == workspace)
-                && scope.is_none_or(|scope| Some(scope.0) == panel)
-        })
+        .filter(|(_, _, scope)| scope.is_none_or(|scope| Some(scope.0) == panel))
         .filter_map(|(_, binding, _)| {
             let chord = KeyChord::new(binding.chord.modifiers.resolved(), binding.chord.key);
             let key = bevy_to_egui_physical_key(&chord.key)?;
@@ -207,7 +203,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin))
             .init_resource::<Calls>();
-        Workspaces::new(app.world_mut()).open("Test");
+        crate::tests::layout(app.world_mut());
         let mut workbench = Workbench::new(app.world_mut());
         workbench.register_handler::<Save, _>(record).unwrap();
         workbench.register_handler::<Other, _>(record).unwrap();
@@ -284,12 +280,11 @@ mod tests {
     }
 
     #[test]
-    fn world_shortcut_collection_continues_after_the_last_workspace_is_removed() {
+    fn world_shortcut_collection_continues_after_the_last_layout_is_removed() {
         let (mut app, surface, ctx) = app();
         let world = app.world_mut();
-        let workspace = crate::workspaces::selected(world).unwrap();
-        world.despawn(workspace.entity());
-        install_global_handler::<Save, _>(world, record).unwrap();
+        let layout = active_layout(world).unwrap();
+        world.despawn(layout);
         world.spawn(Binding::new::<Save>(KeyChord::new(
             Modifiers::PRIMARY,
             KeyCode::KeyS,

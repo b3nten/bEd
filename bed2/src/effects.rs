@@ -1,7 +1,7 @@
 //! Whole-workbench post-processing. Input and rendering use the same frame settings.
-use crate::settings::{GlobalPreferences, Settings, WorkspacePreferences};
+use crate::settings::{GlobalPreferences, ProjectPreferences, Settings};
 use bedtime_ui2::{UiSystems, egui};
-use bedtime_workbench2::{ActiveLayout, ActiveWorkspace, InActiveWorkspace, WorkbenchCamera};
+use bedtime_workbench2::{ActiveLayout, WorkbenchCamera};
 use bevy::{
     asset::{embedded_asset, load_embedded_asset},
     core_pipeline::{Core2d, FullscreenShader, upscaling::upscaling},
@@ -109,18 +109,17 @@ struct PointerState {
 fn prepare_input(
     mut commands: Commands,
     global: Res<GlobalPreferences>,
-    workspaces: Query<(Entity, Option<&WorkspacePreferences>), With<ActiveWorkspace>>,
-    layouts: Query<Entity, (With<ActiveLayout>, With<InActiveWorkspace>)>,
+    preferences: Option<Res<ProjectPreferences>>,
+    layouts: Query<Entity, With<ActiveLayout>>,
     mut cameras: Query<(Entity, &mut EguiInput), With<WorkbenchCamera>>,
     time: Res<Time<Real>>,
     mut pointer: Local<PointerState>,
 ) {
-    let active = workspaces.iter().next();
-    let settings = active
-        .and_then(|(_, prefs)| prefs)
+    let settings = preferences
+        .as_ref()
         .map(|p| p.0.resolve(&global.0))
         .unwrap_or_else(|| global.0.clone());
-    let scene = (active.map(|(e, _)| e), layouts.iter().next());
+    let scene = (None, layouts.iter().next());
     for (camera, mut input) in &mut cameras {
         if pointer.camera != Some(camera) {
             *pointer = PointerState {

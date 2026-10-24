@@ -1,4 +1,4 @@
-//! Application-owned quit decisions and workspace worker shutdown.
+//! Application-owned quit decisions and session worker shutdown.
 use bedtime_ui2::egui;
 use bedtime_workbench2::*;
 use bevy::{ecs::message::MessageCursor, prelude::*};
@@ -42,11 +42,11 @@ fn close_requested_panels(world: &mut World) {
         for request in requests {
             if !matches!(world.resource::<AppClose>().phase, ClosePhase::Idle) { continue; }
             let result = (|| {
-                let panels = Workbench::for_entity(world, request.workspace.entity())?.close_targets(&request)?;
+                let panels = Workbench::new(world).close_targets(&request)?;
                 if panels.iter().any(|&panel| world.get::<DocumentDraft>(panel).is_some()) {
                     return Err("Finish or cancel text composition before closing this view. Your document and edits remain open.".into());
                 }
-                Workbench::for_entity(world, request.workspace.entity())?.commit_close(&request)
+                Workbench::new(world).commit_close(&request)
             })();
             if let Err(error) = result {
                 request_error_dialog(world, ErrorDialog {
@@ -61,7 +61,6 @@ fn close_requested_panels(world: &mut World) {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct CloseSnapshot {
-    workspaces: Vec<Entity>,
     revisions: Vec<(DocumentId, u64)>,
 }
 
@@ -75,10 +74,10 @@ enum ClosePhase {
         awaited: Vec<DocumentId>,
     },
     Flushing {
-        mode: WorkspaceCloseMode,
+        mode: SessionCloseMode,
     },
     FlushError {
-        mode: WorkspaceCloseMode,
+        mode: SessionCloseMode,
     },
     ShuttingDown,
     ExitSent,
@@ -130,7 +129,7 @@ fn request_close(world: &mut World) {
         // follow-ups take effect on the next pass. Observe them before deciding
         // whether documents are clean, rather than abandoning an admitted edit.
         let commands_pending = world
-            .get_resource::<GlobalCommandRequests>()
+            .get_resource::<ContextCommandRequests>()
             .is_some_and(|queue| !queue.is_empty())
             || world
                 .query::<&ContextCommandRequests>()
@@ -164,7 +163,7 @@ fn request_close(world: &mut World) {
         if saving {
             begin_save_all(world)
         } else {
-            begin_shutdown(world, WorkspaceCloseMode::Saved)
+            begin_shutdown(world, SessionCloseMode::Saved)
         }
     })();
     if let Err(error) = result {
@@ -173,27 +172,17 @@ fn request_close(world: &mut World) {
 }
 
 fn close_snapshot(world: &mut World) -> Result<CloseSnapshot, String> {
-    let mut workspaces: Vec<_> = world
-        .query_filtered::<Entity, With<Workspace>>()
-        .iter(world)
-        .collect();
-    workspaces.sort();
     let mut revisions = Vec::new();
-    for workspace in &workspaces {
-        for id in document_ids(world, *workspace) {
-            revisions.push((
-                id,
-                inspect_document(world, id)
-                    .map_err(|e| e.to_string())?
-                    .revision,
-            ));
-        }
+    for id in document_ids(world) {
+        revisions.push((
+            id,
+            inspect_document(world, id)
+                .map_err(|e| e.to_string())?
+                .revision,
+        ));
     }
     revisions.sort_by_key(|entry| entry.0);
-    Ok(CloseSnapshot {
-        workspaces,
-        revisions,
-    })
+    Ok(CloseSnapshot { revisions })
 }
 
 fn close_failed(world: &mut World, error: String) {
@@ -246,12 +235,8 @@ fn begin_save_all(world: &mut World) -> Result<(), String> {
     Ok(())
 }
 
-fn begin_shutdown(world: &mut World, mode: WorkspaceCloseMode) -> Result<(), String> {
-    let snapshot = close_snapshot(world)?;
-    // No workspace is retired or worker cancelled until every workspace passes.
-    for workspace in snapshot.workspaces {
-        preflight_workspace_close(world, workspace, mode)?;
-    }
+fn begin_shutdown(world: &mut World, mode: SessionCloseMode) -> Result<(), String> {
+    preflight_session_close(world, mode)?;
     let mut close = world.resource_mut::<AppClose>();
     close.phase = ClosePhase::Flushing { mode };
     close.error = None;
@@ -267,7 +252,7 @@ fn apply_close_choice(world: &mut World, choice: CloseChoice) {
     }
     let result = match choice {
         CloseChoice::SaveAll => begin_save_all(world),
-        CloseChoice::Discard => begin_shutdown(world, WorkspaceCloseMode::Discard),
+        CloseChoice::Discard => begin_shutdown(world, SessionCloseMode::Discard),
         CloseChoice::Cancel => {
             // Admitted saves continue normally. Cancellation only abandons the
             // quit intention; live documents, viewers and workers are retained.
@@ -288,7 +273,7 @@ fn advance_close(world: &mut World) {
         ClosePhase::Saving { snapshot, awaited } => {
             let result = (|| {
                 if close_snapshot(world)? != snapshot {
-                    return Err("Documents or workspaces changed while Save All was pending. Nothing was closed. Cancel quit to review, or choose Save All again.".into());
+                    return Err("Documents or layouts changed while Save All was pending. Nothing was closed. Cancel quit to review, or choose Save All again.".into());
                 }
                 let infos: Vec<_> = snapshot
                     .revisions
@@ -309,8 +294,8 @@ fn advance_close(world: &mut World) {
                     }
                 }
                 // The completed snapshots, not merely save admission, must pass
-                // the same core gate that protects normal workspace closure.
-                begin_shutdown(world, WorkspaceCloseMode::Saved)
+                // the same core gate that protects normal session shutdown.
+                begin_shutdown(world, SessionCloseMode::Saved)
             })();
             if let Err(error) = result {
                 close_failed(world, error);
@@ -319,7 +304,7 @@ fn advance_close(world: &mut World) {
         ClosePhase::Flushing { mode } => {
             let result = (|| {
                 // Poll every store even while another is pending. Session flush
-                // captures final mutations and retains retired-workspace writes.
+                // captures final mutations and retains final session writes.
                 let files = crate::files::flush_preferences(world);
                 let settings = crate::settings::flush(world);
                 let session = crate::session::flush(world);
@@ -327,10 +312,8 @@ fn advance_close(world: &mut World) {
                     return Ok(());
                 }
                 // Revalidate after draining writes/outcomes, before any cancellation.
-                for workspace in close_snapshot(world)?.workspaces {
-                    preflight_workspace_close(world, workspace, mode)?;
-                }
-                Workspaces::new(world).shutdown_work()?;
+                preflight_session_close(world, mode)?;
+                shutdown_work(world)?;
                 world.resource_mut::<AppClose>().phase = ClosePhase::ShuttingDown;
                 Ok::<_, String>(())
             })();
@@ -343,7 +326,7 @@ fn advance_close(world: &mut World) {
             }
         }
         ClosePhase::ShuttingDown => {
-            if Workspaces::new(world).work_finished() {
+            if work_finished(world) {
                 world.write_message(AppExit::Success);
                 world.resource_mut::<AppClose>().phase = ClosePhase::ExitSent;
             }
@@ -369,7 +352,7 @@ pub fn draw_close_dialog(ui: &mut egui::Ui, world: &mut World) {
         ui.set_max_width(480.0);
         ui.heading("Quit bEd 2?");
         if matches!(phase, ClosePhase::Prompt | ClosePhase::Saving { .. }) {
-            ui.label("Modified documents include inactive workspaces and documents with no open viewers. Workspace layouts save automatically.");
+            ui.label("Modified documents include documents with no open viewers. Layouts save automatically.");
         }
         if let Some(error) = &error {
             ui.colored_label(ui.visuals().error_fg_color, error);
@@ -411,7 +394,7 @@ pub fn draw_close_dialog(ui: &mut egui::Ui, world: &mut World) {
             }
             ClosePhase::ShuttingDown | ClosePhase::ExitSent => {
                 ui.spinner();
-                ui.label("Stopping workspace tasks and processes…");
+                ui.label("Stopping tasks and processes…");
             }
             ClosePhase::Idle => {}
         }
@@ -437,12 +420,9 @@ mod tests {
         app
     }
 
-    fn workspace(app: &mut App, name: &str) -> (Entity, Entity) {
-        let workspace = Workspaces::new(app.world_mut()).open(name).entity();
-        let layout = Workbench::for_entity(app.world_mut(), workspace)
-            .unwrap()
-            .active_layout();
-        (workspace, layout)
+    fn workspace(app: &mut App, _name: &str) -> (Entity, Entity) {
+        let layout = crate::test_layout(app.world_mut());
+        (layout, layout)
     }
 
     fn viewer(world: &mut World, layout: Entity) -> Entity {
@@ -455,14 +435,8 @@ mod tests {
             .id()
     }
 
-    fn text_document(world: &mut World, workspace: Entity) -> DocumentId {
-        let handle = open_document(
-            world,
-            workspace,
-            String::new(),
-            DocumentOptions::loaded("Test"),
-        )
-        .unwrap();
+    fn text_document(world: &mut World) -> DocumentId {
+        let handle = open_document(world, String::new(), DocumentOptions::loaded("Test")).unwrap();
         bind_document_save(world, handle, DocumentSaveBinding::new(None, |_| Ok(None))).unwrap();
         handle.id()
     }
@@ -506,15 +480,15 @@ mod tests {
             const LABEL: &'static str = "Complete edit";
         }
         let mut app = host();
-        let (owner, _) = workspace(&mut app, "Default");
-        let id = text_document(app.world_mut(), owner);
+        let (_owner, _) = workspace(&mut app, "Default");
+        let id = text_document(app.world_mut());
         register_context_command::<QueueEdit>(app.world_mut()).unwrap();
         register_context_command::<CompleteEdit>(app.world_mut()).unwrap();
         install_global_handler::<QueueEdit, _>(
             app.world_mut(),
             |_: In<ContextCommandInvocation>, world: &mut World| {
                 world
-                    .resource_mut::<GlobalCommandRequests>()
+                    .resource_mut::<ContextCommandRequests>()
                     .invoke::<CompleteEdit>();
                 Ok(())
             },
@@ -529,7 +503,7 @@ mod tests {
         )
         .unwrap();
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .invoke::<QueueEdit>();
         app.world_mut()
             .write_message(CloseRequested { window: None });
@@ -547,44 +521,33 @@ mod tests {
 
     #[test]
     fn accepted_folder_results_wait_behind_quit_and_resume_on_cancellation() {
-        let root = std::env::temp_dir().join(format!("bed2-close-folder-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
+        let root = std::fs::canonicalize(std::env::temp_dir()).unwrap();
         let mut app = host();
         app.add_plugins(crate::files::FilesPlugin);
         workspace(&mut app, "Default");
-        crate::opening::open_folder(app.world_mut(), root.clone()).unwrap();
+        app.insert_resource(crate::files::ProjectRoot(root.clone()));
+        app.insert_resource(crate::files::ProjectFolder);
+        let result = crate::opening::open_folder(app.world_mut(), root.clone()).unwrap();
         app.world_mut().resource_mut::<AppClose>().phase = ClosePhase::Prompt;
         for _ in 0..3 {
             app.update();
         }
-        assert_eq!(
-            app.world_mut()
-                .query_filtered::<Entity, With<crate::files::FolderWorkspace>>()
-                .iter(app.world())
-                .count(),
-            0
-        );
+        assert!(result.lock().unwrap().try_recv().is_err());
         assert!(crate::opening::open_folder(app.world_mut(), root.clone()).is_err());
         apply_close_choice(app.world_mut(), CloseChoice::Cancel);
-        eventually(&mut app, |world| {
-            world
-                .query_filtered::<Entity, With<crate::files::FolderWorkspace>>()
-                .iter(world)
-                .count()
-                == 1
-        });
-        Workspaces::new(app.world_mut()).shutdown_work().unwrap();
-        eventually(&mut app, |world| Workspaces::new(world).work_finished());
-        std::fs::remove_dir_all(root).unwrap();
+        eventually(&mut app, |_| result.lock().unwrap().try_recv().is_ok());
+        assert_eq!(app.world().resource::<crate::files::ProjectRoot>().0, root);
+        shutdown_work(app.world_mut()).unwrap();
+        eventually(&mut app, |world| work_finished(world));
     }
 
     #[test]
     fn clean_startup_quits_without_a_document_prompt() {
         for clean_document in [false, true] {
             let mut app = host();
-            let (owner, _) = workspace(&mut app, "Memory workspace");
+            let (_owner, _) = workspace(&mut app, "Memory workspace");
             if clean_document {
-                text_document(app.world_mut(), owner);
+                text_document(app.world_mut());
             }
             app.world_mut()
                 .write_message(CloseRequested { window: None });
@@ -603,8 +566,8 @@ mod tests {
     #[test]
     fn dirty_document_requests_a_decision_even_without_an_open_viewer() {
         let mut app = host();
-        let (owner, _) = workspace(&mut app, "Project");
-        let id = text_document(app.world_mut(), owner);
+        let (_owner, _) = workspace(&mut app, "Project");
+        let id = text_document(app.world_mut());
         change_text(app.world_mut(), id, "Modified");
         app.world_mut()
             .write_message(CloseRequested { window: None });
@@ -669,8 +632,8 @@ mod tests {
     #[test]
     fn close_cancel_preserves_live_documents_and_never_emits_exit() {
         let mut app = host();
-        let (owner, layout) = workspace(&mut app, "Project");
-        let id = text_document(app.world_mut(), owner);
+        let (_owner, layout) = workspace(&mut app, "Project");
+        let id = text_document(app.world_mut());
         change_text(app.world_mut(), id, "Unsaved edit");
         let viewer = viewer(app.world_mut(), layout);
         let handle = cast_document::<String>(app.world(), id).unwrap();
@@ -696,8 +659,8 @@ mod tests {
     #[test]
     fn save_all_failure_leaves_the_app_editable_and_does_not_exit() {
         let mut app = host();
-        let (owner, _) = workspace(&mut app, "Project");
-        let id = text_document(app.world_mut(), owner);
+        let (_owner, _) = workspace(&mut app, "Project");
+        let id = text_document(app.world_mut());
         change_text(app.world_mut(), id, "Local edit");
         let handle = cast_document::<String>(app.world(), id).unwrap();
         bind_document_save(
@@ -734,9 +697,9 @@ mod tests {
     #[test]
     fn discard_preflights_inactive_workspace_drafts_before_shutting_down_any_work() {
         let mut app = host();
-        let (first, _) = workspace(&mut app, "Active");
-        let (inactive, layout) = workspace(&mut app, "Inactive");
-        let id = text_document(app.world_mut(), inactive);
+        let (_first, _) = workspace(&mut app, "Active");
+        let (_inactive, layout) = workspace(&mut app, "Inactive");
+        let id = text_document(app.world_mut());
         let viewer = viewer(app.world_mut(), layout);
         let handle = cast_document::<String>(app.world(), id).unwrap();
         bind_document_view(app.world_mut(), viewer, handle).unwrap();
@@ -759,7 +722,7 @@ mod tests {
         assert!(app.world().resource::<Messages<AppExit>>().is_empty());
         let _task = app
             .world_mut()
-            .get_mut::<WorkspaceWork>(first)
+            .get_resource_mut::<ManagedWork>()
             .unwrap()
             .spawn_task(None, "Still accepts work after rejected close", |_| 1_u8)
             .unwrap();
@@ -768,11 +731,11 @@ mod tests {
     #[test]
     fn successful_quit_waits_for_workspace_work_before_emitting_exit() {
         let mut app = host();
-        let (owner, _) = workspace(&mut app, "Project");
+        let (_owner, _) = workspace(&mut app, "Project");
         let (release, wait) = std::sync::mpsc::channel::<()>();
         let _task = app
             .world_mut()
-            .get_mut::<WorkspaceWork>(owner)
+            .get_resource_mut::<ManagedWork>()
             .unwrap()
             .spawn_task(None, "Pending cleanup", move |_| {
                 let _ = wait.recv_timeout(Duration::from_secs(3));
@@ -796,8 +759,8 @@ mod tests {
     #[test]
     fn save_all_does_not_loop_when_a_document_changes_while_saving() {
         let mut app = host();
-        let (owner, _) = workspace(&mut app, "Project");
-        let id = text_document(app.world_mut(), owner);
+        let (_owner, _) = workspace(&mut app, "Project");
+        let id = text_document(app.world_mut());
         change_text(app.world_mut(), id, "Save this version");
         apply_close_choice(app.world_mut(), CloseChoice::SaveAll);
         change_text(app.world_mut(), id, "A newer version arrived");

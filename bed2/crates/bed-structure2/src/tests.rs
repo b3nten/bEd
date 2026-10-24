@@ -22,10 +22,9 @@ struct Host {
 fn host() -> Host {
     let mut app = App::new();
     app.add_plugins((WorkbenchCorePlugin, EditorAnalysisPlugin, StructurePlugin));
-    let workspace = Workspaces::new(app.world_mut()).open("Code").entity();
+    let workspace = crate::test_layout(app.world_mut());
     let document = open_document(
         app.world_mut(),
-        workspace,
         TextBuffer::from("fn cat() {\n let age=42;\n}\nfn dog() {}\n"),
         DocumentOptions::loaded("cats.rs"),
     )
@@ -60,7 +59,7 @@ fn focus(h: &mut Host, panel: Entity) {
 fn source(h: &Host) -> Option<Entity> {
     h.app
         .world()
-        .get::<StructureSource>(h.workspace)
+        .get_resource::<StructureSource>()
         .and_then(|s| s.source)
         .map(|s| s.panel)
 }
@@ -139,7 +138,6 @@ fn automatic_ineligible_focus_clears_closed_source_and_rebinding_is_not_a_fallba
     focus(&mut h, structure);
     let other = open_document(
         h.app.world_mut(),
-        h.workspace,
         TextBuffer::from("not code"),
         DocumentOptions::loaded("text"),
     )
@@ -172,7 +170,7 @@ fn shared_analysis_targets_the_source_view_and_reveals_its_existing_layout() {
         .activate_layout(other)
         .unwrap();
     assert!(activate(h.app.world_mut(), activation).unwrap());
-    assert_eq!(active_layout(h.app.world(), h.workspace), Some(h.layout));
+    assert_eq!(active_layout(h.app.world()), Some(h.layout));
     assert_eq!(
         Workbench::for_entity(h.app.world_mut(), h.workspace)
             .unwrap()
@@ -202,7 +200,7 @@ fn shared_analysis_targets_the_source_view_and_reveals_its_existing_layout() {
     )
     .unwrap();
     assert!(!activate(h.app.world_mut(), activation).unwrap());
-    assert_eq!(active_layout(h.app.world(), h.workspace), Some(other));
+    assert_eq!(active_layout(h.app.world()), Some(other));
 }
 #[test]
 fn closed_rebound_and_unsupported_sources_reject_obsolete_activation() {
@@ -219,7 +217,6 @@ fn closed_rebound_and_unsupported_sources_reject_obsolete_activation() {
     };
     let other = open_document(
         h.app.world_mut(),
-        h.workspace,
         TextBuffer::from("fn other() {}"),
         DocumentOptions::loaded("other.rs"),
     )
@@ -266,7 +263,7 @@ fn closing_the_last_view_retires_analysis_but_retains_the_document() {
     while !h
         .app
         .world()
-        .get::<WorkspaceWork>(h.workspace)
+        .get_resource::<ManagedWork>()
         .unwrap()
         .is_finished()
     {
@@ -299,7 +296,7 @@ fn composition_rejects_activation_without_switching_layout_or_focus() {
         .unwrap();
     h.app.world_mut().entity_mut(h.b).insert(DocumentDraft);
     assert!(!activate(h.app.world_mut(), activation).unwrap());
-    assert_eq!(active_layout(h.app.world(), h.workspace), Some(other));
+    assert_eq!(active_layout(h.app.world()), Some(other));
 }
 
 #[test]

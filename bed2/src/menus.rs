@@ -31,13 +31,67 @@ edit_command!(Cut, "bed.edit.cut", "Cut");
 edit_command!(Copy, "bed.edit.copy", "Copy");
 edit_command!(Paste, "bed.edit.paste", "Paste");
 
-struct CreatePanel;
-impl ContextCommand for CreatePanel {
-    const KEY: &'static str = "bed.view.create_panel";
-    const LABEL: &'static str = "Open panel";
+/// Contributions are installed by features; persistence never consults this list.
+#[derive(Resource, Default)]
+struct PanelMenus(Vec<PanelMenu>);
+#[derive(Clone)]
+pub(crate) struct PanelMenu {
+    pub key: &'static str,
+    pub factory: PanelFactory,
+    command: ContextCommandId,
+    order: Option<u32>,
+    pub(crate) available: fn(&World) -> bool,
 }
-#[derive(Component)]
-struct CreatesPanel(&'static str);
+struct OpenPanel<P>(std::marker::PhantomData<P>);
+impl<P: Panel + Send + Sync + 'static> ContextCommand for OpenPanel<P> {
+    const KEY: &'static str = P::KEY;
+    const LABEL: &'static str = P::LABEL;
+}
+
+/// Register a feature's creation action and optional View entry once at setup.
+/// Menu composition runs after plugin setup and preserves explicit contribution order.
+pub(crate) fn register_panel<P: Panel + Send + Sync + 'static>(
+    app: &mut App,
+    order: Option<u32>,
+    factory: PanelFactory,
+    available: fn(&World) -> bool,
+) {
+    app.init_resource::<PanelMenus>();
+    let world = app.world_mut();
+    register_context_command::<OpenPanel<P>>(world).unwrap();
+    install_global_handler::<OpenPanel<P>, _>(
+        world,
+        |_invocation: In<ContextCommandInvocation>, world: &mut World| {
+            let layout = active_layout(world).ok_or("Select a layout first")?;
+            open_panel(world, layout, P::KEY).map(|_| ())
+        },
+    )
+    .unwrap();
+    world.resource_mut::<PanelMenus>().0.push(PanelMenu {
+        key: P::KEY,
+        factory,
+        command: ContextCommandId::of::<OpenPanel<P>>(),
+        order,
+        available,
+    });
+}
+pub(crate) fn panel_menu(world: &World, key: &str) -> Option<PanelMenu> {
+    world
+        .get_resource::<PanelMenus>()?
+        .0
+        .iter()
+        .find(|entry| entry.key == key)
+        .cloned()
+}
+fn view_panels(world: &World) -> Vec<PanelMenu> {
+    let mut entries = world
+        .get_resource::<PanelMenus>()
+        .map(|r| r.0.clone())
+        .unwrap_or_default();
+    entries.retain(|entry| entry.order.is_some());
+    entries.sort_by_key(|entry| (entry.order, entry.key));
+    entries
+}
 
 pub struct Quit;
 impl ContextCommand for Quit {
@@ -107,7 +161,7 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
         .map_err(|error| error.to_string())?;
     let menu = menu_snapshot(world, root, InvocationContext::Focused)?;
     Ok(
-        json!({ "native_installed": native_menu_installed(world, root), "entries": menu.entries.iter().map(node).collect::<Vec<_>>(), "view_choices": PANELS.iter().map(|(_, label)| *label).collect::<Vec<_>>() }),
+        json!({ "native_installed": native_menu_installed(world, root), "entries": menu.entries.iter().map(node).collect::<Vec<_>>(), "view_choices": view_panels(world).iter().map(|entry| entry.factory.label).collect::<Vec<_>>() }),
     )
 }
 
@@ -134,7 +188,7 @@ pub fn install(app: &mut App) {
         .add_systems(
             PreUpdate,
             sync_menu_availability
-                .after(WorkspaceSystems::Prepare)
+                .after(SessionSystems::Prepare)
                 .before(NativeSystems::Poll),
         )
         .add_systems(
@@ -146,7 +200,6 @@ pub fn install(app: &mut App) {
         );
     let world = app.world_mut();
     register_context_command::<OpenFolder>(world).unwrap();
-    register_context_command::<CreatePanel>(world).unwrap();
     register_context_command::<Quit>(world).unwrap();
     register_context_command::<UndoEdit>(world).unwrap();
     register_context_command::<RedoEdit>(world).unwrap();
@@ -154,7 +207,6 @@ pub fn install(app: &mut App) {
     register_context_command::<Copy>(world).unwrap();
     register_context_command::<Paste>(world).unwrap();
     install_global_handler::<OpenFolder, _>(world, open_folder).unwrap();
-    install_global_handler::<CreatePanel, _>(world, create_panel).unwrap();
     install_global_handler::<Quit, _>(world, quit).unwrap();
     install_global_handler::<UndoEdit, _>(
         world,
@@ -278,11 +330,10 @@ fn compose_menu(world: &mut World) -> Entity {
             InMenu(root),
         ))
         .id();
-    for &(key, label) in PANELS {
+    for entry in view_panels(world) {
         world.spawn((
-            MenuItem::new(label),
-            Invokes::of::<CreatePanel>(),
-            CreatesPanel(key),
+            MenuItem::new(entry.factory.label),
+            Invokes(entry.command),
             InMenu(view),
         ));
     }
@@ -296,26 +347,6 @@ fn compose_menu(world: &mut World) -> Entity {
 struct FolderDialog(
     Option<std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>>>>>,
 );
-
-fn create_panel(
-    invocation: In<ContextCommandInvocation>,
-    world: &mut World,
-) -> ContextCommandResult {
-    if !crate::close::accepts_user_actions(world) {
-        return Ok(());
-    }
-    let key = invocation
-        .source
-        .and_then(|source| world.get::<CreatesPanel>(source))
-        .ok_or("Choose a panel from View")?
-        .0;
-    let workspace = invocation
-        .workspace
-        .ok_or("Open a workspace first")?
-        .entity();
-    let layout = active_layout(world, workspace).ok_or("Select a layout first")?;
-    open_panel(world, layout, key).map(|_| ())
-}
 
 #[cfg(feature = "automation")]
 fn activate_menu(
@@ -359,7 +390,7 @@ fn activate_menu(
         .request(entity, target)
         .ok_or("Menu action is missing or unavailable")?;
     world
-        .resource_mut::<GlobalCommandRequests>()
+        .resource_mut::<ContextCommandRequests>()
         .submit(request);
     Ok(serde_json::json!({"admitted": true}))
 }
@@ -449,7 +480,7 @@ pub fn editor_context_menu(ui: &mut egui::Ui, world: &mut World, panel: Entity) 
                 memory.request_focus(egui::Id::new(("bedtime.editor", panel, document)));
             });
             world
-                .resource_mut::<GlobalCommandRequests>()
+                .resource_mut::<ContextCommandRequests>()
                 .submit(ContextCommandRequest {
                     command,
                     source: None,
@@ -501,7 +532,7 @@ fn edit(
             return Ok(());
         }
         world
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .submit(ContextCommandRequest {
                 command: match action {
                     EditAction::Undo => ContextCommandId::of::<UndoDocument>(),
@@ -576,16 +607,7 @@ fn inject_edit_events(world: &mut World) {
 
 fn sync_menu_availability(world: &mut World) {
     let focus = focused_ui(world);
-    let workspace = world
-        .query_filtered::<Entity, With<ActiveWorkspace>>()
-        .iter(world)
-        .next();
-    let panel = workspace.and_then(|workspace| {
-        let layout = active_layout(world, workspace)?;
-        Workbench::for_entity(world, layout)
-            .ok()?
-            .focused_panel(layout)
-    });
+    let panel = active_layout(world).and_then(|layout| Workbench::new(world).focused_panel(layout));
     let document = panel
         .and_then(|panel| world.get::<DocumentView>(panel))
         .and_then(|view| inspect_document(world, view.document()).ok());
@@ -601,7 +623,16 @@ fn sync_menu_availability(world: &mut World) {
         .and_then(|panel| world.get::<bedtime_editor2::workbench::WorkbenchEditor>(panel))
         .is_some_and(|editor| editor.view.settings.read_only);
     let accepting_actions = crate::close::accepts_user_actions(world);
-    let layout_ready = workspace.is_some_and(|workspace| crate::storage::ready(world, workspace));
+    let layout_ready = crate::storage::ready(world);
+    let has_layout = active_layout(world).is_some();
+    let panel_availability: Vec<_> = world
+        .get_resource::<PanelMenus>()
+        .map(|r| {
+            r.0.iter()
+                .map(|entry| (entry.command.clone(), (entry.available)(world)))
+                .collect()
+        })
+        .unwrap_or_default();
     let enabled = |command: &ContextCommandId| {
         if !accepting_actions {
             return false;
@@ -609,8 +640,8 @@ fn sync_menu_availability(world: &mut World) {
         if command.as_str().starts_with("bed.layout.") {
             return layout_ready;
         }
-        if *command == ContextCommandId::of::<CreatePanel>() {
-            return workspace.is_some();
+        if let Some((_, available)) = panel_availability.iter().find(|(id, _)| *id == *command) {
+            return has_layout && *available;
         }
         if *command == ContextCommandId::of::<SaveDocument>() {
             return document.as_ref().is_some_and(|info| {
@@ -680,38 +711,36 @@ fn sync_menu_availability(world: &mut World) {
 
 use bevy::prelude::*;
 
-pub const PANELS: &[(&str, &str)] = &[
-    (crate::git::GitPanel::KEY, "Git"),
-    (bedtime_filetree2::FileTreePanel::KEY, "Files"),
-    (bed_structure2::StructurePanel::KEY, "Structure"),
-    (bedtime_terminal2::TerminalPanel::KEY, "Terminal"),
-    (crate::cube::CubeViewport::KEY, "3D Viewport"),
-    (bedtime_mascots2::BedPanel::KEY, "Bed"),
-    (crate::tasks::TasksPanel::KEY, "Tasks & Processes"),
-    (crate::lsp_panel::LspPanel::KEY, "Language Servers"),
-    (crate::settings::SettingsPanel::KEY, "Settings"),
-];
-
 pub fn open_panel(world: &mut World, layout: Entity, key: &str) -> Result<Entity, String> {
-    let kind = crate::layouts::ToolKind::ALL
-        .into_iter()
-        .find(|kind| kind.key() == key)
-        .ok_or_else(|| format!("Unknown application panel: {key}"))?;
-    let workspace = world
-        .get::<InWorkspace>(layout)
-        .ok_or("Layout has no workspace")?
-        .0;
-    if kind == crate::layouts::ToolKind::Terminal && !crate::storage::ready(world, workspace) {
-        return Err("Workspace root or settings are still loading or need repair; open Settings before starting a terminal".into());
+    if !crate::close::accepts_user_actions(world) {
+        return Err("Cancel quit before opening a panel".into());
+    }
+    let entry =
+        panel_menu(world, key).ok_or_else(|| format!("Unknown application panel: {key}"))?;
+    if !(entry.available)(world) {
+        return Err("Project root or settings are still loading or need repair".into());
     }
     let area = Workbench::for_entity(world, layout)?.destination_area(layout)?;
-    Ok(crate::layouts::spawn_tool(world, area, kind))
+    Ok((entry.factory.create)(world, area))
+}
+pub fn open_or_focus(world: &mut World, layout: Entity, key: &str) -> Result<Entity, String> {
+    let panels = Workbench::for_entity(world, layout)?.panels(layout);
+    let panel = match panels.into_iter().find(|&panel| {
+        world
+            .get::<PanelInstance>(panel)
+            .is_some_and(|p| p.key == key)
+    }) {
+        Some(panel) => panel,
+        None => open_panel(world, layout, key)?,
+    };
+    Workbench::for_entity(world, layout)?.focus_panel(panel)?;
+    Ok(panel)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bedtime_workbench2::{PanelInstance, WorkbenchCorePlugin, Workspaces};
+    use bedtime_workbench2::{PanelInstance, WorkbenchCorePlugin};
 
     fn menu_app() -> App {
         let mut app = App::new();
@@ -719,6 +748,15 @@ mod tests {
             .add_message::<CloseRequested>()
             .insert_resource(Clipboard::memory());
         register_document_handlers(app.world_mut()).unwrap();
+        crate::git::register_menu(&mut app);
+        crate::files::register_menu(&mut app);
+        crate::code::register_menu(&mut app);
+        crate::terminal::register_menu(&mut app);
+        crate::cube::register_menu(&mut app);
+        crate::mascots::register_menu(&mut app);
+        crate::tasks::register_menu(&mut app);
+        crate::lsp_panel::register_menu(&mut app);
+        crate::settings::register_menu(&mut app);
         install(&mut app);
         app
     }
@@ -818,7 +856,7 @@ mod tests {
     #[test]
     fn native_view_action_composes_its_concrete_panel_in_the_selected_workspace() {
         let mut app = menu_app();
-        let workspace = Workspaces::new(app.world_mut()).open("Default").entity();
+        let _workspace = crate::test_layout(app.world_mut());
         sync_menu_availability(app.world_mut());
         let root = app
             .world_mut()
@@ -837,10 +875,13 @@ mod tests {
             })
             .unwrap();
         let request = snapshot
-            .request(item, ContextCommandId::of::<CreatePanel>())
+            .request(
+                item,
+                ContextCommandId::of::<OpenPanel<crate::settings::SettingsPanel>>(),
+            )
             .unwrap();
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .submit(request);
         app.update();
         let panel = app
@@ -848,7 +889,7 @@ mod tests {
             .query_filtered::<Entity, With<crate::settings::SettingsPanel>>()
             .single(app.world())
             .unwrap();
-        assert_eq!(app.world().get::<InWorkspace>(panel).unwrap().0, workspace);
+        assert!(app.world().get::<InArea>(panel).is_some());
     }
 
     #[test]
@@ -856,7 +897,7 @@ mod tests {
         let mut app = menu_app();
         app.add_plugins(crate::close::ClosePlugin)
             .add_message::<AppExit>();
-        Workspaces::new(app.world_mut()).open("Default");
+        crate::test_layout(app.world_mut());
         app.world_mut()
             .write_message(CloseRequested { window: None });
         app.update();
@@ -879,7 +920,7 @@ mod tests {
             );
         }
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .invoke::<OpenFolder>();
         app.update();
         assert!(app.world().non_send::<FolderDialog>().0.is_none());
@@ -888,26 +929,22 @@ mod tests {
     #[test]
     fn cancelling_folder_chooser_changes_no_workspace_or_root() {
         let mut app = menu_app();
-        let workspace = Workspaces::new(app.world_mut()).open("Original").entity();
+        let _workspace = crate::test_layout(app.world_mut());
         let root = std::path::PathBuf::from("/original");
         app.world_mut()
-            .entity_mut(workspace)
-            .insert(crate::files::WorkspaceRoot(root.clone()));
+            .insert_resource(crate::files::ProjectRoot(root.clone()));
         app.world_mut().non_send_mut::<FolderDialog>().0 = Some(Box::pin(std::future::ready(None)));
         poll_folder_dialog(app.world_mut());
         assert!(app.world().non_send::<FolderDialog>().0.is_none());
         assert_eq!(
             app.world()
-                .get::<crate::files::WorkspaceRoot>(workspace)
+                .get_resource::<crate::files::ProjectRoot>()
                 .unwrap()
                 .0,
             root
         );
         assert_eq!(
-            app.world_mut()
-                .query::<&Workspace>()
-                .iter(app.world())
-                .count(),
+            app.world_mut().query::<&Layout>().iter(app.world()).count(),
             1
         );
     }
@@ -941,7 +978,7 @@ mod tests {
             .write_text("from native menu")
             .unwrap();
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .invoke::<Paste>();
         app.update();
         inject_edit_events(app.world_mut());
@@ -971,7 +1008,7 @@ mod tests {
             },
         );
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .invoke::<Copy>();
         app.update();
         inject_edit_events(app.world_mut());
@@ -983,7 +1020,7 @@ mod tests {
         let copied = draw(&mut text, input);
         assert!(copied.platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(value) if value == "from native menu")));
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .invoke::<Cut>();
         app.update();
         inject_edit_events(app.world_mut());
@@ -996,7 +1033,7 @@ mod tests {
         assert!(text.is_empty());
         assert!(cut.platform_output.commands.iter().any(|command| matches!(command, egui::OutputCommand::CopyText(value) if value == "from native menu")));
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .invoke::<Paste>();
         app.update();
         context.memory_mut(|memory| memory.request_focus(egui::Id::new("different-field")));
@@ -1013,15 +1050,14 @@ mod tests {
     #[test]
     fn native_history_routes_to_canonical_document_handler_not_widget_history() {
         let mut app = menu_app();
-        let workspace = Workspaces::new(app.world_mut()).open("Project").entity();
-        let layout = active_layout(app.world(), workspace).unwrap();
+        let _workspace = crate::test_layout(app.world_mut());
+        let layout = active_layout(app.world()).unwrap();
         let panel = Workbench::for_entity(app.world_mut(), layout)
             .unwrap()
             .create_panel(layout, "Editor")
             .unwrap();
         let document = open_document(
             app.world_mut(),
-            workspace,
             bedtime_editor2::TextBuffer::from("original"),
             DocumentOptions::loaded("Text"),
         )
@@ -1046,7 +1082,7 @@ mod tests {
             bevy_egui::EguiInput::default(),
         ));
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .invoke::<UndoEdit>();
         app.update();
         app.update();
@@ -1057,7 +1093,7 @@ mod tests {
             "original"
         );
         app.world_mut()
-            .resource_mut::<GlobalCommandRequests>()
+            .resource_mut::<ContextCommandRequests>()
             .invoke::<RedoEdit>();
         app.update();
         app.update();
@@ -1077,9 +1113,15 @@ mod tests {
     fn code_is_not_a_view_creation_choice_or_creation_route() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        let workspace = Workspaces::new(app.world_mut()).open("Project").entity();
-        let layout = active_layout(app.world(), workspace).unwrap();
-        assert!(PANELS.iter().all(|(key, label)| *key != crate::files::FilePreviewPanel::KEY && *label != "Code"));
+        let _workspace = crate::test_layout(app.world_mut());
+        let layout = active_layout(app.world()).unwrap();
+        crate::settings::register_menu(&mut app);
+        assert!(
+            view_panels(app.world())
+                .iter()
+                .all(|entry| entry.key != crate::files::FilePreviewPanel::KEY
+                    && entry.factory.label != "Code")
+        );
         assert!(open_panel(app.world_mut(), layout, crate::files::FilePreviewPanel::KEY).is_err());
         assert_eq!(
             app.world_mut()
@@ -1091,14 +1133,24 @@ mod tests {
     }
 
     #[test]
-    fn application_creation_choices_compose_concrete_panels_without_registration() {
+    fn feature_menu_contributions_create_concrete_panels() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        let workspace = Workspaces::new(app.world_mut()).open("Project").entity();
+        let workspace = crate::test_layout(app.world_mut());
         let layout = Workbench::for_entity(app.world_mut(), workspace)
             .unwrap()
             .active_layout();
-        for &(key, _) in PANELS {
+        crate::git::register_menu(&mut app);
+        crate::files::register_menu(&mut app);
+        crate::code::register_menu(&mut app);
+        crate::terminal::register_menu(&mut app);
+        crate::cube::register_menu(&mut app);
+        crate::mascots::register_menu(&mut app);
+        crate::tasks::register_menu(&mut app);
+        crate::lsp_panel::register_menu(&mut app);
+        crate::settings::register_menu(&mut app);
+        for entry in view_panels(app.world()) {
+            let key = entry.key;
             let panel = open_panel(app.world_mut(), layout, key).unwrap();
             let instance = app.world().get::<PanelInstance>(panel).unwrap();
             assert_eq!(instance.key, key);

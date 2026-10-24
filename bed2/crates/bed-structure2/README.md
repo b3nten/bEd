@@ -12,7 +12,7 @@ There is no arbitrary-document structure-provider protocol or application comman
 bus. The [integration plan](../../../MIGRATION/treesitter-and-structure-plan.md)
 records the scope and package split.
 
-`StructureSource` on each workspace remembers one panel and its exact document
+The `StructureSource` world resource remembers one panel and its exact document
 binding. After Workbench's focus and closure changes, current eligible editor
 focus wins; otherwise a still-open remembered binding survives. Automatic tab
 selection counts as ordinary focus. Closing the remembered source clears it
@@ -32,7 +32,7 @@ clear the cached outline. No available observation or cache displays
 **No structure available**. A valid empty outline replaces the cache and displays
 **No declarations**. A focused panel becoming eligible is reevaluated normally;
 rebinding a remembered but unfocused panel cannot silently replace its document.
-Tracking is workspace-local across layouts and retires with the workspace.
+Tracking is world-local across layouts and retires with the session.
 
 Each Structure panel owns its expansion and selection. Presentation positions include closing descendants during bed1-style 160 ms
 smoothstep collapse; only viewport rows are drawn. Disclosure triangles match

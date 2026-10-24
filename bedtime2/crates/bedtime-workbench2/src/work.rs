@@ -1,4 +1,4 @@
-//! Workspace-owned work. Workers own their I/O and return values through handles;
+//! World-owned managed work. Workers own their I/O and return values through handles;
 //! they never borrow an ECS world. Closing requests cancellation without waiting.
 use bevy::prelude::*;
 use std::{
@@ -83,13 +83,13 @@ impl Cancellation {
     }
 }
 
-pub struct WorkspaceTask<T> {
+pub struct ManagedTask<T> {
     pub id: WorkId,
     receiver: Mutex<mpsc::Receiver<T>>,
     cancellation: Cancellation,
 }
 
-impl<T> WorkspaceTask<T> {
+impl<T> ManagedTask<T> {
     pub fn try_recv(&self) -> Result<T, mpsc::TryRecvError> {
         self.receiver.lock().unwrap().try_recv()
     }
@@ -129,7 +129,7 @@ pub struct ProcessOutput {
 }
 
 /// Bounded retained output: workers always drain pipes, including while inactive.
-pub struct WorkspaceProcess {
+pub struct ManagedProcess {
     pub id: WorkId,
     pub process_id: u32,
     input: Mutex<Option<mpsc::SyncSender<Vec<u8>>>>,
@@ -138,7 +138,7 @@ pub struct WorkspaceProcess {
     cancellation: Cancellation,
 }
 
-impl WorkspaceProcess {
+impl ManagedProcess {
     /// Queue at most 8 KiB per write. Backpressure is reported to the caller.
     pub fn write(&self, bytes: &[u8]) -> io::Result<()> {
         if self.cancellation.is_cancelled() {
@@ -207,14 +207,14 @@ pub struct WorkInfo {
     pub status: WorkStatus,
 }
 
-#[derive(Component, Default)]
-pub struct WorkspaceWork {
+#[derive(Resource, Default)]
+pub struct ManagedWork {
     next_id: u64,
     closing: bool,
     running: BTreeMap<WorkId, RunningWork>,
 }
 
-impl WorkspaceWork {
+impl ManagedWork {
     /// Shutdown is final for this scope: no further work may be admitted.
     pub fn is_closing(&self) -> bool {
         self.closing
@@ -222,7 +222,7 @@ impl WorkspaceWork {
 
     fn admit(&mut self) -> Result<WorkId, String> {
         if self.closing {
-            return Err("Workspace is closing".into());
+            return Err("Session is closing".into());
         }
         self.next_id = self.next_id.checked_add(1).expect("Work IDs exhausted");
         Ok(WorkId(self.next_id))
@@ -232,13 +232,13 @@ impl WorkspaceWork {
         owner: Option<Entity>,
         label: impl Into<String>,
         task: impl FnOnce(Cancellation) -> T + Send + 'static,
-    ) -> Result<WorkspaceTask<T>, String> {
+    ) -> Result<ManagedTask<T>, String> {
         let id = self.admit()?;
         let cancellation = Cancellation::new();
         let cancel = cancellation.clone();
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker = thread::Builder::new()
-            .name("workspace-task".into())
+            .name("managed-task".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     let value = task(cancel.clone());
@@ -246,7 +246,7 @@ impl WorkspaceWork {
                         let _ = sender.send(value);
                     }
                 }));
-                cancel.finish(result.map_err(|_| "Workspace task panicked".into()));
+                cancel.finish(result.map_err(|_| "Managed task panicked".into()));
             })
             .map_err(|e| e.to_string())?;
         self.running.insert(
@@ -259,7 +259,7 @@ impl WorkspaceWork {
                 process: None,
             },
         );
-        Ok(WorkspaceTask {
+        Ok(ManagedTask {
             id,
             receiver: Mutex::new(receiver),
             cancellation,
@@ -273,7 +273,7 @@ impl WorkspaceWork {
         owner: Option<Entity>,
         label: impl Into<String>,
         spec: ProcessSpec,
-    ) -> Result<WorkspaceProcess, String> {
+    ) -> Result<ManagedProcess, String> {
         let id = self.admit()?;
         let mut command = Command::new(&spec.program);
         command
@@ -310,7 +310,7 @@ impl WorkspaceWork {
         }));
         let child = process.clone();
         let worker = thread::Builder::new()
-            .name("workspace-process".into())
+            .name("managed-process".into())
             .spawn(move || {
                 let reader =
                     |mut pipe: Box<dyn Read + Send>,
@@ -397,7 +397,7 @@ impl WorkspaceWork {
                 process: Some(process),
             },
         );
-        Ok(WorkspaceProcess {
+        Ok(ManagedProcess {
             id,
             process_id,
             input: Mutex::new(Some(input)),
@@ -454,13 +454,13 @@ impl WorkspaceWork {
             let job = self.running.remove(&id).unwrap();
             if job.worker.join().is_err() {
                 job.cancellation
-                    .finish(Err("Workspace worker panicked".into()));
+                    .finish(Err("Managed worker panicked".into()));
             }
         }
     }
 }
 
-impl Drop for WorkspaceWork {
+impl Drop for ManagedWork {
     fn drop(&mut self) {
         self.shutdown();
         // Drop is a forceful fallback. Signal owned processes immediately even

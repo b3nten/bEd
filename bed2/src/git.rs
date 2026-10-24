@@ -1,8 +1,9 @@
 //! Local Git workflow. The workspace owns repository state and admitted work;
 //! panels only observe it. All Git/file I/O stays in managed workers.
-mod panel;
 pub(crate) mod diff;
+mod panel;
 mod presentation;
+use crate::persistence::ReflectProjectPersist;
 use presentation::{ChangeSet, DirectoryKey, Group, RepositoryView, Row};
 pub(crate) use presentation::{GitPanelOptions, GroupBy, ViewMode};
 use std::collections::BTreeSet;
@@ -23,54 +24,55 @@ use std::{
 
 pub use panel::GitPanel;
 
-#[derive(Component)]
+#[derive(Resource)]
 struct RestoredDraft(String);
-#[derive(Component)]
+#[derive(Resource)]
 struct RestoredOptions(GitPanelOptions);
 
-pub(crate) fn panel_options(world: &World, workspace: Entity) -> GitPanelOptions {
+pub(crate) fn panel_options(world: &World) -> GitPanelOptions {
     world
-        .get::<GitSession>(workspace)
+        .get_resource::<GitSession>()
         .map(|s| s.options)
-        .or_else(|| world.get::<RestoredOptions>(workspace).map(|o| o.0))
+        .or_else(|| world.get_resource::<RestoredOptions>().map(|o| o.0))
         .unwrap_or_default()
 }
-pub(crate) fn restore_options(world: &mut World, workspace: Entity, options: GitPanelOptions) {
-    if let Some(mut session) = world.get_mut::<GitSession>(workspace) {
+pub(crate) fn restore_options(world: &mut World, options: GitPanelOptions) {
+    if let Some(mut session) = world.get_resource_mut::<GitSession>() {
         if session.options != options {
             session.options = options;
             session.invalidate();
         }
     } else {
-        world.entity_mut(workspace).insert(RestoredOptions(options));
+        world.insert_resource(RestoredOptions(options));
     }
 }
 
-pub(crate) fn commit_draft(world: &World, workspace: Entity) -> String {
+pub(crate) fn commit_draft(world: &World) -> String {
     world
-        .get::<GitSession>(workspace)
+        .get_resource::<GitSession>()
         .map(|s| s.draft.clone())
-        .or_else(|| world.get::<RestoredDraft>(workspace).map(|d| d.0.clone()))
+        .or_else(|| world.get_resource::<RestoredDraft>().map(|d| d.0.clone()))
         .unwrap_or_default()
 }
-pub(crate) fn restore_draft(world: &mut World, workspace: Entity, draft: String) {
-    if let Some(mut session) = world.get_mut::<GitSession>(workspace) {
+pub(crate) fn restore_draft(world: &mut World, draft: String) {
+    if let Some(mut session) = world.get_resource_mut::<GitSession>() {
         if session.draft.is_empty() {
             session.draft = draft;
         }
     } else {
-        world.entity_mut(workspace).insert(RestoredDraft(draft));
+        world.insert_resource(RestoredDraft(draft));
     }
 }
-pub(crate) fn has_pending_operation(world: &World, workspace: Entity) -> bool {
+pub(crate) fn has_pending_operation(world: &World) -> bool {
     world
-        .get::<GitSession>(workspace)
+        .get_resource::<GitSession>()
         .is_some_and(|s| s.pending.is_some())
 }
 
 pub struct GitPlugin;
 impl Plugin for GitPlugin {
     fn build(&self, app: &mut App) {
+        register_menu(app);
         app.init_resource::<crate::file_editor::FileWrites>()
             .add_systems(
                 Update,
@@ -101,15 +103,15 @@ fn staging(entry: &StatusEntry) -> Staging {
         Staging::Staged
     }
 }
-#[derive(Component)]
+#[derive(Resource)]
 struct GitSession {
     root: PathBuf,
     view: Option<Arc<RepositoryView>>,
     view_epoch: u64,
     options: GitPanelOptions,
     collapsed: BTreeSet<DirectoryKey>,
-    projection: Option<(u64, WorkspaceTask<RepositoryView>)>,
-    scan: Option<(u64, WorkspaceTask<Result<RepositoryView, String>>)>,
+    projection: Option<(u64, ManagedTask<RepositoryView>)>,
+    scan: Option<(u64, ManagedTask<Result<RepositoryView, String>>)>,
     epoch: u64,
     refresh: bool,
     last_scan: Instant,
@@ -189,11 +191,11 @@ enum Pending {
         guard: Option<diff::StageGuard>,
     },
     Review {
-        task: WorkspaceTask<Result<bedtime_git::Diff, String>>,
+        task: ManagedTask<Result<bedtime_git::Diff, String>>,
     },
     Running {
         operation: Operation,
-        task: WorkspaceTask<MutationResult>,
+        task: ManagedTask<MutationResult>,
         cancel: Arc<AtomicBool>,
     },
 }
@@ -253,21 +255,20 @@ fn changes_files(operation: &Operation) -> bool {
     )
 }
 fn needs_write_lease(operation: &Operation) -> bool {
-    changes_files(operation) || matches!(operation, Operation::Stage { .. } | Operation::StageRange { .. } | Operation::StageHunk { .. })
+    changes_files(operation)
+        || matches!(
+            operation,
+            Operation::Stage { .. } | Operation::StageRange { .. } | Operation::StageHunk { .. }
+        )
 }
 
-fn begin(
-    world: &mut World,
-    workspace: Entity,
-    session: &mut GitSession,
-    operation: Operation,
-) -> Result<(), String> {
+fn begin(world: &mut World, session: &mut GitSession, operation: Operation) -> Result<(), String> {
     if !crate::close::accepts_user_actions(world) {
         return Err("Cancel quit before changing Git state.".into());
     }
     if world
-        .get::<WorkspaceWork>(workspace)
-        .is_none_or(WorkspaceWork::is_closing)
+        .get_resource::<ManagedWork>()
+        .is_none_or(ManagedWork::is_closing)
     {
         return Err("The Git workspace is closing.".into());
     }
@@ -286,7 +287,9 @@ fn begin(
             Operation::Stage { paths } => {
                 paths.is_empty() || paths.iter().any(|p| p == relative.as_ref())
             }
-            Operation::StageRange { path, .. } | Operation::StageHunk { path, .. } => path == relative.as_ref(),
+            Operation::StageRange { path, .. } | Operation::StageHunk { path, .. } => {
+                path == relative.as_ref()
+            }
             Operation::CreateBranch { .. }
             | Operation::SwitchBranch { .. }
             | Operation::Pull
@@ -294,9 +297,10 @@ fn begin(
             _ => false,
         };
         let replaces = match &operation {
-            Operation::Discard { path, .. } | Operation::DiscardRange { path, .. } | Operation::DiscardHunk { path, .. } | Operation::Resolve { path, .. } => {
-                path == relative.as_ref()
-            }
+            Operation::Discard { path, .. }
+            | Operation::DiscardRange { path, .. }
+            | Operation::DiscardHunk { path, .. }
+            | Operation::Resolve { path, .. } => path == relative.as_ref(),
             Operation::Abort => true,
             _ => false,
         };
@@ -330,14 +334,17 @@ fn begin(
         }
     }
     session.error = None;
-    session.pending = Some(Pending::Saving { operation, sources, guard: None });
+    session.pending = Some(Pending::Saving {
+        operation,
+        sources,
+        guard: None,
+    });
     session.invalidate();
     Ok(())
 }
 
 fn request_discard(
     world: &mut World,
-    workspace: Entity,
     session: &mut GitSession,
     path: String,
 ) -> Result<(), String> {
@@ -345,22 +352,23 @@ fn request_discard(
         return Err("Wait for Git to refresh before discarding.".into());
     }
     let root = session.root.clone();
-    let task = Workbench::for_entity(world, workspace)?.work().spawn_task(
-        None,
-        "Review Git discard",
-        move |cancel| match git_job(
-            root,
-            Operation::Diff {
-                path,
-                side: DiffSide::Unstaged,
-            },
-            &cancel,
-            &AtomicBool::new(false),
-        )? {
-            Output::Diff(diff) => Ok(diff),
-            _ => Err("Unexpected Git diff response".into()),
-        },
-    )?;
+    let task =
+        Workbench::new(world)
+            .work()
+            .spawn_task(None, "Review Git discard", move |cancel| {
+                match git_job(
+                    root,
+                    Operation::Diff {
+                        path,
+                        side: DiffSide::Unstaged,
+                    },
+                    &cancel,
+                    &AtomicBool::new(false),
+                )? {
+                    Output::Diff(diff) => Ok(diff),
+                    _ => Err("Unexpected Git diff response".into()),
+                }
+            })?;
     session.pending = Some(Pending::Review { task });
     Ok(())
 }
@@ -383,11 +391,7 @@ fn cancel(session: &mut GitSession) {
     }
 }
 
-fn poll_pending(
-    world: &mut World,
-    workspace: Entity,
-    session: &mut GitSession,
-) -> Result<(), String> {
+fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), String> {
     let Some(pending) = session.pending.take() else {
         return Ok(());
     };
@@ -405,7 +409,11 @@ fn poll_pending(
             }
             Err(_) => return Err("Git review was cancelled.".into()),
         },
-        Pending::Saving { operation, sources, guard } => {
+        Pending::Saving {
+            operation,
+            sources,
+            guard,
+        } => {
             let mut saving = false;
             for source in &sources {
                 let info = inspect_document(world, source.id).map_err(|e| e.to_string())?;
@@ -432,7 +440,11 @@ fn poll_pending(
                 }
             }
             if saving || session.scan.is_some() {
-                session.pending = Some(Pending::Saving { operation, sources, guard });
+                session.pending = Some(Pending::Saving {
+                    operation,
+                    sources,
+                    guard,
+                });
                 return Ok(());
             }
             // Check destructive gates again after queued reads/saves. New edits
@@ -441,9 +453,10 @@ fn poll_pending(
             if changes_files(&operation) {
                 for (info, path) in source_infos(world, &root) {
                     let affected = match &operation {
-                        Operation::Discard { path: p, .. } | Operation::DiscardRange { path: p, .. } | Operation::DiscardHunk { path: p, .. } | Operation::Resolve { path: p, .. } => {
-                            path == root.join(p)
-                        }
+                        Operation::Discard { path: p, .. }
+                        | Operation::DiscardRange { path: p, .. }
+                        | Operation::DiscardHunk { path: p, .. }
+                        | Operation::Resolve { path: p, .. } => path == root.join(p),
                         _ => true,
                     };
                     if affected
@@ -471,9 +484,10 @@ fn poll_pending(
             };
             let observations = if changes_files(&operation) {
                 let affected = match &operation {
-                    Operation::Discard { path, .. } | Operation::DiscardRange { path, .. } | Operation::DiscardHunk { path, .. } | Operation::Resolve { path, .. } => {
-                        root.join(path)
-                    }
+                    Operation::Discard { path, .. }
+                    | Operation::DiscardRange { path, .. }
+                    | Operation::DiscardHunk { path, .. }
+                    | Operation::Resolve { path, .. } => root.join(path),
                     _ => root.clone(),
                 };
                 crate::file_editor::capture_sources(world, &affected)
@@ -485,7 +499,7 @@ fn poll_pending(
             let requested = Arc::new(AtomicBool::new(false));
             let stop = requested.clone();
             let mut op = operation.clone();
-            let task = Workbench::for_entity(world, workspace)?.work().spawn_task(None, "Git operation", move |cancel| {
+            let task = Workbench::new(world).work().spawn_task(None, "Git operation", move |cancel| {
                 let result = (|| {
                     if let Some(expected) = expected_commit {
                         let Output::Status(status) = git_job(root.clone(), Operation::Status, &cancel, &stop)? else { unreachable!() };
@@ -563,7 +577,7 @@ fn poll_pending(
     Ok(())
 }
 
-fn reproject(world: &mut World, workspace: Entity, session: &mut GitSession) -> Result<(), String> {
+fn reproject(world: &mut World, session: &mut GitSession) -> Result<(), String> {
     if let Some((_, task)) = session.projection.take() {
         task.cancel();
     }
@@ -576,57 +590,47 @@ fn reproject(world: &mut World, workspace: Entity, session: &mut GitSession) -> 
     let status = view.status.clone();
     let options = session.options;
     let collapsed = session.collapsed.clone();
-    let task = Workbench::for_entity(world, workspace)?.work().spawn_task(
-        None,
-        "Prepare Git presentation",
-        move |_| RepositoryView::prepare(status, options, collapsed),
-    )?;
+    let task =
+        Workbench::new(world)
+            .work()
+            .spawn_task(None, "Prepare Git presentation", move |_| {
+                RepositoryView::prepare(status, options, collapsed)
+            })?;
     session.projection = Some((session.epoch, task));
     Ok(())
 }
 
 fn update(world: &mut World) {
-    let requested: Vec<_> = world
-        .query_filtered::<&InWorkspace, Or<(With<GitPanel>, With<diff::DiffPanel>)>>()
+    let has_panels = world
+        .query_filtered::<Entity, Or<(With<GitPanel>, With<diff::DiffPanel>)>>()
         .iter(world)
-        .map(|owner| owner.0)
-        .collect();
-    for &workspace in &requested {
-        if world.get::<GitSession>(workspace).is_none()
-            && let Some(root) = world
-                .get::<crate::files::WorkspaceRoot>(workspace)
-                .map(|r| r.0.clone())
-        {
-            let draft = world
-                .entity_mut(workspace)
-                .take::<RestoredDraft>()
-                .map(|d| d.0)
-                .unwrap_or_default();
-            let options = world
-                .entity_mut(workspace)
-                .take::<RestoredOptions>()
-                .map(|o| o.0)
-                .unwrap_or_default();
-            let mut session = GitSession::new(root);
-            session.options = options;
-            session.draft = draft;
-            world.entity_mut(workspace).insert(session);
-        }
+        .next()
+        .is_some();
+    if has_panels
+        && !world.contains_resource::<GitSession>()
+        && let Some(root) = world
+            .get_resource::<crate::files::ProjectRoot>()
+            .map(|r| r.0.clone())
+    {
+        let draft = world
+            .remove_resource::<RestoredDraft>()
+            .map(|d| d.0)
+            .unwrap_or_default();
+        let options = world
+            .remove_resource::<RestoredOptions>()
+            .map(|o| o.0)
+            .unwrap_or_default();
+        let mut session = GitSession::new(root);
+        session.options = options;
+        session.draft = draft;
+        world.insert_resource(session);
     }
-    let owners: Vec<_> = world
-        .query_filtered::<Entity, With<GitSession>>()
-        .iter(world)
-        .collect();
-    for workspace in owners {
-        let closing = world
-            .get::<WorkspaceWork>(workspace)
-            .is_none_or(WorkspaceWork::is_closing);
+    if let Some(mut session) = world.remove_resource::<GitSession>() {
+        let closing = world.resource::<ManagedWork>().is_closing();
         let visible = world
-            .query_filtered::<(&InWorkspace, &PanelPresentation), Or<(With<GitPanel>, With<diff::DiffPanel>)>>()
+            .query_filtered::<&PanelPresentation, Or<(With<GitPanel>, With<diff::DiffPanel>)>>()
             .iter(world)
-            .any(|(owner, presentation)| owner.0 == workspace && presentation.visible);
-        let mut session = world.entity_mut(workspace).take::<GitSession>().unwrap();
-        let has_panels = requested.contains(&workspace);
+            .any(|p| p.visible);
         if has_panels && !session.had_panels {
             session.invalidate();
         }
@@ -663,7 +667,7 @@ fn update(world: &mut World) {
                             Ok(view) => {
                                 session.view = Some(Arc::new(view));
                                 session.view_epoch = epoch;
-                                if let Err(error) = reproject(world, workspace, &mut session) {
+                                if let Err(error) = reproject(world, &mut session) {
                                     session.error = Some(error);
                                 }
                             }
@@ -686,7 +690,7 @@ fn update(world: &mut World) {
             }
         }
         if !closing {
-            if let Err(error) = poll_pending(world, workspace, &mut session) {
+            if let Err(error) = poll_pending(world, &mut session) {
                 session.error = Some(error);
                 session.invalidate();
             }
@@ -699,18 +703,24 @@ fn update(world: &mut World) {
                 let root = session.root.clone();
                 let options = session.options;
                 let collapsed = session.collapsed.clone();
-                let task = Workbench::for_entity(world, workspace).and_then(|mut w| {
-                    w.work().spawn_task(None, "Git status", move |cancel| {
-                        match git_job(root, Operation::Status, &cancel, &AtomicBool::new(false))? {
-                            Output::Status(status) => Ok(RepositoryView::prepare(
-                                Arc::new(status),
-                                options,
-                                collapsed,
-                            )),
-                            _ => Err("Unexpected Git status response".into()),
-                        }
-                    })
-                });
+                let task =
+                    Workbench::new(world)
+                        .work()
+                        .spawn_task(None, "Git status", move |cancel| {
+                            match git_job(
+                                root,
+                                Operation::Status,
+                                &cancel,
+                                &AtomicBool::new(false),
+                            )? {
+                                Output::Status(status) => Ok(RepositoryView::prepare(
+                                    Arc::new(status),
+                                    options,
+                                    collapsed,
+                                )),
+                                _ => Err("Unexpected Git status response".into()),
+                            }
+                        });
                 match task {
                     Ok(task) => {
                         session.scan = Some((session.epoch, task));
@@ -726,8 +736,10 @@ fn update(world: &mut World) {
                 }
             }
         }
-        if !closing { diff::update(world, workspace, &mut session); }
-        world.entity_mut(workspace).insert(session);
+        if !closing {
+            diff::update(world, &mut session);
+        }
+        world.insert_resource(session);
     }
 }
 
@@ -738,4 +750,108 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
     }).collect();
     let panels: Vec<_> = world.query::<(Entity, &GitPanel)>().iter(world).map(|(entity, panel)| serde_json::json!({"entity":entity.to_bits().to_string(),"rendered_rows":panel.rendered_rows,"draw_micros":panel.draw_micros,"tree":panel.tree_diagnostics(),"controls":panel.controls.iter().map(|(key, rect)| (key.clone(),serde_json::json!({"min":[rect.min.x,rect.min.y],"max":[rect.max.x,rect.max.y]}))).collect::<serde_json::Map<String,serde_json::Value>>()})).collect();
     Ok(serde_json::json!({"sessions":sessions,"panels":panels,"diffs":diff::inspect(world)}))
+}
+
+use bedtime_workbench2::persistence::{CapturedWorld, ReflectWorkbenchPersist};
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, WorkbenchPersist)]
+#[require(GitPanel)]
+pub(crate) struct PersistedGitPanel;
+#[derive(Resource, Reflect, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[reflect(opaque)]
+#[reflect(Resource, Serialize, Deserialize, ProjectPersist)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PersistedGit {
+    pub draft: String,
+    pub options: GitPanelOptions,
+}
+#[derive(Component, Reflect, Clone, serde::Serialize, serde::Deserialize)]
+#[reflect(opaque)]
+#[reflect(Component, Serialize, Deserialize, WorkbenchPersist)]
+#[require(PanelInstance=PanelInstance::of::<diff::DiffPanel>())]
+pub(crate) struct PersistedDiff(diff::Descriptor);
+pub(crate) fn register_persistence(app: &mut App) {
+    app.register_type::<PersistedGitPanel>()
+        .register_type::<PersistedGit>()
+        .register_type::<PersistedDiff>();
+}
+pub(crate) fn project_persistence(
+    world: &mut World,
+    captured: &mut bedtime_workbench2::persistence::CapturedWorld,
+) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<GitPanel>>()
+        .iter(world)
+        .collect();
+    for e in panels {
+        captured.insert_component(e, PersistedGitPanel);
+    }
+    let panels: Vec<_> = world
+        .query::<(Entity, &diff::DiffPanel)>()
+        .iter(world)
+        .map(|(e, p)| (e, p.descriptor.clone()))
+        .collect();
+    for (e, p) in panels {
+        captured.insert_component(e, PersistedDiff(p));
+    }
+}
+pub(crate) fn clear_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, Or<(With<PersistedGitPanel>, With<PersistedDiff>)>>()
+        .iter(world)
+        .collect();
+    for e in panels {
+        world
+            .entity_mut(e)
+            .remove::<(PersistedGitPanel, PersistedDiff)>();
+    }
+}
+pub(crate) fn validate_persistence(prepared: &CapturedWorld) -> Result<(), String> {
+    for (_, p) in prepared.components::<PersistedDiff>() {
+        p.0.validate()?;
+    }
+    Ok(())
+}
+pub(crate) fn activate_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedDiff>>()
+        .iter(world)
+        .collect();
+    for e in panels {
+        let p = world.entity_mut(e).take::<PersistedDiff>().unwrap();
+        world.entity_mut(e).insert(diff::DiffPanel::new(p.0));
+    }
+    clear_persistence(world);
+}
+
+pub(crate) fn register_menu(app: &mut App) {
+    crate::menus::register_panel::<GitPanel>(
+        app,
+        Some(10),
+        bedtime_workbench2::PanelFactory::of::<GitPanel>(),
+        crate::storage::ready,
+    );
+}
+
+pub(crate) fn filter_layout_default(
+    capture: &mut bedtime_workbench2::persistence::CapturedLayout,
+    registry: &AppTypeRegistry,
+) -> Result<(), String> {
+    let panels: Vec<_> = capture
+        .components::<PersistedDiff>()
+        .into_iter()
+        .map(|(panel, _)| panel)
+        .collect();
+    for panel in panels {
+        capture.remove_panel(panel, registry)?;
+    }
+    Ok(())
+}
+pub(crate) fn validate_layout_default(
+    capture: &bedtime_workbench2::persistence::CapturedLayout,
+) -> Result<(), String> {
+    if !capture.components::<PersistedDiff>().is_empty() {
+        return Err("Layout defaults cannot contain project Git comparisons".into());
+    }
+    Ok(())
 }

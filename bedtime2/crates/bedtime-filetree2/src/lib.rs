@@ -1,5 +1,5 @@
 //! Local filesystem panels with explicit application-supplied roots. Filesystem
-//! I/O and projection happen in workspace-managed work; opening is a buffered
+//! I/O and projection happen in world-managed work; opening is a buffered
 //! request for the application. Optional panel drags carry a host constructor
 //! that Workbench executes after drawing.
 mod backend;
@@ -22,7 +22,7 @@ pub use view::file_icon;
 use backend::{Backend, ViewRequest};
 use bedtime_clipboard2::Clipboard;
 use bedtime_ui2::{UiContext, egui};
-use bedtime_workbench2::{InWorkspace, Panel, PanelInstance, WorkStatus, WorkspaceWork};
+use bedtime_workbench2::{ManagedWork, Panel, PanelInstance, WorkStatus};
 use bevy::prelude::*;
 use std::{
     collections::{BTreeSet, HashMap, VecDeque},
@@ -78,7 +78,6 @@ pub enum FileTreeActivation {
 #[derive(Message, Clone, Debug)]
 pub struct FileTreeOpenRequested {
     pub panel: Entity,
-    pub workspace: Entity,
     pub path: PathBuf,
     pub activation: FileTreeActivation,
 }
@@ -95,7 +94,6 @@ pub struct FileTreeOpenChoice {
 #[derive(Message, Clone, Debug)]
 pub struct FileTreeOpenWithRequested {
     pub panel: Entity,
-    pub workspace: Entity,
     pub path: PathBuf,
     pub choice: String,
 }
@@ -106,18 +104,15 @@ pub struct FileTreeOpenWithRequested {
 #[derive(Resource)]
 pub struct FileTreePanelDrag(pub fn(PathBuf) -> bedtime_workbench2::PanelFactory);
 
-/// Custom workspace data is not part of Workbench's layout snapshot. Hosts use
+/// Visibility is host-persisted data. Hosts use
 /// this notification to persist FileTreePreferences through their own storage.
 #[derive(Message, Clone, Debug)]
-pub struct FileTreePreferencesChanged {
-    pub workspace: Entity,
-}
+pub struct FileTreePreferencesChanged {}
 
 /// Reported even after the originating panel closes or changes root. A cancelled
 /// operation can have completed effects; applications must inspect the result.
 #[derive(Message, Clone, Debug)]
 pub struct FileTreeOperationFinished {
-    pub workspace: Entity,
     pub panel: Entity,
     pub root: PathBuf,
     pub generation: u64,
@@ -130,13 +125,13 @@ pub enum FileTreeSystems {
 }
 
 /// Admitted mutations, including those whose originating panel has closed.
-/// Hosts can defer destructive workspace/quit policy until outcomes have been
+/// Hosts can defer destructive session/quit policy until outcomes have been
 /// reconciled and their own persistence has admitted any resulting changes.
 /// Calling cancellation is not evidence that a mutation had no effects.
-pub fn filetree_operation_count(world: &World, workspace: Entity) -> usize {
+pub fn filetree_operation_count(world: &World) -> usize {
     world
         .get_resource::<OperationArchive>()
-        .and_then(|archive| archive.0.get(&workspace))
+        .and_then(|archive| archive.0.as_ref())
         .map_or(0, |pending| pending.origins.len())
 }
 
@@ -146,6 +141,7 @@ impl Plugin for FileTreePlugin {
         app.init_resource::<Clipboard>()
             .init_resource::<FileTreeClipboard>()
             .init_resource::<OperationArchive>()
+            .init_resource::<FileTreePreferences>()
             .add_message::<FileTreeOpenRequested>()
             .add_message::<FileTreeOpenWithRequested>()
             .add_message::<FileTreePreferencesChanged>()
@@ -162,7 +158,6 @@ pub struct FileTreePanel {
     snapshot: Arc<FileTreeSnapshot>,
     retirement: Option<backend::SnapshotRetirementHandle>,
     root_input: Option<PathBuf>,
-    workspace: Option<Entity>,
     generation: u64,
     revision: u64,
     sent_revision: u64,
@@ -191,7 +186,6 @@ impl Default for FileTreePanel {
             snapshot: Arc::new(FileTreeSnapshot::default()),
             retirement: None,
             root_input: None,
-            workspace: None,
             generation: 0,
             revision: 0,
             sent_revision: 0,
@@ -327,12 +321,11 @@ impl FileTreePanel {
             let _ = retirement.retire_snapshot(retired);
         }
     }
-    fn reset(&mut self, workspace: Entity, root: Option<PathBuf>) {
+    fn reset(&mut self, root: Option<PathBuf>) {
         self.generation = self
             .generation
             .checked_add(1)
             .expect("File tree generation exhausted");
-        self.workspace = Some(workspace);
         self.root_input = root;
         self.revision = 1;
         self.sent_revision = 0;
@@ -351,7 +344,7 @@ impl FileTreePanel {
         self.reported = errors::ReportedErrors::default();
         self.actions.clear();
         self.view = view::TreeView::default();
-        // Admitted mutations are workspace-owned and still report their outcomes.
+        // Admitted mutations are world-owned and still report their outcomes.
         self.pending.clear();
         self.progress = None;
     }
@@ -463,7 +456,7 @@ struct FileClipboardIntent {
     clipboard_snapshot: Arc<bedtime_clipboard2::ClipboardFilesSnapshot>,
 }
 
-#[derive(Component)]
+#[derive(Resource)]
 struct FilesystemRuntime {
     backend: Backend,
     panels: BTreeSet<Entity>,
@@ -471,12 +464,11 @@ struct FilesystemRuntime {
     preferences_revision: u64,
 }
 
-/// Results outlive workspace entity destruction: the managed worker can finish
-/// between Update and Workbench's Last-stage workspace retirement. Entries exist
+/// Results outlive panel destruction and remain available while work drains. Entries exist
 /// only while admitted operations are outstanding, never for idle directory views.
 #[derive(Resource, Default)]
-struct OperationArchive(HashMap<Entity, WorkspaceOperations>);
-struct WorkspaceOperations {
+struct OperationArchive(Option<PendingOperations>);
+struct PendingOperations {
     results: backend::OperationResultsHandle,
     origins: HashMap<u64, OperationOrigin>,
 }
@@ -489,61 +481,37 @@ struct OperationOrigin {
 }
 
 /// One visible execution point owns admission, observation application, and
-/// reconciliation. This runs for inactive/hidden/closing workspaces as well.
+/// reconciliation, including hidden layouts and orderly session shutdown.
 fn update_filetrees(world: &mut World) {
-    let panels: Vec<_> = world
-        .query::<(Entity, &InWorkspace, &FileTreePanel)>()
+    let live: BTreeSet<_> = world
+        .query_filtered::<Entity, With<FileTreePanel>>()
         .iter(world)
-        .map(|(panel, owner, _)| (panel, owner.0))
         .collect();
-    let mut by_workspace: HashMap<Entity, BTreeSet<Entity>> = HashMap::new();
-    for &(panel, workspace) in &panels {
-        by_workspace.entry(workspace).or_default().insert(panel);
-    }
-    for &workspace in by_workspace.keys() {
-        if world.get::<FileTreePreferences>(workspace).is_none() {
-            world
-                .entity_mut(workspace)
-                .insert(FileTreePreferences::default());
-        }
-        if world.get::<FilesystemRuntime>(workspace).is_none() {
-            let result = world
-                .get_mut::<WorkspaceWork>(workspace)
-                .ok_or_else(|| "Workspace has no managed work scope".to_string())
-                .and_then(|mut scope| Backend::spawn(&mut scope));
-            match result {
-                Ok(backend) => {
-                    world.entity_mut(workspace).insert(FilesystemRuntime {
-                        backend,
-                        panels: BTreeSet::new(),
-                        next_operation: 0,
-                        preferences_revision: 0,
-                    });
-                }
-                Err(error) => {
-                    for &panel in &by_workspace[&workspace] {
-                        world.get_mut::<FileTreePanel>(panel).unwrap().error = Some(error.clone());
-                    }
+    if !live.is_empty() && !world.contains_resource::<FilesystemRuntime>() {
+        let result = Backend::spawn(&mut world.resource_mut::<ManagedWork>());
+        match result {
+            Ok(backend) => {
+                world.insert_resource(FilesystemRuntime {
+                    backend,
+                    panels: BTreeSet::new(),
+                    next_operation: 0,
+                    preferences_revision: 0,
+                });
+            }
+            Err(error) => {
+                for &panel in &live {
+                    world.get_mut::<FileTreePanel>(panel).unwrap().error = Some(error.clone());
                 }
             }
         }
     }
-    let workspaces: Vec<_> = world
-        .query_filtered::<Entity, With<FilesystemRuntime>>()
-        .iter(world)
-        .collect();
-    for workspace in workspaces {
-        let Some(mut runtime) = world.entity_mut(workspace).take::<FilesystemRuntime>() else {
-            continue;
-        };
+    if let Some(mut runtime) = world.remove_resource::<FilesystemRuntime>() {
         if world
-            .entity(workspace)
-            .get_ref::<FileTreePreferences>()
+            .get_resource_ref::<FileTreePreferences>()
             .is_some_and(|p| p.is_changed())
         {
             runtime.preferences_revision = runtime.preferences_revision.wrapping_add(1);
         }
-        let live = by_workspace.get(&workspace).cloned().unwrap_or_default();
         for &removed in runtime.panels.difference(&live) {
             runtime.backend.remove_view(removed);
         }
@@ -553,10 +521,10 @@ fn update_filetrees(world: &mut World) {
             let Some(mut state) = world.entity_mut(panel).take::<FileTreePanel>() else {
                 continue;
             };
-            let reset = state.root_input != root || state.workspace != Some(workspace);
+            let reset = state.root_input != root;
             if reset {
                 runtime.backend.remove_view(panel);
-                state.reset(workspace, root);
+                state.reset(root);
             }
             if reset || state.retirement.is_none() {
                 state.retirement = Some(runtime.backend.snapshot_retirement_handle());
@@ -633,7 +601,7 @@ fn update_filetrees(world: &mut World) {
                     .as_ref()
                     .and_then(|root| {
                         world
-                            .get::<FileTreePreferences>(workspace)?
+                            .get_resource::<FileTreePreferences>()?
                             .roots
                             .get(root)
                             .cloned()
@@ -648,9 +616,7 @@ fn update_filetrees(world: &mut World) {
             }
             while let Some(action) = state.actions.pop_front() {
                 let title = errors::action_title(&action);
-                if let Err(error) =
-                    apply_action(world, workspace, panel, &mut runtime, &mut state, action)
-                {
+                if let Err(error) = apply_action(world, panel, &mut runtime, &mut state, action) {
                     bedtime_workbench2::request_error_dialog(
                         world,
                         errors::action_dialog(title, error.clone()),
@@ -697,18 +663,16 @@ fn update_filetrees(world: &mut World) {
             }
             world.entity_mut(panel).insert(state);
         }
-        // WorkspaceWork prevents new admission while closing, but the separate
+        // ManagedWork prevents new admission while closing, but the separate
         // result mailbox still lets this system observe already committed writes.
-        if world.get_entity(workspace).is_ok() {
-            world.entity_mut(workspace).insert(runtime);
-        }
+        world.insert_resource(runtime);
     }
     world.resource_scope(|world, mut archive: Mut<OperationArchive>| {
-        for (&workspace, pending) in &mut archive.0 {
+        if let Some(pending) = &mut archive.0 {
             let mut results = pending.results.take_operation_results();
-            let failed = world.get::<FilesystemRuntime>(workspace)
+            let failed = world.get_resource::<FilesystemRuntime>()
                 .is_some_and(|runtime| matches!(runtime.backend.status(), WorkStatus::Failed(_)));
-            if failed || world.get_entity(workspace).is_err() {
+            if failed {
                 // A panic cannot be interpreted as rollback. Preserve real results
                 // first, then explicitly report that remaining effects are unknown.
                 let received: BTreeSet<_> = results.iter().map(|r| r.id).collect();
@@ -721,22 +685,21 @@ fn update_filetrees(world: &mut World) {
             }
             for result in results {
                 if let Some(origin) = pending.origins.remove(&result.id) {
-                    reconcile_operation(world, workspace, &origin, &result);
+                    reconcile_operation(world, &origin, &result);
                     world.write_message(FileTreeOperationFinished {
-                        workspace, panel: origin.panel, root: origin.root,
+                        panel: origin.panel, root: origin.root,
                         generation: origin.generation, result: Arc::new(result),
                     });
                 }
             }
         }
-        archive.0.retain(|_, pending| !pending.origins.is_empty());
+        if archive.0.as_ref().is_some_and(|pending| pending.origins.is_empty()) { archive.0 = None; }
     });
     errors::report(world);
 }
 
 fn apply_action(
     world: &mut World,
-    workspace: Entity,
     panel: Entity,
     runtime: &mut FilesystemRuntime,
     state: &mut FileTreePanel,
@@ -799,7 +762,6 @@ fn apply_action(
             {
                 world.write_message(FileTreeOpenWithRequested {
                     panel,
-                    workspace,
                     path,
                     choice,
                 });
@@ -816,7 +778,6 @@ fn apply_action(
             } else {
                 world.write_message(FileTreeOpenRequested {
                     panel,
-                    workspace,
                     path,
                     activation,
                 });
@@ -992,7 +953,7 @@ fn apply_action(
         Action::Trash { paths } => FileTreeOperation::Trash { sources: paths },
         Action::Hide { paths } | Action::Unhide { paths } => {
             let hide = hide_action;
-            let mut preferences = world.get_mut::<FileTreePreferences>(workspace).unwrap();
+            let mut preferences = world.get_resource_mut::<FileTreePreferences>().unwrap();
             let visibility = preferences.roots.entry(root.clone()).or_default();
             for path in paths {
                 let relative = path
@@ -1006,11 +967,11 @@ fn apply_action(
             }
             drop(preferences);
             runtime.preferences_revision = runtime.preferences_revision.wrapping_add(1);
-            world.write_message(FileTreePreferencesChanged { workspace });
+            world.write_message(FileTreePreferencesChanged {});
             return Ok(());
         }
         Action::ToggleHiddenFiles | Action::ClearHidden => {
-            let mut preferences = world.get_mut::<FileTreePreferences>(workspace).unwrap();
+            let mut preferences = world.get_resource_mut::<FileTreePreferences>().unwrap();
             let visibility = preferences.roots.entry(root).or_default();
             if matches!(action, Action::ToggleHiddenFiles) {
                 visibility.hide_hidden = !visibility.hide_hidden;
@@ -1019,7 +980,7 @@ fn apply_action(
             }
             drop(preferences);
             runtime.preferences_revision = runtime.preferences_revision.wrapping_add(1);
-            world.write_message(FileTreePreferencesChanged { workspace });
+            world.write_message(FileTreePreferencesChanged {});
             return Ok(());
         }
         Action::ToggleRevealHidden => {
@@ -1038,10 +999,10 @@ fn apply_action(
         );
     }
     if world
-        .get::<WorkspaceWork>(workspace)
+        .get_resource::<ManagedWork>()
         .is_none_or(|scope| scope.is_closing())
     {
-        return Err("The workspace is closing.".into());
+        return Err("The session is closing.".into());
     }
     runtime.next_operation = runtime
         .next_operation
@@ -1058,8 +1019,7 @@ fn apply_action(
     world
         .resource_mut::<OperationArchive>()
         .0
-        .entry(workspace)
-        .or_insert_with(|| WorkspaceOperations {
+        .get_or_insert_with(|| PendingOperations {
             results,
             origins: HashMap::new(),
         })
@@ -1124,15 +1084,13 @@ fn remap_set(set: &mut BTreeSet<PathBuf>, source: &Path, destination: &Path) {
 
 fn reconcile_operation(
     world: &mut World,
-    workspace: Entity,
     origin: &OperationOrigin,
     result: &FileTreeOperationResult,
 ) {
     let panels: Vec<_> = world
-        .query::<(Entity, &InWorkspace, &FileTreePanel)>()
+        .query::<(Entity, &FileTreePanel)>()
         .iter(world)
-        .filter(|(_, owner, _)| owner.0 == workspace)
-        .map(|(panel, _, _)| panel)
+        .map(|(panel, _)| panel)
         .collect();
     let mut preferences_changed = false;
     for change in &result.completed {
@@ -1167,7 +1125,7 @@ fn reconcile_operation(
             if let (Ok(source), Ok(destination)) = (
                 source.strip_prefix(&origin.root),
                 destination.strip_prefix(&origin.root),
-            ) && let Some(mut preferences) = world.get_mut::<FileTreePreferences>(workspace)
+            ) && let Some(mut preferences) = world.get_resource_mut::<FileTreePreferences>()
                 && let Some(visibility) = preferences.roots.get_mut(&origin.root)
             {
                 let old = visibility.hidden_paths.clone();
@@ -1177,10 +1135,10 @@ fn reconcile_operation(
         }
     }
     if preferences_changed {
-        if let Some(mut runtime) = world.get_mut::<FilesystemRuntime>(workspace) {
+        if let Some(mut runtime) = world.get_resource_mut::<FilesystemRuntime>() {
             runtime.preferences_revision = runtime.preferences_revision.wrapping_add(1);
         }
-        world.write_message(FileTreePreferencesChanged { workspace });
+        world.write_message(FileTreePreferencesChanged {});
     }
     let mut clipboard_error = None;
     if let Some(snapshot) = &origin.cut_snapshot {
@@ -1260,7 +1218,6 @@ fn reconcile_operation(
         details: Some(details.clone()),
     }));
     if let Some(mut state) = world.get_mut::<FileTreePanel>(origin.panel)
-        && state.workspace == Some(workspace)
         && state.generation == origin.generation
     {
         state.pending.remove(&result.id);
@@ -1342,3 +1299,13 @@ fn native_clipboard_revision() -> Option<i64> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn test_layout(world: &mut bevy::prelude::World) -> bevy::prelude::Entity {
+    use bedtime_workbench2::*;
+    let layout = Workbench::new(world).create_layout("Test").unwrap();
+    if active_layout(world).is_none() {
+        world.entity_mut(layout).insert(ActiveLayout);
+    }
+    layout
+}

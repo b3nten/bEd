@@ -55,7 +55,7 @@ visible text let clients wait for application-specific readiness.
 IDs are strings or unsigned integers, unique among pending requests. Operations
 execute sequentially. Results follow completion, rather than queue admission;
 normal mutations wait through a subsequent frame, command invocation waits for
-the actual command receipt, workspace closure waits for despawning, and capture
+the actual command receipt, layout deletion observes entity teardown, and capture
 waits for GPU readback and successful PNG writing. Protocol/validation errors may
 be returned immediately. Every response includes the application frame.
 
@@ -154,24 +154,19 @@ Bevy's application input path, rather than generating OS-wide native events.
 ## Workbench operations
 
 All use the real main-world entities and existing public workbench transitions.
-`workspace` defaults to the active workspace where applicable; `layout` defaults
-to that workspace's active layout. Explicit selection may be empty.
+`layout` defaults to the World's selected layout; explicit selection may be empty.
+There are no workspace lifecycle operations or scope arguments.
 
-| Operation | Arguments |
-|---|---|
-| `workspace.create` | `name`, optional `with_layout` (true), `activate` (false), `background_updates` (true). Returns workspace and optional layout/area IDs. |
-| `workspace.activate` | `workspace`: ID, or `null` to clear selection. |
-| `workspace.configure` | Optional `workspace`, `name`, `background_updates`. |
-| `workspace.close` | Optional `workspace`, `replacement`. Waits for workspace workers to finish and ownership teardown to complete. |
-| `layout.create` | `name`, optional `workspace`, `activate`. Creates a layout with one empty area. |
-| `layout.activate` | `layout`: ID, or `null` with optional `workspace` to clear its selection. |
+| Operation | Arguments and result |
+| --- | --- |
+| `layout.create` | `name`, optional `activate`. Creates a layout with one empty area; returns `layout`. |
+| `layout.activate` | `layout`: ID, or `null` to clear selection. |
 | `layout.delete` | Optional `layout`. |
-| `layout.move` | `layout`, `workspace`. Moves its ownership subtree; rejects conflicting active layout selections. |
 | `panel.focus`, `panel.close` | `panel`. |
 | `panel.move` | `panel`, `area`, optional `index` within the destination tabs. |
 | `area.split` | `area`, `axis`: `horizontal` (x) or `vertical` (y), optional `fraction` (0.5). Returns the new area. |
 | `area.close` | `area`. Uses normal geometry-preserving close behavior. |
-| `invoke` | `command`: registered key; optional `workspace`, `panel`, or `global: true`. Returns the actual handler outcome. |
+| `invoke` | `command`: registered key; optional `panel`, or `global: true`. Returns the actual handler outcome. |
 | `surface.configure` | Optional `window`, partial `settings`, `panels_visible`, `titlebar_height`, `titlebar_ownership` (`workbench`/`application`), `blur`. |
 | `surface.detach`, `surface.attach` | Optional `window`. Detach remembers WorkbenchSurface settings; attach reinstalls them (or defaults). Normal lifecycle owns generated themes and egui sessions. |
 | `theme.set` | Optional `window`, `preset` (`dark`/`light`), partial `theme` object. Validates colors/metrics before writing. |
@@ -195,10 +190,10 @@ concrete creation and session operations through their own UI or custom operatio
 descriptive panel keys are not a Workbench construction registry. `capture` in the
 general operations table means a rendered PNG, not session serialization.
 
-Inspection includes command availability, workspace and layout selection, area
+Inspection includes command availability, layout selection, area
 tiling, inherited active/running markers, panel and
 tab/close bounds, surface settings, themes and shell allocations. Derived state
-is observed; automation does not maintain a second workspace model.
+is observed; automation does not maintain a second session model.
 
 ## Application-specific control
 

@@ -73,7 +73,6 @@ pub fn draw_menu_bar(frame: &mut UiFrame, world: &mut World, root: Entity) -> Re
         return Ok(());
     }
     let menu = menu_snapshot(world, root, InvocationContext::Focused)?;
-    let workspace = crate::menus::optional_menu_workspace(world, root);
     use bedtime_ui2::egui;
     let available = frame.ui.available_rect_before_wrap();
     let padding = world
@@ -89,7 +88,7 @@ pub fn draw_menu_bar(frame: &mut UiFrame, world: &mut World, root: Entity) -> Re
         .ui(&mut row, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             ui.visuals_mut().widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
-            draw_entries(ui, world, workspace, &menu.entries);
+            draw_entries(ui, world, &menu.entries);
             if let Some(draw) = world.get::<bedtime_ui2::UiView>(root).map(|view| view.draw) {
                 draw(ui, world, &frame.context().for_view(root));
             }
@@ -115,19 +114,13 @@ pub fn draw_popup_menu(
     context: InvocationContext,
 ) -> Result<(), String> {
     let menu = menu_snapshot(world, root, context)?;
-    let workspace = crate::menus::optional_menu_workspace(world, root);
     response.context_menu(|ui| {
-        draw_entries(ui, world, workspace, &menu.entries);
+        draw_entries(ui, world, &menu.entries);
     });
     Ok(())
 }
 
-fn draw_entries(
-    ui: &mut bedtime_ui2::egui::Ui,
-    world: &mut World,
-    workspace: Option<WorkspaceId>,
-    entries: &[MenuNode],
-) {
+fn draw_entries(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, entries: &[MenuNode]) {
     use bedtime_ui2::egui;
     for entry in entries {
         match entry {
@@ -138,7 +131,7 @@ fn draw_entries(
             } => {
                 let response = ui
                     .push_id(entity.to_bits(), |ui| {
-                        ui.menu_button(label, |ui| draw_entries(ui, world, workspace, entries))
+                        ui.menu_button(label, |ui| draw_entries(ui, world, entries))
                     })
                     .inner
                     .response;
@@ -166,16 +159,9 @@ fn draw_entries(
                         source: Some(*entity),
                         context: *context,
                     };
-                    if let Some(workspace) = workspace {
-                        Workbench::with_workspace(world, workspace)
-                            .expect("Menu workspace")
-                            .commands()
-                            .submit(request);
-                    } else {
-                        world
-                            .resource_mut::<GlobalCommandRequests>()
-                            .submit(request);
-                    }
+                    world
+                        .resource_mut::<ContextCommandRequests>()
+                        .submit(request);
                     ui.close();
                 }
             }

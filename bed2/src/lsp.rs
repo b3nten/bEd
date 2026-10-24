@@ -25,16 +25,14 @@ struct Opening {
     location: Location,
     opened: crate::opening::OpenedFile,
     started: Instant,
-    workspace: Entity,
 }
 
 struct Navigating {
     source: DefinitionResult,
     target: Entity,
     path: std::path::PathBuf,
-    task: WorkspaceTask<Result<Navigation, String>>,
+    task: ManagedTask<Result<Navigation, String>>,
     opened: crate::opening::OpenedFile,
-    workspace: Entity,
 }
 
 #[derive(Component, Default)]
@@ -82,21 +80,17 @@ impl Plugin for LanguageToolsPlugin {
 }
 
 fn project(world: &mut World) {
-    let workspaces: Vec<_> = world
-        .query_filtered::<Entity, With<Workspace>>()
-        .iter(world)
-        .collect();
-    for workspace in workspaces {
+    {
         let desired = (|| {
             if world
-                .get::<crate::files::FolderWorkspace>(workspace)
+                .get_resource::<crate::files::ProjectFolder>()
                 .is_none()
-                || !crate::storage::ready(world, workspace)
+                || !crate::storage::ready(world)
             {
                 return None;
             }
             let global = world.get_resource::<crate::settings::GlobalPreferences>()?;
-            let overrides = world.get::<crate::settings::WorkspacePreferences>(workspace);
+            let overrides = world.get_resource::<crate::settings::ProjectPreferences>();
             if !overrides
                 .and_then(|p| p.0.language_servers_enabled)
                 .unwrap_or(global.0.language_servers_enabled)
@@ -109,25 +103,25 @@ fn project(world: &mut World) {
             if servers.values().any(|s| s.validate().is_err()) {
                 return None;
             }
-            let root = crate::files::workspace_directory(world, workspace)?;
+            let root = crate::files::project_directory(world)?;
             if world
-                .get::<LspWorkspace>(workspace)
+                .get_resource::<LspProject>()
                 .is_some_and(|p| p.root == root && &p.servers == servers)
             {
                 return Some(None);
             }
-            Some(Some(LspWorkspace {
+            Some(Some(LspProject {
                 root,
                 servers: servers.clone(),
             }))
         })();
         match desired {
             Some(Some(project)) => {
-                world.entity_mut(workspace).insert(project);
+                world.insert_resource(project);
             }
             Some(None) => {}
             None => {
-                world.entity_mut(workspace).remove::<LspWorkspace>();
+                world.remove_resource::<LspProject>();
             }
         }
     }
@@ -208,12 +202,7 @@ pub(crate) fn error_for_panel(world: &World, panel: Entity) -> Option<(&str, Ins
     Some((message, *reported_at))
 }
 
-fn navigation_current(
-    world: &World,
-    source: &DefinitionResult,
-    target: Entity,
-    workspace: Entity,
-) -> bool {
+fn navigation_current(world: &World, source: &DefinitionResult, target: Entity) -> bool {
     if !definition_ticket_is_current(world, &source.origin) {
         return false;
     }
@@ -224,20 +213,14 @@ fn navigation_current(
         return false;
     };
     let source_current = match inspect_document(world, DocumentId(document)) {
-        Ok(info) => {
-            info.workspace == workspace
-                && info.revision == source.origin.revision
-                && !info.has_drafts
-        }
+        Ok(info) => info.revision == source.origin.revision && !info.has_drafts,
         // Replacing a clean preview deliberately retires its old canonical file
         // document. The already-accepted open is now guarded by its load stamp.
         Err(DocumentError::Unavailable(_)) => panel == target,
         Err(_) => false,
     };
     source_current
-        && world
-            .get::<InWorkspace>(panel)
-            .is_some_and(|owner| owner.0 == workspace)
+        && world.get::<PanelInstance>(panel).is_some()
         && (panel == target
             || world
                 .get::<DocumentView>(panel)
@@ -255,7 +238,6 @@ fn start_open(
     let panel = Entity::try_from_bits(source.origin.panel).ok_or("Definition source has closed")?;
     let workbench = Workbench::for_entity(world, panel)?;
     let layout = workbench.panel_layout(panel)?;
-    let workspace = workbench.workspace_id().entity();
     let opened = crate::opening::open_file(
         world,
         layout,
@@ -267,7 +249,6 @@ fn start_open(
         location,
         opened,
         started: Instant::now(),
-        workspace,
     });
     Ok(())
 }
@@ -294,7 +275,7 @@ fn navigate(world: &mut World) {
     }
     let pending = std::mem::take(&mut world.resource_mut::<LanguageState>().opening);
     for open in pending {
-        if !navigation_current(world, &open.source, open.opened.panel, open.workspace) {
+        if !navigation_current(world, &open.source, open.opened.panel) {
             continue;
         }
         let panel = Entity::try_from_bits(open.source.origin.panel).unwrap();
@@ -355,7 +336,6 @@ fn navigate(world: &mut World) {
                 path: open.location.uri.path(),
                 task,
                 opened: open.opened,
-                workspace: open.workspace,
             })
         })();
         match result {
@@ -365,7 +345,7 @@ fn navigate(world: &mut World) {
     }
     let pending = std::mem::take(&mut world.resource_mut::<LanguageState>().navigating);
     for pending in pending {
-        if !navigation_current(world, &pending.source, pending.target, pending.workspace)
+        if !navigation_current(world, &pending.source, pending.target)
             || !matches!(pending.opened.result(world), Some(Ok(())))
         {
             pending.task.cancel();

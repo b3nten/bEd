@@ -4,15 +4,18 @@ version.workspace = true
 edition = "2024"
 publish = false
 license.workspace = true
-description = "Entity-backed workspaces, layouts, panels and commands for Bedtime"
+description = "World sessions, layouts, panels, documents and commands for Bedtime"
 
 [features]
 default = ["ui", "native", "clipboard"]
 ui = ["dep:bedtime-ui2", "dep:bevy_egui"]
 clipboard = ["dep:bedtime-clipboard2"]
+persistence = ["dep:bevy_world_serialization", "dep:ron", "bevy/bevy_asset", "bevy/serialize"]
 native = ["clipboard", "bedtime-clipboard2/system_clipboard", "bevy/bevy_window", "bevy/mouse", "dep:muda", "dep:raw-window-handle", "dep:objc2", "dep:objc2-quartz-core", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [dependencies]
+bevy_world_serialization = { version = "=0.20.0", optional = true }
+ron = { version = "0.12.2", optional = true }
 bevy = { workspace = true, features = ["std", "keyboard"] }
 bedtime-clipboard2 = { workspace = true, optional = true }
 bedtime-ui2 = { workspace = true, optional = true }

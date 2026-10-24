@@ -10,7 +10,7 @@ or document service.
 use bedtime_lsp2::{FileUri, ServerConfig, workbench::*};
 
 app.add_plugins(LspPlugin);
-world.entity_mut(workspace).insert(LspWorkspace {
+world.insert_resource(LspProject {
     root: project_directory,
     servers: [("rust".into(), ServerConfig::default())].into(),
 });
@@ -30,19 +30,19 @@ GUI PATH omits Cargo. The rustup dispatch filename is preserved.
 
 ## Ownership and execution
 
-One server entity/task belongs to its workspace. Languages with identical launch
+One server entity/task belongs to the world session. Languages with identical launch
 configuration and root share that process. Servers start lazily for viewed
-eligible documents; hidden tabs and inactive layouts/workspaces continue syncing.
+eligible documents; hidden tabs and hidden layouts continue syncing.
 After attachment, dirty documents remain synchronized without viewers. Clean
 viewless documents detach; the server remains available until restart, changed
-configuration or workspace shutdown. Canonical text/history stays in Workbench.
+configuration or session shutdown. Canonical text/history stays in Workbench.
 
 `LspDocument` projects source identity; `DocumentLsp` owns its current attachment,
 admitted journal cursor, shared diagnostics and document-specific error. A source
 or language change retires that attachment and creates a fresh generation.
-`workspace_servers` and `server_status` expose observations; `restart` and
+`session_servers` and `server_status` expose observations; `restart` and
 `restart_instance` request managed retirement before a replacement starts.
-`stop_instance` stops a shared launch configuration in that workspace and retains
+`stop_instance` stops a shared launch configuration in the session and retains
 its identity so synchronization cannot relaunch it. Explicit Restart or a changed
 launch configuration releases that stop; document text/history is preserved.
 The application owns status rendering and which document it describes.
@@ -76,8 +76,8 @@ between commands and received messages. No pipe-reader threads are detached.
 Workbench owns the task; its cancellation closure performs the shutdown/exit
 handshake, terminates the process group as needed and reaps the leader before
 returning. A non-reaping exit observation reserves the group ID until cleanup.
-Applications must keep updating through the existing workspace quit gate.
-`WorkspaceProcess` is deliberately unused because its rolling output retention
+Applications must keep updating through the existing session quit gate.
+`ManagedProcess` is deliberately unused because its rolling output retention
 would corrupt protocol framing.
 
 ## Text and protocol contracts

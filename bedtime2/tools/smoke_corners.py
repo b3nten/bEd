@@ -7,11 +7,11 @@ from pathlib import Path
 import tempfile
 
 from automation import Application
-from smoke_bed2 import ready, workspace
+from smoke_bed2 import ready, session
 
 
 def areas(snapshot):
-    return next(layout["areas"] for layout in workspace(snapshot)["layouts"] if layout["active"])
+    return next(layout["areas"] for layout in session(snapshot)["layouts"] if layout["active"])
 
 
 def corner(surface, high, inset=6.0):

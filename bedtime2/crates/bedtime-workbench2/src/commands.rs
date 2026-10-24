@@ -1,5 +1,7 @@
 //! Stable contextual command identities with independently scoped bindings and handlers.
-use crate::{Area, InWorkspace, Layout, PanelInstance, Workbench, WorkspaceId};
+#[cfg(feature = "persistence")]
+use crate::persistence::ReflectWorkbenchPersist;
+use crate::{Area, Layout, PanelInstance, Workbench};
 use bevy::{ecs::system::SystemId, prelude::*};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,7 +14,7 @@ pub trait ContextCommand: Send + Sync + 'static {
     const KEY: &'static str;
     const LABEL: &'static str;
 
-    /// Compose application behavior directly on a panel/workspace/entity.
+    /// Compose application behavior directly on a panel or world entity.
     fn handler(
         call: fn(ContextCommandInvocation, &mut World) -> ContextCommandResult,
     ) -> CommandHandler<Self>
@@ -104,7 +106,7 @@ pub(crate) fn handler_scope_changed(world: &mut bevy::ecs::world::DeferredWorld,
     }
 }
 
-/// A handler attached directly to its panel or workspace. Ordinary unscoped
+/// A handler attached directly to its panel or an unscoped entity. Ordinary unscoped
 /// entities provide world handlers. Construction installs no command definition
 /// and executes no application code.
 #[derive(Component)]
@@ -182,18 +184,17 @@ fn attached_removed<C: ContextCommand>(
 }
 
 #[derive(Component, Debug)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[component(on_insert = crate::membership::member_changed, on_remove = crate::membership::member_changed)]
 #[relationship(relationship_target = PanelCommandParts)]
-pub struct InPanel(pub Entity);
+pub struct InPanel(#[cfg_attr(feature = "persistence", entities)] pub Entity);
 
 #[derive(Component, Default)]
+#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
+#[cfg_attr(feature = "persistence", reflect(Component))]
 #[relationship_target(relationship = InPanel, linked_spawn)]
-pub struct PanelCommandParts(Vec<Entity>);
-impl PanelCommandParts {
-    pub(crate) fn entities(&self) -> &[Entity] {
-        &self.0
-    }
-}
+pub struct PanelCommandParts(#[cfg_attr(feature = "persistence", entities)] Vec<Entity>);
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InvocationContext {
@@ -222,8 +223,6 @@ impl ContextCommandRequest {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContextCommandInvocation {
-    /// Workspace captured at admission; world-only invocations need none.
-    pub workspace: Option<WorkspaceId>,
     /// The requested origin, retained independently of the resolved panel.
     pub context: InvocationContext,
     pub command: ContextCommandId,
@@ -233,26 +232,9 @@ pub struct ContextCommandInvocation {
 
 pub type ContextCommandResult = Result<(), String>;
 
-/// Requests owned by a workspace.
-#[derive(Component, Default)]
-pub struct ContextCommandRequests(VecDeque<ContextCommandRequest>);
-
-/// Application-wide requests, including commands with no workspace. This is a
-/// distinct resource: Bevy resources carry singleton ownership and cannot also
-/// serve as per-workspace components.
+/// One request queue for the editing session, including when no layout is selected.
 #[derive(Resource, Default)]
-pub struct GlobalCommandRequests(ContextCommandRequests);
-impl std::ops::Deref for GlobalCommandRequests {
-    type Target = ContextCommandRequests;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-impl std::ops::DerefMut for GlobalCommandRequests {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
+pub struct ContextCommandRequests(VecDeque<ContextCommandRequest>);
 
 impl ContextCommandRequests {
     /// Whether all submitted requests have been admitted by dispatch. Hosts can
@@ -291,6 +273,7 @@ pub enum ContextCommandSystems {
 
 /// Portable modifier data; no native menu or egui types occur in the model.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub struct Modifiers(u8);
 impl Modifiers {
     pub const CONTROL: Self = Self(1);
@@ -298,6 +281,9 @@ impl Modifiers {
     pub const ALT: Self = Self(4);
     pub const META: Self = Self(8);
     pub const PRIMARY: Self = Self(16);
+    pub fn is_valid(self) -> bool {
+        self.0 & !31 == 0
+    }
     pub fn contains(self, rhs: Self) -> bool {
         self.0 & rhs.0 == rhs.0
     }
@@ -321,6 +307,7 @@ impl BitOr for Modifiers {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "persistence", derive(Serialize, Deserialize))]
 pub struct KeyChord {
     pub modifiers: Modifiers,
     pub key: KeyCode,
@@ -395,13 +382,13 @@ pub struct BindingConflict {
 
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<BindingInput>()
-        .init_resource::<GlobalCommandRequests>()
+        .init_resource::<ContextCommandRequests>()
         .add_message::<ContextCommandFinished>()
         .add_message::<BindingConflict>()
         .configure_sets(
             PreUpdate,
             (
-                ContextCommandSystems::CollectInput.after(crate::WorkspaceSystems::Prepare),
+                ContextCommandSystems::CollectInput.after(crate::SessionSystems::Prepare),
                 ContextCommandSystems::Shortcuts,
                 ContextCommandSystems::Dispatch,
             )
@@ -441,7 +428,7 @@ pub fn register_context_command<C: ContextCommand>(
     Ok(command)
 }
 
-/// Install a world handler, independently of command metadata or workspace selection.
+/// Install a world handler, independently of command metadata or layout selection.
 pub fn install_global_handler<C: ContextCommand, M>(
     world: &mut World,
     handler: impl IntoSystem<In<ContextCommandInvocation>, ContextCommandResult, M> + 'static,
@@ -449,17 +436,7 @@ pub fn install_global_handler<C: ContextCommand, M>(
     install_handler::<C, M>(world, CommandScope::World, handler)
 }
 
-/// Install a handler belonging to one workspace, including an inactive workspace.
-pub fn install_workspace_handler<C: ContextCommand, M>(
-    world: &mut World,
-    workspace: WorkspaceId,
-    handler: impl IntoSystem<In<ContextCommandInvocation>, ContextCommandResult, M> + 'static,
-) -> Result<Entity, String> {
-    crate::workspaces::validate(world, workspace)?;
-    install_handler::<C, M>(world, CommandScope::Workspace(workspace), handler)
-}
-
-/// Install a panel handler. Panel ownership supplies its workspace and lifetime.
+/// Install a panel handler. Panel ownership supplies its lifetime.
 pub fn install_panel_handler<C: ContextCommand, M>(
     world: &mut World,
     panel: Entity,
@@ -468,15 +445,12 @@ pub fn install_panel_handler<C: ContextCommand, M>(
     world
         .get::<PanelInstance>(panel)
         .ok_or("Panel is unavailable")?;
-    let workspace = crate::workspaces::owner(world, panel).ok_or("Panel has no workspace")?;
-    crate::workspaces::validate(world, workspace)?;
     install_handler::<C, M>(world, CommandScope::Panel(panel), handler)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CommandScope {
     World,
-    Workspace(WorkspaceId),
     Panel(Entity),
 }
 
@@ -494,17 +468,8 @@ fn install_handler<C: ContextCommand, M>(
         command,
         generation: 0,
     });
-    match scope {
-        CommandScope::World => {}
-        CommandScope::Workspace(workspace) => {
-            world.entity_mut(entity).insert(InWorkspace(workspace.0));
-        }
-        CommandScope::Panel(panel) => {
-            let workspace = crate::workspaces::owner(world, panel).expect("Validated panel owner");
-            world
-                .entity_mut(entity)
-                .insert((InPanel(panel), InWorkspace(workspace.0)));
-        }
+    if let CommandScope::Panel(panel) = scope {
+        world.entity_mut(entity).insert(InPanel(panel));
     }
     Ok(entity)
 }
@@ -516,20 +481,13 @@ impl Workbench<'_> {
         register_context_command::<C>(self.world)
     }
 
-    /// Register in this workspace, never implicitly in the world scope.
+    /// Install a world handler for this session.
     pub fn register_handler<C: ContextCommand, M>(
         &mut self,
         handler: impl IntoSystem<In<ContextCommandInvocation>, ContextCommandResult, M> + 'static,
     ) -> Result<ContextCommandId, String> {
-        self.register_workspace_handler::<C, M>(handler)?;
+        install_global_handler::<C, M>(self.world, handler)?;
         Ok(ContextCommandId::of::<C>())
-    }
-
-    pub fn register_workspace_handler<C: ContextCommand, M>(
-        &mut self,
-        handler: impl IntoSystem<In<ContextCommandInvocation>, ContextCommandResult, M> + 'static,
-    ) -> Result<Entity, String> {
-        install_workspace_handler::<C, M>(self.world, self.workspace, handler)
     }
 
     pub fn register_panel_handler<C: ContextCommand, M>(
@@ -558,17 +516,13 @@ impl Workbench<'_> {
     }
 
     pub fn handler(&mut self, command: ContextCommandId, panel: Option<Entity>) -> Option<Entity> {
-        let scope = panel.map_or(CommandScope::Workspace(self.workspace), CommandScope::Panel);
+        let scope = panel.map_or(CommandScope::World, CommandScope::Panel);
         find_handler(self.world, command, scope)
     }
 }
 
-fn scope(panel: Option<&InPanel>, workspace: Option<&InWorkspace>) -> CommandScope {
-    match (panel, workspace) {
-        (Some(panel), _) => CommandScope::Panel(panel.0),
-        (None, Some(workspace)) => CommandScope::Workspace(WorkspaceId(workspace.0)),
-        (None, None) => CommandScope::World,
-    }
+fn scope(panel: Option<&InPanel>) -> CommandScope {
+    panel.map_or(CommandScope::World, |panel| CommandScope::Panel(panel.0))
 }
 
 pub(crate) fn global_handler_exists(world: &mut World, command: ContextCommandId) -> bool {
@@ -581,10 +535,10 @@ fn find_handler(
     requested_scope: CommandScope,
 ) -> Option<Entity> {
     let registered: Vec<_> = world
-        .query::<(Entity, &Handler, Option<&InPanel>, Option<&InWorkspace>)>()
+        .query::<(Entity, &Handler, Option<&InPanel>)>()
         .iter(world)
-        .filter_map(|(entity, h, panel, owner)| {
-            (h.command == command && scope(panel, owner) == requested_scope).then_some(entity)
+        .filter_map(|(entity, h, panel)| {
+            (h.command == command && scope(panel) == requested_scope).then_some(entity)
         })
         .collect();
     let attached: Vec<_> = world
@@ -592,18 +546,14 @@ fn find_handler(
             Entity,
             &AttachedHandlers,
             Option<&InPanel>,
-            Option<&InWorkspace>,
             Option<&PanelInstance>,
-            Option<&crate::Workspace>,
         )>()
         .iter(world)
-        .filter_map(|(entity, handlers, panel, owner, is_panel, is_workspace)| {
+        .filter_map(|(entity, handlers, panel, is_panel)| {
             let actual = if is_panel.is_some() {
                 CommandScope::Panel(entity)
-            } else if is_workspace.is_some() {
-                CommandScope::Workspace(WorkspaceId(entity))
             } else {
-                scope(panel, owner)
+                scope(panel)
             };
             (actual == requested_scope && handlers.0.iter().any(|h| h.command == command))
                 .then_some(entity)
@@ -618,13 +568,8 @@ fn find_handler(
     handler
 }
 
-#[cfg(feature = "ui")]
 pub(crate) fn focused_panel(world: &World) -> Option<Entity> {
-    focused_panel_in(world, crate::workspaces::selected(world)?)
-}
-
-pub(crate) fn focused_panel_in(world: &World, workspace: WorkspaceId) -> Option<Entity> {
-    let layout = crate::active_layout(world, workspace.0)?;
+    let layout = crate::active_layout(world)?;
     let area = world.get::<Layout>(layout)?.focused_area()?;
     world.get::<Area>(area)?.selected_panel()
 }
@@ -647,10 +592,7 @@ fn handler_snapshot(
     {
         Some(AdmittedHandler {
             entity,
-            scope: scope(
-                world.get::<InPanel>(entity),
-                world.get::<InWorkspace>(entity),
-            ),
+            scope: scope(world.get::<InPanel>(entity)),
             generation: handler.generation,
             attached: false,
         })
@@ -662,13 +604,8 @@ fn handler_snapshot(
             .find(|h| &h.command == command)?;
         let actual = if world.get::<PanelInstance>(entity).is_some() {
             CommandScope::Panel(entity)
-        } else if world.get::<crate::Workspace>(entity).is_some() {
-            CommandScope::Workspace(WorkspaceId(entity))
         } else {
-            scope(
-                world.get::<InPanel>(entity),
-                world.get::<InWorkspace>(entity),
-            )
+            scope(world.get::<InPanel>(entity))
         };
         Some(AdmittedHandler {
             entity,
@@ -681,37 +618,24 @@ fn handler_snapshot(
 
 pub(crate) fn resolve(
     world: &mut World,
-    workspace: Option<WorkspaceId>,
     request: ContextCommandRequest,
 ) -> (ContextCommandInvocation, Result<AdmittedHandler, String>) {
     let panel = match request.context {
-        InvocationContext::Focused => workspace.and_then(|w| focused_panel_in(world, w)),
+        InvocationContext::Focused => focused_panel(world),
         InvocationContext::Global => None,
         InvocationContext::Panel(p) => Some(p),
     };
     let invocation = ContextCommandInvocation {
-        workspace,
         context: request.context,
         command: request.command.clone(),
         source: request.source,
         panel,
     };
-    if workspace.is_some_and(|w| crate::workspaces::validate(world, w).is_err())
-        || panel.is_some_and(|p| {
-            workspace.is_none()
-                || world.get::<PanelInstance>(p).is_none()
-                || crate::workspaces::owner(world, p) != workspace
-        })
-    {
+    if panel.is_some_and(|p| world.get::<PanelInstance>(p).is_none()) {
         return (invocation, Err("Target panel is unavailable".into()));
     }
     let handler = panel
         .and_then(|p| find_handler(world, request.command.clone(), CommandScope::Panel(p)))
-        .or_else(|| {
-            workspace.and_then(|w| {
-                find_handler(world, request.command.clone(), CommandScope::Workspace(w))
-            })
-        })
         .or_else(|| find_handler(world, request.command.clone(), CommandScope::World));
     let result = handler
         .ok_or_else(|| "No handler for this action in the requested context".into())
@@ -747,23 +671,8 @@ pub fn command_available(
     command: ContextCommandId,
     context: InvocationContext,
 ) -> bool {
-    let workspace = match context {
-        InvocationContext::Panel(panel) => crate::workspaces::owner(world, panel),
-        _ => crate::workspaces::selected(world),
-    };
-    command_available_in(world, workspace, command, context)
-}
-
-/// Query an explicit workspace (or only world scope) without selected-workspace APIs.
-pub fn command_available_in(
-    world: &mut World,
-    workspace: Option<WorkspaceId>,
-    command: ContextCommandId,
-    context: InvocationContext,
-) -> bool {
     resolve(
         world,
-        workspace,
         ContextCommandRequest {
             command,
             source: None,
@@ -787,29 +696,24 @@ struct ResolvedBinding {
 /// nearest scope reserve the chord rather than exposing an outer binding.
 fn binding_groups(
     world: &mut World,
-    workspace: Option<WorkspaceId>,
     context: InvocationContext,
 ) -> HashMap<KeyChord, Vec<ResolvedBinding>> {
     let panel = match context {
-        InvocationContext::Focused => workspace.and_then(|w| focused_panel_in(world, w)),
+        InvocationContext::Focused => focused_panel(world),
         InvocationContext::Panel(p) => Some(p),
         InvocationContext::Global => None,
     };
     let mut groups: HashMap<KeyChord, Vec<ResolvedBinding>> = HashMap::new();
-    for (source, b, p, owner) in world
-        .query::<(Entity, &Binding, Option<&InPanel>, Option<&InWorkspace>)>()
+    for (source, b, p) in world
+        .query::<(Entity, &Binding, Option<&InPanel>)>()
         .iter(world)
     {
-        let depth = match scope(p, owner) {
+        let depth = match scope(p) {
             CommandScope::World => 0,
-            CommandScope::Workspace(w) if Some(w) == workspace => 1,
             CommandScope::Panel(p)
-                if Some(p) == panel
-                    && workspace.is_some()
-                    && world.get::<PanelInstance>(p).is_some()
-                    && crate::workspaces::owner(world, p) == workspace =>
+                if Some(p) == panel && world.get::<PanelInstance>(p).is_some() =>
             {
-                2
+                1
             }
             _ => continue,
         };
@@ -832,11 +736,10 @@ fn binding_groups(
 
 pub(crate) fn shortcut_for(
     world: &mut World,
-    workspace: Option<WorkspaceId>,
     command: ContextCommandId,
     context: InvocationContext,
 ) -> Option<KeyChord> {
-    let mut bindings: Vec<_> = binding_groups(world, workspace, context)
+    let mut bindings: Vec<_> = binding_groups(world, context)
         .into_values()
         .filter(|group| group.len() == 1)
         .flatten()
@@ -850,13 +753,8 @@ pub(crate) fn shortcut_for(
 fn shortcuts(world: &mut World) {
     let presses = std::mem::take(&mut world.resource_mut::<BindingInput>().0);
     for press in presses {
-        let workspace = match press.context {
-            InvocationContext::Panel(panel) => crate::workspaces::owner(world, panel),
-            _ => crate::workspaces::selected(world),
-        };
         let chord = KeyChord::new(press.chord.modifiers.resolved(), press.chord.key);
-        let Some(mut candidates) = binding_groups(world, workspace, press.context).remove(&chord)
-        else {
+        let Some(mut candidates) = binding_groups(world, press.context).remove(&chord) else {
             continue;
         };
         if candidates.len() > 1 {
@@ -873,43 +771,17 @@ fn shortcuts(world: &mut World) {
                 source: Some(binding.source),
                 context: press.context,
             };
-            if let Some(workspace) = workspace {
-                world
-                    .get_mut::<ContextCommandRequests>(workspace.0)
-                    .expect("Workspace command queue")
-                    .submit(request);
-            } else {
-                world
-                    .resource_mut::<GlobalCommandRequests>()
-                    .submit(request);
-            }
+            world
+                .resource_mut::<ContextCommandRequests>()
+                .submit(request);
         }
     }
 }
 
 fn dispatch(world: &mut World) {
-    let mut pending: Vec<_> = world
-        .query_filtered::<(Entity, &mut ContextCommandRequests), With<crate::Workspace>>()
-        .iter_mut(world)
-        .flat_map(|(entity, mut requests)| {
-            std::mem::take(&mut requests.0)
-                .into_iter()
-                .map(move |r| (Some(WorkspaceId(entity)), r))
-        })
-        .collect();
-    let requests = std::mem::take(&mut world.resource_mut::<GlobalCommandRequests>().0.0);
-    for request in requests {
-        let workspace = match request.context {
-            InvocationContext::Panel(panel) => crate::workspaces::owner(world, panel),
-            _ => crate::workspaces::selected(world),
-        };
-        pending.push((workspace, request));
-    }
+    let pending = std::mem::take(&mut world.resource_mut::<ContextCommandRequests>().0);
     // Capture origin and targets before any handler changes focus or activation.
-    let admitted: Vec<_> = pending
-        .into_iter()
-        .map(|(workspace, r)| resolve(world, workspace, r))
-        .collect();
+    let admitted: Vec<_> = pending.into_iter().map(|r| resolve(world, r)).collect();
     for (invocation, handler) in admitted {
         let result = handler.and_then(|admitted| {
             let entity = admitted.entity;
@@ -917,13 +789,8 @@ fn dispatch(world: &mut World) {
                 return Err("Admitted command handler was removed, replaced, or retargeted".into());
             }
             if invocation
-                .workspace
-                .is_some_and(|w| crate::workspaces::validate(world, w).is_err())
-                || invocation.panel.is_some_and(|p| {
-                    invocation.workspace.is_none()
-                        || world.get::<PanelInstance>(p).is_none()
-                        || crate::workspaces::owner(world, p) != invocation.workspace
-                })
+                .panel
+                .is_some_and(|p| world.get::<PanelInstance>(p).is_none())
             {
                 return Err("Admitted command target is unavailable".into());
             }
@@ -954,25 +821,16 @@ fn dispatch(world: &mut World) {
 #[cfg(test)]
 mod scope_tests {
     use super::*;
-    use crate::{WorkbenchCorePlugin, Workspaces};
-
+    use crate::WorkbenchCorePlugin;
     struct Save;
     impl ContextCommand for Save {
-        const KEY: &'static str = "scope-tests.save";
+        const KEY: &'static str = "scope.save";
         const LABEL: &'static str = "Save";
     }
-    struct Other;
-    impl ContextCommand for Other {
-        const KEY: &'static str = "scope-tests.other";
-        const LABEL: &'static str = "Other";
-    }
     #[derive(Resource, Default)]
-    struct Calls(Vec<ContextCommandInvocation>);
-    fn record(
-        input: In<ContextCommandInvocation>,
-        mut calls: ResMut<Calls>,
-    ) -> ContextCommandResult {
-        calls.0.push(input.0);
+    struct Calls(Vec<Option<Entity>>);
+    fn record(i: In<ContextCommandInvocation>, mut calls: ResMut<Calls>) -> ContextCommandResult {
+        calls.0.push(i.panel);
         Ok(())
     }
     fn app() -> App {
@@ -981,402 +839,77 @@ mod scope_tests {
             .init_resource::<Calls>();
         app
     }
-    fn request() -> ContextCommandRequest {
-        ContextCommandRequest::new::<Save>()
+    fn invoke(world: &mut World, context: InvocationContext) {
+        world
+            .resource_mut::<ContextCommandRequests>()
+            .submit(ContextCommandRequest {
+                command: ContextCommandId::of::<Save>(),
+                source: None,
+                context,
+            });
+        dispatch(world);
     }
-    fn chord() -> KeyChord {
-        KeyChord::new(Modifiers::CONTROL, KeyCode::KeyS)
+    #[test]
+    fn world_commands_work_without_layout_or_implicit_definition() {
+        let mut app = app();
+        let world = app.world_mut();
+        install_global_handler::<Save, _>(world, record).unwrap();
+        assert_eq!(world.query::<&ContextCommandInfo>().iter(world).count(), 3);
+        invoke(world, InvocationContext::Focused);
+        assert_eq!(world.resource::<Calls>().0, [None]);
     }
-    fn press(world: &mut World, context: InvocationContext) {
+    #[test]
+    fn disabled_panel_handler_blocks_world_fallback() {
+        let mut app = app();
+        let world = app.world_mut();
+        let layout = crate::tests::layout(world);
+        let panel = Workbench::new(world).create_panel(layout, "Panel").unwrap();
+        install_global_handler::<Save, _>(world, record).unwrap();
+        let local = install_panel_handler::<Save, _>(world, panel, record).unwrap();
+        assert!(install_panel_handler::<Save, _>(world, panel, record).is_err());
+        world.get_mut::<ActionEnabled>(local).unwrap().0 = false;
+        invoke(world, InvocationContext::Panel(panel));
+        assert!(world.resource::<Calls>().0.is_empty());
+        world.despawn(local);
+        invoke(world, InvocationContext::Panel(panel));
+        assert_eq!(world.resource::<Calls>().0, [Some(panel)]);
+    }
+    #[test]
+    fn panel_binding_conflicts_reserve_the_world_chord() {
+        let mut app = app();
+        let world = app.world_mut();
+        let layout = crate::tests::layout(world);
+        let panel = Workbench::new(world).create_panel(layout, "Panel").unwrap();
+        install_global_handler::<Save, _>(world, record).unwrap();
+        let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyS);
+        world.spawn(Binding::new::<Save>(chord));
+        let a = world
+            .spawn((Binding::new::<Save>(chord), InPanel(panel)))
+            .id();
+        world.spawn((Binding::new::<Save>(chord), InPanel(panel)));
         world.resource_mut::<BindingInput>().0.push(BindingPress {
-            chord: chord(),
+            chord,
             repeat: false,
-            context,
+            context: InvocationContext::Panel(panel),
         });
         shortcuts(world);
         dispatch(world);
-    }
-
-    #[test]
-    fn world_commands_and_shortcuts_need_no_workspace_or_implicit_definition() {
-        let mut app = app();
-        let world = app.world_mut();
-        install_global_handler::<Save, _>(world, record).unwrap();
-        assert!(
-            !world
-                .query::<&ContextCommandInfo>()
-                .iter(world)
-                .any(|info| info.command() == ContextCommandId::of::<Save>())
-        );
-        register_context_command::<Save>(world).unwrap();
-        assert!(command_available(
-            world,
-            ContextCommandId::of::<Save>(),
-            InvocationContext::Focused
-        ));
-        world
-            .resource_mut::<GlobalCommandRequests>()
-            .submit(request());
-        dispatch(world);
-        world.spawn(Binding::new::<Save>(chord()));
-        press(world, InvocationContext::Focused);
-        let calls = &world.resource::<Calls>().0;
-        assert_eq!(calls.len(), 2);
-        assert!(
-            calls
-                .iter()
-                .all(|invocation| invocation.workspace.is_none() && invocation.panel.is_none())
-        );
-        assert_eq!(calls[0].context, InvocationContext::Focused);
-    }
-
-    #[test]
-    fn handler_scopes_are_exact_and_disabled_nearest_blocks_fallback() {
-        let mut app = app();
-        let world = app.world_mut();
-        let first = Workspaces::new(world).open("First");
-        let second = Workspaces::new(world).open("Second");
-        let mut w = Workbench::with_workspace(world, first).unwrap();
-        let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
-        let global = install_global_handler::<Save, _>(world, record).unwrap();
-        let local = install_workspace_handler::<Save, _>(world, first, record).unwrap();
-        let other = install_workspace_handler::<Save, _>(world, second, record).unwrap();
-        let panel_handler = install_panel_handler::<Save, _>(world, panel, record).unwrap();
-        assert!(install_workspace_handler::<Save, _>(world, first, record).is_err());
-        assert!(install_panel_handler::<Save, _>(world, panel, record).is_err());
-        let mut r = request();
-        r.context = InvocationContext::Panel(panel);
+        assert!(world.resource::<Calls>().0.is_empty());
         assert_eq!(
-            resolve(world, Some(first), r.clone()).1.unwrap().entity,
-            panel_handler
-        );
-        world.get_mut::<ActionEnabled>(panel_handler).unwrap().0 = false;
-        assert!(resolve(world, Some(first), r.clone()).1.is_err());
-        world.despawn(panel_handler);
-        assert_eq!(
-            resolve(world, Some(first), r.clone()).1.unwrap().entity,
-            local
-        );
-        world.get_mut::<ActionEnabled>(local).unwrap().0 = false;
-        assert!(resolve(world, Some(first), r.clone()).1.is_err());
-        world.despawn(local);
-        assert_eq!(resolve(world, Some(first), r).1.unwrap().entity, global);
-        assert_eq!(
-            resolve(world, Some(second), request()).1.unwrap().entity,
-            other
-        );
-        assert_eq!(resolve(world, None, request()).1.unwrap().entity, global);
-    }
-
-    #[test]
-    fn bindings_overlay_world_workspace_panel_and_nearest_conflicts_reserve_input() {
-        let mut app = app();
-        let world = app.world_mut();
-        let workspace = Workspaces::new(world).open("Project");
-        let unrelated = Workspaces::new(world).open("Unrelated");
-        let mut w = Workbench::with_workspace(world, workspace).unwrap();
-        let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
-        install_global_handler::<Save, _>(world, record).unwrap();
-        install_global_handler::<Other, _>(world, record).unwrap();
-        world.spawn(Binding::new::<Other>(chord()));
-        let local = world
-            .spawn((Binding::new::<Save>(chord()), InWorkspace(workspace.0)))
-            .id();
-        world.spawn((Binding::new::<Other>(chord()), InWorkspace(unrelated.0)));
-        let context = InvocationContext::Panel(panel);
-        press(world, context);
-        assert_eq!(
-            world.resource::<Calls>().0.last().unwrap().command,
-            ContextCommandId::of::<Save>()
-        );
-        let panel_binding = world
-            .spawn((Binding::new::<Other>(chord()), InPanel(panel)))
-            .id();
-        press(world, context);
-        assert_eq!(
-            world.resource::<Calls>().0.last().unwrap().command,
-            ContextCommandId::of::<Other>()
-        );
-        let conflict = world
-            .spawn((Binding::new::<Save>(chord()), InPanel(panel)))
-            .id();
-        let before = world.resource::<Calls>().0.len();
-        press(world, context);
-        assert_eq!(world.resource::<Calls>().0.len(), before);
-        assert!(
-            shortcut_for(
-                world,
-                Some(workspace),
-                ContextCommandId::of::<Save>(),
-                context
-            )
-            .is_none()
-        );
-        assert!(
-            shortcut_for(
-                world,
-                Some(workspace),
-                ContextCommandId::of::<Other>(),
-                context
-            )
-            .is_none()
-        );
-        let conflicts: Vec<_> = world
-            .resource_mut::<Messages<BindingConflict>>()
-            .drain()
-            .collect();
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0].sources.len(), 2);
-        world.despawn(conflict);
-        world.despawn(panel_binding);
-        world.despawn(local);
-        press(world, context);
-        assert_eq!(
-            world.resource::<Calls>().0.last().unwrap().command,
-            ContextCommandId::of::<Other>()
-        );
-        assert_eq!(
-            world.resource::<Calls>().0.last().unwrap().workspace,
-            Some(workspace)
-        );
-    }
-
-    #[test]
-    fn dispatch_captures_all_origins_before_handlers_change_workspace_selection() {
-        let mut app = app();
-        let world = app.world_mut();
-        let origin = Workspaces::new(world).open("Origin");
-        let destination = Workspaces::new(world).open("Destination");
-        install_global_handler::<Save, _>(
-            world,
-            move |input: In<ContextCommandInvocation>, world: &mut World| -> ContextCommandResult {
-                Workspaces::new(world).activate(destination)?;
-                world.resource_mut::<Calls>().0.push(input.0);
-                Ok(())
-            },
-        )
-        .unwrap();
-        world
-            .resource_mut::<GlobalCommandRequests>()
-            .invoke::<Save>();
-        world
-            .resource_mut::<GlobalCommandRequests>()
-            .invoke::<Save>();
-        dispatch(world);
-        let calls = &world.resource::<Calls>().0;
-        assert_eq!(calls.len(), 2);
-        assert!(
-            calls
-                .iter()
-                .all(|invocation| invocation.workspace == Some(origin))
-        );
-        assert_eq!(crate::workspaces::selected(world), Some(destination));
-    }
-
-    #[test]
-    fn document_definitions_are_standard_but_behavior_is_opt_in() {
-        let mut app = app();
-        let world = app.world_mut();
-        let save = ContextCommandId::of::<crate::SaveDocument>();
-        assert!(
             world
-                .query::<&ContextCommandInfo>()
-                .iter(world)
-                .any(|info| info.command() == save)
+                .resource_mut::<Messages<BindingConflict>>()
+                .drain()
+                .count(),
+            1
         );
-        assert!(!command_available(
-            world,
-            save.clone(),
-            InvocationContext::Global
-        ));
-        crate::register_document_handlers(world).unwrap();
-        assert!(command_available(world, save, InvocationContext::Global));
-        assert!(crate::register_document_handlers(world).is_err());
-    }
-}
-
-#[cfg(test)]
-mod attached_tests {
-    use super::*;
-    use crate::*;
-    struct New;
-    impl ContextCommand for New {
-        const KEY: &'static str = "attached.new";
-        const LABEL: &'static str = "New";
-    }
-    #[derive(Component, Default)]
-    struct Counter(u32);
-    fn increment(invocation: ContextCommandInvocation, world: &mut World) -> ContextCommandResult {
-        world
-            .get_mut::<Counter>(invocation.panel.ok_or("No panel")?)
-            .ok_or("No counter")?
-            .0 += 1;
-        Ok(())
-    }
-    #[test]
-    fn attached_handlers_are_immediately_available_and_removed_without_a_later_pass() {
-        let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
-        let workspace = Workspaces::new(app.world_mut()).open("Attached");
-        let mut workbench = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
-        let area = workbench
-            .destination_area(workbench.active_layout())
-            .unwrap();
-        let panel = workbench
-            .world_mut()
-            .spawn((
-                PanelInstance::default(),
-                InArea(area),
-                Counter::default(),
-                CommandHandler::<New>::new(increment),
-            ))
-            .id();
-        assert!(command_available(
-            workbench.world_mut(),
-            ContextCommandId::of::<New>(),
-            InvocationContext::Panel(panel)
-        ));
-        workbench.commands().invoke::<New>();
-        app.update();
-        assert_eq!(app.world().get::<Counter>(panel).unwrap().0, 1);
-        app.world_mut()
-            .get_mut::<CommandHandler<New>>(panel)
-            .unwrap()
-            .enabled = false;
-        assert!(!command_available(
-            app.world_mut(),
-            ContextCommandId::of::<New>(),
-            InvocationContext::Panel(panel)
-        ));
-        app.world_mut()
-            .entity_mut(panel)
-            .remove::<CommandHandler<New>>();
-        assert!(!command_available(
-            app.world_mut(),
-            ContextCommandId::of::<New>(),
-            InvocationContext::Panel(panel)
-        ));
-        assert!(app.world().get::<Counter>(panel).is_some());
-    }
-
-    #[test]
-    fn registered_panel_handlers_follow_the_panels_owner_before_old_workspace_despawn() {
-        let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
-        let first = Workspaces::new(app.world_mut()).open("First");
-        let second = Workspaces::new(app.world_mut()).open("Second");
-        let first_area = {
-            let w = Workbench::with_workspace(app.world_mut(), first).unwrap();
-            w.destination_area(w.active_layout()).unwrap()
-        };
-        let second_area = {
-            let w = Workbench::with_workspace(app.world_mut(), second).unwrap();
-            w.destination_area(w.active_layout()).unwrap()
-        };
-        let panel = app
-            .world_mut()
-            .spawn((
-                PanelInstance::default(),
-                InArea(first_area),
-                Counter::default(),
-            ))
-            .id();
-        let handler = install_panel_handler::<New, _>(
-            app.world_mut(),
-            panel,
-            |input: In<ContextCommandInvocation>, world: &mut World| increment(input.0, world),
-        )
-        .unwrap();
-        Workbench::with_workspace(app.world_mut(), first)
-            .unwrap()
-            .relocate_panel(panel, second_area)
-            .unwrap();
-        assert_eq!(
-            app.world().get::<InWorkspace>(handler).unwrap().0,
-            second.entity()
-        );
-        app.world_mut().despawn(first.entity());
-        assert!(app.world().get_entity(handler).is_ok());
-        Workbench::with_workspace(app.world_mut(), second)
-            .unwrap()
-            .commands()
-            .submit(ContextCommandRequest {
-                command: ContextCommandId::of::<New>(),
-                source: None,
-                context: InvocationContext::Panel(panel),
-            });
-        app.update();
-        assert_eq!(app.world().get::<Counter>(panel).unwrap().0, 1);
-    }
-}
-
-#[cfg(test)]
-mod admission_lifetime_tests {
-    use super::*;
-    use crate::*;
-    struct Replace;
-    impl ContextCommand for Replace {
-        const KEY: &'static str = "admission.replace";
-        const LABEL: &'static str = "Replace";
-    }
-    #[derive(Resource, Default)]
-    struct Calls(u32);
-    fn replacement(_: ContextCommandInvocation, world: &mut World) -> ContextCommandResult {
-        world.resource_mut::<Calls>().0 += 100;
-        Ok(())
-    }
-    fn replace_self(
-        invocation: ContextCommandInvocation,
-        world: &mut World,
-    ) -> ContextCommandResult {
-        world.resource_mut::<Calls>().0 += 1;
-        world
-            .entity_mut(invocation.panel.unwrap())
-            .insert(CommandHandler::<Replace>::new(replacement));
-        Ok(())
-    }
-    #[test]
-    fn a_batch_does_not_execute_an_attached_handler_installed_after_admission() {
-        let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin)
-            .init_resource::<Calls>();
-        let workspace = Workspaces::new(app.world_mut()).open("Origin");
-        let area = {
-            let w = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
-            w.destination_area(w.active_layout()).unwrap()
-        };
-        let panel = app
-            .world_mut()
-            .spawn((
-                PanelInstance::default(),
-                InArea(area),
-                CommandHandler::<Replace>::new(replace_self),
-            ))
-            .id();
-        for _ in 0..2 {
-            Workbench::with_workspace(app.world_mut(), workspace)
-                .unwrap()
-                .commands()
-                .submit(ContextCommandRequest {
-                    command: ContextCommandId::of::<Replace>(),
-                    source: None,
-                    context: InvocationContext::Panel(panel),
-                });
-        }
-        app.update();
-        assert_eq!(app.world().resource::<Calls>().0, 1);
-        let finished: Vec<_> = app
-            .world_mut()
-            .resource_mut::<Messages<ContextCommandFinished>>()
-            .drain()
-            .collect();
-        assert!(finished[0].result.is_ok());
-        assert!(
-            finished[1]
-                .result
-                .as_ref()
-                .unwrap_err()
-                .contains("replaced")
-        );
+        world.despawn(a);
+        world.resource_mut::<BindingInput>().0.push(BindingPress {
+            chord,
+            repeat: false,
+            context: InvocationContext::Panel(panel),
+        });
+        shortcuts(world);
+        dispatch(world);
+        assert_eq!(world.resource::<Calls>().0, [Some(panel)]);
     }
 }

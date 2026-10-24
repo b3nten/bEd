@@ -41,10 +41,7 @@ impl Panel for GitPanel {
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         #[cfg(feature = "automation")]
         let started = Instant::now();
-        let Some(workspace) = world.get::<InWorkspace>(panel).map(|owner| owner.0) else {
-            return;
-        };
-        let Some(mut session) = world.entity_mut(workspace).take::<GitSession>() else {
+        let Some(mut session) = world.remove_resource::<GitSession>() else {
             ui.weak("Loading repository…");
             return;
         };
@@ -143,7 +140,7 @@ impl Panel for GitPanel {
             [composer.available_width(), input_height],
             egui::TextEdit::multiline(&mut session.draft)
                 .hint_text(hint)
-                .id_salt(("git-commit", workspace)),
+                .id_salt(("git-commit", panel)),
         );
         #[cfg(feature = "automation")]
         state.controls.insert("commit-message".into(), input.rect);
@@ -254,33 +251,42 @@ impl Panel for GitPanel {
                         session.confirmation = Some(operation);
                         Ok(())
                     }
-                    Action::Operation(operation) => {
-                        begin(world, workspace, &mut session, operation)
-                    }
-                    Action::Discard(path) => request_discard(world, workspace, &mut session, path),
+                    Action::Operation(operation) => begin(world, &mut session, operation),
+                    Action::Discard(path) => request_discard(world, &mut session, path),
                     Action::Confirm => {
                         if let Some(operation) = session.confirmation.take() {
-                            begin(world, workspace, &mut session, operation)
+                            begin(world, &mut session, operation)
                         } else {
                             Ok(())
                         }
                     }
                     Action::Options(options) => {
                         session.options = options;
-                        reproject(world, workspace, &mut session)
+                        reproject(world, &mut session)
                     }
                     Action::ToggleDirectory(key) => {
                         if !session.collapsed.remove(&key) {
                             session.collapsed.insert(key);
                         }
-                        reproject(world, workspace, &mut session)
+                        reproject(world, &mut session)
                     }
                     Action::Cancel => {
                         cancel(&mut session);
                         Ok(())
                     }
-                    Action::Diff(path, side, pin) => diff::open(world, panel, diff::Descriptor { root:PathBuf::from(&session.view.as_ref().unwrap().status.root), path, side },pin).map(|_|()),
-                    Action::Open(path) => Workbench::for_entity(world,panel).and_then(|w|w.panel_layout(panel))
+                    Action::Diff(path, side, pin) => diff::open(
+                        world,
+                        panel,
+                        diff::Descriptor {
+                            root: PathBuf::from(&session.view.as_ref().unwrap().status.root),
+                            path,
+                            side,
+                        },
+                        pin,
+                    )
+                    .map(|_| ()),
+                    Action::Open(path) => Workbench::for_entity(world, panel)
+                        .and_then(|w| w.panel_layout(panel))
                         .and_then(|layout| {
                             crate::opening::open_file(
                                 world,
@@ -316,7 +322,7 @@ impl Panel for GitPanel {
                 session.error = Some(error);
             }
         }
-        world.entity_mut(workspace).insert(session);
+        world.insert_resource(session);
     }
 }
 
@@ -780,10 +786,20 @@ fn draw_row(
                     response
                         .clone()
                         .on_hover_text(format!("{}\n{:?}", entry.path, stage));
-                    let side = match group { Some(Group::Staged)=>DiffSide::Staged,Some(Group::Unstaged)=>DiffSide::Unstaged,_=>if stage==Staging::Staged {DiffSide::Staged} else {DiffSide::Unstaged} };
+                    let side = match group {
+                        Some(Group::Staged) => DiffSide::Staged,
+                        Some(Group::Unstaged) => DiffSide::Unstaged,
+                        _ => {
+                            if stage == Staging::Staged {
+                                DiffSide::Staged
+                            } else {
+                                DiffSide::Unstaged
+                            }
+                        }
+                    };
                     if response.clicked() {
                         panel.selected = Some(entry.path.clone());
-                        *action=Some(Action::Diff(entry.path.clone(),side,false));
+                        *action = Some(Action::Diff(entry.path.clone(), side, false));
                     }
                     #[cfg(feature = "automation")]
                     {
@@ -798,11 +814,17 @@ fn draw_row(
                     if response.double_clicked()
                         || (response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     {
-                        *action = Some(Action::Diff(entry.path.clone(),side,true));
+                        *action = Some(Action::Diff(entry.path.clone(), side, true));
                     }
                     response.context_menu(|ui| {
-                        for (label,side) in [("Open unstaged diff",DiffSide::Unstaged),("Open staged diff",DiffSide::Staged)] {
-                            if ui.button(label).clicked() { *action=Some(Action::Diff(entry.path.clone(),side,true));ui.close(); }
+                        for (label, side) in [
+                            ("Open unstaged diff", DiffSide::Unstaged),
+                            ("Open staged diff", DiffSide::Staged),
+                        ] {
+                            if ui.button(label).clicked() {
+                                *action = Some(Action::Diff(entry.path.clone(), side, true));
+                                ui.close();
+                            }
                         }
                         if ui.button("Open file").clicked() {
                             *action = Some(Action::Open(entry.path.clone()));

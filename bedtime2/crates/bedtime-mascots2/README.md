@@ -51,14 +51,14 @@ Enable `workbench` to expose `BedPanel` and `DuckPanel`. Spawn either with
 `InArea(area)`. Required components install `PanelInstance` and `MascotScene`
 immediately. The descriptive keys are `bedtime.bed` and `bedtime.duck`, and the
 labels are **Bed** and **Ducky**. Creation discovery and persistence remain
-application-owned. Ordinary hidden-panel/layout/workspace drawing rules suspend
+application-owned. Ordinary hidden-panel/layout drawing rules suspend
 these viewports without a second activation state.
 
 bEd2 exposes only Bed in View and saves both panels' placement in its existing
 session and layout-default formats. Ducky is an easter egg opened through the
 undocumented `+ducky` Terminal2 command: no arguments,
-open/focus Ducky in the invoking workspace's selected layout, with creation in
-the largest area. No implicit workspace activation is performed.
+open/focus Ducky in the invoking terminal's selected layout, with creation in
+the largest area. The current session is retained.
 
 ## Verification
 
@@ -73,7 +73,7 @@ cargo run --offline --locked -p bedtime-mascots2 --example standalone
 ```
 
 The native smoke uses an isolated configuration directory and verifies rendered
-output, interactions, themes, resize, hidden layouts/workspaces, cube coexistence,
+output, interactions, themes, resize, hidden layouts, cube coexistence,
 shell routing, cleanup and session restoration. Captures do not verify audible
 output; audio samples and MP3 decoding have deterministic coverage. Native
 platform and audible checks must be reported separately when performed.

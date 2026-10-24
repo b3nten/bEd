@@ -1,9 +1,11 @@
 # bEd 2
 
-A workbench application with a temporary default workspace rooted at the user's
-home directory. An explicit directory argument or **File → Open Folder…** opens
-or reuses a folder workspace. Application metadata lives in the user configuration
-directory, never inside the opened project.
+One editing session per application instance/Bevy World. Startup without a folder
+uses a memory-only home session. An explicit folder argument admits that project;
+**File → Open Folder…** reuses the current canonical root or launches a separate
+application instance for a different folder. Independent windows editing the same
+canonical project are explicitly unsupported and rejected before restore/editing.
+Application metadata lives in the user config directory, never in the project.
 
 The titlebar controls are **Terminal, Git, Files, Structure, Settings**. Click to open
 or focus a tool in the current layout; drag to create a new panel in an area or
@@ -20,15 +22,21 @@ switch. Startup opens a single terminal layout by default; General can opt into
 reopening the last folder workspace. Document autosave defaults to a one-second idle delay. Five numbered layout
 slots retain live views and workers; their starting arrangements can be saved as
 global defaults. See the [composition record](../MIGRATION/application-composition.md)
-for boundaries and the remaining Save As/recovery and workspace-management work.
+for earlier composition decisions; the current ownership/persistence contract is
+in the [world/session record](../MIGRATION/workbench-world-session-plan.md).
 
 ```sh
 cargo run --offline -p bed2
 ```
 
+Feature plugins register their own creation commands and View contributions. The
+application composes those menu entries after plugin setup; toolbar clicks and drags
+use the same feature factories. Persistence does not consult the menu contributions
+or a panel-kind enum.
+
 `src/main.rs` installs Bevy, UI2 and Workbench. Startup attaches `WorkbenchSurface`
 and `Titlebar { height, draw }` to the window and spawns an explicit
-`WorkbenchCamera`. `settings.rs` owns explicit global values, individual workspace
+`WorkbenchCamera`. `settings.rs` owns explicit global values, individual project
 overrides and their application to UI/editor/tree state. `storage.rs` owns global
 RON preferences I/O; `session.rs` owns one combined file per folder workspace.
 `layouts.rs` creates concrete layouts after settings/session readiness and keeps
@@ -43,7 +51,7 @@ placement. `files.rs` installs the file tree and the current file viewer; `file_
 owns their canonical document bindings and save backend. `code.rs` supplies
 canvas context-menu actions, analysis execution and the application-owned
 [Structure viewer](crates/bed-structure2/README.md).
-`close.rs` owns application quit decisions and workspace worker shutdown.
+`close.rs` owns application quit decisions and session worker shutdown.
 `git.rs` owns local repository operations and document coordination;
 `git/panel.rs` renders the Git panel in egui.
 All use the main World and renderer. Open another panel through **View**; empty
@@ -56,91 +64,32 @@ The memory-only Documents and Hello World demos remain removed. Files and termin
 helpers share the application opening route; opening a file needs no Files panel.
 The standalone library examples remain available independently.
 
-## Reflected persistence prototype
+## Reflected persistence example
 
-An isolated experiment lives in [`examples/persist_world.rs`](examples/persist_world.rs),
-with the capture/restore layer in
-[`examples/persist_world/persistence.rs`](examples/persist_world/persistence.rs).
-It does **not** install in the real application, read its preferences, or change
-its session format. The only added dependency is a development dependency on
-Bevy 0.20's `bevy_world_serialization`.
+[`examples/persist_world.rs`](examples/persist_world.rs) consumes the same optional
+Workbench persistence API as production. It has one session, two layouts/eight
+editable Notes panels and distinct global/project resources. Save captures the world;
+`--load` restores it at startup. Reload layout replaces only the selected layout at
+runtime, preserving global/project resources and recreating runtime counters.
+It uses synchronous, non-atomic writes to `target/persist-world-smoke.ron`; production
+uses the asynchronous storage policy below. The native smoke captures
+`target/persist-world-smoke.png`.
 
 ```sh
 cargo run --offline --locked -p bed2 --example persist_world
-# Renderer-free round trip:
 cargo run --offline --locked -p bed2 --example persist_world -- --roundtrip
 cargo test --offline --locked -p bed2 --example persist_world
-# Native save → mutate → load → screenshot → exit:
 cargo run --offline --locked -p bed2 --example persist_world -- --smoke
 ```
 
-The desktop app has two workspaces with split areas and editable Notes tabs.
-Edit text, global large-text preference, workspace/panel values, layout geometry,
-tab ordering and selection. **save all** writes the displayed prototype path;
-**load / replace** deliberately replaces this app's notes/layouts. Runtime-only
-click counters reset. **inspect snapshot** displays the raw global/workspace
-partitions without writing a file. The default file is
-`std::env::temp_dir()/bed2-persist-prototype.ron`; saves are explicit, not automatic.
-Native smoke instead uses `target/persist-world-smoke.ron` and captures
-`target/persist-world-smoke.png`.
-
-### What it proves
-
-Types opt in through reflection type data, not a panel factory registry:
-
-```rust,ignore
-#[derive(Component, Reflect, Default)]
-#[reflect(Component, WorkbenchPersist)]
-#[require(PanelInstance = PanelInstance::of::<Self>(), RuntimeOnly)]
-struct Notes { text: String }
-
-app.register_type::<Notes>();
-```
-
-`ReflectWorkbenchPersist` is a small custom type-data marker. Capture builds a
-deny-by-default `WorldFilter` from marked registrations and uses Bevy's
-`DynamicWorldBuilder`, `DynamicWorld::serialize` and `WorldDeserializer` directly.
-A marked resource is global. Marked components stay on their entity and are
-partitioned using workspace ownership; an unscoped marked entity is global.
-Workspace, area and panel-local `Preferences` use the same marked component type.
-Declarative binding examples exercise global/workspace/panel scope and remapped
-panel references, but do not install shortcut handlers or a binding editor.
-
-Bevy remaps annotated entity references to fresh IDs. Reflection insertion also
-recreates the Notes component's required `PanelInstance`, drawing function and
-runtime component. Unmarked data is excluded even when registered for reflection;
-load also rejects unmarked top-level component/resource types. Workspace partitions
-restore independently without importing global state or another workspace.
-
-### Where workbench still needs a layer
-
-- Core workbench types aren't reflected. Temporary reflected structural components
-  bridge workspace/layout/area/panel metadata without a persistent second live
-  layout model or a panel-kind enum. They are removed after restoration.
-- Bevy's stock writer uses `RelationshipHookMode::Skip`. The experiment reconstructs
-  workbench relationships parent-first with ordinary insertion, preserving area/tab
-  order, then restores focus/selection after attachment hooks run. Reverse ownership
-  collections and presentation state are regenerated, not serialized.
-- Each partition rejects entity references outside itself; reference fields must
-  use Bevy's `#[entities]` annotation. Global resources cannot refer to workspace
-  entities in this model. Cross-partition stable references are not implemented.
-- Parsing, the top-level type allowlist, reference closure, ownership and tiling are
-  checked in a disposable staging world before the desktop action retires live
-  workspaces. Required-component construction runs during staging too: this assumes
-  the prototype's value-only, side-effect-free component types.
-
-This is not production persistence: reflected Rust type paths are the schema,
-there are no migrations, asset-handle loading is unsupported, writes are synchronous
-and non-atomic, and replacement has no document/process admission or rollback.
-The application chooses the first restored workspace rather than persisting active
-workspace selection. The outer versioned RON archive contains a global RON payload
-and one RON payload per workspace; it is just one demonstration storage choice.
-Real bed2 settings/session persistence and its safer I/O remain unchanged.
-
-On 2026-10-24, all five prototype tests, the renderer-free executable round trip,
-and the native macOS save/mutate/load/render-capture smoke passed. The native smoke
-exercises the same file-action path as the toolbar; pointer-driven editing,
-dragging/resizing and native Linux were not verified by that smoke.
+Durable panel data uses `#[reflect(Component, WorkbenchPersist)]` and ordinary
+reflection registration. Global/project resources use independent application
+markers. `Workbench::capture_world::<Marker>` returns an editable detached capture;
+`serialize` encodes it and `CapturedWorld::<Marker>::deserialize` validates loading.
+Required components rebuild panel defaults/runtime without a factory registry.
+The reusable layer owns graph validation, identity remapping and structural
+restoration; the example/application chooses partitions and external activation.
+See [Workbench's full persistence contract](../bedtime2/crates/bedtime-workbench2/README.md#optional-reflected-persistence).
 
 ## Bed mascot
 
@@ -152,7 +101,7 @@ pose while retaining click audio. Audio is opened lazily and device failure
 leaves the visuals available.
 
 Panels have independent state and cameras in the application's Bevy world.
-Hidden tabs, layouts and workspaces pause rendering and animation; closing them
+Hidden tabs and layouts pause rendering and animation; closing them
 retires scene entities, image handles and playback. Sessions and saved layout
 defaults preserve kind and placement, with fresh animation and playback on restore.
 The startup layout and titlebar remain unchanged.
@@ -183,8 +132,7 @@ resumes checks; changed root sources use the existing file observation flow.
 Confirmed moves rebase relative resources without losing canonical text edits.
 Preparation and asset-loading failures show details while retaining the last
 valid scene. Different files start freshly framed; same-source reloads retain
-camera and appearance. Folder workspace sessions restore those values per tab;
-older session records default the new optional field. No bed1 session import runs.
+camera and appearance. Project sessions restore those values per tab. No bed1 session import runs.
 
 Verify with the focused crate/application commands in the model README and
 `python3 -B bedtime2/tools/smoke_models.py` after building with `automation`.
@@ -203,7 +151,7 @@ requires staged changes, a message and no unresolved Git conflicts. The centered
 and entered message, including message-only amendments when nothing is staged;
 working changes are not staged implicitly. Signoff adds Git's `Signed-off-by`
 trailer using the configured identity. All modes use the same managed operation,
-reviewed-status check and Git hooks. The action choice is workspace runtime state.
+reviewed-status check and Git hooks. The action choice is session runtime state.
 
 The small settings button beside the branch picker selects **List** or **Tree**
 and groups by **None**, **Tracked and untracked**, or **Staged and unstaged**.
@@ -220,8 +168,8 @@ folder staging when descendants contain conflicts.
 In staged/unstaged grouping, partially staged files appear in both sections.
 The staged copy unstages that file; the unstaged copy stages its remaining
 changes. The commit count still counts each staged file once. View/group choices
-are shared by the workspace's Git panels and persisted with its session. New
-workspaces and older sessions without a saved choice default to Tree with
+are shared by the session's Git panels and persisted with its session. New
+sessions without a saved choice default to Tree with
 tracked/untracked grouping; explicit saved choices survive. Folder expansion is
 runtime state. Changing settings or expanding a folder prepares rows from the
 cached immutable status on a managed worker, without another Git query; stale
@@ -241,12 +189,11 @@ require confirmation. Text diff views, hunk controls and ordinary editor/tree
 Git decorations remain deferred.
 
 Repository state, the commit draft and admitted operations belong to the
-workspace, shared across panel instances and layouts. Closing a panel preserves
-operations; closing its workspace requests cancellation and drains the backend.
+World, shared across panel instances and layouts. Closing a panel preserves
+operations; orderly session shutdown cancels and drains the backend.
 Successful commit clears only the message actually submitted, preserving a newer
 draft. Folder sessions persist Git placement and the commit draft in the existing
-centralized RON record; temporary workspaces remain memory-only. Older records
-default the new draft field to empty. Drafts are limited to 64 KiB at the session
+centralized RON record; home sessions remain memory-only. Drafts are limited to 64 KiB at the session
 validation boundary.
 
 The application reuses the GUI-free `bedtime-git` backend and the installed Git
@@ -257,7 +204,7 @@ can be completed with **Open Git terminal** after an error. This is local Git
 integration; it does not install bed1's SSH workspace infrastructure.
 
 All Git and source reads run in managed background tasks. One mutation is
-admitted per workspace, redundant refresh requests coalesce, and stale scan
+admitted per session, redundant refresh requests coalesce, and stale scan
 epochs cannot acknowledge newer operations. Status scans run every two seconds
 with a visible panel, ten seconds with hidden panels, and stop periodic polling
 after the last panel closes. Reopening requests fresh status. File groups, order,
@@ -267,7 +214,7 @@ visits the visible rows. Filesystem-triggered refresh is a later optimization.
 Staging first saves relevant canonical documents and rechecks revision/source
 identity before dispatch. Destructive actions refuse dirty, saving, composing or
 conflicted sources and recheck after preparation. Process-local write leases
-exclude competing editor saves across overlapping workspace roots, remain alive
+exclude competing editor saves in this session, remain alive
 through worker completion and source reconciliation, and defer autosave while
 held. Git changes reach open and retained text documents through the existing
 source-generation gate, preserving local edits and undo. Confirmed discard uses
@@ -388,7 +335,7 @@ animate their background and ink on hover and show descriptive tooltips.
 Single-click opens a replaceable preview beside Files, updates Structure to that
 file, and retains tree focus.
 Double-click or Enter pins the tab and focuses the editor. Modified/drafting/saving/conflicted documents are never replaced by another
-preview. Reopening a file within a workspace shares its canonical document,
+preview. Reopening a file in the World shares its canonical document,
 including retained edits/history after its last viewer closes. Different layouts
 have separate preview slots. Additional shared views can be created by dragging a file from Files; the
 canvas menu does not expose view creation.
@@ -403,10 +350,10 @@ rebind saving to the new path. Deleted dirty sources retain edits and lose their
 save binding; Save As and missing-source recovery remain future application work.
 
 The restored tree includes lazy watching, file operations, per-panel settings and
-root-scoped visibility. The application stores root-scoped visibility in the owning folder workspace's
+root-scoped visibility. The application stores root-scoped visibility in the project's
 config file, together with its settings and layout state. One asynchronous writer
-owns the entire workspace record; admitted changes survive workspace retirement.
-The default home workspace retains visibility changes in memory, including when
+owns the entire project record; admitted changes survive panel retirement.
+The default home session retains visibility changes in memory, including when
 home contains an existing `.bed` directory. The reusable plugin chooses neither
 cwd nor storage itself. Core Workbench snapshots/restoration remain removed; application session recipes
 are described below.
@@ -466,12 +413,12 @@ API. Main handles helper invocations before constructing Bevy or initializing a
 window/renderer. Helpers are private symlinks to the running executable, added to
 child PATH; no separate helper binary is packaged or installed globally.
 
-- `+open` opens the calling shell's current directory as a folder workspace,
-  activating an existing workspace for its canonical root or creating one and
-  loading its stored session. The temporary home workspace is retained.
+- `+open` opens the calling shell's current directory through the folder policy:
+  reuse this canonical project or launch another instance. The calling session and
+  its unsaved work remain intact. A project already owned elsewhere is rejected.
 - `+open .` or one explicit directory uses that same folder-opening path.
 - `+open FILE ...` resolves paths relative to the calling shell's actual cwd,
-  including after `cd`, and opens pinned tabs in the originating workspace/layout.
+  including after `cd`, and opens pinned tabs in the originating layout.
   `+o` is an alias with identical behavior. Supply directories separately from files.
 
 `opening.rs` is the shared route for file-opening intentions. Files validates its
@@ -485,18 +432,15 @@ canonical document and unsaved edits.
 
 File helpers acknowledge after loads and document binding finish; missing files,
 closed origins and load failures return a nonzero exit status with a diagnostic.
-Folder helpers acknowledge validated workspace activation; normal session restore
-continues through the existing loading/error UI. Switching focus/workspaces cannot
-redirect an accepted file open. Commands respect quit and workspace readiness gates.
+Folder helpers acknowledge canonical-root reuse or successful process launch; the
+child independently claims admission and restores its own session. Switching focus
+cannot redirect an accepted file open. Commands respect quit/readiness gates.
 The shared transport times out after 60 seconds without automatically retrying or
 rolling back an accepted operation.
 
-Verified on 2026-10-22: 99 application tests passed (the native GPU benchmark was
-left ignored), along with 47 Terminal2 tests and 11 shared transport tests. The
-native macOS/Metal `smoke_open.py` scenario passed two captures, exercising real
-helper dispatch, cwd workspace creation/reuse, relative paths with spaces, binary
-metadata, alias/reopen behavior, error exit status and saved-session restoration
-through no-argument `+open`. Native Linux was not exercised.
+The opening helper smoke is `python3 -B bedtime2/tools/smoke_open.py`.
+The broader native session smoke also verifies separate instances and duplicate
+rejection. Historical workspace-activation smoke results do not verify this policy.
 
 ## Code and Structure
 
@@ -557,7 +501,7 @@ destination through the common Files route and selects/reveals its range.
 Multiple targets present a chooser. Destinations use temporary preview tabs:
 another clean preview can be reused, editing or explicit tab activation pins normally, and an
 already pinned destination stays pinned. A source preview can itself be replaced;
-the accepted navigation retains its ticket/workspace and validates the target
+the accepted navigation retains its ticket/session and validates the target
 load stamp and revision before applying. Closed/rebound/newer requests cannot
 deliver late selection changes. Conversion for long target lines runs off-thread.
 
@@ -601,18 +545,18 @@ readiness. A real native regression covers `Vec`/`Vec::new` hover and selects th
 actual standard-library method in a temporary tab.
 
 `status_bar.rs` installs the application's renderer in Workbench's existing
-workspace status slot. It displays startup/ready/failure state, current-document
+world status slot. It displays startup/ready/failure state, current-document
 nonzero error/warning counts and document/save errors. It uses focused text or the application's remembered Structure source
 while Files/other tools have focus. A compact diagnostics icon opens a menu with
 one submenu per loaded server, containing only Restart and Stop, plus Open Language
 Servers. Stop uses managed process cleanup and suppresses relaunch until explicit
 Restart or a changed launch configuration; shared-language bindings stop together.
 The menu remains reachable after stopping the last server. Server failures
-elsewhere in that workspace remain visible.
+elsewhere in the session remain visible.
 Counts are cached with the report and never scan the source or diagnostics while
 drawing. Stale reports do not count as current errors. Without LSP state or a
 document error, the renderer is absent and the shell reserves no status height.
-The renderer tolerates the empty workspace before restoration creates a layout.
+The renderer tolerates the empty session before restoration creates a layout.
 Document/save/navigation failures display their first nonempty message line,
 truncated to fit the row, with the full error in a tooltip on that message. Notices
 expire after eight seconds; this dismisses the notice without clearing canonical
@@ -632,7 +576,7 @@ opens the application-owned `LspPanelPlugin` panel. It shows configured/inactive
 integrations, process/server identity, roots, negotiated synchronization/encoding,
 attached documents, outstanding requests, work progress, recent server messages
 and stderr, with managed restart controls. Panels persist in workspace sessions
-and layout defaults; closing an observer does not stop workspace language workers.
+and layout defaults; closing an observer does not stop session language workers.
 
 Server activity and diagnostic freshness are independent. The bar spins for
 startup or actual `$/progress` work, showing its title and percentage. Begin,
@@ -710,7 +654,7 @@ camera and image ownership; the application-owned scene remains available.
 No core layout/session serializer persists viewports. Any camera-state restore
 recipe belongs to the application; the current session format does not store orbit state.
 
-The Tasks & Processes panel demonstrates the existing `WorkspaceWork` API:
+The Tasks & Processes panel demonstrates the existing `ManagedWork` API:
 
 - **Start task** sums 1 through 100 on a worker thread, with a configurable
   duration, progress, a typed result (5050), and cooperative cancellation.
@@ -722,10 +666,10 @@ The Tasks & Processes panel demonstrates the existing `WorkspaceWork` API:
   stream. Process supervision status and the child's exit status are displayed
   separately: `Finished` can accompany a nonzero exit code.
 
-Both workers are owned by the workspace where they started, with the panel as a
+Both workers are owned by the World, with the panel as a
 shorter-lived owner. Workbench handles cancellation and process cleanup when
 either closes. An ordinary Update system collects results and drains output for
-hidden panels and inactive workspaces too. Worker timing uses real time, not
+hidden panels and layouts too. Worker timing uses real time, not
 Bevy's virtual time. No session serializer stores live workers, logs or results;
 applications reconstruct fresh idle panels if implementing restore.
 
@@ -753,13 +697,12 @@ background inherits panel opacity without adding another background layer.
 - Shell exit retains the transcript and shows its status. **Restart** creates a
   fresh session after the old runtime has finished cleanup. Applications can still
   use `TerminalPanel::stop()`; the canvas has no permanent Stop control.
-- Hidden/inactive sessions continue draining/parsing output, even with workspace
-  background updates disabled. Panel/workspace closure and the normal quit flow
+- Hidden tabs/layouts continue draining/parsing output. Panel/layout closure and the normal quit flow
   cancel and drain the workbench-owned runtime off the UI thread.
-- There is no core workspace/layout snapshot. Application folder recipes can
+- Durable panel descriptors can
   reconstruct a terminal panel, which starts lazily, never from a persisted PID or
   transcript. Startup waits for root/preferences readiness, and uses home for the
-  default workspace or the explicit folder root (unless launch policy is overridden).
+  home session or the explicit folder root (unless launch policy is overridden).
   Local `+open`/`+o` helpers use the pre-startup dispatch described above.
 
 Initial support is macOS/Linux only, without SSH, inline images or
@@ -770,21 +713,60 @@ also omits DCS protocols and OSC 1337. See the
 
 ## Settings, layouts and persistence
 
-All application metadata uses versioned RON with a `.bed` extension. The config
-root is `$XDG_CONFIG_HOME/bed2`, falling back to `$HOME/.config/bed2`:
+Application metadata uses versioned RON `.bed` files under
+`$XDG_CONFIG_HOME/bed2`, falling back to `$HOME/.config/bed2`:
 
 | File | Contents |
 | --- | --- |
-| `preferences.bed` | Global settings, startup policy/last folder and five saved layout defaults |
-| `workspaces/<id>.bed` | One folder workspace's settings overrides, file visibility, layouts and active slot |
+| `preferences.bed` | Global settings, startup/last-folder policy, binding declarations and five tool/geometry defaults |
+| `workspaces/<id>.bed` | Canonical root, reflected graph and project resources: overrides, bindings, visibility, title and Git draft/options |
 
-The workspace ID is the BLAKE3 digest of its canonical folder path's native encoded
-bytes. Each record includes the root and checks it before restore/replacement.
-Explicit folder opening canonicalizes off-thread and reuses an already-open
-workspace. No JSON import runs: older JSON and project `.bed` files stay untouched.
-`WorkspaceRoot` supplies browsing/cwd; only `FolderWorkspace` opts into persistence.
-The default workspace keeps its settings, visibility and layouts in memory. Global
-settings and explicitly saved global layout defaults persist normally.
+`id` is BLAKE3 of the canonical path's native encoded bytes. `ProjectRoot` and
+`ProjectFolder` are resources; the latter opts into persistence. Home data stays
+in memory except explicit global changes/defaults. No project metadata or old JSON
+is imported. The directory/UI word “workspace” remains storage/user vocabulary;
+it no longer describes a Workbench runtime scope.
+
+`project.rs` holds an OS exclusive file lock for the canonical project for the
+instance lifetime, acquired off-thread before restoration. Lock files use a
+per-user temporary namespace independent of config-directory overrides. Files are
+never unlinked while claims may exist; process exit/crash releases the OS lock.
+Opening another root validates it before spawning the current executable. The
+child claims independently, so racing launches cannot both edit. This policy
+excludes identical canonical roots, not overlapping ancestor/descendant projects.
+Native in-process Bevy teardown/restart is not part of this implementation.
+
+Both current envelopes are application schema **2**. The graph and resource values
+use Workbench snapshot schema **2**, with reflected Rust type paths/fields as part
+of their schema. Global schema-1 preferences and schema-2 preferences with the former
+tool/geometry layout recipes are read through isolated legacy decoders. Recipes convert
+to reflected layout snapshots in memory and migrate on the next actual edit; startup
+does not rewrite them. The old panel-kind enum exists only at this compatibility
+boundary. Old schema-1 project sessions, previous Workbench schema-1 reflected snapshots,
+unknown schemas/types and malformed records are rejected with visible errors and preserved;
+they are never silently treated as empty sessions or overwritten. Recover by
+migrating/repairing or moving the rejected record explicitly. No automatic migration
+of old project layout recipes is provided.
+
+`persistence.rs` orchestrates capture/validation/activation. Feature-specific durable
+declarations live beside files, Git, terminals, tasks, Settings, Structure, viewports
+and mascots. Workbench components capture directly; feature descriptors are added
+to the detached capture without temporarily inserting components into the live World.
+Graph components use `WorkbenchPersist`, global resources `GlobalPersist`, and
+project resources `ProjectPersist`; manual resource type lists are unnecessary.
+Workbench's area/tab relationships use the same registered generic relationship
+restoration available to application components, preserving order and field data.
+The central panel-recipe enum is gone. Both graph and local resources
+validate before startup composition is retired; restoration refuses live documents,
+workers, terminals, Git or filesystem mutations. File descriptors reopen through
+normal checked loading/canonical document deduplication after structure is ready.
+Runtime processes, source caches, menu handlers and viewports are recreated.
+
+Global writes lock/read/merge/atomically replace the preference file. Changes are
+merged per value against each writer's baseline; the local edit wins a same-value
+conflict. Instances refresh untouched global values from disk about once a second.
+Project metadata has one admitted writer. Remembered-last-folder updates happen
+on actual admission, not every poll, avoiding a cross-instance write loop.
 
 Settings has no header or storage-location prose. Its sidebar contains:
 
@@ -794,18 +776,20 @@ Settings has no header or storage-location prose. Its sidebar contains:
   border radius/gap, file-tree indentation and shader effects.
 - **Editor:** Line numbers, smart wrapping and smart indentation, all enabled by default.
 
-Startup policy is global because it is resolved before a workspace is opened.
+Startup policy is global because it is resolved before project admission.
 With **Open last workspace on open** enabled, launching without a folder argument
 reopens the last active folder workspace through normal session restoration,
 including its layouts and active slot. An explicit folder argument takes precedence.
 If the remembered folder is unavailable, startup reports the error and opens home.
-The temporary home workspace does not replace the remembered folder.
+The temporary home session does not replace the remembered folder.
 
 Other values support workspace inheritance. Editing a Workspace value creates an
 individual override; its reset icon resumes following Global. Unedited values
-continue inheriting global changes. Switching workspaces applies effective
-appearance to the window. Keybinding settings are deferred; Save, Open Folder,
-Quit and layouts retain fixed Primary+S/O/Q and Primary+1–5 shortcuts. Primary is
+continue inheriting global changes. Effective appearance applies to this window.
+GlobalBindings/ProjectBindings persist declarative chord overrides: absent entries
+inherit; a present entry with no command explicitly unbinds. Defaults are Save, Open
+Folder, Quit and layouts on Primary+S/O/Q and Primary+1–5. The keybinding editor is
+deferred; runtime handler installation is separate from these declarations. Primary is
 Command on macOS and Control elsewhere. Widget-owned editing shortcuts retain
 first refusal. The standalone Theme editor is retired.
 
@@ -892,8 +876,7 @@ time or thermal behavior. Frame pacing remains unchanged.
 
 Document autosave is independent of metadata persistence. Timer defaults to one
 second since the last content edit (supported timeout: 0.01–86400 seconds).
-Change Focus saves when leaving an editor's text canvas, including panel/layout/
-workspace changes and OS focus loss. Canonical document IDs deduplicate viewers;
+Change Focus saves when leaving an editor's text canvas, including panel/layout changes and OS focus loss. Canonical document IDs deduplicate viewers;
 inactive and viewless documents remain eligible. Composition, pending saves,
 conflicts and missing bindings defer/prevent writes. Saves use the existing
 source-checked service. Failures remain visible and do not retry the same revision
@@ -901,34 +884,43 @@ indefinitely; manual Save remains available. Quit decisions suspend new autosave
 
 **View → Layout** selects layouts 1–5 and offers **Save Current Layout** and
 **Reset Current Layout**. Switching retains panel/document/terminal instances.
-A slot first uses its current global default, then retains its workspace edits.
-Saving a default captures geometry, auxiliary tool placement, selection and focus,
-without file paths, Code viewers or process state. It does not rearrange existing
-workspace layouts. Reset reuses matching tools in stable tab order, creates
-missing tools, and appends remaining panels to the largest area (first area wins
-a size tie). Existing documents, drafts, histories and workers retain their owners.
+A slot first uses its current global default, then retains its session edits.
+Saving a default captures a reflected layout graph: geometry, auxiliary panel types
+and their persistent data, selection and focus. Global defaults exclude project paths,
+file viewers, Git comparisons and process state. They use the same capture/validation/
+reconstruction engine as sessions, without a tool-kind enum or constructor switch.
+Saving does not rearrange live layouts. Reset validates the saved default and destroys
+and recreates the selected layout and its panels. Viewer-local drafts block Reset;
+canonical documents, edits/history and admitted saves survive viewer retirement.
+Panel-owned processes/work retire through ordinary panel cleanup. Other layouts and
+session services remain untouched; replacement retains the numbered slot/order and
+active status. Files roots and terminal cwd initialize from the current project.
 
 The built-in layout 1 is one full-area Terminal. Only that layout is created at
 startup; layouts 2–5 start empty when first selected. Saved global layout defaults
 continue to apply to new layouts. Startup waits for
-global preferences and workspace restoration before composing default tools, so
+global preferences and project restoration before composing default tools, so
 an initial shell cannot block restoration. Installing untouched defaults does not
 create a workspace file.
 
-Global and workspace stores validate bounded reads, merge untouched setting
-values from late reads, buffer changes for 250 ms, and atomically replace files
-on background workers. Workspace capture runs after layout edits and before
-workspace retirement, and again after ordinary updates. Writes outlive retired
-entities. Malformed/unsupported files and late composition conflicts are preserved
-with visible errors; repair/access retry revalidates disk before saving live work.
-Unresolved policy keeps editor/file operations read-only and blocks new terminals.
-The quit barrier drains final snapshots before cancelling managed work.
+Global/project stores validate bounded reads, merge untouched per-value overrides,
+bindings and per-root visibility from late reads, debounce for 250 ms and atomically
+replace on background workers. Capture runs after layout edits and ordinary updates.
+Once startup preferences and session restoration complete, the application permanently closes world restoration.
+Lazy numbered-slot creation and Reset use the scoped layout API during runtime;
+they never clear/reload the application World or replace session resources.
+Malformed/unsupported records, unsupported concrete panels and late composition
+conflicts preserve the saved original with visible errors. Retry revalidates disk
+before replacing it. Unresolved policy keeps file edits read-only and blocks new
+terminals. Quit drains final snapshots before managed cancellation.
 
-Workspace records restore geometry, panel kinds, file/tree descriptors, tab
-order/selection and area focus. They do not recover unsaved content/history/drafts,
-editor cursor/folds/scroll, tree expansion/selection, terminal processes/transcripts
-or viewport orbit state. Save As, New/Untitled creation, unsaved-content recovery
-and broader workspace-management UI remain later work.
+Session graphs restore layout order/geometry, active layout, area focus and tab
+selection, feature descriptors, Git drafts/options, project settings/bindings and
+model camera/appearance state. They reopen file contents from disk; unsaved content,
+history/drafts, editor cursor/folds/scroll, tree expansion/selection and terminal
+processes/transcripts are not recovery data. Save As, New/Untitled and unsaved-content
+recovery remain later work. Global layout defaults contain tools/geometry only and
+exclude project paths and live documents.
 
 ## Close decisions and application shutdown
 
@@ -936,15 +928,14 @@ Destructive panel/area UI intentions arrive as `PanelCloseRequested`. `close.rs`
 currently approves through `commit_close` only while quit is idle and rejects
 viewer-local text composition. `close_targets` preflights the exact views removed
 by joins/docks using the same geometry planner as commit. Closing a view retains its canonical document and
-edits; this is distinct from discarding a workspace. Workbench revalidates the
+edits. Workbench revalidates the
 captured layout stamp at commit. Raw entity despawn bypasses decisions and prompts,
 though ownership/worker cleanup still runs.
 
 Closing a clean application flushes buffered metadata/settings and shuts down
 without a save-workspace question. Only dirty/conflicted/composing documents need a
-Save All / Discard / Cancel decision, across all workspaces including retained
-viewless documents. Cancel retains live state and workers. Persistence failures
-have a separate Retry / Cancel path, never a workspace Save/Discard decision.
+Save All / Discard / Cancel decision, including retained viewless documents. Cancel retains live state and workers. Persistence failures
+have a separate Retry / Cancel path, never a project Save/Discard decision.
 Native actions obey the same close-modal gate; pending folder results resume on
 cancellation, not after the final shutdown barrier. Already admitted editing
 follow-ups are observed before deciding documents are clean. Quit preflights
@@ -954,6 +945,11 @@ The quit policy retains Workbench's document gates for future integrations:
 Save All awaits admitted writes, failures or changed revisions return to the
 decision, and pending writes/drafts prevent destructive shutdown. File-backed Code documents participate in Save All, discard and cancel decisions;
 missing-source documents require explicit discard or recovery.
+
+Current migration results are recorded in the
+[world/session verification record](../MIGRATION/workbench-world-session-plan.md#implementation-and-verification--2026-10-24).
+Native session, storage/autosave, terminal helper, task and persistence-example
+smokes exercise the new model; older dated results below are historical.
 
 ## Verification
 
@@ -990,8 +986,8 @@ The former Documents browser and its automation commands remain retired.
 `app.inspect_menus` reports the shared tree and actual native installation;
 `app.activate_menu` accepts a nested label path such as `["View", "Layout", "Layout 2"]` and revalidates the same action as a native
 click. `app.open_folder` exercises the accepted directory-selection boundary, not
-OS dialog clicking. `app.inspect_filetree` includes workspace roots, persistence
-opt-in and settings/session readiness. `app.inspect_settings`/`app.set_settings`,
+OS dialog clicking. `app.inspect_filetree` includes a singleton project root, persistence
+opt-in and settings/session readiness. `app.inspect_settings`/`app.set_settings` (scope `global` or `project`),
 `app.inspect_layouts`/`app.select_layout` and `app.inspect_titlebar` expose the
 application policy and actual titlebar geometry for automation. These are application operations, not a
 reintroduced library panel registry.
@@ -1001,7 +997,7 @@ has used macOS/Metal. The Windows task echo script and non-macOS native input
 have not been verified here. Quit choices and worker-draining behavior have
 application unit coverage; automation transport exit is separate from window quit.
 
-Current workspace/menu policy verification is recorded in
+Historical workspace/menu policy verification is recorded in
 [application composition](../MIGRATION/application-composition.md#follow-up-verification--2026-10-19):
 the application and affected library suites passed, and the desktop policy scenario
 verified native menus, actual home cwd, memory-only defaults, pre-quit autosave,

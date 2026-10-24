@@ -1,9 +1,8 @@
 use super::*;
-fn local_mut<T: Component<Mutability = bevy::ecs::component::Mutable>>(
+fn local_mut<T: Resource<Mutability = bevy::ecs::component::Mutable>>(
     world: &mut World,
 ) -> Mut<'_, T> {
-    let workspace = workspaces::active(world);
-    world.get_mut::<T>(workspace.entity()).unwrap()
+    world.resource_mut::<T>()
 }
 
 struct First;
@@ -33,19 +32,18 @@ fn app() -> App {
         .init_resource::<Calls>();
     register_context_command::<First>(app.world_mut()).unwrap();
     register_context_command::<Second>(app.world_mut()).unwrap();
-    Workspaces::new(app.world_mut()).open("Test");
+    crate::tests::layout(app.world_mut());
     app
 }
 
 #[test]
 fn last_layout_can_be_deleted() {
     let mut app = app();
-    let workspace = workspaces::active(app.world()).entity();
     let layout = Workbench::new(app.world_mut()).active_layout();
     Workbench::new(app.world_mut())
         .delete_layout(layout)
         .unwrap();
-    assert_eq!(active_layout(app.world(), workspace), None);
+    assert_eq!(active_layout(app.world()), None);
     app.update();
 }
 
@@ -203,14 +201,12 @@ fn typed_commands_run_in_submission_order_and_report_handler_errors() {
         app.world().resource::<Calls>().0,
         [
             ContextCommandInvocation {
-                workspace: Some(workspaces::active(app.world())),
                 command: first.clone(),
                 source: Some(source),
                 panel: None,
                 context: InvocationContext::Global,
             },
             ContextCommandInvocation {
-                workspace: Some(workspaces::active(app.world())),
                 command: first.clone(),
                 source: None,
                 panel: None,
@@ -354,13 +350,10 @@ fn handlers_enqueue_followups_without_reentrant_execution() {
         .unwrap();
     Workbench::new(app.world_mut())
         .register_handler::<First, _>(
-            |In(invocation): In<ContextCommandInvocation>,
-             mut requests: Query<&mut ContextCommandRequests>|
+            |In(_invocation): In<ContextCommandInvocation>,
+             mut requests: ResMut<ContextCommandRequests>|
              -> ContextCommandResult {
-                requests
-                    .get_mut(invocation.workspace.unwrap().entity())
-                    .unwrap()
-                    .invoke::<Second>();
+                requests.invoke::<Second>();
                 Ok(())
             },
         )
@@ -493,7 +486,7 @@ fn ui_requests_execute_in_the_same_frame_without_application_ordering() {
     app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin));
     register_context_command::<First>(app.world_mut()).unwrap();
     register_context_command::<Second>(app.world_mut()).unwrap();
-    Workspaces::new(app.world_mut()).open("Test");
+    crate::tests::layout(app.world_mut());
     {
         let mut w = Workbench::new(app.world_mut());
         w.world_mut().init_resource::<Calls>();
@@ -906,71 +899,12 @@ fn user_closure_waits_for_application_approval_and_revalidates_the_layout() {
     assert!(w.world.get_entity(panel).is_ok());
 }
 
-#[test]
-fn checked_cross_workspace_relocation_detaches_documents_but_preserves_local_state() {
-    let mut app = app();
-    let first = workspaces::active(app.world());
-    let document = open_document(
-        app.world_mut(),
-        first.entity(),
-        "content".to_owned(),
-        DocumentOptions::loaded("Text"),
-    )
-    .unwrap();
-    let panel = {
-        let mut w = Workbench::with_workspace(app.world_mut(), first).unwrap();
-        w.create_panel(w.active_layout(), "Viewer").unwrap()
-    };
-    bind_document_view(app.world_mut(), panel, document).unwrap();
-    app.world_mut()
-        .entity_mut(panel)
-        .insert(Draft("local view state".into()));
-    let other = Workspaces::new(app.world_mut()).open("Other");
-    let area = {
-        let w = Workbench::with_workspace(app.world_mut(), other).unwrap();
-        w.destination_area(w.active_layout()).unwrap()
-    };
-    app.world_mut().entity_mut(panel).insert(DocumentDraft);
-    assert!(
-        Workbench::with_workspace(app.world_mut(), first)
-            .unwrap()
-            .relocate_panel(panel, area)
-            .is_err()
-    );
-    assert_eq!(
-        app.world().get::<InWorkspace>(panel).unwrap().0,
-        first.entity()
-    );
-    assert!(app.world().get::<DocumentView>(panel).is_some());
-    app.world_mut().entity_mut(panel).remove::<DocumentDraft>();
-    Workbench::with_workspace(app.world_mut(), first)
-        .unwrap()
-        .relocate_panel(panel, area)
-        .unwrap();
-    assert_eq!(
-        app.world().get::<InWorkspace>(panel).unwrap().0,
-        other.entity()
-    );
-    assert!(app.world().get::<DocumentView>(panel).is_none());
-    assert_eq!(
-        inspect_document(app.world(), document.id())
-            .unwrap()
-            .workspace,
-        first.entity()
-    );
-    assert_eq!(
-        app.world().get::<Draft>(panel),
-        Some(&Draft("local view state".into()))
-    );
-}
-
 #[cfg(feature = "ui")]
 #[test]
 fn direct_marker_leave_and_return_invalidates_pending_close_approval() {
-    for workspace_marker in [false, true] {
+    {
         let mut app = app();
         let mut w = Workbench::new(app.world_mut());
-        let workspace = w.workspace_id().entity();
         let layout = w.active_layout();
         let panel = w.create_panel(layout, "Keep until valid approval").unwrap();
         w.user_edit(w.stamp(), &LayoutEdit::ClosePanels(vec![panel]))
@@ -981,13 +915,8 @@ fn direct_marker_leave_and_return_invalidates_pending_close_approval() {
             .drain()
             .next()
             .unwrap();
-        if workspace_marker {
-            w.world.entity_mut(workspace).remove::<ActiveWorkspace>();
-            w.world.entity_mut(workspace).insert(ActiveWorkspace);
-        } else {
-            w.world.entity_mut(layout).remove::<ActiveLayout>();
-            w.world.entity_mut(layout).insert(ActiveLayout);
-        }
+        w.world.entity_mut(layout).remove::<ActiveLayout>();
+        w.world.entity_mut(layout).insert(ActiveLayout);
         assert!(w.commit_close(&request).is_err());
         assert!(w.world.get_entity(panel).is_ok());
     }
@@ -1043,4 +972,42 @@ fn untracked_geometry_and_retained_tab_order_changes_still_invalidate_gestures()
     w.world.entity_mut(first).replace_related::<InArea>(&[b, a]);
     reconcile_workbench(w.world).unwrap();
     assert_ne!(w.stamp(), stamp);
+}
+
+#[test]
+fn moving_between_layouts_preserves_shared_document_and_local_state() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.active_layout();
+    let panel = w.create_panel(first, "Viewer").unwrap();
+    let document = open_document(
+        w.world_mut(),
+        "text".to_owned(),
+        DocumentOptions::loaded("File"),
+    )
+    .unwrap();
+    bind_document_view(w.world_mut(), panel, document).unwrap();
+    w.world_mut()
+        .entity_mut(panel)
+        .insert(Draft("view state".into()));
+    let second = w.create_layout("Other").unwrap();
+    let area = w.destination_area(second).unwrap();
+    w.relocate_panel(panel, area).unwrap();
+    assert_eq!(
+        w.world().get::<DocumentView>(panel).unwrap().document(),
+        document.id()
+    );
+    assert_eq!(
+        w.world().get::<Draft>(panel),
+        Some(&Draft("view state".into()))
+    );
+}
+
+/// A layout fixture; core installation itself deliberately creates no layout.
+pub(crate) fn layout(world: &mut World) -> Entity {
+    let layout = crate::layout::new_layout(world, "Test".into());
+    if active_layout(world).is_none() {
+        world.entity_mut(layout).insert(ActiveLayout);
+    }
+    layout
 }

@@ -2,11 +2,20 @@
 use bedtime_terminal2::{
     ShellCommandsAppExt, ShellInvocation, ShellReply, TerminalPanel, TerminalSystems,
 };
-use bedtime_workbench2::{InWorkspace, Workbench, WorkspaceTask, WorkspaceWork};
+use bedtime_workbench2::{ManagedTask, ManagedWork, Workbench};
 use bevy::prelude::*;
 use std::{ffi::OsString, path::PathBuf, sync::mpsc};
 
-pub fn install(app: &mut App) {
+pub struct TerminalPlugin;
+impl Plugin for TerminalPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(bedtime_terminal2::TerminalPlugin);
+        install(app);
+    }
+}
+
+fn install(app: &mut App) {
+    register_menu(app);
     app.init_resource::<ShellOpens>()
         .add_shell_command(["+ducky"], duck_from_shell)
         .expect("Ducky shell alias")
@@ -34,7 +43,7 @@ enum OpenTargets {
 enum OpenStage {
     Resolve {
         layout: Entity,
-        task: WorkspaceTask<Result<OpenTargets, String>>,
+        task: ManagedTask<Result<OpenTargets, String>>,
     },
     Folder(crate::opening::FolderOpenResult),
     Files(Vec<crate::opening::OpenedFile>),
@@ -42,7 +51,6 @@ enum OpenStage {
 
 struct ShellOpen {
     panel: Entity,
-    workspace: Entity,
     stage: OpenStage,
     reply: ShellReply,
 }
@@ -80,7 +88,6 @@ fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
         arguments,
         directory,
         panel,
-        workspace,
         reply,
         ..
     } = invocation;
@@ -91,14 +98,14 @@ fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
         if arguments.is_empty() {
             return crate::opening::open_folder(world, directory).map(OpenStage::Folder);
         }
-        if !crate::storage::ready(world, workspace) {
+        if !crate::storage::ready(world) {
             return Err(
                 "The originating workspace is still loading or has a settings error".into(),
             );
         }
         let layout = Workbench::for_entity(world, panel)?.panel_layout(panel)?;
         let task = world
-            .get_mut::<WorkspaceWork>(workspace)
+            .get_resource_mut::<ManagedWork>()
             .ok_or("Workspace work is unavailable")?
             .spawn_task(Some(panel), "Resolve shell paths", move |cancel| {
                 if cancel.is_cancelled() {
@@ -111,7 +118,6 @@ fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
     match result {
         Ok(stage) => world.resource_mut::<ShellOpens>().0.push(ShellOpen {
             panel,
-            workspace,
             stage,
             reply,
         }),
@@ -128,11 +134,8 @@ fn poll_opens(world: &mut World) {
             }
             if world.get::<TerminalPanel>(request.panel).is_none()
                 || world
-                    .get::<InWorkspace>(request.panel)
-                    .is_none_or(|owner| owner.0 != request.workspace)
-                || world
-                    .get::<WorkspaceWork>(request.workspace)
-                    .is_none_or(WorkspaceWork::is_closing)
+                    .get_resource::<ManagedWork>()
+                    .is_none_or(ManagedWork::is_closing)
             {
                 return Err("The originating terminal or workspace has closed".into());
             }
@@ -150,10 +153,7 @@ fn poll_opens(world: &mut World) {
                             OpenStage::Folder(crate::opening::open_folder(world, root)?)
                         }
                         OpenTargets::Files(paths) => {
-                            if world
-                                .get::<InWorkspace>(*layout)
-                                .is_none_or(|owner| owner.0 != request.workspace)
-                            {
+                            if world.get::<bedtime_workbench2::Layout>(*layout).is_none() {
                                 return Err("The originating layout has closed".into());
                             }
                             let files = paths
@@ -207,11 +207,8 @@ fn inspect(
     _: serde_json::Value,
 ) -> bedtime_automation2::AutomationResult {
     use bedtime_terminal2::{TerminalPanel, TerminalStatus};
-    use bedtime_workbench2::{
-        InActiveWorkspace, InRunningWorkspace, InWorkspace, PanelInstance, PanelPresentation,
-        WorkspaceWork,
-    };
-    use bevy::prelude::{Entity, Has};
+    use bedtime_workbench2::{ManagedWork, PanelInstance, PanelPresentation};
+    use bevy::prelude::Entity;
     use serde_json::json;
 
     let panels: Vec<_> = world
@@ -219,13 +216,10 @@ fn inspect(
             Entity,
             &TerminalPanel,
             &PanelInstance,
-            &InWorkspace,
             &PanelPresentation,
-            Has<InActiveWorkspace>,
-            Has<InRunningWorkspace>,
         )>()
         .iter(world)
-        .map(|(entity, state, instance, workspace, presentation, active, running)| {
+        .map(|(entity, state, instance, presentation)| {
             let snapshot = state.snapshot();
             // A cell's text is the complete grapheme cluster. Width-zero cells
             // continue a wide cluster; neither they nor `character` add text.
@@ -277,7 +271,6 @@ fn inspect(
             let modes = snapshot.modes;
             json!({
                 "entity": entity.to_bits().to_string(),
-                "workspace": workspace.0.to_bits().to_string(),
                 "status": status,
                 "tab_title": instance.title,
                 "pid": state.process_id(),
@@ -350,27 +343,13 @@ fn inspect(
                         "max": presentation.close_rect.max.to_array(),
                     },
                 },
-                "active_workspace": active,
-                "running_workspace": running,
             })
         })
         .collect();
-    let workspaces: Vec<_> = world
-        .query::<(Entity, &WorkspaceWork)>()
-        .iter(world)
-        .map(|(entity, work)| {
-            json!({
-                "entity": entity.to_bits().to_string(),
-                "jobs": work.list().into_iter().map(|job| json!({
-                    "id": job.id.0,
-                    "owner": job.owner.map(|owner| owner.to_bits().to_string()),
-                    "label": job.label,
-                    "status": work_status(&job.status),
-                })).collect::<Vec<_>>(),
-            })
-        })
-        .collect();
-    Ok(json!({ "panels": panels, "workspaces": workspaces }))
+    let jobs: Vec<_> = world.resource::<ManagedWork>().list().into_iter().map(|job| json!({
+        "id": job.id.0, "owner": job.owner.map(|owner| owner.to_bits().to_string()), "label": job.label, "status": work_status(&job.status)
+    })).collect();
+    Ok(json!({ "panels": panels, "jobs": jobs }))
 }
 
 #[cfg(feature = "automation")]
@@ -386,47 +365,54 @@ fn work_status(status: &bedtime_workbench2::WorkStatus) -> String {
 }
 
 fn duck_from_shell(world: &mut World, invocation: ShellInvocation) {
-    let result = show_duck(world, invocation.workspace, &invocation.arguments).map(|_| ());
+    let result = show_duck(world, &invocation.arguments).map(|_| ());
     invocation.reply.complete(result);
 }
 
-fn show_duck(
-    world: &mut World,
-    workspace: Entity,
-    arguments: &[OsString],
-) -> Result<Entity, String> {
+fn show_duck(world: &mut World, arguments: &[OsString]) -> Result<Entity, String> {
     if !arguments.is_empty() {
         return Err("usage: +ducky".into());
     }
     if !crate::close::accepts_user_actions(world) {
         return Err("Cancel quit before opening Ducky".into());
     }
-    let layout = bedtime_workbench2::active_layout(world, workspace)
-        .ok_or("Workspace has no selected layout")?;
-    crate::layouts::open_or_focus(world, layout, crate::layouts::ToolKind::Ducky)
+    let layout =
+        bedtime_workbench2::active_layout(world).ok_or("Workspace has no selected layout")?;
+    crate::menus::open_or_focus(
+        world,
+        layout,
+        <bedtime_mascots2::DuckPanel as bedtime_workbench2::Panel>::KEY,
+    )
 }
 
 #[cfg(test)]
 mod mascot_tests {
     use super::*;
-    use bedtime_workbench2::{Panel, PanelInstance, WorkbenchCorePlugin, Workspaces};
+    use bedtime_workbench2::{Panel, PanelInstance, WorkbenchCorePlugin};
 
     #[test]
     fn duck_shell_uses_origin_workspace_reuses_panel_and_rejects_arguments() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        let origin = Workspaces::new(app.world_mut()).open("Origin").entity();
-        let other_id = Workspaces::new(app.world_mut()).open("Focused elsewhere");
-        let other = other_id.entity();
-        Workspaces::new(app.world_mut()).activate(other_id).unwrap();
-        let duck = show_duck(app.world_mut(), origin, &[]).unwrap();
-        assert_eq!(app.world().get::<InWorkspace>(duck).unwrap().0, origin);
-        assert_eq!(show_duck(app.world_mut(), origin, &[]).unwrap(), duck);
-        assert!(app.world().get::<bedtime_workbench2::ActiveWorkspace>(other).is_some());
-        let focused = show_duck(app.world_mut(), other, &[]).unwrap();
-        assert_ne!(focused, duck);
+        crate::mascots::register_menu(&mut app);
+        let _origin = crate::test_layout(app.world_mut());
+        let other_id = crate::test_layout(app.world_mut());
+        let other = other_id;
+        Workbench::new(app.world_mut())
+            .activate_layout(other_id)
+            .unwrap();
+        let duck = show_duck(app.world_mut(), &[]).unwrap();
         assert!(
-            show_duck(app.world_mut(), origin, &["extra".into()])
+            app.world()
+                .get::<bedtime_workbench2::InArea>(duck)
+                .is_some()
+        );
+        assert_eq!(show_duck(app.world_mut(), &[]).unwrap(), duck);
+        assert_eq!(bedtime_workbench2::active_layout(app.world()), Some(other));
+        let focused = show_duck(app.world_mut(), &[]).unwrap();
+        assert_eq!(focused, duck);
+        assert!(
+            show_duck(app.world_mut(), &["extra".into()])
                 .unwrap_err()
                 .contains("usage")
         );
@@ -436,25 +422,26 @@ mod mascot_tests {
                 .iter(app.world())
                 .filter(|p| p.key == bedtime_mascots2::DuckPanel::KEY)
                 .count(),
-            2
+            1
         );
-        let bare = app
-            .world_mut()
-            .spawn(bedtime_workbench2::Workspace::default())
-            .id();
-        assert!(show_duck(app.world_mut(), bare, &[]).is_err());
+        let layout = bedtime_workbench2::active_layout(app.world()).unwrap();
+        app.world_mut()
+            .entity_mut(layout)
+            .remove::<bedtime_workbench2::ActiveLayout>();
+        assert!(show_duck(app.world_mut(), &[]).is_err());
     }
+
     #[test]
     fn duck_shell_rejects_opening_after_quit_was_requested() {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, crate::close::ClosePlugin))
             .add_message::<AppExit>();
-        let owner = Workspaces::new(app.world_mut()).open("Closing").entity();
+        let _owner = crate::test_layout(app.world_mut());
         app.world_mut()
             .write_message(bedtime_workbench2::CloseRequested { window: None });
         app.update();
         assert!(
-            show_duck(app.world_mut(), owner, &[])
+            show_duck(app.world_mut(), &[])
                 .unwrap_err()
                 .contains("Cancel quit")
         );
@@ -466,4 +453,81 @@ mod mascot_tests {
             0
         );
     }
+}
+
+use bedtime_workbench2::persistence::ReflectWorkbenchPersist;
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, WorkbenchPersist)]
+#[require(bedtime_terminal2::TerminalPanel)]
+pub(crate) struct PersistedTerminal;
+
+pub(crate) fn register_persistence(app: &mut App) {
+    app.register_type::<PersistedTerminal>();
+}
+pub(crate) fn project_persistence(
+    world: &mut World,
+    captured: &mut bedtime_workbench2::persistence::CapturedWorld,
+) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<TerminalPanel>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        captured.insert_component(panel, PersistedTerminal);
+        // Foreground process names are observations, not restored process state.
+        if let Some(mut state) = captured.component::<bedtime_workbench2::PanelInstance>(panel) {
+            state.title = "Terminal".into();
+            captured.insert_component(panel, state);
+        }
+    }
+}
+pub(crate) fn clear_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedTerminal>>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        world.entity_mut(panel).remove::<PersistedTerminal>();
+    }
+}
+
+pub(crate) fn activate_persistence(world: &mut World) {
+    let panels: Vec<_> = world
+        .query_filtered::<Entity, With<PersistedTerminal>>()
+        .iter(world)
+        .collect();
+    let directory = crate::settings::effective_preferences(world)
+        .terminal
+        .unwrap_or_default()
+        .project_directory
+        .then(|| crate::files::project_directory(world))
+        .flatten();
+    for panel in panels {
+        world
+            .get_mut::<TerminalPanel>(panel)
+            .unwrap()
+            .options
+            .working_directory = directory.clone();
+    }
+}
+
+pub(crate) fn register_menu(app: &mut App) {
+    crate::menus::register_panel::<TerminalPanel>(
+        app,
+        Some(40),
+        bedtime_workbench2::PanelFactory::new("Terminal", |world, area| {
+            let options = bedtime_terminal2::TerminalOptions {
+                working_directory: crate::files::project_directory(world),
+                ..default()
+            };
+            world
+                .spawn((
+                    TerminalPanel::new(options),
+                    bedtime_workbench2::InArea(area),
+                ))
+                .id()
+        }),
+        crate::storage::ready,
+    );
 }

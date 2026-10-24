@@ -24,7 +24,7 @@ bedtime-automation2 = { workspace = true, optional = true }
 bedtime-ui2.workspace = true
 bedtime-filetree2.workspace = true
 bedtime-terminal2.workspace = true
-bedtime-workbench2 = { workspace = true, features = ["ui"] }
+bedtime-workbench2 = { workspace = true, features = ["ui", "persistence"] }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }
 serde_json.workspace = true
 serde = { workspace = true, features = ["derive"] }

@@ -1,6 +1,6 @@
 //! Abstract ordered menus. Native and egui presenters use the same snapshots.
 use crate::{
-    ContextCommandId, ContextCommandRequest, InvocationContext, Invokes, KeyChord, WorkspaceId,
+    ContextCommandId, ContextCommandRequest, InvocationContext, Invokes, KeyChord,
     commands::shortcut_for,
 };
 use bevy::prelude::*;
@@ -105,16 +105,6 @@ impl MenuSnapshot {
     }
 }
 
-pub(crate) fn optional_menu_workspace(world: &World, root: Entity) -> Option<WorkspaceId> {
-    crate::workspaces::owner(world, root)
-        .or_else(|| {
-            world
-                .get::<crate::InPanel>(root)
-                .and_then(|panel| crate::workspaces::owner(world, panel.0))
-        })
-        .or_else(|| crate::workspaces::selected(world))
-}
-
 /// Snapshot a menu bar or contextual menu root. No native window is required.
 /// Root/descendant InvocationContext components override the supplied context.
 pub fn menu_snapshot(
@@ -125,13 +115,12 @@ pub fn menu_snapshot(
     if world.get::<MenuBar>(root).is_none() && world.get::<Menu>(root).is_none() {
         return Err("Menu root is unavailable".into());
     }
-    let workspace = optional_menu_workspace(world, root);
     let context = world
         .get::<crate::InPanel>(root)
         .map_or(context, |p| InvocationContext::Panel(p.0));
-    let context = capture_context(world, workspace, context);
+    let context = capture_context(world, context);
     let mut visited = HashSet::from([root]);
-    let entries = read_entries(world, workspace, root, &mut visited, context)?;
+    let entries = read_entries(world, root, &mut visited, context)?;
     if world.get::<MenuBar>(root).is_some()
         && entries.iter().any(|e| !matches!(e, MenuNode::Menu { .. }))
     {
@@ -143,14 +132,9 @@ pub fn menu_snapshot(
     })
 }
 
-fn capture_context(
-    world: &mut World,
-    workspace: Option<WorkspaceId>,
-    context: InvocationContext,
-) -> InvocationContext {
+fn capture_context(world: &mut World, context: InvocationContext) -> InvocationContext {
     match context {
-        InvocationContext::Focused => workspace
-            .and_then(|w| crate::commands::focused_panel_in(world, w))
+        InvocationContext::Focused => crate::commands::focused_panel(world)
             .map_or(InvocationContext::Global, InvocationContext::Panel),
         explicit => explicit,
     }
@@ -158,7 +142,6 @@ fn capture_context(
 
 fn read_entries(
     world: &mut World,
-    workspace: Option<WorkspaceId>,
     parent: Entity,
     visited: &mut HashSet<Entity>,
     inherited: InvocationContext,
@@ -167,7 +150,7 @@ fn read_entries(
         .get::<InvocationContext>(parent)
         .copied()
         .unwrap_or(inherited);
-    let context = capture_context(world, workspace, context);
+    let context = capture_context(world, context);
     let children = world
         .get::<MenuEntries>(parent)
         .map_or_else(Vec::new, |e| e.0.clone());
@@ -188,7 +171,7 @@ fn read_entries(
             .get::<InvocationContext>(entity)
             .copied()
             .unwrap_or(context);
-        let context = capture_context(world, workspace, context);
+        let context = capture_context(world, context);
         match (
             world.get::<Menu>(entity).cloned(),
             world.get::<MenuItem>(entity).cloned(),
@@ -201,7 +184,7 @@ fn read_entries(
                 entries.push(MenuNode::Menu {
                     entity,
                     label: menu.label,
-                    entries: read_entries(world, workspace, entity, visited, context)?,
+                    entries: read_entries(world, entity, visited, context)?,
                 });
             }
             (None, Some(item), false) => {
@@ -213,7 +196,6 @@ fn read_entries(
                     && target.clone().is_some_and(|t| {
                         crate::commands::resolve(
                             world,
-                            workspace,
                             ContextCommandRequest {
                                 command: t,
                                 source: Some(entity),
@@ -223,9 +205,7 @@ fn read_entries(
                         .1
                         .is_ok()
                     });
-                let shortcut = target
-                    .clone()
-                    .and_then(|t| shortcut_for(world, workspace, t, context));
+                let shortcut = target.clone().and_then(|t| shortcut_for(world, t, context));
                 entries.push(MenuNode::Item {
                     entity,
                     label: item.label,

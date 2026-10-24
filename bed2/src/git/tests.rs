@@ -65,11 +65,10 @@ pub(super) fn host(root: &Path) -> (App, Entity, Entity) {
         crate::file_editor::FileEditorPlugin,
         GitPlugin,
     ));
-    let workspace = Workspaces::new(app.world_mut()).open("Git test").entity();
+    let workspace = crate::test_layout(app.world_mut());
     app.world_mut()
-        .entity_mut(workspace)
-        .insert(crate::files::WorkspaceRoot(root.to_owned()));
-    let layout = active_layout(app.world(), workspace).unwrap();
+        .insert_resource(crate::files::ProjectRoot(root.to_owned()));
+    let layout = active_layout(app.world()).unwrap();
     let area = Workbench::for_entity(app.world_mut(), layout)
         .unwrap()
         .destination_area(layout)
@@ -78,7 +77,7 @@ pub(super) fn host(root: &Path) -> (App, Entity, Entity) {
         .world_mut()
         .spawn((GitPanel::default(), InArea(area)))
         .id();
-    settle(&mut app, workspace);
+    settle(&mut app);
     (app, workspace, panel)
 }
 pub(super) fn wait(app: &mut App, mut done: impl FnMut(&World) -> bool) {
@@ -92,29 +91,25 @@ pub(super) fn wait(app: &mut App, mut done: impl FnMut(&World) -> bool) {
         std::thread::sleep(Duration::from_millis(2));
     }
 }
-pub(super) fn settle(app: &mut App, workspace: Entity) {
+pub(super) fn settle(app: &mut App) {
     wait(app, |w| {
-        w.get::<GitSession>(workspace).is_some_and(|s| {
+        w.get_resource::<GitSession>().is_some_and(|s| {
             s.view.is_some() && s.scan.is_none() && s.pending.is_none() && !s.refresh
         })
     });
 }
-fn action(app: &mut App, workspace: Entity, operation: Operation) -> Result<(), String> {
-    let mut session = app
-        .world_mut()
-        .entity_mut(workspace)
-        .take::<GitSession>()
-        .unwrap();
-    let result = begin(app.world_mut(), workspace, &mut session, operation);
-    app.world_mut().entity_mut(workspace).insert(session);
+fn action(app: &mut App, operation: Operation) -> Result<(), String> {
+    let mut session = app.world_mut().remove_resource::<GitSession>().unwrap();
+    let result = begin(app.world_mut(), &mut session, operation);
+    app.world_mut().insert_resource(session);
     result
 }
-fn refresh(app: &mut App, workspace: Entity) {
+fn refresh(app: &mut App) {
     app.world_mut()
-        .get_mut::<GitSession>(workspace)
+        .get_resource_mut::<GitSession>()
         .unwrap()
         .invalidate();
-    settle(app, workspace);
+    settle(app);
 }
 pub(super) fn bind(app: &mut App, panel: Entity, repo: &Repo) -> DocumentHandle<TextBuffer> {
     let text = TextBuffer::from(fs::read_to_string(repo.0.join("a.txt")).unwrap());
@@ -141,23 +136,22 @@ fn stage_partial_unstage_and_commit_preserve_newer_message() {
     let repo = Repo::new();
     repo.initial();
     repo.write("a.txt", "changed\n");
-    let (mut app, workspace, _) = host(&repo.0);
+    let (mut app, _workspace, _) = host(&repo.0);
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(repo.git(&["show", ":a.txt"]), "changed\n");
     repo.write("a.txt", "more changes\n");
-    refresh(&mut app, workspace);
+    refresh(&mut app);
     assert_eq!(
         staging(
             &app.world()
-                .get::<GitSession>(workspace)
+                .get_resource::<GitSession>()
                 .unwrap()
                 .view
                 .as_ref()
@@ -169,30 +163,27 @@ fn stage_partial_unstage_and_commit_preserve_newer_message() {
     );
     action(
         &mut app,
-        workspace,
         Operation::Unstage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(repo.git(&["show", ":a.txt"]), "original\n");
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     app.world_mut()
-        .get_mut::<GitSession>(workspace)
+        .get_resource_mut::<GitSession>()
         .unwrap()
         .draft = "Submitted".into();
     action(
         &mut app,
-        workspace,
         Operation::Commit {
             mode: Default::default(),
             message: "Submitted".into(),
@@ -200,18 +191,18 @@ fn stage_partial_unstage_and_commit_preserve_newer_message() {
     )
     .unwrap();
     app.world_mut()
-        .get_mut::<GitSession>(workspace)
+        .get_resource_mut::<GitSession>()
         .unwrap()
         .draft = "Next commit".into();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "Submitted");
     assert_eq!(
-        app.world().get::<GitSession>(workspace).unwrap().draft,
+        app.world().get_resource::<GitSession>().unwrap().draft,
         "Next commit"
     );
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .error
             .is_none()
@@ -222,23 +213,22 @@ fn stage_partial_unstage_and_commit_preserve_newer_message() {
 fn staging_saves_the_shared_document_before_reading_working_bytes() {
     let repo = Repo::new();
     repo.initial();
-    let (mut app, workspace, panel) = host(&repo.0);
+    let (mut app, _workspace, panel) = host(&repo.0);
     let document = bind(&mut app, panel, &repo);
     edit(&mut app, document, "unsaved document\n");
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(repo.git(&["show", ":a.txt"]), "unsaved document\n");
     assert!(!inspect_document(app.world(), document.id()).unwrap().dirty);
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .error
             .is_none()
@@ -249,19 +239,18 @@ fn staging_saves_the_shared_document_before_reading_working_bytes() {
 fn edits_after_save_capture_stop_staging_without_losing_text() {
     let repo = Repo::new();
     repo.initial();
-    let (mut app, workspace, panel) = host(&repo.0);
+    let (mut app, _workspace, panel) = host(&repo.0);
     let document = bind(&mut app, panel, &repo);
     edit(&mut app, document, "saved capture\n");
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
     edit(&mut app, document, "newer edit\n");
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(repo.git(&["show", ":a.txt"]), "original\n");
     assert_eq!(
         read_document(app.world(), document)
@@ -271,7 +260,7 @@ fn edits_after_save_capture_stop_staging_without_losing_text() {
     );
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .error
             .as_ref()
@@ -284,19 +273,18 @@ fn edits_after_save_capture_stop_staging_without_losing_text() {
 fn failed_source_checked_save_never_stages_external_changes() {
     let repo = Repo::new();
     repo.initial();
-    let (mut app, workspace, panel) = host(&repo.0);
+    let (mut app, _workspace, panel) = host(&repo.0);
     let document = bind(&mut app, panel, &repo);
     edit(&mut app, document, "my edits\n");
     repo.write("a.txt", "external\n");
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(repo.git(&["show", ":a.txt"]), "original\n");
     assert_eq!(
         fs::read_to_string(repo.0.join("a.txt")).unwrap(),
@@ -305,7 +293,7 @@ fn failed_source_checked_save_never_stages_external_changes() {
     assert!(inspect_document(app.world(), document.id()).unwrap().dirty);
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .error
             .is_some()
@@ -317,7 +305,7 @@ fn discard_rejects_dirty_buffers_and_reconciles_clean_documents_with_undo() {
     let repo = Repo::new();
     repo.initial();
     repo.write("a.txt", "working\n");
-    let (mut app, workspace, panel) = host(&repo.0);
+    let (mut app, _workspace, panel) = host(&repo.0);
     let document = bind(&mut app, panel, &repo);
     let Output::Diff(diff) = bedtime_git::execute(
         &repo.0,
@@ -333,7 +321,6 @@ fn discard_rejects_dirty_buffers_and_reconciles_clean_documents_with_undo() {
     assert!(
         action(
             &mut app,
-            workspace,
             Operation::Discard {
                 path: "a.txt".into(),
                 snapshot: diff.snapshot.clone()
@@ -344,14 +331,13 @@ fn discard_rejects_dirty_buffers_and_reconciles_clean_documents_with_undo() {
     undo_document(app.world_mut(), document.id()).unwrap();
     action(
         &mut app,
-        workspace,
         Operation::Discard {
             path: "a.txt".into(),
             snapshot: diff.snapshot,
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(
         fs::read_to_string(repo.0.join("a.txt")).unwrap(),
         "original\n"
@@ -377,7 +363,7 @@ fn stale_discard_and_external_index_change_before_commit_are_rejected() {
     let repo = Repo::new();
     repo.initial();
     repo.write("a.txt", "working\n");
-    let (mut app, workspace, _) = host(&repo.0);
+    let (mut app, _workspace, _) = host(&repo.0);
     let Output::Diff(diff) = bedtime_git::execute(
         &repo.0,
         &Operation::Diff {
@@ -391,37 +377,34 @@ fn stale_discard_and_external_index_change_before_commit_are_rejected() {
     repo.write("a.txt", "new external\n");
     action(
         &mut app,
-        workspace,
         Operation::Discard {
             path: "a.txt".into(),
             snapshot: diff.snapshot,
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(
         fs::read_to_string(repo.0.join("a.txt")).unwrap(),
         "new external\n"
     );
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .error
             .is_some()
     );
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     action(
         &mut app,
-        workspace,
         Operation::Commit {
             mode: Default::default(),
             message: "Do not commit extra content".into(),
@@ -430,7 +413,7 @@ fn stale_discard_and_external_index_change_before_commit_are_rejected() {
     .unwrap();
     repo.write("a.txt", "unexpected staged content\n");
     repo.git(&["add", "a.txt"]);
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "Initial");
 }
 
@@ -439,10 +422,10 @@ fn nested_workspace_is_read_only_and_non_repository_is_a_clean_empty_state() {
     let repo = Repo::new();
     repo.initial();
     fs::create_dir(repo.0.join("nested")).unwrap();
-    let (mut app, workspace, _) = host(&repo.0.join("nested"));
+    let (mut app, _workspace, _) = host(&repo.0.join("nested"));
     assert!(
         !app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .view
             .as_ref()
@@ -450,11 +433,11 @@ fn nested_workspace_is_read_only_and_non_repository_is_a_clean_empty_state() {
             .status
             .writable
     );
-    assert!(action(&mut app, workspace, Operation::Stage { paths: vec![] }).is_err());
+    assert!(action(&mut app, Operation::Stage { paths: vec![] }).is_err());
     let temporary = Repo::new();
     fs::remove_dir_all(temporary.0.join(".git")).unwrap();
-    let (app, workspace, _) = host(&temporary.0);
-    let session = app.world().get::<GitSession>(workspace).unwrap();
+    let (app, _workspace, _) = host(&temporary.0);
+    let session = app.world().get_resource::<GitSession>().unwrap();
     assert!(session.view.as_ref().unwrap().status.root.is_empty());
     assert!(session.error.is_none());
 }
@@ -464,33 +447,32 @@ fn refresh_requests_coalesce_and_old_reads_do_not_acknowledge_a_write() {
     let repo = Repo::new();
     repo.initial();
     repo.write("a.txt", "modified\n");
-    let (mut app, workspace, _) = host(&repo.0);
-    let started = app.world().get::<GitSession>(workspace).unwrap().scans;
+    let (mut app, _workspace, _) = host(&repo.0);
+    let started = app.world().get_resource::<GitSession>().unwrap().scans;
     for _ in 0..10 {
         app.world_mut()
-            .get_mut::<GitSession>(workspace)
+            .get_resource_mut::<GitSession>()
             .unwrap()
             .invalidate();
     }
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(
-        app.world().get::<GitSession>(workspace).unwrap().scans,
+        app.world().get_resource::<GitSession>().unwrap().scans,
         started + 1
     );
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    assert!(!app.world().get::<GitSession>(workspace).unwrap().writable());
-    settle(&mut app, workspace);
-    assert!(app.world().get::<GitSession>(workspace).unwrap().writable());
+    assert!(!app.world().get_resource::<GitSession>().unwrap().writable());
+    settle(&mut app);
+    assert!(app.world().get_resource::<GitSession>().unwrap().writable());
     assert_eq!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .view
             .as_ref()
@@ -524,14 +506,13 @@ fn closing_a_panel_keeps_a_commit_alive_and_cancellation_keeps_the_draft() {
     repo.hook();
     repo.write("a.txt", "modified\n");
     repo.git(&["add", "a.txt"]);
-    let (mut app, workspace, panel) = host(&repo.0);
+    let (mut app, _workspace, panel) = host(&repo.0);
     app.world_mut()
-        .get_mut::<GitSession>(workspace)
+        .get_resource_mut::<GitSession>()
         .unwrap()
         .draft = "Commit through closed panel".into();
     action(
         &mut app,
-        workspace,
         Operation::Commit {
             mode: Default::default(),
             message: "Commit through closed panel".into(),
@@ -541,14 +522,14 @@ fn closing_a_panel_keeps_a_commit_alive_and_cancellation_keeps_the_draft() {
     wait(&mut app, |_| repo.0.join(".git/hook-started").exists());
     app.world_mut().despawn(panel);
     fs::write(repo.0.join(".git/release-hook"), "").unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(
         repo.git(&["log", "-1", "--format=%s"]).trim(),
         "Commit through closed panel"
     );
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .draft
             .is_empty()
@@ -557,14 +538,13 @@ fn closing_a_panel_keeps_a_commit_alive_and_cancellation_keeps_the_draft() {
     fs::remove_file(repo.0.join(".git/release-hook")).unwrap();
     repo.write("a.txt", "next\n");
     repo.git(&["add", "a.txt"]);
-    refresh(&mut app, workspace);
+    refresh(&mut app);
     app.world_mut()
-        .get_mut::<GitSession>(workspace)
+        .get_resource_mut::<GitSession>()
         .unwrap()
         .draft = "Keep on cancellation".into();
     action(
         &mut app,
-        workspace,
         Operation::Commit {
             mode: Default::default(),
             message: "Keep on cancellation".into(),
@@ -572,16 +552,16 @@ fn closing_a_panel_keeps_a_commit_alive_and_cancellation_keeps_the_draft() {
     )
     .unwrap();
     wait(&mut app, |_| repo.0.join(".git/hook-started").exists());
-    cancel(&mut app.world_mut().get_mut::<GitSession>(workspace).unwrap());
-    settle(&mut app, workspace);
+    cancel(&mut app.world_mut().get_resource_mut::<GitSession>().unwrap());
+    settle(&mut app);
     assert_eq!(
-        app.world().get::<GitSession>(workspace).unwrap().draft,
+        app.world().get_resource::<GitSession>().unwrap().draft,
         "Keep on cancellation"
     );
     assert!(!repo.0.join(".git/index.lock").exists());
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .error
             .is_some()
@@ -634,18 +614,17 @@ fn branch_switch_refreshes_retained_documents_without_a_filetree_panel() {
     repo.write("a.txt", "other branch\n");
     repo.git(&["commit", "-am", "Other"]);
     repo.git(&["switch", "main"]);
-    let (mut app, workspace, panel) = host(&repo.0);
+    let (mut app, _workspace, panel) = host(&repo.0);
     let document = bind(&mut app, panel, &repo);
     bedtime_editor2::workbench::unbind_text_editor(app.world_mut(), panel).unwrap();
     action(
         &mut app,
-        workspace,
         Operation::SwitchBranch {
             name: "other".into(),
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(
         read_document(app.world(), document)
             .unwrap()
@@ -655,7 +634,7 @@ fn branch_switch_refreshes_retained_documents_without_a_filetree_panel() {
     assert!(!inspect_document(app.world(), document.id()).unwrap().dirty);
     assert_eq!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .view
             .as_ref()
@@ -666,7 +645,7 @@ fn branch_switch_refreshes_retained_documents_without_a_filetree_panel() {
     );
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .error
             .is_none()
@@ -690,19 +669,18 @@ fn conflict_resolution_requires_marker_free_text_before_staging() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let (mut app, workspace, _) = host(&repo.0);
+    let (mut app, _workspace, _) = host(&repo.0);
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert!(
         app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .error
             .as_ref()
@@ -711,27 +689,25 @@ fn conflict_resolution_requires_marker_free_text_before_staging() {
     );
     action(
         &mut app,
-        workspace,
         Operation::Resolve {
             path: "a.txt".into(),
             choice: bedtime_git::ConflictChoice::Incoming,
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert_eq!(fs::read_to_string(repo.0.join("a.txt")).unwrap(), "other\n");
     action(
         &mut app,
-        workspace,
         Operation::Stage {
             paths: vec!["a.txt".into()],
         },
     )
     .unwrap();
-    settle(&mut app, workspace);
+    settle(&mut app);
     assert!(
         !app.world()
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .view
             .as_ref()
@@ -751,10 +727,9 @@ fn closing_workspace_cancels_and_drains_a_hook_before_retiring() {
     repo.hook();
     repo.write("a.txt", "changed\n");
     repo.git(&["add", "a.txt"]);
-    let (mut app, workspace, _) = host(&repo.0);
+    let (mut app, _workspace, _) = host(&repo.0);
     action(
         &mut app,
-        workspace,
         Operation::Commit {
             mode: Default::default(),
             message: "Cancel on close".into(),
@@ -762,11 +737,8 @@ fn closing_workspace_cancels_and_drains_a_hook_before_retiring() {
     )
     .unwrap();
     wait(&mut app, |_| repo.0.join(".git/hook-started").exists());
-    let id = Workbench::for_entity(app.world_mut(), workspace)
-        .unwrap()
-        .workspace_id();
-    Workspaces::new(app.world_mut()).close(id, None).unwrap();
-    wait(&mut app, |w| !w.entities().contains(workspace));
+    shutdown_work(app.world_mut()).unwrap();
+    wait(&mut app, |w| work_finished(w));
     assert!(!repo.0.join(".git/index.lock").exists());
     assert_eq!(repo.git(&["log", "-1", "--format=%s"]).trim(), "Initial");
 }
@@ -777,32 +749,21 @@ fn a_restored_draft_is_shared_when_the_first_git_panel_attaches() {
     repo.initial();
     let mut app = App::new();
     app.add_plugins((WorkbenchCorePlugin, GitPlugin));
-    let workspace = Workspaces::new(app.world_mut()).open("Restored").entity();
+    let _workspace = crate::test_layout(app.world_mut());
     app.world_mut()
-        .entity_mut(workspace)
-        .insert(crate::files::WorkspaceRoot(repo.0.clone()));
-    restore_draft(
-        app.world_mut(),
-        workspace,
-        "Retain this commit message".into(),
-    );
-    assert_eq!(
-        commit_draft(app.world(), workspace),
-        "Retain this commit message"
-    );
-    assert!(app.world().get::<GitSession>(workspace).is_none());
-    let layout = active_layout(app.world(), workspace).unwrap();
+        .insert_resource(crate::files::ProjectRoot(repo.0.clone()));
+    restore_draft(app.world_mut(), "Retain this commit message".into());
+    assert_eq!(commit_draft(app.world()), "Retain this commit message");
+    assert!(app.world().get_resource::<GitSession>().is_none());
+    let layout = active_layout(app.world()).unwrap();
     let area = Workbench::for_entity(app.world_mut(), layout)
         .unwrap()
         .destination_area(layout)
         .unwrap();
     app.world_mut().spawn((GitPanel::default(), InArea(area)));
-    settle(&mut app, workspace);
-    assert_eq!(
-        commit_draft(app.world(), workspace),
-        "Retain this commit message"
-    );
-    assert!(app.world().get::<RestoredDraft>(workspace).is_none());
+    settle(&mut app);
+    assert_eq!(commit_draft(app.world()), "Retain this commit message");
+    assert!(app.world().get_resource::<RestoredDraft>().is_none());
 }
 
 #[test]
@@ -833,19 +794,19 @@ fn a_refresh_during_an_inflight_scan_rejects_the_old_observation() {
             Ok(RepositoryView::new(status))
         })
         .unwrap();
-    let mut session = app.world_mut().get_mut::<GitSession>(workspace).unwrap();
+    let mut session = app.world_mut().get_resource_mut::<GitSession>().unwrap();
     session.scan = Some((session.epoch, task));
     wait(&mut app, |_| captured.load(Ordering::Acquire));
     repo.write("a.txt", "external changed after read\n");
     app.world_mut()
-        .get_mut::<GitSession>(workspace)
+        .get_resource_mut::<GitSession>()
         .unwrap()
         .invalidate();
     app.update();
-    assert!(!app.world().get::<GitSession>(workspace).unwrap().writable());
+    assert!(!app.world().get_resource::<GitSession>().unwrap().writable());
     release.store(true, Ordering::Release);
-    settle(&mut app, workspace);
-    let session = app.world().get::<GitSession>(workspace).unwrap();
+    settle(&mut app);
+    let session = app.world().get_resource::<GitSession>().unwrap();
     assert!(session.writable());
     assert_eq!(
         session.view.as_ref().unwrap().status.entries[0].worktree_status,
@@ -859,17 +820,17 @@ fn changing_presentation_reuses_status_and_accepts_only_the_latest_projection() 
     repo.initial();
     fs::create_dir(repo.0.join("src")).unwrap();
     repo.write("src/new.txt", "new\n");
-    let (mut app, workspace, _) = host(&repo.0);
+    let (mut app, _workspace, _) = host(&repo.0);
     let source = app
         .world()
-        .get::<GitSession>(workspace)
+        .get_resource::<GitSession>()
         .unwrap()
         .view
         .as_ref()
         .unwrap()
         .status
         .clone();
-    let scans = app.world().get::<GitSession>(workspace).unwrap().scans;
+    let scans = app.world().get_resource::<GitSession>().unwrap().scans;
     for options in [
         GitPanelOptions {
             view: ViewMode::Tree,
@@ -884,24 +845,20 @@ fn changing_presentation_reuses_status_and_accepts_only_the_latest_projection() 
             group_by: GroupBy::None,
         },
     ] {
-        let mut session = app
-            .world_mut()
-            .entity_mut(workspace)
-            .take::<GitSession>()
-            .unwrap();
+        let mut session = app.world_mut().remove_resource::<GitSession>().unwrap();
         session.last_scan = Instant::now();
         session.options = options;
-        reproject(app.world_mut(), workspace, &mut session).unwrap();
-        app.world_mut().entity_mut(workspace).insert(session);
+        reproject(app.world_mut(), &mut session).unwrap();
+        app.world_mut().insert_resource(session);
     }
     wait(&mut app, |world| {
         world
-            .get::<GitSession>(workspace)
+            .get_resource::<GitSession>()
             .unwrap()
             .projection
             .is_none()
     });
-    let session = app.world().get::<GitSession>(workspace).unwrap();
+    let session = app.world().get_resource::<GitSession>().unwrap();
     assert_eq!(session.scans, scans);
     assert!(Arc::ptr_eq(&source, &session.view.as_ref().unwrap().status));
     assert_eq!(

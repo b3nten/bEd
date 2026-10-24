@@ -13,7 +13,7 @@ type RenderedImage = Result<(Arc<ImageContent>, DecodedImage), String>;
 struct RenderJob {
     stamp: Option<(DocumentId, u64)>,
     size: [u32; 2],
-    task: WorkspaceTask<RenderedImage>,
+    task: ManagedTask<RenderedImage>,
 }
 #[derive(Component, Default)]
 pub(crate) struct ImagePreview {
@@ -74,12 +74,9 @@ pub(crate) fn update(world: &mut World) {
         .iter(world)
         .collect();
     for panel in panels {
-        let Some(workspace) = world.get::<InWorkspace>(panel).map(|owner| owner.0) else {
-            continue;
-        };
         if world
-            .get::<WorkspaceWork>(workspace)
-            .is_none_or(WorkspaceWork::is_closing)
+            .get_resource::<ManagedWork>()
+            .is_none_or(ManagedWork::is_closing)
         {
             continue;
         }
@@ -161,10 +158,10 @@ pub(crate) fn update(world: &mut World) {
             } else {
                 desired
             };
-            let result = world
-                .get_mut::<WorkspaceWork>(workspace)
-                .unwrap()
-                .spawn_task(Some(panel), "Render image", move |cancel| {
+            let result = world.get_resource_mut::<ManagedWork>().unwrap().spawn_task(
+                Some(panel),
+                "Render image",
+                move |cancel| {
                     if cancel.is_cancelled() {
                         return Err("Image rendering cancelled".into());
                     }
@@ -181,7 +178,8 @@ pub(crate) fn update(world: &mut World) {
                         (width as f32 * dimensions.y / dimensions.x).ceil().max(1.0) as u32;
                     let pixels = content.render([width, height])?;
                     Ok((content, pixels))
-                });
+                },
+            );
             match result {
                 Ok(task) => {
                     state.job = Some(RenderJob {

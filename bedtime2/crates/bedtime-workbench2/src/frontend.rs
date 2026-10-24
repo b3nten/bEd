@@ -24,7 +24,7 @@ fn allows_panel_edit(settings: WorkbenchSurface, edit: &LayoutEdit) -> bool {
 }
 
 /// Who renders and handles input in the window's titlebar. Native geometry is
-/// still reserved in either mode, so the workspace stays below native chrome.
+/// still reserved in either mode, so the workbench stays below native chrome.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TitlebarOwnership {
     /// Render the optional application slot and handle background window moves.
@@ -36,7 +36,7 @@ pub enum TitlebarOwnership {
 }
 
 /// The workbench shell required by WorkbenchSurface on a window. This entity
-/// lives in the application world and remains stable across workspace switches.
+/// lives in the application world and remains stable across layout switches.
 #[derive(Component, Clone)]
 #[require(WorkbenchPresentation)]
 pub struct WorkbenchShell {
@@ -72,25 +72,20 @@ pub struct Titlebar {
     pub draw: UiDraw,
 }
 
-/// Workspace-local menu, status renderer and shell system state.
-#[derive(Component, Default)]
-pub struct WorkspaceUi {
+/// World-owned menu, status renderer and shell system state.
+#[derive(Resource, Default)]
+pub struct WorkbenchUi {
     pub menu: Option<Entity>,
     status_bar: Option<Entity>,
     frontend: Frontend,
     pub(crate) drawing: bool,
 }
 
-pub(crate) fn workspace_ui(world: &World) -> &WorkspaceUi {
-    world
-        .get::<WorkspaceUi>(crate::workspaces::active(world).0)
-        .expect("Workspace UI")
+pub(crate) fn workbench_ui(world: &World) -> &WorkbenchUi {
+    world.resource()
 }
-pub(crate) fn workspace_ui_mut(world: &mut World) -> Mut<'_, WorkspaceUi> {
-    let workspace = crate::workspaces::active(world);
-    world
-        .get_mut::<WorkspaceUi>(workspace.0)
-        .expect("Workspace UI")
+pub(crate) fn workbench_ui_mut(world: &mut World) -> Mut<'_, WorkbenchUi> {
+    world.resource_mut()
 }
 
 impl Workbench<'_> {
@@ -126,42 +121,23 @@ impl Workbench<'_> {
         }
     }
 
-    /// Install or replace this workspace's application-owned status renderer.
+    /// Install or replace the world session's application-owned status renderer.
     /// The renderer receives its entity as UiContext::view and owns the row's contents.
     pub fn register_status_bar(&mut self, draw: UiDraw) -> Entity {
         self.remove_status_bar();
-        let renderer = self
-            .world
-            .spawn((
-                UiView { draw },
-                InWorkspace(self.workspace.0),
-                bedtime_ui2::InView(self.workspace.0),
-            ))
-            .id();
-        self.world
-            .get_mut::<WorkspaceUi>(self.workspace.0)
-            .unwrap()
-            .status_bar = Some(renderer);
+        let renderer = self.world.spawn((UiView { draw },)).id();
+        self.world.resource_mut::<WorkbenchUi>().status_bar = Some(renderer);
         renderer
     }
 
-    /// The optional renderer entity, whose state belongs to this workspace.
+    /// The optional renderer entity, whose state belongs to the World.
     pub fn status_bar(&self) -> Option<Entity> {
-        self.world
-            .get::<WorkspaceUi>(self.workspace.0)
-            .unwrap()
-            .status_bar
+        self.world.resource::<WorkbenchUi>().status_bar
     }
 
     /// Remove the renderer and its state. The shell stops reserving status space.
     pub fn remove_status_bar(&mut self) {
-        if let Some(renderer) = self
-            .world
-            .get_mut::<WorkspaceUi>(self.workspace.0)
-            .unwrap()
-            .status_bar
-            .take()
-        {
+        if let Some(renderer) = self.world.resource_mut::<WorkbenchUi>().status_bar.take() {
             self.world.despawn(renderer);
         }
     }
@@ -173,28 +149,8 @@ impl Workbench<'_> {
         if let Some(root) = root {
             // Validate the whole tree before changing ownership.
             menu_snapshot(self.world, root, InvocationContext::Global)?;
-            let mut pending = vec![root];
-            let mut members = Vec::new();
-            while let Some(entity) = pending.pop() {
-                if crate::workspaces::owner(self.world, entity).is_some_and(|w| w != self.workspace)
-                {
-                    return Err("Menu belongs to another workspace".into());
-                }
-                if let Some(entries) = self.world.get::<MenuEntries>(entity) {
-                    pending.extend_from_slice(entries.entities());
-                }
-                members.push(entity);
-            }
-            for entity in members {
-                self.world
-                    .entity_mut(entity)
-                    .insert(InWorkspace(self.workspace.0));
-            }
         }
-        self.world
-            .get_mut::<WorkspaceUi>(self.workspace.0)
-            .unwrap()
-            .menu = root;
+        self.world.resource_mut::<WorkbenchUi>().menu = root;
         Ok(())
     }
 }
@@ -210,16 +166,12 @@ pub(crate) fn reset(world: &mut World) {
         area.visible = false;
     }
     for mut viewport in world
-        .query_filtered::<&mut bedtime_ui2::UiViewport, With<InWorkspace>>()
+        .query::<&mut bedtime_ui2::UiViewport>()
         .iter_mut(world)
     {
         viewport.visible = false;
         viewport.hovered = false;
     }
-}
-
-pub(crate) fn deactivate(world: &mut World) {
-    reset(world);
 }
 
 pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
@@ -313,48 +265,25 @@ pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiCont
         }
         let body = egui::Rect::from_min_max(egui::pos2(outer.left(), band.bottom()), outer.max);
         descriptor.bounds = Some(observed(body));
-        // Resolve selection after the titlebar so it can open or select a workspace.
-        let workspace = crate::workspaces::selected(world);
-        let mut presentation = if let Some(workspace) = workspace {
-            world.get_mut::<WorkspaceUi>(workspace.0).unwrap().drawing = true;
-            let mut ui = root.new_child(
-                egui::UiBuilder::new()
-                    .id_salt(("workspace", workspace))
-                    .max_rect(body),
-            );
-            let mut state = std::mem::take(&mut workspace_ui_mut(world).frontend);
-            draw(
-                frame.for_view(workspace.0, &mut ui),
-                world,
-                &mut state,
-                &descriptor,
-                focused,
-            );
-            workspace_ui_mut(world).frontend = state;
-            workspace_ui_mut(world).drawing = false;
-            *world.get::<WorkbenchPresentation>(workspace.0).unwrap()
-        } else {
-            if descriptor.panels_visible {
-                root.painter().rect_filled(
-                    body,
-                    0.0,
-                    bedtime_ui2::theme::color(frame.theme.palette.background),
-                );
-            }
-            WorkbenchPresentation {
-                panels: observed(body),
-                ..default()
-            }
-        };
+        world.resource_mut::<WorkbenchUi>().drawing = true;
+        let mut ui = root.new_child(egui::UiBuilder::new().id_salt("session").max_rect(body));
+        let mut state = std::mem::take(&mut workbench_ui_mut(world).frontend);
+        draw(
+            frame.for_view(host_entity, &mut ui),
+            world,
+            &mut state,
+            &descriptor,
+            focused,
+        );
+        workbench_ui_mut(world).frontend = state;
+        workbench_ui_mut(world).drawing = false;
+        let mut presentation = *world.get::<WorkbenchPresentation>(host_entity).unwrap();
         if world.get::<WorkbenchSurface>(frame.surface).is_none() {
             return;
         }
         presentation.bounds = observed(outer);
         presentation.titlebar = observed(band);
         presentation.titlebar_content = observed(content);
-        if let Some(workspace) = workspace {
-            *world.get_mut::<WorkbenchPresentation>(workspace.0).unwrap() = presentation;
-        }
         *world.get_mut::<WorkbenchPresentation>(host_entity).unwrap() = presentation;
         background
     };
@@ -777,7 +706,7 @@ fn draw(
     host: &WorkbenchShell,
     window_focused: bool,
 ) {
-    let shell = workspace_ui(world);
+    let shell = workbench_ui(world);
     let (panels_visible, menu, status_bar, minimum_area_size) = (
         host.panels_visible,
         shell.menu,
@@ -867,8 +796,7 @@ fn draw(
             .ceil()
             .clamp(1.0, LAYOUT_EXTENT as f32) as i32,
     ];
-    let workspace = crate::workspaces::active(world);
-    if crate::active_layout(world, workspace.0).is_none_or(|layout| {
+    if crate::active_layout(world).is_none_or(|layout| {
         world
             .get::<LayoutAreas>(layout)
             .is_none_or(|a| a.entities().is_empty())
@@ -2200,34 +2128,24 @@ mod tests {
     }
 
     #[test]
-    fn free_panel_creation_uses_the_supplied_inactive_layout_owner() {
+    fn free_panel_creation_uses_the_supplied_inactive_layout() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        Workspaces::new(app.world_mut()).open("Test");
-        let active = Workspaces::new(app.world_mut()).active();
-        let other = Workspaces::new(app.world_mut()).open("Other");
-        let layout = Workbench::with_workspace(app.world_mut(), other)
-            .unwrap()
-            .active_layout();
-        let panel = spawn_panel(app.world_mut(), layout, "Inactive", |_, _, _, _| {}).unwrap();
+        let active = crate::tests::layout(app.world_mut());
+        let other = crate::tests::layout(app.world_mut());
+        let panel = spawn_panel(app.world_mut(), other, "Inactive", |_, _, _, _| {}).unwrap();
         assert_eq!(
-            app.world().get::<InWorkspace>(panel).unwrap().0,
-            other.entity()
+            Workbench::new(app.world_mut()).panel_layout(panel).unwrap(),
+            other
         );
-        assert_eq!(Workspaces::new(app.world_mut()).active(), active);
-        let area = app.world().get::<InArea>(panel).unwrap().0;
-        assert!(
-            Workbench::new(app.world_mut())
-                .create_panel_in_area(area, "Foreign")
-                .is_err()
-        );
+        assert_eq!(active_layout(app.world()), Some(active));
     }
 
     #[test]
     fn user_permissions_do_not_restrict_application_layout_operations() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        Workspaces::new(app.world_mut()).open("Test");
+        crate::tests::layout(app.world_mut());
         app.world_mut()
             .spawn((Window::default(), WorkbenchSurface::single_panel()));
         let mut w = Workbench::new(app.world_mut());
@@ -2371,7 +2289,7 @@ mod tests {
                     for last_tab in [false, true] {
                         let mut app = App::new();
                         app.add_plugins(WorkbenchCorePlugin);
-                        Workspaces::new(app.world_mut()).open("Test");
+                        crate::tests::layout(app.world_mut());
                         let mut w = Workbench::new(app.world_mut());
                         let layout = w.active_layout();
                         let low = w.destination_area(layout).unwrap();
@@ -2452,7 +2370,7 @@ mod tests {
             for offset in [1, 500, 2500, 4500, 4999] {
                 let mut app = App::new();
                 app.add_plugins(WorkbenchCorePlugin);
-                Workspaces::new(app.world_mut()).open("Test");
+                crate::tests::layout(app.world_mut());
                 let mut w = Workbench::new(app.world_mut());
                 let layout = w.active_layout();
                 let root = w.destination_area(layout).unwrap();
@@ -2593,38 +2511,20 @@ mod tests {
     }
 
     #[test]
-    fn application_status_renderers_are_optional_replaceable_and_owned_by_their_workspace() {
+    fn application_status_renderers_are_optional_and_replaceable_without_a_layout() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        let a = Workspaces::new(app.world_mut()).open("A");
         let mut w = Workbench::new(app.world_mut());
         assert_eq!(w.status_bar(), None);
         let old = w.register_status_bar(|_, _, _| {});
-        let old_part = w.world_mut().spawn(bedtime_ui2::InView(old)).id();
+        let child = w.world_mut().spawn(bedtime_ui2::InView(old)).id();
         let replacement = w.register_status_bar(|_, _, _| {});
-        assert_eq!(w.status_bar(), Some(replacement));
         assert!(w.world().get_entity(old).is_err());
-        assert!(w.world().get_entity(old_part).is_err());
+        assert!(w.world().get_entity(child).is_err());
+        assert_eq!(w.status_bar(), Some(replacement));
         w.remove_status_bar();
-        assert_eq!(w.status_bar(), None);
         assert!(w.world().get_entity(replacement).is_err());
-        let bar = w.register_status_bar(|_, _, _| {});
-        let part = w.world_mut().spawn(bedtime_ui2::InView(bar)).id();
-        assert_eq!(w.world().get::<InWorkspace>(bar).unwrap().0, a.entity());
-
-        let b = Workspaces::new(app.world_mut()).open("B");
-        let other = Workbench::with_workspace(app.world_mut(), b)
-            .unwrap()
-            .register_status_bar(|_, _, _| {});
-        Workspaces::new(app.world_mut()).activate(b).unwrap();
-        assert_eq!(Workbench::new(app.world_mut()).status_bar(), Some(other));
-        Workspaces::new(app.world_mut()).activate(a).unwrap();
-        assert_eq!(Workbench::new(app.world_mut()).status_bar(), Some(bar));
-        Workspaces::new(app.world_mut()).close(a, Some(b)).unwrap();
-        app.update();
-        assert!(app.world().get_entity(bar).is_err());
-        assert!(app.world().get_entity(part).is_err());
-        assert!(app.world().get_entity(other).is_ok());
+        assert_eq!(w.status_bar(), None);
     }
 
     fn projection(
@@ -2674,7 +2574,7 @@ mod tests {
     fn last_tab_preview_includes_source_gap_and_single_area_border_policy() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        Workspaces::new(app.world_mut()).open("Test");
+        crate::tests::layout(app.world_mut());
         let mut w = Workbench::new(app.world_mut());
         let layout = w.active_layout();
         let source = w.destination_area(layout).unwrap();
@@ -2745,7 +2645,7 @@ mod tests {
                 ] {
                     let mut app = App::new();
                     app.add_plugins(WorkbenchCorePlugin);
-                    Workspaces::new(app.world_mut()).open("Test");
+                    crate::tests::layout(app.world_mut());
                     let mut w = Workbench::new(app.world_mut());
                     let layout = w.active_layout();
                     let left = w.destination_area(layout).unwrap();

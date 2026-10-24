@@ -30,8 +30,8 @@ impl Fixture {
         std::fs::create_dir_all(&root).unwrap();
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, LspPlugin));
-        let workspace = Workspaces::new(app.world_mut()).open("Code").entity();
-        app.world_mut().entity_mut(workspace).insert(LspWorkspace {
+        let workspace = crate::test_layout(app.world_mut());
+        app.world_mut().insert_resource(LspProject {
             root: root.clone(),
             servers: [(
                 "rust".into(),
@@ -49,7 +49,6 @@ impl Fixture {
         });
         let doc = open_document(
             app.world_mut(),
-            workspace,
             TextBuffer::from("source"),
             DocumentOptions::loaded("source.rs"),
         )
@@ -113,9 +112,9 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = Workspaces::new(self.app.world_mut()).shutdown_work();
+        let _ = shutdown_work(self.app.world_mut());
         let until = Instant::now() + Duration::from_secs(3);
-        while !Workspaces::new(self.app.world_mut()).work_finished() && Instant::now() < until {
+        while !work_finished(self.app.world_mut()) && Instant::now() < until {
             self.app.update();
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -188,8 +187,10 @@ fn journal_gaps_undo_redo_and_inactive_workspaces_synchronize_canonical_text() {
     }
     undo_document(f.app.world_mut(), f.doc.id()).unwrap();
     redo_document(f.app.world_mut(), f.doc.id()).unwrap();
-    let other = Workspaces::new(f.app.world_mut()).open("Other");
-    Workspaces::new(f.app.world_mut()).activate(other).unwrap();
+    let other = crate::test_layout(f.app.world_mut());
+    Workbench::new(f.app.world_mut())
+        .activate_layout(other)
+        .unwrap();
     f.definition();
     let text = read_document(f.app.world(), f.doc).unwrap().to_string();
     let until = Instant::now() + Duration::from_secs(5);
@@ -268,7 +269,7 @@ fn stopping_suppresses_relaunch_until_explicit_restart_and_preserves_document_ed
     let until = Instant::now() + Duration::from_secs(3);
     loop {
         f.app.update();
-        let servers = workspace_servers(f.app.world_mut(), f.workspace);
+        let servers = session_servers(f.app.world_mut());
         assert_eq!(servers.len(), 1);
         if !servers[0].retiring && servers[0].status == ServerStatus::Stopped {
             break;
@@ -386,4 +387,13 @@ fn hover_and_completion_have_independent_tickets_and_edits_invalidate_both() {
     ));
     f.app.update();
     assert!(take_intelligence(f.app.world_mut()).is_empty());
+}
+
+pub(crate) fn test_layout(world: &mut bevy::prelude::World) -> bevy::prelude::Entity {
+    use bedtime_workbench2::*;
+    let layout = Workbench::new(world).create_layout("Test").unwrap();
+    if active_layout(world).is_none() {
+        world.entity_mut(layout).insert(ActiveLayout);
+    }
+    layout
 }

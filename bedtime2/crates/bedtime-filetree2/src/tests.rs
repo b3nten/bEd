@@ -1,6 +1,7 @@
 //! Headless integration coverage: real workspace workers, files and buffered messages.
 use super::*;
-use bedtime_workbench2::{InArea, Workbench, WorkbenchCorePlugin, WorkspaceId, Workspaces};
+use bedtime_workbench2::{InArea, Workbench, WorkbenchCorePlugin};
+use bedtime_workbench2::{shutdown_work, work_finished};
 use bevy::ecs::message::Messages;
 use std::{
     fs,
@@ -42,20 +43,18 @@ impl Drop for Fixture {
     }
 }
 
-pub(super) fn host() -> (App, WorkspaceId) {
+pub(super) fn host() -> (App, Entity) {
     let mut app = App::new();
     // Core Workbench does not require a window, renderer or native clipboard.
     app.insert_resource(Clipboard::memory());
     app.add_plugins((FileTreePlugin, WorkbenchCorePlugin));
-    let workspace = Workspaces::new(app.world_mut()).open("Files");
+    let workspace = crate::test_layout(app.world_mut());
     (app, workspace)
 }
 
-pub(super) fn panel(app: &mut App, workspace: WorkspaceId, root: Option<&Path>) -> Entity {
-    let workbench = Workbench::with_workspace(app.world_mut(), workspace).unwrap();
-    let area = workbench
-        .destination_area(workbench.active_layout())
-        .unwrap();
+pub(super) fn panel(app: &mut App, workspace: Entity, root: Option<&Path>) -> Entity {
+    let workbench = Workbench::new(app.world_mut());
+    let area = workbench.destination_area(workspace).unwrap();
     let panel = app
         .world_mut()
         .spawn((FileTreePanel::default(), InArea(area)))
@@ -162,8 +161,8 @@ fn rename(app: &mut App, panel: Entity, path: &Path, name: &str) -> FileTreeOper
     operate(app, panel, Action::SubmitEdit)
 }
 pub(super) fn finish(app: &mut App) {
-    Workspaces::new(app.world_mut()).shutdown_work().unwrap();
-    eventually(app, |app| Workspaces::new(app.world_mut()).work_finished());
+    shutdown_work(app.world_mut()).unwrap();
+    eventually(app, |app| work_finished(app.world_mut()));
     // Observe reserved operation outcomes and let Workbench reap finished work.
     app.update();
 }
@@ -266,11 +265,7 @@ fn panels_keep_independent_roots_navigation_and_selection_but_share_one_workspac
     assert!(tree(&app, same_root).selection().is_empty());
     assert!(!visible(&app, same_root, &child));
     assert!(!visible(&app, b, &branch));
-    let work = app
-        .world()
-        .get::<WorkspaceWork>(workspace.entity())
-        .unwrap()
-        .list();
+    let work = app.world().get_resource::<ManagedWork>().unwrap().list();
     assert_eq!(work.len(), 1);
     assert!(
         work[0].owner.is_none(),
@@ -323,11 +318,10 @@ fn filesystem_observations_continue_in_an_inactive_workspace_without_background_
     let (mut app, workspace) = host();
     let panel = panel(&mut app, workspace, Some(&fixture.0));
     ready(&mut app, panel, &fixture.0);
-    let other = Workspaces::new(app.world_mut()).open("Elsewhere");
-    Workspaces::new(app.world_mut())
-        .set_background_updates(workspace, false)
+    let other = crate::test_layout(app.world_mut());
+    Workbench::new(app.world_mut())
+        .activate_layout(other)
         .unwrap();
-    Workspaces::new(app.world_mut()).activate(other).unwrap();
     // No refresh or drawing: native notifications or the worker fallback discover it.
     let added = fixture.file("background.txt", b"observed");
     eventually(&mut app, |app| visible(app, panel, &added));
@@ -456,15 +450,16 @@ fn activations_are_buffered_keep_both_clicks_and_capture_the_originating_workspa
         drain::<FileTreeOpenRequested>(&mut app).is_empty(),
         "Capturing an intention must not invoke the host during drawing"
     );
-    let other = Workspaces::new(app.world_mut()).open("Other");
-    Workspaces::new(app.world_mut()).activate(other).unwrap();
+    let other = crate::test_layout(app.world_mut());
+    Workbench::new(app.world_mut())
+        .activate_layout(other)
+        .unwrap();
     app.update();
     let events = drain::<FileTreeOpenRequested>(&mut app);
     assert_eq!(events.len(), 2);
     assert_eq!(events[0].activation, FileTreeActivation::SingleClick);
     assert_eq!(events[1].activation, FileTreeActivation::DoubleClick);
     for event in events {
-        assert_eq!(event.workspace, workspace.entity());
         assert_eq!(event.panel, panel);
         assert_eq!(event.path, file);
     }
@@ -497,14 +492,14 @@ fn hide_preferences_are_root_relative_shared_persistable_and_recoverable_without
     app.update();
     let events = drain::<FileTreePreferencesChanged>(&mut app);
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].workspace, workspace.entity());
+
     eventually(&mut app, |app| {
         !visible(app, a, &folder) && !visible(app, b, &folder)
     });
     assert!(visible(&app, other, &same_name));
     let saved = app
         .world()
-        .get::<FileTreePreferences>(workspace.entity())
+        .get_resource::<FileTreePreferences>()
         .unwrap()
         .clone();
     assert_eq!(
@@ -525,9 +520,7 @@ fn hide_preferences_are_root_relative_shared_persistable_and_recoverable_without
     assert!(snapshot.rows[snapshot.row_index(&folder).unwrap()].hidden);
     assert!(!snapshot.rows[0].hidden);
     assert_eq!(
-        app.world()
-            .get::<FileTreePreferences>(workspace.entity())
-            .unwrap(),
+        app.world().get_resource::<FileTreePreferences>().unwrap(),
         &saved
     );
     assert!(drain::<FileTreePreferencesChanged>(&mut app).is_empty());
@@ -543,7 +536,7 @@ fn hide_preferences_are_root_relative_shared_persistable_and_recoverable_without
     eventually(&mut app, |app| visible(app, b, &folder));
     assert!(
         app.world()
-            .get::<FileTreePreferences>(workspace.entity())
+            .get_resource::<FileTreePreferences>()
             .unwrap()
             .roots[&fixture.0]
             .hidden_paths
@@ -570,16 +563,15 @@ fn show_hidden_files_updates_both_same_root_panels_and_can_be_restored_from_the_
     });
     let saved = app
         .world()
-        .get::<FileTreePreferences>(workspace.entity())
+        .get_resource::<FileTreePreferences>()
         .unwrap()
         .encode()
         .unwrap();
     assert!(!FileTreePreferences::decode(&saved).unwrap().roots[&fixture.0].hide_hidden);
     // Applications restore their own preferences independently of panel layout.
-    let restored_workspace = Workspaces::new(app.world_mut()).open("Restored files");
+    let restored_workspace = crate::test_layout(app.world_mut());
     app.world_mut()
-        .entity_mut(restored_workspace.entity())
-        .insert(FileTreePreferences::decode(&saved).unwrap());
+        .insert_resource(FileTreePreferences::decode(&saved).unwrap());
     let restored = panel(&mut app, restored_workspace, Some(&fixture.0));
     ready(&mut app, restored, &fixture.0);
     eventually(&mut app, |app| visible(app, restored, &hidden));
@@ -625,10 +617,7 @@ fn successful_directory_rename_migrates_hidden_descendants_and_other_panels_expa
         fs::read(fixture.path("after/secret.txt")).unwrap(),
         b"secret"
     );
-    let preferences = app
-        .world()
-        .get::<FileTreePreferences>(workspace.entity())
-        .unwrap();
+    let preferences = app.world().get_resource::<FileTreePreferences>().unwrap();
     assert_eq!(
         preferences.roots[&fixture.0].hidden_paths,
         BTreeSet::from([PathBuf::from("after/secret.txt")])
@@ -658,7 +647,7 @@ fn failed_inline_rename_preserves_the_editor_preferences_and_both_files_then_all
     select(&mut app, panel, &source);
     let before = app
         .world()
-        .get::<FileTreePreferences>(workspace.entity())
+        .get_resource::<FileTreePreferences>()
         .unwrap()
         .clone();
     let failed = rename(&mut app, panel, &source, "occupied.txt");
@@ -676,9 +665,7 @@ fn failed_inline_rename_preserves_the_editor_preferences_and_both_files_then_all
     assert_eq!(fs::read(&source).unwrap(), b"source contents");
     assert_eq!(fs::read(&occupied).unwrap(), b"do not replace");
     assert_eq!(
-        app.world()
-            .get::<FileTreePreferences>(workspace.entity())
-            .unwrap(),
+        app.world().get_resource::<FileTreePreferences>().unwrap(),
         &before
     );
     assert!(drain::<FileTreePreferencesChanged>(&mut app).is_empty());
@@ -956,7 +943,7 @@ fn an_old_move_completion_cannot_consume_another_panels_newer_cut_of_the_same_pa
         new_revision, old_revision,
         "This regression deliberately reuses the numerical revision"
     );
-    reconcile_operation(app.world_mut(), workspace.entity(), &origin, &old_result);
+    reconcile_operation(app.world_mut(), &origin, &old_result);
     assert_eq!(
         clipboard.revision(),
         new_revision,
@@ -1044,7 +1031,7 @@ fn partial_cut_moves_preserve_failed_intent_for_retry_and_migrate_only_completed
     assert_eq!(clipboard.read_files().unwrap(), [blocked.clone()]);
     assert_eq!(
         app.world()
-            .get::<FileTreePreferences>(workspace.entity())
+            .get_resource::<FileTreePreferences>()
             .unwrap()
             .roots[&fixture.0]
             .hidden_paths,
@@ -1074,7 +1061,7 @@ fn partial_cut_moves_preserve_failed_intent_for_retry_and_migrate_only_completed
     assert_eq!(fs::read(collision).unwrap(), b"blocked source");
     assert_eq!(
         app.world()
-            .get::<FileTreePreferences>(workspace.entity())
+            .get_resource::<FileTreePreferences>()
             .unwrap()
             .roots[&fixture.0]
             .hidden_paths,
@@ -1102,13 +1089,8 @@ fn closing_an_originating_panel_does_not_cancel_admitted_work_or_the_shared_work
     let survivor = panel(&mut app, workspace, Some(&fixture.0));
     ready(&mut app, origin, &fixture.0);
     ready(&mut app, survivor, &fixture.0);
-    let worker_id = app
-        .world()
-        .get::<WorkspaceWork>(workspace.entity())
-        .unwrap()
-        .list()[0]
-        .id;
-    assert_eq!(filetree_operation_count(app.world(), workspace.entity()), 0);
+    let worker_id = app.world().get_resource::<ManagedWork>().unwrap().list()[0].id;
+    assert_eq!(filetree_operation_count(app.world()), 0);
     queue(
         &mut app,
         origin,
@@ -1117,7 +1099,7 @@ fn closing_an_originating_panel_does_not_cancel_admitted_work_or_the_shared_work
         },
     );
     assert_eq!(
-        filetree_operation_count(app.world(), workspace.entity()),
+        filetree_operation_count(app.world()),
         0,
         "A queued UI intention is not yet admitted work"
     );
@@ -1126,14 +1108,11 @@ fn closing_an_originating_panel_does_not_cancel_admitted_work_or_the_shared_work
         tree(&app, origin).is_busy(),
         "The close must precede observation of this copy's completion"
     );
-    assert_eq!(filetree_operation_count(app.world(), workspace.entity()), 1);
-    Workbench::with_workspace(app.world_mut(), workspace)
-        .unwrap()
-        .close_panel(origin)
-        .unwrap();
+    assert_eq!(filetree_operation_count(app.world()), 1);
+    Workbench::new(app.world_mut()).close_panel(origin).unwrap();
     assert!(app.world().get_entity(origin).is_err());
     assert_eq!(
-        filetree_operation_count(app.world(), workspace.entity()),
+        filetree_operation_count(app.world()),
         1,
         "Quit preflight must still see work from closed panels"
     );
@@ -1141,7 +1120,7 @@ fn closing_an_originating_panel_does_not_cancel_admitted_work_or_the_shared_work
     // A completed disk effect is still admitted work until Update reconciles it.
     let deadline = Instant::now() + Duration::from_secs(10);
     let committed = loop {
-        assert_eq!(filetree_operation_count(app.world(), workspace.entity()), 1);
+        assert_eq!(filetree_operation_count(app.world()), 1);
         let copied = fs::read_dir(&fixture.0)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -1156,14 +1135,14 @@ fn closing_an_originating_panel_does_not_cancel_admitted_work_or_the_shared_work
         std::thread::sleep(Duration::from_millis(2));
     };
     assert_eq!(fs::metadata(&committed).unwrap().len(), 16 * 1024 * 1024);
-    assert_eq!(filetree_operation_count(app.world(), workspace.entity()), 1);
+    assert_eq!(filetree_operation_count(app.world()), 1);
     let result = completion(&mut app, origin);
     assert_eq!(
-        filetree_operation_count(app.world(), workspace.entity()),
+        filetree_operation_count(app.world()),
         0,
         "Only reconciliation retires admitted operations"
     );
-    assert_eq!(result.workspace, workspace.entity());
+
     assert_eq!(result.root, fixture.0);
     assert!(!result.result.cancelled);
     assert!(result.result.errors.is_empty());
@@ -1173,16 +1152,11 @@ fn closing_an_originating_panel_does_not_cancel_admitted_work_or_the_shared_work
     assert_eq!(destination, &committed);
     assert_eq!(fs::metadata(destination).unwrap().len(), 16 * 1024 * 1024);
     eventually(&mut app, |app| visible(app, survivor, destination));
-    Workbench::with_workspace(app.world_mut(), workspace)
-        .unwrap()
+    Workbench::new(app.world_mut())
         .close_panel(survivor)
         .unwrap();
     app.update();
-    let work = app
-        .world()
-        .get::<WorkspaceWork>(workspace.entity())
-        .unwrap()
-        .list();
+    let work = app.world().get_resource::<ManagedWork>().unwrap().list();
     assert_eq!(work.len(), 1);
     assert_eq!(work[0].id, worker_id);
     assert_eq!(work[0].status, WorkStatus::Running);
@@ -1190,11 +1164,7 @@ fn closing_an_originating_panel_does_not_cancel_admitted_work_or_the_shared_work
     ready(&mut app, reopened, &fixture.0);
     assert!(visible(&app, reopened, destination));
     assert_eq!(
-        app.world()
-            .get::<WorkspaceWork>(workspace.entity())
-            .unwrap()
-            .list()[0]
-            .id,
+        app.world().get_resource::<ManagedWork>().unwrap().list()[0].id,
         worker_id
     );
     finish(&mut app);
@@ -1220,11 +1190,11 @@ fn workspace_shutdown_drains_every_admitted_outcome_and_leaves_only_reported_com
         );
     }
     app.update();
-    Workspaces::new(app.world_mut()).shutdown_work().unwrap();
+    shutdown_work(app.world_mut()).unwrap();
     let mut outcomes = Vec::new();
     eventually(&mut app, |app| {
         outcomes.extend(drain::<FileTreeOperationFinished>(app));
-        outcomes.len() == 2 && Workspaces::new(app.world_mut()).work_finished()
+        outcomes.len() == 2 && work_finished(app.world_mut())
     });
     assert_eq!(
         outcomes
@@ -1235,7 +1205,6 @@ fn workspace_shutdown_drains_every_admitted_outcome_and_leaves_only_reported_com
     );
     let mut expected_entries = BTreeSet::from([source.clone()]);
     for event in outcomes {
-        assert_eq!(event.workspace, workspace.entity());
         assert!(
             event.result.errors.is_empty(),
             "Cancellation is not an invented I/O failure"
@@ -1260,7 +1229,7 @@ fn workspace_shutdown_drains_every_admitted_outcome_and_leaves_only_reported_com
     app.update();
     assert!(
         app.world()
-            .get::<WorkspaceWork>(workspace.entity())
+            .get_resource::<ManagedWork>()
             .unwrap()
             .list()
             .is_empty()
@@ -1431,7 +1400,7 @@ fn read_only_admission_blocks_filesystem_mutations_but_keeps_copy_open_and_visib
         queue(&mut app, panel, action);
         app.update();
     }
-    assert_eq!(filetree_operation_count(app.world(), workspace.entity()), 0);
+    assert_eq!(filetree_operation_count(app.world()), 0);
     assert!(tree(&app, panel).error().is_none());
     assert!(tree(&app, panel).editing.is_none());
     assert!(source.exists() && fs::read_dir(&destination).unwrap().next().is_none());
@@ -1472,7 +1441,7 @@ fn read_only_admission_blocks_filesystem_mutations_but_keeps_copy_open_and_visib
     assert_eq!(opens[0].path, source);
     assert!(
         app.world()
-            .get::<FileTreePreferences>(workspace.entity())
+            .get_resource::<FileTreePreferences>()
             .unwrap()
             .roots[&fixture.0]
             .hidden_paths
@@ -1510,7 +1479,7 @@ fn invalid_drop_self_descendant_and_same_parent_are_silent_and_admit_no_work() {
         queue(&mut app, panel, action);
         app.update();
     }
-    assert_eq!(filetree_operation_count(app.world(), workspace.entity()), 0);
+    assert_eq!(filetree_operation_count(app.world()), 0);
     assert!(tree(&app, panel).error().is_none());
     assert!(file.exists() && folder.exists());
     assert_eq!(fs::read_dir(&fixture.0).unwrap().count(), 2);
@@ -1611,12 +1580,14 @@ fn explicit_viewer_choices_are_validated_and_keep_the_origin_workspace() {
             choice: "image".into(),
         },
     );
-    let other = Workspaces::new(app.world_mut()).open("Other");
-    Workspaces::new(app.world_mut()).activate(other).unwrap();
+    let other = crate::test_layout(app.world_mut());
+    Workbench::new(app.world_mut())
+        .activate_layout(other)
+        .unwrap();
     app.update();
     let messages = drain::<FileTreeOpenWithRequested>(&mut app);
     assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].workspace, workspace.entity());
+
     assert_eq!(messages[0].path, file);
     assert_eq!(messages[0].choice, "image");
     queue(

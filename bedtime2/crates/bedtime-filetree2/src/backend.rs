@@ -1,8 +1,8 @@
-//! One workspace-owned filesystem worker. The world only exchanges bounded
+//! One world-owned filesystem worker. The world only exchanges bounded
 //! intentions and Arc snapshots; filesystem access, sorting and projection live here.
 #[cfg(target_os = "macos")]
 use crate::mac_watch::DirectoryWatcher as NativeWatcher;
-use bedtime_workbench2::{Cancellation, WorkStatus, WorkspaceTask, WorkspaceWork};
+use bedtime_workbench2::{Cancellation, ManagedTask, ManagedWork, WorkStatus};
 use bevy::prelude::Entity;
 #[cfg(not(target_os = "macos"))]
 use notify::{Event, EventKind, RecommendedWatcher as NativeWatcher, RecursiveMode, Watcher};
@@ -220,11 +220,11 @@ fn drain_operation_results(mailbox: &Mutex<Mailbox>) -> Vec<crate::FileTreeOpera
 
 pub(crate) struct Backend {
     mailbox: Arc<Mutex<Mailbox>>,
-    task: WorkspaceTask<()>,
+    task: ManagedTask<()>,
 }
 
 impl Backend {
-    pub(crate) fn spawn(scope: &mut WorkspaceWork) -> Result<Self, String> {
+    pub(crate) fn spawn(scope: &mut ManagedWork) -> Result<Self, String> {
         let mailbox = Arc::new(Mutex::new(Mailbox::default()));
         let worker_mailbox = mailbox.clone();
         let task = scope.spawn_task(None, "File tree filesystem", move |cancel| {
@@ -251,7 +251,7 @@ impl Backend {
                 }
             } else if mail.views.len() == MAX_VIEWS {
                 return Err(format!(
-                    "At most {MAX_VIEWS} file tree views may share a workspace"
+                    "At most {MAX_VIEWS} file tree views may share a session"
                 ));
             }
             let refresh = mail
@@ -1537,7 +1537,7 @@ mod tests {
         let tree = TempTree::new();
         fs::create_dir(tree.0.join("branch")).unwrap();
         fs::write(tree.0.join("branch/leaf"), b"leaf").unwrap();
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let panel = Entity::from_raw_u32(1).unwrap();
         backend.set_view(request(panel, &tree.0)).unwrap();
@@ -1585,7 +1585,7 @@ mod tests {
         ] {
             fs::write(path, b"").unwrap();
         }
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let first = Entity::from_raw_u32(1).unwrap();
         let second = Entity::from_raw_u32(2).unwrap();
@@ -1896,7 +1896,7 @@ mod tests {
     fn invalid_root_and_failed_directory_are_explicit_not_empty_success() {
         let tree = TempTree::new();
         let missing = tree.0.join("missing");
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let panel = Entity::from_raw_u32(1).unwrap();
         backend.set_view(request(panel, &missing)).unwrap();
@@ -1926,7 +1926,7 @@ mod tests {
     #[test]
     fn latest_value_views_are_bounded_and_stale_generations_cannot_install() {
         let tree = TempTree::new();
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let panel = Entity::from_raw_u32(1).unwrap();
         for revision in 1..=1000 {
@@ -1961,7 +1961,7 @@ mod tests {
     #[test]
     fn native_watching_eventually_observes_external_create_and_rename() {
         let tree = TempTree::new();
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let panel = Entity::from_raw_u32(1).unwrap();
         backend.set_view(request(panel, &tree.0)).unwrap();
@@ -1985,7 +1985,7 @@ mod tests {
 
     #[test]
     fn worker_resolves_relative_root_and_always_includes_root_row() {
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let panel = Entity::from_raw_u32(1).unwrap();
         backend.set_view(request(panel, Path::new("."))).unwrap();
@@ -2005,7 +2005,7 @@ mod tests {
         let tree = TempTree::new();
         let root = tree.0.join("root");
         fs::create_dir(&root).unwrap();
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let panel = Entity::from_raw_u32(1).unwrap();
         backend.set_view(request(panel, &root)).unwrap();
@@ -2033,7 +2033,7 @@ mod tests {
     #[test]
     fn operations_reserve_outcome_slots_and_survive_managed_task_cancellation() {
         let tree = TempTree::new();
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let operation = |id| crate::FileTreeOperationRequest {
             id,
@@ -2080,7 +2080,7 @@ mod tests {
         assert_eq!(
             results.len(),
             1,
-            "WorkspaceTask discards its return value on cancellation; mailbox must not"
+            "ManagedTask discards its return value on cancellation; mailbox must not"
         );
         assert_eq!(results[0].id, 100);
         assert_eq!(
@@ -2093,7 +2093,7 @@ mod tests {
     #[test]
     fn operation_archive_outlives_backend_and_workspace_runtime() {
         let tree = TempTree::new();
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let archive = backend.operation_results_handle();
         backend
@@ -2448,7 +2448,7 @@ mod tests {
             MAX_RETIRED_SNAPSHOTS
         );
 
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let worker_mail = mail.clone();
         let task = scope
             .spawn_task(None, "Test snapshot retirement", move |_| {
@@ -2477,7 +2477,7 @@ mod tests {
 
     #[test]
     fn cancellation_finishes_retirement_without_waiting_for_surviving_handles() {
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let retirement = backend.snapshot_retirement_handle();
         let snapshot = Arc::new(FileTreeSnapshot::default());
@@ -2523,7 +2523,7 @@ mod tests {
         }
         let _restore = RestorePermissions(tree.0.clone(), original);
         fs::set_permissions(&tree.0, fs::Permissions::from_mode(0)).unwrap();
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let panel = Entity::from_raw_u32(1).unwrap();
         backend.set_view(request(panel, &tree.0)).unwrap();
@@ -2558,7 +2558,7 @@ mod tests {
             Err(error) => panic!("Cannot create native filename fixture: {error}"),
         };
         fs::write(tree.0.join(".secret"), b"").unwrap();
-        let mut scope = WorkspaceWork::default();
+        let mut scope = ManagedWork::default();
         let mut backend = Backend::spawn(&mut scope).unwrap();
         let panel = Entity::from_raw_u32(1).unwrap();
         // A supplied root alias is canonicalized on the worker, while symlink

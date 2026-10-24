@@ -1,5 +1,11 @@
 # Workbench documents: implemented contract and deferred work
 
+Ownership update (2026-10-24): the implemented [world/session migration](workbench-world-session-plan.md)
+supersedes workspace entities/membership, workspace command scope and the blanket
+exclusion of reusable persistence in this record. The World owns one session;
+layouts/panels/documents and their checked save/source/close invariants remain.
+Use the current crate README for signatures and opt-in reflected persistence.
+
 This records the document/session API implemented in
 `bedtime2/crates/bedtime-workbench2/src/documents.rs` and
 `document_commands.rs`, plus its lifecycle integration in `workspaces.rs` and

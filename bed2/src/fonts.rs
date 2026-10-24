@@ -140,18 +140,7 @@ struct AppliedFont {
 /// replace the atlas; panels, canonical editor contents and PTYs retain ownership.
 pub fn apply(world: &mut World) {
     poll_catalog(world);
-    let active = world
-        .query_filtered::<Entity, With<bedtime_workbench2::ActiveWorkspace>>()
-        .iter(world)
-        .next();
-    let desired = active
-        .map(|workspace| crate::settings::effective_settings(world, workspace))
-        .unwrap_or_else(|| {
-            world
-                .resource::<crate::settings::GlobalPreferences>()
-                .0
-                .clone()
-        });
+    let desired = crate::settings::effective_settings(world);
     let cameras: Vec<_> = world
         .query_filtered::<Entity, With<UiCamera>>()
         .iter(world)

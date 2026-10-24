@@ -1,4 +1,4 @@
-//! Workspace-owned document sessions, independent of their panel viewers.
+//! World-owned canonical documents, independent of their panel viewers.
 //!
 //! The application creates/loads models and supplies source observations and save
 //! I/O. Only this module mutates canonical content, history and acknowledged source
@@ -15,14 +15,13 @@
 //!
 //! let mut app = App::new();
 //! app.add_plugins(WorkbenchCorePlugin);
-//! let workspace = Workspaces::new(app.world_mut()).open("Project");
 //! let document = open_document(
-//!     app.world_mut(), workspace.entity(), String::from("hello"),
+//!     app.world_mut(), String::from("hello"),
 //!     DocumentOptions::loaded("Notes"),
 //! )?;
 //! let panel = {
-//!     let mut workbench = Workbench::with_workspace(app.world_mut(), workspace)?;
-//!     let layout = workbench.active_layout();
+//!     let mut workbench = Workbench::new(app.world_mut());
+//!     let layout = workbench.create_layout("Code")?;
 //!     workbench.create_panel(layout, "Notes")?
 //! };
 //! bind_document_view(app.world_mut(), panel, document)?;
@@ -35,7 +34,7 @@
 //! assert!(!inspect_document(app.world(), document.id())?.dirty);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
-use crate::{InWorkspace, PanelInstance, WorkId, Workbench, Workspace, WorkspaceId, WorkspaceWork};
+use crate::{ManagedWork, PanelInstance, WorkId, Workbench};
 use bevy::prelude::*;
 use std::{
     any::{Any, TypeId, type_name},
@@ -196,7 +195,7 @@ pub enum DocumentInitialState {
 #[derive(Clone, Debug)]
 pub struct DocumentOptions {
     pub title: String,
-    /// Application identity, deduplicated only within this workspace. Reopening
+    /// Application identity, deduplicated throughout this World. Reopening
     /// an existing key returns its session and does not replace its contents.
     pub source_key: Option<String>,
     pub initial_state: DocumentInitialState,
@@ -228,10 +227,8 @@ impl Default for DocumentOptions {
 }
 
 /// Queryable metadata with privately owned, type-erased canonical session state.
-/// Moving/removing its InWorkspace relationship directly is not supported.
 #[derive(Component)]
 pub struct Document {
-    workspace: Entity,
     title: String,
     source_key: Option<String>,
     model_type: TypeId,
@@ -240,9 +237,6 @@ pub struct Document {
 }
 
 impl Document {
-    pub fn workspace(&self) -> Entity {
-        self.workspace
-    }
     pub fn title(&self) -> &str {
         &self.title
     }
@@ -290,14 +284,13 @@ pub fn unbind_document_view(
 
 /// Application declaration that a bound panel has uncommitted input. Remove it
 /// only after explicitly committing or abandoning that input. Save, undo, redo
-/// and document/workspace retirement reject drafts rather than using old content.
+/// and document/session retirement reject drafts rather than using old content.
 #[derive(Component, Default, Debug)]
 pub struct DocumentDraft;
 
 #[derive(Clone, Debug)]
 pub struct DocumentInfo {
     pub id: DocumentId,
-    pub workspace: Entity,
     pub title: String,
     pub source_key: Option<String>,
     pub model_type_name: &'static str,
@@ -325,9 +318,8 @@ pub struct DocumentInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentError {
     Unavailable(DocumentId),
-    WorkspaceUnavailable(Entity),
-    WorkspaceClosing(Entity),
-    WrongWorkspace,
+    SessionUnavailable,
+    SessionClosing,
     WrongModel {
         expected: &'static str,
         actual: &'static str,
@@ -361,11 +353,8 @@ impl fmt::Display for DocumentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unavailable(id) => write!(f, "Document {id:?} is unavailable"),
-            Self::WorkspaceUnavailable(entity) => write!(f, "Workspace {entity:?} is unavailable"),
-            Self::WorkspaceClosing(entity) => write!(f, "Workspace {entity:?} is closing"),
-            Self::WrongWorkspace => {
-                f.write_str("Document and viewer belong to different workspaces")
-            }
+            Self::SessionUnavailable => f.write_str("Document services are unavailable"),
+            Self::SessionClosing => f.write_str("Session is closing"),
             Self::WrongModel { expected, actual } => {
                 write!(f, "Expected document model {expected}, found {actual}")
             }
@@ -486,7 +475,7 @@ pub struct DocumentSaveBinding<M: DocumentModel> {
 }
 
 impl<M: DocumentModel> DocumentSaveBinding<M> {
-    /// Equal destination keys serialize saves across documents and workspaces in
+    /// Equal destination keys serialize saves across documents in
     /// this World. Applications must use globally meaningful keys (e.g. canonical
     /// paths); absent keys only serialize saves within the individual document.
     pub fn new(
@@ -545,13 +534,12 @@ pub enum DocumentExternalUpdate {
 
 pub fn open_document<M: DocumentModel>(
     world: &mut World,
-    workspace: Entity,
     model: M,
     options: DocumentOptions,
 ) -> Result<DocumentHandle<M>, DocumentError> {
-    validate_workspace(world, workspace)?;
+    validate_session(world)?;
     if let Some(key) = &options.source_key {
-        for id in document_ids(world, workspace) {
+        for id in document_ids(world) {
             if world.get::<Document>(id.0).unwrap().source_key.as_ref() == Some(key) {
                 return cast_document(world, id);
             }
@@ -559,17 +547,13 @@ pub fn open_document<M: DocumentModel>(
     }
     let state = Session::new(model, &options);
     let entity = world
-        .spawn((
-            Document {
-                workspace,
-                title: options.title,
-                source_key: options.source_key,
-                model_type: TypeId::of::<M>(),
-                model_name: type_name::<M>(),
-                state: Box::new(state),
-            },
-            InWorkspace(workspace),
-        ))
+        .spawn((Document {
+            title: options.title,
+            source_key: options.source_key,
+            model_type: TypeId::of::<M>(),
+            model_name: type_name::<M>(),
+            state: Box::new(state),
+        },))
         .id();
     Ok(DocumentHandle {
         id: DocumentId(entity),
@@ -595,15 +579,13 @@ pub fn read_document<M: DocumentModel>(
     Ok(&typed_session::<M>(world, handle.id)?.content)
 }
 
-pub fn document_ids(world: &World, workspace: Entity) -> Vec<DocumentId> {
+pub fn document_ids(world: &World) -> Vec<DocumentId> {
     let Some(mut query) = world.try_query::<(Entity, &Document)>() else {
         return Vec::new();
     };
     let mut ids: Vec<_> = query
         .iter(world)
-        .filter_map(|(entity, document)| {
-            (document.workspace == workspace).then_some(DocumentId(entity))
-        })
+        .map(|(entity, _)| DocumentId(entity))
         .collect();
     ids.sort();
     ids
@@ -615,7 +597,6 @@ pub fn inspect_document(world: &World, id: DocumentId) -> Result<DocumentInfo, D
     let has_drafts = document_has_drafts(world, id);
     Ok(DocumentInfo {
         id,
-        workspace: document.workspace,
         title: document.title.clone(),
         source_key: document.source_key.clone(),
         model_type_name: document.model_name,
@@ -762,9 +743,6 @@ pub fn bind_document_view<M: DocumentModel>(
     if world.get::<PanelInstance>(panel).is_none() {
         return Err(DocumentError::InvalidPanel(panel));
     }
-    if world.get::<InWorkspace>(panel).map(|owner| owner.0) != Some(document.workspace) {
-        return Err(DocumentError::WrongWorkspace);
-    }
     if let Some(view) = world.get::<DocumentView>(panel) {
         if view.model_type != TypeId::of::<M>() {
             return Err(DocumentError::WrongModel {
@@ -841,7 +819,7 @@ pub fn start_document_save(world: &mut World, id: DocumentId) -> Result<WorkId, 
     validate_mutation(world, id)?;
     reject_drafts(world, id)?;
     let document = get_document(world, id)?;
-    let workspace = document.workspace;
+
     let (destination, job) = document.state.prepare_save(id)?;
     world.init_resource::<SaveDestinations>();
     if let Some(key) = &destination {
@@ -850,8 +828,8 @@ pub fn start_document_save(world: &mut World, id: DocumentId) -> Result<WorkId, 
         }
     }
     let task = world
-        .get_mut::<WorkspaceWork>(workspace)
-        .ok_or(DocumentError::WorkspaceUnavailable(workspace))?
+        .get_resource_mut::<ManagedWork>()
+        .ok_or(DocumentError::SessionUnavailable)?
         .spawn_task(Some(id.0), "Save document", move |_| job())
         .map_err(DocumentError::Work)?;
     let work = task.id;
@@ -1041,9 +1019,9 @@ pub fn check_document_close(
     Ok(())
 }
 
-pub fn check_workspace_documents(world: &World, workspace: Entity) -> Result<(), DocumentError> {
-    validate_workspace(world, workspace)?;
-    for id in document_ids(world, workspace) {
+pub fn check_session_documents(world: &World) -> Result<(), DocumentError> {
+    validate_session(world)?;
+    for id in document_ids(world) {
         check_document_close(world, id, false)?;
     }
     Ok(())
@@ -1062,14 +1040,13 @@ pub fn discard_document(world: &mut World, id: DocumentId) -> Result<(), Documen
 fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(), DocumentError> {
     validate_mutation(world, id)?;
     check_document_close(world, id, discard)?;
-    let workspace = get_document(world, id)?.workspace;
     #[cfg(feature = "ui")]
     if world
-        .get::<crate::WorkspaceUi>(workspace)
+        .get_resource::<crate::WorkbenchUi>()
         .is_some_and(|ui| ui.drawing)
     {
         return Err(DocumentError::InvalidGraph(
-            "Cannot retire documents during workspace drawing".into(),
+            "Cannot retire documents during workbench drawing".into(),
         ));
     }
     crate::reconcile_workbench(world).map_err(DocumentError::InvalidGraph)?;
@@ -1079,8 +1056,7 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
         .iter(world)
         .filter_map(|(entity, view)| (view.document == id).then_some(entity))
         .collect();
-    let mut workbench = Workbench::with_workspace(world, WorkspaceId(workspace))
-        .map_err(DocumentError::InvalidGraph)?;
+    let mut workbench = Workbench::new(world);
     // Validate every viewer before retiring any of them.
     for &panel in &panels {
         workbench
@@ -1108,17 +1084,9 @@ pub fn reconcile_documents(world: &mut World) -> Result<(), String> {
 pub fn reconcile_document_views(world: &mut World) -> Result<(), String> {
     let mut sources = HashMap::new();
     for (entity, document) in world.query::<(Entity, &Document)>().iter(world) {
-        if world.get::<Workspace>(document.workspace).is_none()
-            || world.get::<InWorkspace>(entity).map(|owner| owner.0) != Some(document.workspace)
-        {
-            return Err("Document has invalid workspace ownership".into());
-        }
         if let Some(key) = &document.source_key {
-            if sources
-                .insert((document.workspace, key.clone()), entity)
-                .is_some()
-            {
-                return Err("Duplicate document source key within a workspace".into());
+            if sources.insert(key.clone(), entity).is_some() {
+                return Err("Duplicate document source key in the World".into());
             }
         }
     }
@@ -1136,9 +1104,6 @@ pub fn reconcile_document_views(world: &mut World) -> Result<(), String> {
             return Err("DocumentView requires PanelInstance".into());
         }
         let document = get_document(world, view.document).map_err(|error| error.to_string())?;
-        if world.get::<InWorkspace>(panel).map(|owner| owner.0) != Some(document.workspace) {
-            return Err(DocumentError::WrongWorkspace.to_string());
-        }
         if document.model_type != view.model_type {
             return Err("DocumentView model does not match its document".into());
         }
@@ -1160,7 +1125,7 @@ pub(crate) fn install(app: &mut App) {
         .add_message::<DocumentSaveFinished>()
         .add_systems(
             PreUpdate,
-            poll_saves_system.before(crate::WorkspaceSystems::Prepare),
+            poll_saves_system.before(crate::SessionSystems::Prepare),
         );
 }
 
@@ -1202,25 +1167,19 @@ fn session_mut<M: DocumentModel>(
         })
 }
 
-fn validate_workspace(world: &World, workspace: Entity) -> Result<(), DocumentError> {
-    if world.get::<Workspace>(workspace).is_none() {
-        return Err(DocumentError::WorkspaceUnavailable(workspace));
-    }
-    if world
-        .get::<crate::layout::WorkspaceRuntime>(workspace)
-        .is_none_or(|runtime| runtime.closing)
-        || world
-            .get::<WorkspaceWork>(workspace)
-            .is_none_or(WorkspaceWork::is_closing)
-    {
-        return Err(DocumentError::WorkspaceClosing(workspace));
+fn validate_session(world: &World) -> Result<(), DocumentError> {
+    let work = world
+        .get_resource::<ManagedWork>()
+        .ok_or(DocumentError::SessionUnavailable)?;
+    if work.is_closing() {
+        return Err(DocumentError::SessionClosing);
     }
     Ok(())
 }
 
 fn validate_mutation(world: &World, id: DocumentId) -> Result<(), DocumentError> {
-    let document = get_document(world, id)?;
-    validate_workspace(world, document.workspace)
+    get_document(world, id)?;
+    validate_session(world)
 }
 
 fn validate_viewer(world: &World, viewer: Entity, id: DocumentId) -> Result<(), DocumentError> {
@@ -1229,11 +1188,6 @@ fn validate_viewer(world: &World, viewer: Entity, id: DocumentId) -> Result<(), 
         .ok_or(DocumentError::InvalidPanel(viewer))?;
     if view.document != id || world.get::<PanelInstance>(viewer).is_none() {
         return Err(DocumentError::InvalidPanel(viewer));
-    }
-    if world.get::<InWorkspace>(viewer).map(|owner| owner.0)
-        != Some(get_document(world, id)?.workspace)
-    {
-        return Err(DocumentError::WrongWorkspace);
     }
     Ok(())
 }
@@ -1276,7 +1230,7 @@ trait ErasedSession: Send + Sync + 'static {
     fn undo(&mut self, redo: bool) -> Result<u64, DocumentError>;
     fn unbind_save(&mut self) -> Result<(), DocumentError>;
     fn prepare_save(&self, id: DocumentId) -> Result<(Option<String>, SaveJob), DocumentError>;
-    fn save_started(&mut self, task: crate::WorkspaceTask<SaveResult>);
+    fn save_started(&mut self, task: crate::ManagedTask<SaveResult>);
     fn poll_save(&mut self, id: DocumentId) -> Option<(Option<String>, DocumentSaveFinished)>;
 }
 
@@ -1324,7 +1278,7 @@ struct ActiveSave<M: DocumentModel> {
     source_generation: u64,
     binding_generation: u64,
     destination: Option<String>,
-    task: crate::WorkspaceTask<SaveResult>,
+    task: crate::ManagedTask<SaveResult>,
 }
 
 impl<M: DocumentModel> Session<M> {
@@ -1560,7 +1514,7 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
             }),
         ))
     }
-    fn save_started(&mut self, task: crate::WorkspaceTask<SaveResult>) {
+    fn save_started(&mut self, task: crate::ManagedTask<SaveResult>) {
         self.group = None;
         self.last_save_error = None;
         self.saving = Some(ActiveSave {
