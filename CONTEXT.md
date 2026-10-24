@@ -1,6 +1,6 @@
 # Project context
 
-Last reviewed: 2026-10-22. This is the entry point for current project knowledge;
+Last reviewed: 2026-10-23. This is the entry point for current project knowledge;
 keep detailed contracts and decision history in the linked documents.
 
 ## Direction and code map
@@ -21,6 +21,7 @@ an explicit package when working on v2.
 | v2 workspaces, layouts, concrete panels, commands and documents | [Workbench2](bedtime2/crates/bedtime-workbench2/README.md) |
 | v2 lazy local filetree, watching, operations and visibility | [Filetree2](bedtime2/crates/bedtime-filetree2/README.md) |
 | v2 local terminal plugin and lifecycle | [Terminal2](bedtime2/crates/bedtime-terminal2/README.md) |
+| v2 Git panel, file-tree presentation and workspace preferences | [Git contract](bed2/README.md#git-panel), [coordinator](bed2/src/git.rs), [presentation](bed2/src/git/presentation.rs) |
 | Engineering guidance by task | [Engineering index](ENGINEERING.md) |
 
 ## Current implementation and decision records
@@ -68,14 +69,47 @@ Distinguish those plans and historical notes from implemented capabilities.
 
 ## Work status
 
-Git for v2 is an investigation, with no runtime installed. The
-[Git and comparison viewer proposal](MIGRATION/git2-investigation.md) covers
-reuse of the GUI-free `bedtime-git` backend, UI2 panel/diff work, canonical
-save/reconciliation gates and staged image/glTF extensions. On 2026-10-22 its
-19 existing backend regression tests passed in an isolated Cargo harness;
-v2 Git implementation remains pending. Inline diff presentation belongs inside
-Editor2; the proposed optional `diff` feature accepts text comparisons and
-returns host-defined hunk actions, keeping Git operations in the integration.
+The [model viewer](bedtime2/crates/bedtime-model2/README.md) ports bed1's
+GLTF/GLB/STL preparation, inspection and appearance controls to main-world Bevy
+scenes and UI2. bEd2 owns associations, managed loading, canonical `.gltf` text
+refresh, local sidecar observation and per-tab camera/appearance persistence.
+Relative sidecars may reach parent directories; remote/absolute URIs are rejected.
+Animation playback remains deferred. See the crate/application READMEs for the
+asset-source registration order and verification commands. Current implementation
+verification is recorded there after running the native and feature checks.
+
+The optional [mascots crate](bedtime2/crates/bedtime-mascots2/README.md) ports Bed
+and Ducky to main-world Bevy scenes with UI2 image viewports, per-instance state,
+linked cleanup, lazy click audio and an optional Workbench panel adapter. bEd2
+owns Bed's View creation, session/layout-default restoration and the origin-scoped,
+undocumented `+ducky` easter egg; Ducky has no menu creation entry.
+Hidden views suspend cameras and animation. Welcome/idle scenes
+remain unported. See the crate README for embedding, render-layer ownership and
+verification commands.
+On 2026-10-23, 142 application tests, five mascot tests with Workbench, four
+standalone mascot tests, 30 UI2 tests and 14 packaging tests passed; the standalone
+example also checked without Workbench. The nine-capture native macOS mascot
+smoke passed interactions, alpha, scene isolation, shell routing, lifecycle and
+restoration after the cleanup fix. Audible output and native Linux remain unverified.
+
+bEd2's [Git panel](bed2/README.md#git-panel) implements bed1's layout/actions in
+egui using `bedtime-git`, workspace-owned managed operations, checked document
+saves and source reconciliation. Git is available from View/titlebar and restores
+placement/shared commit drafts. Tree with tracked/untracked grouping is the
+default; the branch-adjacent menu selects List/Tree and all three grouping modes,
+and explicit saved choices persist. Files and Git share UI2's tree row painter,
+geometry and motion primitives. Folder staging and partial-file copies retain
+their group scope, and row preparation uses cached status on managed workers.
+The centered commit button's adjacent menu selects Commit, Amend or Signoff.
+Zed informed ordered work, coalesced refreshes and virtualized rows. On 2026-10-23,
+137 application tests, 100 Files tests, 30 UI2 tests, 20 backend regressions and
+eleven nonblank native Git captures passed, including real amend/signoff, all
+view/group combinations, folder actions, partial staging, discard and restoration.
+The Files native smoke also passed eleven captures, including a 10,000-entry tree.
+Diff views remain pending:
+[the comparison proposal](MIGRATION/git2-investigation.md) puts inline text diff
+presentation inside Editor2 behind an optional `diff` feature, with host-defined
+actions and later image/glTF comparisons. No diff API is installed yet.
 
 The optional [LSP2 plugin](bedtime2/crates/bedtime-lsp2/README.md) implements local
 stdio synchronization, diagnostics/progress and definition, hover and
@@ -159,7 +193,13 @@ for workspace restore. Fresh startup creates one terminal layout. General has a
 global, default-off **Open last workspace on open** option; it restores the last
 active folder and its session unless an explicit folder argument takes precedence. Titlebar Terminal/Files/Structure/Settings buttons open or
 focus on click and create via existing panel-factory drop handling on drag. The
-standalone Theme editor is retired. Save As, New/Untitled, crash recovery and
+standalone Theme editor is retired. Single-file tree drags also use those
+area/tab/split targets to create pinned viewers sharing canonical documents;
+eligible tree folders retain move/copy priority. The three-capture native
+`smoke_filetree_drag.py` passed on 2026-10-23, including shared document identity,
+edge splitting, Escape cancellation and folder transfer priority. Application tests,
+all 100 Files tests, all 199 Workbench tests and the Workbench build without
+default features also passed. Save As, New/Untitled, crash recovery and
 broader workspace-management UI remain pending. Optional v2 automation is in
 `bedtime2/crates/bedtime-automation2`, with clients in `bedtime2/tools`.
 

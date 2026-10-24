@@ -361,7 +361,7 @@ impl GitController {
     }
 
     fn queue_saved_mutation(&mut self, operation: Operation, saved: Vec<SavedDocument>) {
-        let commit = if let Operation::Commit { message } = &operation {
+        let commit = if let Operation::Commit { message, .. } = &operation {
             Some(message.clone())
         } else {
             None
@@ -1883,6 +1883,7 @@ mod tests {
         let mut session = DocumentSession::default();
         controller.mutate(
             Operation::Commit {
+                mode: Default::default(),
                 message: controller.draft.clone(),
             },
             &session,
@@ -1894,6 +1895,7 @@ mod tests {
         fs::remove_file(hook).unwrap();
         controller.mutate(
             Operation::Commit {
+                mode: Default::default(),
                 message: controller.draft.clone(),
             },
             &session,

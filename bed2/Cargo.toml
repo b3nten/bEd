@@ -10,6 +10,11 @@ description = "Application scaffold for the second Bedtime foundation"
 automation = ["dep:bedtime-automation2"]
 
 [dependencies]
+bedtime-model2.workspace = true
+bedtime-image2.workspace = true
+bedtime-hex2.workspace = true
+bedtime-mascots2 = { workspace = true, features = ["workbench"] }
+bedtime-git.workspace = true
 pulldown-cmark.workspace = true
 bed-structure2.workspace = true
 bedtime-treesitter2.workspace = true
@@ -31,4 +36,8 @@ ron = "0.12.2"
 blake3 = "1"
 
 [dev-dependencies]
+base64.workspace = true
 wgpu.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true

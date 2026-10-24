@@ -86,6 +86,7 @@ class DesktopPackageTests(unittest.TestCase):
             "bedtime2/crates/bedtime-grammars2/grammars/rust/LICENSE": "Embedded Rust grammar notice\n",
             "bedtime2/crates/bedtime-grammars2/sources.json": "[]\n",
             "bedtime2/crates/bedtime-clipboard2/LICENSE-MIT": "Clipboard notice\n",
+            "bedtime2/crates/bedtime-mascots2/resources/licence.txt": "Bed Low Poly by mezuna, CC BY 4.0\n",
             "target/release/bedtime-remote-agent": "#!/bin/sh\nexit 0\n",
         }
         files["resources/fonts/PaperMono-OFL.txt"] = "Paper license\n"
@@ -200,6 +201,7 @@ else:
                 self.assertIn(b"Bundled Nordwand Mono provenance", notice)
                 self.assertIn(b"Embedded Rust grammar notice", notice)
                 self.assertIn(b"Clipboard notice", notice)
+                self.assertIn(b"Bed Low Poly by mezuna, CC BY 4.0", notice)
 
     def test_bed2_install_replaces_only_bed2_and_preserves_bed1(self):
         install = self.root / "test Applications"

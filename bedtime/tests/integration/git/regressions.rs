@@ -1,6 +1,6 @@
 use bedtime_git::{
-    ConflictChoice, Diff, DiffSide, ErrorKind, Job, Operation, Output, RepositoryOperation, Status,
-    execute,
+    CommitMode, ConflictChoice, Diff, DiffSide, ErrorKind, Job, Operation, Output,
+    RepositoryOperation, Status, execute,
 };
 use std::{
     fs,
@@ -83,6 +83,7 @@ impl Repo {
         self.write("a.txt", b"one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n");
         self.run(Operation::Stage { paths: vec![] });
         self.run(Operation::Commit {
+            mode: Default::default(),
             message: "Initial commit".into(),
         });
     }
@@ -92,6 +93,62 @@ impl Drop for Repo {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn signoff_adds_the_git_identity_and_amend_reuses_history_without_staging_working_changes() {
+    let repo = Repo::new();
+    repo.initial();
+    repo.write("a.txt", b"staged version\n");
+    repo.run(Operation::Stage {
+        paths: vec!["a.txt".into()],
+    });
+    repo.run(Operation::Commit {
+        message: "Signed change".into(),
+        mode: CommitMode::Signoff,
+    });
+    let body = repo.git(&["log", "-1", "--format=%B"]);
+    assert!(
+        String::from_utf8(body.stdout)
+            .unwrap()
+            .contains("Signed-off-by: Bed Test <bed@example.invalid>")
+    );
+    let before = repo.git(&["rev-parse", "HEAD"]).stdout;
+    let parent = repo.git(&["rev-parse", "HEAD^"]).stdout;
+    repo.write("a.txt", b"unstaged work stays local\n");
+    repo.run(Operation::Commit {
+        message: "Amended message".into(),
+        mode: CommitMode::Amend,
+    });
+    assert_ne!(repo.git(&["rev-parse", "HEAD"]).stdout, before);
+    assert_eq!(repo.git(&["rev-parse", "HEAD^"]).stdout, parent);
+    assert_eq!(repo.git(&["rev-list", "--count", "HEAD"]).stdout, b"2\n");
+    assert_eq!(
+        repo.git(&["show", "HEAD:a.txt"]).stdout,
+        b"staged version\n"
+    );
+    assert_eq!(
+        fs::read(repo.0.join("a.txt")).unwrap(),
+        b"unstaged work stays local\n"
+    );
+    assert_eq!(repo.status().entries[0].worktree_status, 'M');
+    repo.write("new.txt", b"include staged addition\n");
+    repo.run(Operation::Stage {
+        paths: vec!["new.txt".into()],
+    });
+    repo.run(Operation::Commit {
+        message: "Amended tree".into(),
+        mode: CommitMode::Amend,
+    });
+    assert_eq!(repo.git(&["rev-list", "--count", "HEAD"]).stdout, b"2\n");
+    assert_eq!(
+        repo.git(&["show", "HEAD:new.txt"]).stdout,
+        b"include staged addition\n"
+    );
+    assert_eq!(
+        repo.git(&["show", "HEAD:a.txt"]).stdout,
+        b"staged version\n"
+    );
 }
 
 #[test]
@@ -119,6 +176,7 @@ fn first_commit_and_unborn_unstage() {
     assert!(diff.old_bytes.is_empty());
     assert_eq!(diff.new_bytes, b"new\n");
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "Create first commit\n\nBody retained".into(),
     });
     assert!(repo.status().head.is_some());
@@ -206,6 +264,7 @@ fn literal_paths_renames_and_untracked_discard() {
         paths: vec![name.into()],
     });
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "Literal file".into(),
     });
     repo.git(&["mv", "--", name, "renamed.txt"]);
@@ -278,6 +337,7 @@ fn stale_discard_and_workspace_escape_leave_files_unchanged() {
         execute(
             &repo.0.join("subdir"),
             &Operation::Commit {
+                mode: Default::default(),
                 message: "Hidden scope".into()
             }
         )
@@ -293,6 +353,7 @@ fn binary_and_symlink_diffs_use_whole_file_actions() {
     repo.write("bin", b"a\0b");
     repo.run(Operation::Stage { paths: vec![] });
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "Binary".into(),
     });
     repo.write("bin", b"a\0c");
@@ -353,6 +414,7 @@ fn merge_conflicts_require_explicit_marker_free_resolution() {
         execute(
             &repo.0,
             &Operation::Commit {
+                mode: Default::default(),
                 message: "Premature".into()
             }
         )
@@ -368,6 +430,7 @@ fn merge_conflicts_require_explicit_marker_free_resolution() {
         paths: vec!["a.txt".into()],
     });
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "Resolve merge".into(),
     });
     assert_eq!(repo.status().operation, RepositoryOperation::None);
@@ -448,6 +511,7 @@ fn canceled_hook_job_finishes_and_releases_repository_lock() {
     let mut job = Job::start(
         repo.0.clone(),
         Operation::Commit {
+            mode: Default::default(),
             message: "Canceled".into(),
         },
     );
@@ -467,6 +531,7 @@ fn canceled_hook_job_finishes_and_releases_repository_lock() {
     assert_eq!(result.unwrap_err().kind, ErrorKind::Canceled);
     fs::remove_file(hook).unwrap();
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "After cancellation".into(),
     });
     assert!(repo.status().entries.is_empty());
@@ -513,6 +578,7 @@ fn configured_fetch_pull_push_work_against_a_local_remote() {
     repo.write("a.txt", b"published\n");
     repo.run(Operation::Stage { paths: vec![] });
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "Publish".into(),
     });
     repo.run(Operation::Push);
@@ -571,6 +637,7 @@ fn linked_worktrees_share_repository_lock_and_remain_writable() {
     execute(
         &worktree,
         &Operation::Commit {
+            mode: Default::default(),
             message: "Linked worktree".into(),
         },
     )
@@ -595,6 +662,7 @@ fn cancellation_remains_effective_after_git_exits_with_a_signal_ignoring_hook() 
     let mut job = Job::start(
         repo.0.clone(),
         Operation::Commit {
+            mode: Default::default(),
             message: "Background hook".into(),
         },
     );
@@ -735,6 +803,7 @@ fn range_staging_respects_clean_crlf_and_discard_preserves_worktree_crlf() {
     repo.write("a.txt", b"one\r\ntwo\r\nthree\r\nfour\r\n");
     repo.run(Operation::Stage { paths: vec![] });
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "CRLF".into(),
     });
     repo.write("a.txt", b"ONE\r\ntwo\r\nTHREE\r\nfour\r\n");
@@ -773,6 +842,7 @@ fn deleted_symlinks_and_gitlink_directories_use_nontext_summary() {
         paths: vec!["link".into()],
     });
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "Link".into(),
     });
     repo.git(&["rm", "link"]);
@@ -804,6 +874,7 @@ fn literal_bom_range_deletion_ignores_diff_prefix_configuration() {
         paths: vec![path.into()],
     });
     repo.run(Operation::Commit {
+        mode: Default::default(),
         message: "BOM literal".into(),
     });
     repo.write(path, b"\xef\xbb\xbfprefix\none\ntwo\nfour\n");

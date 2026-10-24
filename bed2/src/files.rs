@@ -12,7 +12,7 @@ use bedtime_filetree2::FileTreePreferences;
 use bedtime_filetree2::FileTreeSettings;
 use bedtime_filetree2::{
     FileTreeActivation, FileTreeChange, FileTreeOpenRequested, FileTreeOperationFinished,
-    FileTreePanel, FileTreePlugin, FileTreeRoot,
+    FileTreePanel, FileTreePanelDrag, FileTreePlugin, FileTreeRoot,
 };
 #[cfg(test)]
 use bedtime_filetree2::{FileTreePreferencesChanged, FileTreeVisibility};
@@ -47,6 +47,10 @@ pub enum FilesSystems {
 impl Plugin for FilesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((FileTreePlugin, crate::file_editor::FileEditorPlugin))
+            .insert_resource(FileTreePanelDrag(crate::opening::file_panel_factory))
+            .insert_resource(bedtime_filetree2::FileTreeOpenWith(
+                crate::opening::tree_viewers,
+            ))
             .init_resource::<StartupRoot>()
             .init_resource::<FolderOpens>()
             .init_resource::<FileEvents>()
@@ -69,7 +73,8 @@ impl Plugin for FilesPlugin {
         #[cfg(feature = "automation")]
         {
             use bedtime_automation2::AutomationAppExt;
-            app.register_automation_command("app.inspect_filetree", inspect)
+            app.register_automation_command("app.open_file", crate::opening::automation_open)
+                .register_automation_command("app.inspect_filetree", inspect)
                 .register_automation_command("app.open_folder", |world, arguments| {
                     let path = arguments
                         .get("path")
@@ -196,6 +201,7 @@ fn lexical_path(path: &Path) -> PathBuf {
 #[derive(Resource, Default)]
 struct FileEvents {
     opens: MessageCursor<FileTreeOpenRequested>,
+    open_with: MessageCursor<bedtime_filetree2::FileTreeOpenWithRequested>,
     operations: MessageCursor<FileTreeOperationFinished>,
     activations: BTreeMap<Entity, ActivationCounts>,
     errors: BTreeMap<Entity, String>,
@@ -241,6 +247,47 @@ fn update_files(world: &mut World) {
                 }
             }
         }
+        let explicit: Vec<_> = events
+            .open_with
+            .read(world.resource::<Messages<bedtime_filetree2::FileTreeOpenWithRequested>>())
+            .cloned()
+            .collect();
+        for request in explicit {
+            let result = (|| {
+                let viewer =
+                    crate::opening::ViewerId::from_id(&request.choice).ok_or("Unknown viewer")?;
+                let tree = world
+                    .get::<FileTreePanel>(request.panel)
+                    .ok_or("Source Files panel closed")?;
+                if world.get::<InWorkspace>(request.panel).map(|owner| owner.0)
+                    != Some(request.workspace)
+                    || !request.path.starts_with(&tree.snapshot().root)
+                {
+                    return Err("Opening source changed".into());
+                }
+                let layout =
+                    Workbench::for_entity(world, request.panel)?.panel_layout(request.panel)?;
+                crate::opening::open_file_with(
+                    world,
+                    layout,
+                    request.path,
+                    crate::opening::FileOpenMode::Focus,
+                    Some(viewer),
+                    None,
+                )?;
+                Ok::<_, String>(())
+            })();
+            if let Err(error) = result {
+                request_error_dialog(
+                    world,
+                    ErrorDialog {
+                        title: "Open With".into(),
+                        message: error,
+                        details: None,
+                    },
+                );
+            }
+        }
         let operations: Vec<_> = events
             .operations
             .read(world.resource::<Messages<FileTreeOperationFinished>>())
@@ -269,6 +316,9 @@ fn update_files(world: &mut World) {
     });
     observe_preview_sources(world);
     poll_previews(world);
+    crate::images::update(world);
+    crate::models::update(world);
+    crate::hex::update(world);
     report_file_errors(world);
 }
 
@@ -452,14 +502,22 @@ pub fn open_files(world: &mut World, layout: Entity) {
 
 #[derive(Clone, Debug)]
 enum PreviewContent {
+    Model(Arc<crate::models::LoadedModel>),
+    Fallback(Box<PreviewContent>, Arc<str>),
+    Hex(Arc<crate::hex::Initial>),
     Text(TextBuffer),
     Metadata(Arc<str>),
+    Image(
+        Arc<bedtime_image2::ImageContent>,
+        bedtime_image2::DecodedImage,
+    ),
 }
 
 #[derive(Debug)]
 enum PreviewReadError {
     Missing,
     Failed(String),
+    Unsupported(String),
 }
 
 fn source_is_missing(error: &std::io::Error) -> bool {
@@ -478,12 +536,18 @@ fn preview_read_error(path: &Path, error: std::io::Error) -> PreviewReadError {
     }
 }
 
+type DiskStamp = (u64, Option<std::time::SystemTime>);
+struct PreviewRead {
+    content: Result<PreviewContent, PreviewReadError>,
+    disk_stamp: Option<DiskStamp>,
+}
+
 struct PreviewLoad {
     generation: u64,
     path: PathBuf,
     workspace: Entity,
     document_stamp: Option<(DocumentId, u64)>,
-    handle: WorkspaceTask<Result<PreviewContent, PreviewReadError>>,
+    handle: WorkspaceTask<PreviewRead>,
 }
 
 /// A replaceable file tab. Text binds to a shared document; unsupported files
@@ -491,6 +555,10 @@ struct PreviewLoad {
 #[derive(Component, Default)]
 #[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct FilePreviewPanel {
+    pub(crate) viewer: crate::opening::ViewerId,
+    pub(crate) explicit: bool,
+    notice: Option<String>,
+    disk_stamp: Option<DiskStamp>,
     path: Option<PathBuf>,
     generation: u64,
     load: Option<PreviewLoad>,
@@ -514,7 +582,12 @@ impl Panel for FilePreviewPanel {
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         let surface = *world.get::<WorkbenchSurface>(context.surface).unwrap();
         let state = world.get::<Self>(panel).unwrap();
+        let image = state.viewer == crate::opening::ViewerId::Image;
+        let model = state.viewer == crate::opening::ViewerId::Model;
+        let hex = state.viewer == crate::opening::ViewerId::Hex;
+        let notice = state.notice.clone();
         let path = state.path.clone();
+        let error = state.error.clone();
         let loading = state.load.is_some();
         let metadata = match &state.content {
             Some(PreviewContent::Metadata(summary)) => Some(summary.clone()),
@@ -524,9 +597,19 @@ impl Panel for FilePreviewPanel {
         let info = document.and_then(|id| inspect_document(world, id).ok());
         let mut reload = false;
         let mut resolution = None;
-        context.frame(ui).padded(surface.padding, |frame| {
+        context.frame(ui).padded(if model { [0.0; 2] } else { surface.padding }, |frame| {
                     let ui = frame.ui;
-                    if document.is_none() {
+                    let mut model_notices;
+                    let ui = if model {
+                        let mut bounds = ui.available_rect_before_wrap().shrink(8.0);
+                        bounds.min.y += 32.0;
+                        crate::models::draw(ui, world, context, panel);
+                        model_notices = ui.new_child(egui::UiBuilder::new().id_salt("model-notices").max_rect(bounds).layout(egui::Layout::top_down(egui::Align::LEFT)));
+                        &mut model_notices
+                    } else { ui };
+                    if let Some(error) = &error { ui.colored_label(ui.visuals().error_fg_color, error); }
+                    if let Some(notice) = &notice { ui.weak(notice); }
+                    if document.is_none() && !image && !hex && !model {
                         if let Some(path) = &path {
                             ui.label(path.to_string_lossy());
                         } else {
@@ -549,7 +632,12 @@ impl Panel for FilePreviewPanel {
                             });
                         }
                     }
-                    if document.is_some() {
+                    if model { return; }
+                    if hex {
+                        crate::hex::draw(ui, world, context, panel);
+                    } else if image {
+                        crate::images::draw(ui, world, context, panel);
+                    } else if document.is_some() {
                         let language_tools = bedtime_lsp2::workbench::language_activity(world,panel).is_some();
                         if let Some(mut editor) = world.get_mut::<bedtime_editor2::workbench::WorkbenchEditor>(panel) { editor.view.language_tools = language_tools; }
                         match bedtime_editor2::workbench::draw_editor(ui, world, context, panel) {
@@ -558,6 +646,7 @@ impl Panel for FilePreviewPanel {
                                 output.response.context_menu(|ui| {
                                     crate::menus::editor_context_menu(ui, world, panel);
                                     crate::lsp::context_menu(ui, world, panel);
+                                    crate::opening::viewer_menu(ui, world, panel);
                                 });
                                 let mut state = world.get_mut::<Self>(panel).unwrap();
                                 state.editor_rect = Some(output.text_rect);
@@ -576,7 +665,11 @@ impl Panel for FilePreviewPanel {
                             }
                         }
                     } else if let Some(summary) = &metadata {
-                        egui::ScrollArea::vertical().show(ui, |ui| { ui.monospace(summary.as_ref()); });
+                        let response = egui::ScrollArea::vertical().show(ui, |ui| { ui.monospace(summary.as_ref()) }).inner;
+                        response.context_menu(|ui| crate::opening::viewer_menu(ui, world, panel));
+                    } else {
+                        let (_, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
+                        response.context_menu(|ui| crate::opening::viewer_menu(ui, world, panel));
                     }
         });
         if document.is_some_and(|id| {
@@ -698,6 +791,47 @@ pub(crate) fn select_structure_source(world: &mut World, panel: Entity) {
         .insert(bed_structure2::StructureSource { source });
 }
 
+/// Viewer changes are admitted only on replaceable tabs, before a new source load.
+pub(crate) fn set_viewer(
+    world: &mut World,
+    panel: Entity,
+    viewer: crate::opening::ViewerId,
+) -> Result<(), String> {
+    if world
+        .get::<FilePreviewPanel>(panel)
+        .ok_or("Missing file viewer")?
+        .viewer
+        != viewer
+    {
+        if !crate::file_editor::can_replace(world, panel) {
+            return Err("This viewer has unsaved work".into());
+        }
+        crate::file_editor::detach(world, panel)?;
+    }
+    world.get_mut::<FilePreviewPanel>(panel).unwrap().viewer = viewer;
+    world.get_mut::<PanelInstance>(panel).unwrap().key = match viewer {
+        crate::opening::ViewerId::Code => "bed.code",
+        crate::opening::ViewerId::Image => "bed.image",
+        crate::opening::ViewerId::Hex => "bed.hex",
+        crate::opening::ViewerId::Model => "bed.model",
+    }
+    .into();
+    if viewer == crate::opening::ViewerId::Image {
+        world
+            .entity_mut(panel)
+            .insert(crate::images::ImagePreview::default());
+    } else {
+        world
+            .entity_mut(panel)
+            .remove::<crate::images::ImagePreview>();
+    }
+    if viewer == crate::opening::ViewerId::Model {
+        if world.get::<crate::models::ModelPreview>(panel).is_none() { world.entity_mut(panel).insert((crate::models::ModelPreview::default(), bedtime_model2::ModelScene::default())); }
+    } else { world.entity_mut(panel).remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>(); }
+    if viewer != crate::opening::ViewerId::Hex { world.entity_mut(panel).remove::<crate::hex::HexPreview>(); }
+    Ok(())
+}
+
 /// A session descriptor, not canonical content or an ECS identity.
 pub fn panel_path(world: &World, panel: Entity) -> Option<PathBuf> {
     world
@@ -723,6 +857,11 @@ pub(crate) fn file_open_result(
     if viewer.load.is_some() {
         return None;
     }
+    if viewer.viewer == crate::opening::ViewerId::Model && viewer.error.is_none() && !viewer.missing { return crate::models::open_result(world, panel); }
+    if viewer.viewer == crate::opening::ViewerId::Image && viewer.error.is_none() && !viewer.missing
+    {
+        return crate::images::open_result(world, panel);
+    }
     Some(if let Some(error) = &viewer.error {
         Err(error.clone())
     } else if viewer.missing {
@@ -746,6 +885,15 @@ pub(crate) fn load_preview(
         .get::<InWorkspace>(panel)
         .ok_or("Preview has no workspace")?
         .0;
+    let viewer = world
+        .get::<FilePreviewPanel>(panel)
+        .ok_or("Missing file viewer")?
+        .viewer;
+    let automatic = !world.get::<FilePreviewPanel>(panel).unwrap().explicit;
+    let image_source = viewer == crate::opening::ViewerId::Image
+        && !path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("svg"));
     let same_source = crate::file_editor::same_source(world, panel, &path);
     if world.get::<DocumentDraft>(panel).is_some() {
         return Err("Finish text composition before reloading or replacing this editor.".into());
@@ -757,6 +905,17 @@ pub(crate) fn load_preview(
     let snapshots = crate::file_editor::load_snapshots(world, panel, &path);
     if !same_source {
         crate::file_editor::detach(world, panel)?;
+    }
+    if !retain { world.entity_mut(panel).remove::<crate::hex::HexPreview>(); }
+    if !retain && viewer == crate::opening::ViewerId::Model {
+        // Removing first runs linked scene cleanup; component replacement is not removal.
+        world.entity_mut(panel).remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>();
+        world.entity_mut(panel).insert((crate::models::ModelPreview::default(), bedtime_model2::ModelScene::default()));
+    }
+    if !retain && viewer == crate::opening::ViewerId::Image {
+        world
+            .entity_mut(panel)
+            .insert(crate::images::ImagePreview::default());
     }
     let generation = {
         let mut state = world
@@ -771,9 +930,11 @@ pub(crate) fn load_preview(
             .expect("Preview generation exhausted");
         state.path = Some(path.clone());
         state.error = None;
+        state.notice = None;
         state.report_error = false;
         state.missing = false;
         if !retain {
+            state.disk_stamp = None;
             state.content = None;
         }
         state.generation
@@ -787,15 +948,46 @@ pub(crate) fn load_preview(
     let task = if let Some(mut work) = world.get_mut::<WorkspaceWork>(workspace) {
         work.spawn_task(Some(panel), "Read file preview", move |cancel| {
             if cancel.is_cancelled() {
-                return Err(PreviewReadError::Failed("Preview cancelled".into()));
+                return PreviewRead {
+                    content: Err(PreviewReadError::Failed("Preview cancelled".into())),
+                    disk_stamp: None,
+                };
             }
-            let mut content = read_preview(&source)?;
-            if let PreviewContent::Text(text) = &mut content {
+            let disk_stamp = fs::metadata(&source)
+                .ok()
+                .map(|m| (m.len(), m.modified().ok()));
+            let mut content = if viewer == crate::opening::ViewerId::Model {
+                if source.extension().is_some_and(|e| e.eq_ignore_ascii_case("gltf")) {
+                    crate::models::read_text(&source).map(PreviewContent::Text).map_err(PreviewReadError::Failed)
+                } else { Ok(PreviewContent::Model(Arc::new(crate::models::read(&source)))) }
+            } else if viewer == crate::opening::ViewerId::Hex {
+                read_hex(&source)
+            } else if image_source {
+                match read_image(&source) {
+                    Err(PreviewReadError::Unsupported(reason)) if automatic => read_automatic_text(&source).map(|content|PreviewContent::Fallback(Box::new(content),reason.into())),
+                    result => result,
+                }
+            } else if automatic {
+                read_automatic_text(&source)
+            } else {
+                read_preview(&source)
+            };
+            if viewer == crate::opening::ViewerId::Image && !image_source && automatic {
+                if let Ok(PreviewContent::Text(text)) = &content {
+                    if let Err(reason) = bedtime_image2::ImageContent::prepare(text.to_string().as_bytes(), "preview.svg") {
+                        content = Ok(PreviewContent::Fallback(Box::new(PreviewContent::Text(text.clone())),reason.into()));
+                    }
+                }
+            }
+            if let Ok(PreviewContent::Text(text)) = &mut content {
                 if let Some(snapshot) = snapshots.iter().find(|snapshot| *snapshot == text) {
                     *text = snapshot.clone();
                 }
             }
-            Ok(content)
+            PreviewRead {
+                content,
+                disk_stamp,
+            }
         })
     } else {
         Err("Missing workspace work".into())
@@ -817,6 +1009,53 @@ pub(crate) fn load_preview(
             state.report_error = true;
             Err(error)
         }
+    }
+}
+
+fn read_image(path: &Path) -> Result<PreviewContent, PreviewReadError> {
+    let metadata = fs::metadata(path).map_err(|e| preview_read_error(path, e))?;
+    if !metadata.is_file() || metadata.len() > MAX_PREVIEW_BYTES {
+        return Err(PreviewReadError::Unsupported(
+            "Image must be a regular file of at most 256 MiB".into(),
+        ));
+    }
+    let mut bytes = Vec::new();
+    File::open(path)
+        .and_then(|file| file.take(MAX_PREVIEW_BYTES + 1).read_to_end(&mut bytes))
+        .map_err(|e| preview_read_error(path, e))?;
+    if bytes.len() as u64 > MAX_PREVIEW_BYTES {
+        return Err(PreviewReadError::Unsupported(
+            "Image exceeds the 256 MiB source limit".into(),
+        ));
+    }
+    let content = Arc::new(
+        bedtime_image2::ImageContent::prepare(&bytes, &path.to_string_lossy())
+            .map_err(PreviewReadError::Unsupported)?,
+    );
+    let size = content.dimensions();
+    let pixels = content
+        .render([size.x.ceil() as u32, size.y.ceil() as u32])
+        .map_err(PreviewReadError::Unsupported)?;
+    Ok(PreviewContent::Image(content, pixels))
+}
+
+fn read_hex(path: &Path) -> Result<PreviewContent, PreviewReadError> {
+    crate::hex::prepare(path).map(PreviewContent::Hex).map_err(PreviewReadError::Failed)
+}
+
+fn read_automatic_text(path: &Path) -> Result<PreviewContent, PreviewReadError> {
+    let metadata = fs::metadata(path).map_err(|e|preview_read_error(path,e))?;
+    if !metadata.is_file() { return read_preview(path); }
+    if metadata.len() > MAX_PREVIEW_BYTES { return read_hex(path); }
+    let mut probe = Vec::new();
+    File::open(path).and_then(|file|file.take(8192).read_to_end(&mut probe)).map_err(|e|preview_read_error(path,e))?;
+    // An incomplete final UTF-8 code point at the probe boundary is valid.
+    if probe.contains(&0) || std::str::from_utf8(&probe).is_err_and(|e|e.error_len().is_some()) {
+        return read_hex(path);
+    }
+    match read_preview(path)? {
+        PreviewContent::Metadata(_) => read_hex(path),
+        content => Ok(content),
     }
 }
 
@@ -887,20 +1126,68 @@ fn poll_previews(world: &mut World) {
                 // is not an actionable file error for the user to dismiss.
                 report_failure =
                     !closing || !matches!(status, WorkStatus::Cancelling | WorkStatus::Cancelled);
-                Some(Err(PreviewReadError::Failed(format!(
-                    "Preview worker stopped: {status:?}"
-                ))))
+                Some(PreviewRead {
+                    content: Err(PreviewReadError::Failed(format!(
+                        "Preview worker stopped: {status:?}"
+                    ))),
+                    disk_stamp: state.disk_stamp,
+                })
             }
         };
         if let Some(result) = result {
             let stamp = state.load.as_ref().and_then(|load| load.document_stamp);
             let path = state.path.clone();
             state.load = None;
+            state.disk_stamp = result.disk_stamp;
+            let result = result.content;
             match result {
                 Ok(content) => {
+                    let automatic = !state.explicit;
+                    let previous = state.viewer;
+                    let (content, fallback_reason) = match content {
+                        PreviewContent::Fallback(content, reason) => (*content, Some(reason)),
+                        content => (content, None),
+                    };
+                    let resolved = match &content {
+                        PreviewContent::Hex(_) => crate::opening::ViewerId::Hex,
+                        PreviewContent::Image(..) => crate::opening::ViewerId::Image,
+                        PreviewContent::Model(_) => crate::opening::ViewerId::Model,
+                        PreviewContent::Text(_) if automatic && previous != crate::opening::ViewerId::Model && (previous != crate::opening::ViewerId::Image || fallback_reason.is_some()) => crate::opening::ViewerId::Code,
+                        _ => state.viewer,
+                    };
+                    // Reconciliation must never detach local edits to install a fallback.
+                    if previous != resolved && !crate::file_editor::can_replace(world,panel) {
+                        let mut state=world.get_mut::<FilePreviewPanel>(panel).unwrap();
+                        state.error=Some("The source is no longer supported by this viewer. Your edits were retained.".into());
+                        continue;
+                    }
+                    if previous != resolved {
+                        if let Err(error)=set_viewer(world,panel,resolved) {
+                            world.get_mut::<FilePreviewPanel>(panel).unwrap().error=Some(error);
+                            continue;
+                        }
+                    }
+                    let mut state=world.get_mut::<FilePreviewPanel>(panel).unwrap();
+                    if previous==crate::opening::ViewerId::Image && resolved!=previous && automatic {
+                        state.notice=Some(format!("Image could not be decoded; showing file contents. {}",fallback_reason.as_deref().unwrap_or("")));
+                    }
                     state.content = Some(content.clone());
                     state.error = None;
                     state.missing = false;
+                    if world.get::<FilePreviewPanel>(panel).unwrap().viewer
+                        == crate::opening::ViewerId::Image
+                        && let PreviewContent::Metadata(summary) = &content
+                        && let Some(mut image) = world.get_mut::<crate::images::ImagePreview>(panel)
+                    {
+                        image.error = Some(summary.to_string());
+                    }
+                    if let (Some(path), PreviewContent::Hex(initial)) = (&path, &content) {
+                        crate::hex::accept(world,panel,path,initial);
+                    }
+                    if let PreviewContent::Model(loaded) = &content { crate::models::accept(world, panel, loaded); }
+                    if let PreviewContent::Image(content, pixels) = &content {
+                        crate::images::accept_loaded(world, panel, content.clone(), pixels.clone());
+                    }
                     if let (Some(path), PreviewContent::Text(text)) = (path, content) {
                         if let Err(error) =
                             crate::file_editor::bind_loaded(world, panel, &path, &text, stamp)
@@ -927,7 +1214,7 @@ fn poll_previews(world: &mut World) {
                     // its old path's absence as deletion. Observation retries.
                     state.error = Some("Source is currently unavailable.".into());
                 }
-                Err(PreviewReadError::Failed(error)) => {
+                Err(PreviewReadError::Failed(error) | PreviewReadError::Unsupported(error)) => {
                     state.error = Some(error);
                     state.report_error = report_failure;
                 }
@@ -990,6 +1277,7 @@ fn trash_previews(world: &mut World, path: &Path) {
 /// here. Never retain deleted-source bytes or a reload association. Sequential
 /// closes leave one unloaded tab if every tab in an area lost its source.
 fn unload_deleted_preview(world: &mut World, panel: Entity) {
+    world.entity_mut(panel).remove::<crate::hex::HexPreview>();
     let retained = crate::file_editor::retain_deleted(world, panel);
     if !retained {
         if let Err(error) = crate::file_editor::detach(world, panel) {
@@ -1020,8 +1308,15 @@ fn unload_deleted_preview(world: &mut World, panel: Entity) {
     if retained {
         return;
     }
+    world.entity_mut(panel).remove::<(crate::models::ModelPreview, bedtime_model2::ModelScene)>();
+    if world.get::<crate::images::ImagePreview>(panel).is_some() {
+        world
+            .entity_mut(panel)
+            .insert(crate::images::ImagePreview::default());
+    }
+    let label = world.get::<FilePreviewPanel>(panel).unwrap().viewer.label();
     let mut instance = world.get_mut::<PanelInstance>(panel).unwrap();
-    instance.title = FilePreviewPanel::LABEL.into();
+    instance.title = label.into();
     instance.preview = false;
     let has_other_tabs = world
         .get::<InArea>(panel)
@@ -1042,6 +1337,8 @@ struct PreviewSource {
     panel: Entity,
     path: PathBuf,
     generation: u64,
+    image: bool,
+    disk_stamp: Option<DiskStamp>,
 }
 
 /// Short, bounded workspace-owned tasks, not one watcher/thread per viewer.
@@ -1053,20 +1350,26 @@ struct PreviewObservation {
     cursor: Option<Entity>,
 }
 
-fn missing_preview_sources(
-    sources: Vec<PreviewSource>,
-    cancel: Cancellation,
-) -> Vec<PreviewSource> {
+fn preview_source_changes(sources: Vec<PreviewSource>, cancel: Cancellation) -> Vec<PreviewSource> {
     let mut observations = BTreeMap::new();
     sources
         .into_iter()
         .take_while(|_| !cancel.is_cancelled())
-        .filter(|source| {
-            *observations.entry(source.path.clone()).or_insert_with(|| {
-                // Match the preview reader's source semantics (including
-                // symlink targets). Permission/temporary errors are not absence.
-                fs::metadata(&source.path).is_err_and(|error| source_is_missing(&error))
-            })
+        .filter_map(|mut source| {
+            let observation = observations.entry(source.path.clone()).or_insert_with(|| {
+                match fs::metadata(&source.path) {
+                    Ok(metadata) => Ok(Some((metadata.len(), metadata.modified().ok()))),
+                    Err(error) if source_is_missing(&error) => Ok(None),
+                    Err(_) => Err(()),
+                }
+            });
+            match observation {
+                Ok(stamp) if stamp.is_none() || (source.image && *stamp != source.disk_stamp) => {
+                    source.disk_stamp = *stamp;
+                    Some(source)
+                }
+                _ => None,
+            }
         })
         .collect()
 }
@@ -1088,6 +1391,9 @@ fn observe_preview_sources(world: &mut World) {
         .query::<(Entity, &InWorkspace, &FilePreviewPanel)>()
         .iter(world)
     {
+        if matches!(state.viewer, crate::opening::ViewerId::Image | crate::opening::ViewerId::Model) && state.load.is_some() {
+            continue;
+        }
         if let Some(path) = &state.path {
             sources.entry(owner.0).or_default().insert(
                 panel,
@@ -1095,6 +1401,8 @@ fn observe_preview_sources(world: &mut World) {
                     panel,
                     path: path.clone(),
                     generation: state.generation,
+                    image: matches!(state.viewer, crate::opening::ViewerId::Image | crate::opening::ViewerId::Hex | crate::opening::ViewerId::Model),
+                    disk_stamp: state.disk_stamp,
                 },
             );
         }
@@ -1127,16 +1435,16 @@ fn observe_preview_sources(world: &mut World) {
             .pending
             .as_ref()
             .and_then(|task| match task.try_recv() {
-                Ok(missing) => Some(missing),
+                Ok(changes) => Some(changes),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => Some(Vec::new()),
                 Err(std::sync::mpsc::TryRecvError::Empty) => None,
             });
-        if let Some(missing) = result {
+        if let Some(changes) = result {
             observation.pending = None;
             // Discard, rather than postpone, observations that overlap an own
             // operation. The next batch rechecks the current source binding.
             if !mutations_pending {
-                for source in missing {
+                for source in changes {
                     if world
                         .get::<InWorkspace>(source.panel)
                         .is_some_and(|owner| owner.0 == workspace)
@@ -1147,7 +1455,22 @@ fn observe_preview_sources(world: &mut World) {
                                     && state.path.as_ref() == Some(&source.path)
                             })
                     {
-                        unload_deleted_preview(world, source.panel);
+                        if let Some(stamp) = source.disk_stamp {
+                            let loading = world
+                                .get::<FilePreviewPanel>(source.panel)
+                                .unwrap()
+                                .load
+                                .is_some();
+                            if !loading {
+                                world
+                                    .get_mut::<FilePreviewPanel>(source.panel)
+                                    .unwrap()
+                                    .disk_stamp = Some(stamp);
+                                let _ = load_preview(world, source.panel, source.path, true);
+                            }
+                        } else {
+                            unload_deleted_preview(world, source.panel);
+                        }
                     }
                 }
             }
@@ -1190,7 +1513,7 @@ fn observe_preview_sources(world: &mut World) {
             .get_mut::<WorkspaceWork>(workspace)
             .unwrap()
             .spawn_task(None, "Observe file preview sources", move |cancel| {
-                missing_preview_sources(batch, cancel)
+                preview_source_changes(batch, cancel)
             });
         let mut observation = world.get_mut::<PreviewObservation>(workspace).unwrap();
         observation.next_check = Some(now + PREVIEW_CHECK_INTERVAL);
@@ -1527,8 +1850,13 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
                 "layout": world.get::<InArea>(entity).and_then(|area| world.get::<InLayout>(area.0))
                     .map(|layout| layout.0.to_bits().to_string()),
                 "path": preview.path.as_ref().map(|path| path.to_string_lossy()),
-                "generation": preview.generation, "loading": preview.load.is_some(),
-                "pinned": !instance.preview, "title": instance.title, "kind": kind,
+                "viewer": preview.viewer.id(),
+                "viewer_explicit": preview.explicit,
+                "hex": crate::hex::inspect(world,entity),
+                "image": world.get::<crate::images::ImagePreview>(entity).map(|image| json!({"zoom": image.view.transform.zoom(), "center": [image.view.transform.center().x,image.view.transform.center().y], "dimensions": image.view.dimensions().map(|s| [s.x,s.y]), "rect": image.view.rect().map(|r| json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})), "error": image.error})),
+                "model": world.get::<bedtime_model2::ModelScene>(entity).map(|scene| json!({"ready":scene.is_ready(),"loading":scene.is_loading(),"info":scene.info(),"generation":scene.generation(),"error":scene.error(),"panel_rect":world.get::<PanelPresentation>(entity).map(|p|json!({"min":p.rect.min.to_array(),"max":p.rect.max.to_array()})),"view":scene.view,"rect":world.get::<bedtime_ui2::UiViewport>(entity).map(|v|json!({"min":[v.rect.min.x,v.rect.min.y],"max":[v.rect.max.x,v.rect.max.y]}))})),
+                "generation": preview.generation, "loading": preview.load.is_some() || (preview.viewer == crate::opening::ViewerId::Image && crate::images::open_result(world, entity).is_none()) || (preview.viewer == crate::opening::ViewerId::Model && crate::models::open_result(world, entity).is_none()),
+                "pinned": !instance.preview, "title": instance.title, "kind": if preview.viewer == crate::opening::ViewerId::Model { "model" } else if preview.viewer == crate::opening::ViewerId::Image { "image" } else if preview.viewer == crate::opening::ViewerId::Hex { "hex" } else { kind },
                 "content": content, "byte_len": text.map(TextBuffer::len), "line_count": text.map(TextBuffer::line_count), "content_truncated": text.is_some_and(|text| text.len() > 16*1024), "rendered_lines": preview.rendered_lines, "laid_out_bytes": preview.laid_out_bytes, "error": preview.error, "missing": preview.missing,
                 "unloaded": preview.path.is_none() && document.is_none(),
                 "document": document.map(|id| id.entity().to_bits().to_string()),
@@ -1834,6 +2162,74 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
     }
+    #[test]
+    fn file_drops_pin_viewers_in_the_target_area_and_share_documents() {
+        let fixture = Fixture::new();
+        let path = fixture.text("dropped.txt", "shared contents");
+        let mut app = host();
+        let (_, layout) = workspace(&mut app, "Drops");
+        let existing = crate::opening::open_file(
+            app.world_mut(),
+            layout,
+            path.clone(),
+            crate::opening::FileOpenMode::Preview,
+        )
+        .unwrap()
+        .panel;
+        wait(&mut app, |world| {
+            file_open_result(world, existing, file_open_generation(world, existing)).is_some()
+        });
+        edit_text(&mut app, existing, "retained unsaved edits");
+        let original_area = app.world().get::<InArea>(existing).unwrap().0;
+        let target = Workbench::for_entity(app.world_mut(), layout)
+            .unwrap()
+            .split_area(original_area, SplitAxis::Horizontal, 5000, [100, 100])
+            .unwrap();
+        for split in [None, Some((SplitAxis::Vertical, true))] {
+            let mut w = Workbench::for_entity(app.world_mut(), layout).unwrap();
+            let stamp = w.stamp();
+            w.requests().submit(WorkbenchRequest::Edit {
+                stamp,
+                edit: LayoutEdit::DropPanel {
+                    area: target,
+                    factory: crate::opening::file_panel_factory(path.clone()),
+                    index: 0,
+                    split,
+                    minimum: [100, 100],
+                },
+            });
+            app.update();
+        }
+        wait(&mut app, |world| {
+            world
+                .query::<&FilePreviewPanel>()
+                .iter(world)
+                .all(|p| p.load.is_none() && p.content.is_some())
+        });
+        let panels = Workbench::for_entity(app.world_mut(), layout)
+            .unwrap()
+            .panels(layout);
+        assert_eq!(panels.len(), 3);
+        let document = app
+            .world()
+            .get::<DocumentView>(existing)
+            .unwrap()
+            .document();
+        for panel in panels.into_iter().filter(|&panel| panel != existing) {
+            assert!(!app.world().get::<PanelInstance>(panel).unwrap().preview);
+            assert_ne!(app.world().get::<InArea>(panel).unwrap().0, original_area);
+            assert_eq!(panel_path(app.world(), panel), Some(path.clone()));
+            assert_eq!(text(&app, panel), "retained unsaved edits");
+            assert_eq!(
+                app.world().get::<DocumentView>(panel).unwrap().document(),
+                document
+            );
+        }
+        assert_eq!(text(&app, existing), "retained unsaved edits");
+        assert_eq!(fs::read_to_string(path).unwrap(), "shared contents");
+        stop(&mut app);
+    }
+
     fn stop(app: &mut App) {
         admit_preferences(app.world_mut());
         Workspaces::new(app.world_mut()).shutdown_work().unwrap();
@@ -2818,7 +3214,10 @@ mod tests {
             .unwrap()
             .spawn_task(Some(viewer), "Old preview", |cancel| {
                 cancel.wait(Duration::from_secs(2));
-                Ok(PreviewContent::Text(TextBuffer::from("stale result")))
+                PreviewRead {
+                    content: Ok(PreviewContent::Text(TextBuffer::from("stale result"))),
+                    disk_stamp: None,
+                }
             })
             .unwrap();
         {
@@ -3194,7 +3593,10 @@ mod tests {
                 // cancellation alone must not be the data-integrity guarantee.
                 waiting.recv_timeout(Duration::from_secs(8)).unwrap();
                 finished.send(()).unwrap();
-                Ok(PreviewContent::Text(TextBuffer::from("late deleted bytes")))
+                PreviewRead {
+                    content: Ok(PreviewContent::Text(TextBuffer::from("late deleted bytes"))),
+                    disk_stamp: None,
+                }
             })
             .unwrap();
         {
@@ -3404,7 +3806,7 @@ mod tests {
         let fixture = Fixture::new();
         let first = fixture.text("first.rs", "fn first() {}\n");
         let second = fixture.text("second.rs", "fn second() {}\n");
-        let image = fixture.path("foo.png");
+        let image = fixture.path("foo.bin");
         fs::write(&image, b"\x89PNG\0binary").unwrap();
         let mut app = host();
         let (owner, layout) = workspace(&mut app, "Shared route");
@@ -3447,7 +3849,7 @@ mod tests {
                 .get::<FilePreviewPanel>(image.panel)
                 .unwrap()
                 .content,
-            Some(PreviewContent::Metadata(_))
+            Some(PreviewContent::Hex(_))
         ));
         assert_eq!(viewers(&mut app, owner).len(), 3);
         assert_eq!(
@@ -3457,6 +3859,271 @@ mod tests {
                 .count(),
             0
         );
+        stop(&mut app);
+    }
+
+    #[test]
+    fn automatic_hex_fallback_reuses_tabs_and_explicit_hex_preserves_dirty_code() {
+        use crate::opening::{FileOpenMode,ViewerId,open_file,open_file_with};
+        let fixture=Fixture::new();
+        let binary=fixture.path("unknown.dat");fs::write(&binary,[0,255,128]).unwrap();
+        let mut app=host();let (owner,layout)=workspace(&mut app,"Hex");
+        let opened=open_file(app.world_mut(),layout,binary.clone(),FileOpenMode::Focus).unwrap();
+        wait(&mut app,|world|opened.result(world).is_some());
+        opened.result(app.world()).unwrap().unwrap();
+        assert_eq!(app.world().get::<FilePreviewPanel>(opened.panel).unwrap().viewer,ViewerId::Hex);
+        assert!(app.world().get::<DocumentView>(opened.panel).is_none());
+        assert_eq!(open_file(app.world_mut(),layout,binary,FileOpenMode::Focus).unwrap().panel,opened.panel);
+        let path=fixture.text("edits.txt","original");
+        let code=open_file(app.world_mut(),layout,path.clone(),FileOpenMode::Focus).unwrap();
+        wait(&mut app,|world|code.result(world).is_some());
+        edit_text(&mut app,code.panel,"unsaved original");
+        let hex=open_file_with(app.world_mut(),layout,path.clone(),FileOpenMode::Focus,Some(ViewerId::Hex),Some(code.panel)).unwrap();
+        wait(&mut app,|world|hex.result(world).is_some());
+        hex.result(app.world()).unwrap().unwrap();
+        assert_ne!(code.panel,hex.panel);
+        assert_eq!(text(&app,code.panel),"unsaved original");
+        assert!(crate::file_editor::disk_view_has_unsaved(app.world_mut(),owner,&path));
+        assert!(app.world().get::<DocumentView>(hex.panel).is_none());
+        stop(&mut app);
+    }
+
+    #[test]
+    fn corrupt_images_fall_back_only_for_automatic_opening() {
+        use crate::opening::{FileOpenMode,ViewerId,open_file,open_file_with};
+        let fixture=Fixture::new();let path=fixture.text("wrong.png","this is text");
+        let mut app=host();let (_,layout)=workspace(&mut app,"Fallback");
+        let auto=open_file(app.world_mut(),layout,path.clone(),FileOpenMode::Focus).unwrap();
+        wait(&mut app,|world|auto.result(world).is_some());auto.result(app.world()).unwrap().unwrap();
+        assert_eq!(app.world().get::<FilePreviewPanel>(auto.panel).unwrap().viewer,ViewerId::Code);
+        assert!(app.world().get::<FilePreviewPanel>(auto.panel).unwrap().notice.is_some());
+        let explicit=open_file_with(app.world_mut(),layout,path,FileOpenMode::Focus,Some(ViewerId::Image),Some(auto.panel)).unwrap();
+        wait(&mut app,|world|explicit.result(world).is_some());
+        assert!(explicit.result(app.world()).unwrap().is_err());
+        assert_eq!(app.world().get::<FilePreviewPanel>(explicit.panel).unwrap().viewer,ViewerId::Image);
+        stop(&mut app);
+    }
+
+    #[test]
+    fn image_associations_and_explicit_viewers_preserve_both_tabs() {
+        use crate::opening::{FileOpenMode, ViewerId, open_file, open_file_with};
+        let fixture = Fixture::new();
+        let path = fixture.path("picture.PNG");
+        fs::write(
+            &path,
+            include_bytes!("../../bedtime/tests/fixtures/images/sample.png"),
+        )
+        .unwrap();
+        assert_eq!(
+            crate::opening::viewers(&path),
+            vec![ViewerId::Image, ViewerId::Code, ViewerId::Hex]
+        );
+        let mut app = host();
+        let (_, layout) = workspace(&mut app, "Images");
+        let image =
+            open_file(app.world_mut(), layout, path.clone(), FileOpenMode::Preview).unwrap();
+        wait(&mut app, |world| image.result(world).is_some());
+        image.result(app.world()).unwrap().unwrap();
+        assert!(app.world().get::<DocumentView>(image.panel).is_none());
+        let code = open_file_with(
+            app.world_mut(),
+            layout,
+            path.clone(),
+            FileOpenMode::Focus,
+            Some(ViewerId::Code),
+            Some(image.panel),
+        )
+        .unwrap();
+        wait(&mut app, |world| code.result(world).is_some());
+        assert_ne!(image.panel, code.panel);
+        assert!(
+            app.world()
+                .get::<PanelInstance>(image.panel)
+                .unwrap()
+                .preview
+        );
+        assert!(
+            !app.world()
+                .get::<PanelInstance>(code.panel)
+                .unwrap()
+                .preview
+        );
+        let area = app.world().get::<InArea>(image.panel).unwrap().0;
+        assert_eq!(
+            panels_in_area(app.world(), area),
+            &[image.panel, code.panel]
+        );
+        assert_eq!(
+            open_file(app.world_mut(), layout, path, FileOpenMode::Focus)
+                .unwrap()
+                .panel,
+            image.panel
+        );
+        stop(&mut app);
+    }
+
+    #[test]
+    fn svg_image_and_code_share_unsaved_edits_and_invalid_source_retains_pixels() {
+        use crate::opening::{FileOpenMode, ViewerId, open_file, open_file_with};
+        let fixture = Fixture::new();
+        let path = fixture.text("live.svg", r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"><rect width="4" height="2" fill="red"/></svg>"#);
+        let mut app = host();
+        let (_, layout) = workspace(&mut app, "SVG");
+        let image =
+            open_file(app.world_mut(), layout, path.clone(), FileOpenMode::Preview).unwrap();
+        wait(&mut app, |world| image.result(world).is_some());
+        image.result(app.world()).unwrap().unwrap();
+        assert!(
+            app.world()
+                .get::<bedtime_editor2::workbench::WorkbenchEditor>(image.panel)
+                .is_none()
+        );
+        let code = open_file_with(
+            app.world_mut(),
+            layout,
+            path.clone(),
+            FileOpenMode::Focus,
+            Some(ViewerId::Code),
+            Some(image.panel),
+        )
+        .unwrap();
+        wait(&mut app, |world| code.result(world).is_some());
+        assert_eq!(
+            app.world()
+                .get::<DocumentView>(image.panel)
+                .unwrap()
+                .document(),
+            app.world()
+                .get::<DocumentView>(code.panel)
+                .unwrap()
+                .document()
+        );
+        app.world_mut()
+            .get_mut::<PanelPresentation>(image.panel)
+            .unwrap()
+            .visible = true;
+        let changed = r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="3"/>"#;
+        edit_text(&mut app, code.panel, changed);
+        wait(&mut app, |world| {
+            world
+                .get::<crate::images::ImagePreview>(image.panel)
+                .unwrap()
+                .view
+                .dimensions()
+                == Some(egui::vec2(8.0, 3.0))
+        });
+        assert!(!fs::read_to_string(&path).unwrap().contains("width=\"8\""));
+        edit_text(&mut app, code.panel, "<svg");
+        wait(&mut app, |world| {
+            world
+                .get::<crate::images::ImagePreview>(image.panel)
+                .unwrap()
+                .error
+                .is_some()
+        });
+        assert_eq!(
+            app.world()
+                .get::<crate::images::ImagePreview>(image.panel)
+                .unwrap()
+                .view
+                .dimensions(),
+            Some(egui::vec2(8.0, 3.0))
+        );
+        edit_text(&mut app, code.panel, changed);
+        wait(&mut app, |world| {
+            world
+                .get::<crate::images::ImagePreview>(image.panel)
+                .unwrap()
+                .error
+                .is_none()
+        });
+        let next = fixture.text("next.txt", "next");
+        let next = open_file(app.world_mut(), layout, next, FileOpenMode::Preview).unwrap();
+        assert_ne!(
+            next.panel, image.panel,
+            "A dirty shared SVG preview must be protected"
+        );
+        stop(&mut app);
+    }
+
+    #[test]
+    fn replaceable_preview_switches_viewer_and_dropped_images_use_image_canvas() {
+        use crate::opening::{FileOpenMode, ViewerId, open_file};
+        let fixture = Fixture::new();
+        let text_path = fixture.text("file.txt", "text");
+        let svg = fixture.text(
+            "picture.svg",
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"/>"#,
+        );
+        let mut app = host();
+        let (_, layout) = workspace(&mut app, "Preview");
+        let text_open = open_file(
+            app.world_mut(),
+            layout,
+            text_path.clone(),
+            FileOpenMode::Preview,
+        )
+        .unwrap();
+        wait(&mut app, |world| text_open.result(world).is_some());
+        let image = open_file(app.world_mut(), layout, svg.clone(), FileOpenMode::Preview).unwrap();
+        assert_eq!(image.panel, text_open.panel);
+        wait(&mut app, |world| image.result(world).is_some());
+        image.result(app.world()).unwrap().unwrap();
+        let area = app.world().get::<InArea>(image.panel).unwrap().0;
+        let factory = crate::opening::file_panel_factory(svg);
+        let dropped = (factory.create)(app.world_mut(), area);
+        assert_eq!(
+            app.world().get::<FilePreviewPanel>(dropped).unwrap().viewer,
+            ViewerId::Image
+        );
+        let reopened =
+            open_file(app.world_mut(), layout, text_path, FileOpenMode::Preview).unwrap();
+        assert_eq!(reopened.panel, image.panel);
+        assert!(
+            app.world()
+                .get::<crate::images::ImagePreview>(reopened.panel)
+                .is_none()
+        );
+        wait(&mut app, |world| reopened.result(world).is_some());
+        assert_eq!(text(&app, reopened.panel), "text");
+        stop(&mut app);
+    }
+
+    #[test]
+    fn image_disk_changes_refresh_and_invalid_image_falls_back_to_text() {
+        use crate::opening::{FileOpenMode, open_file};
+        let fixture = Fixture::new();
+        let path = fixture.text(
+            "disk.svg",
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"/>"#,
+        );
+        let mut app = host();
+        let (_, layout) = workspace(&mut app, "Disk");
+        let image = open_file(app.world_mut(), layout, path.clone(), FileOpenMode::Focus).unwrap();
+        wait(&mut app, |world| image.result(world).is_some());
+        app.world_mut()
+            .get_mut::<PanelPresentation>(image.panel)
+            .unwrap()
+            .visible = true;
+        fs::write(
+            &path,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"/>"#,
+        )
+        .unwrap();
+        wait(&mut app, |world| {
+            world
+                .get::<crate::images::ImagePreview>(image.panel)
+                .unwrap()
+                .view
+                .dimensions()
+                == Some(egui::vec2(40.0, 20.0))
+        });
+        let invalid = fixture.text("invalid.png", "not an image");
+        let invalid = open_file(app.world_mut(), layout, invalid, FileOpenMode::Focus).unwrap();
+        wait(&mut app, |world| invalid.result(world).is_some());
+        invalid.result(app.world()).unwrap().unwrap();
+        assert_eq!(app.world().get::<FilePreviewPanel>(invalid.panel).unwrap().viewer,crate::opening::ViewerId::Code);
+        assert_eq!(text(&app,invalid.panel),"not an image");
         stop(&mut app);
     }
 
@@ -3488,4 +4155,38 @@ mod tests {
         );
         stop(&mut app);
     }
+    #[test]
+    fn model_associations_canonical_edits_and_session_state_follow_file_policy() {
+        use crate::opening::{FileOpenMode, ViewerId, open_file, open_file_with};
+        let fixture = Fixture::new();
+        let path = fixture.text("live.gltf", include_str!("../../bedtime/tests/fixtures/gltf/cube.gltf"));
+        let mut app = host();
+        let (owner, layout) = workspace(&mut app, "Models");
+        assert_eq!(crate::opening::viewers(&path), vec![ViewerId::Model, ViewerId::Code, ViewerId::Hex]);
+        assert_eq!(crate::opening::default_viewer(Path::new("scene.GLB")), ViewerId::Model);
+        assert_eq!(crate::opening::default_viewer(Path::new("scene.stl")), ViewerId::Model);
+        let model = open_file(app.world_mut(), layout, path.clone(), FileOpenMode::Preview).unwrap();
+        wait(&mut app, |world| world.get::<DocumentView>(model.panel).is_some() && world.get::<bedtime_model2::ModelScene>(model.panel).is_some_and(|scene|scene.is_loading()));
+        assert!(app.world().get::<bedtime_editor2::workbench::WorkbenchEditor>(model.panel).is_none());
+        let code = open_file_with(app.world_mut(),layout,path.clone(),FileOpenMode::Focus,Some(ViewerId::Code),Some(model.panel)).unwrap();
+        wait(&mut app, |world| code.result(world).is_some());
+        assert_eq!(app.world().get::<DocumentView>(model.panel).unwrap().document(),app.world().get::<DocumentView>(code.panel).unwrap().document());
+        app.world_mut().get_mut::<PanelPresentation>(model.panel).unwrap().visible = true;
+        edit_text(&mut app,code.panel,"invalid gltf");
+        wait(&mut app, |world| world.get::<crate::models::ModelPreview>(model.panel).unwrap().error.is_some());
+        assert_ne!(fs::read_to_string(&path).unwrap(),"invalid gltf");
+        assert!(!crate::file_editor::can_replace(app.world(),model.panel));
+        let another = fixture.text("another.txt", "another source");
+        let other = open_file(app.world_mut(),layout,another,FileOpenMode::Preview).unwrap();
+        assert_ne!(other.panel,model.panel);
+        let mut view = bedtime_model2::ViewState::default();
+        view.appearance.exposure = 1.25;
+        app.world_mut().get_mut::<bedtime_model2::ModelScene>(model.panel).unwrap().view = view;
+        let recipe = crate::session::capture(app.world(),owner).unwrap();
+        let saved = recipe.layouts.iter().flat_map(|l| &l.areas).flat_map(|a| &a.tabs).find(|t| t.kind == crate::session::PanelKind::Model).unwrap();
+        assert_eq!(saved.model_view,Some(view));
+        crate::session::validate(&recipe).unwrap();
+        stop(&mut app);
+    }
+
 }

@@ -76,6 +76,13 @@ to every panel automatically. Child scissors cannot widen that boundary;
 popups on separate layers keep their own bounds. Direct GPU paint callbacks
 crossing a rounded boundary must render into a `UiViewport` image.
 Content can opt into `frame.padded([14.0, 12.0], draw)`.
+
+`tree` owns the Files and Git trees' shared row geometry, filename/icon painter,
+item-sized hover/selection backgrounds, rainbow selection text and rotating
+disclosures. `RowMotion` supplies smoothstep movement/fading with continuous
+retargeting and reduced-motion settling. Callers own their data, row identity,
+viewport culling, scroll anchors and actions; painting performs no filesystem I/O.
+The painter multiplies its fade with the parent's opacity, including icons.
 `frame.scroll(id, corner_radius, draw)` insets the scrollbar's ends by the supplied
 radius so its track clears rounded container corners, while content keeps the
 complete viewport. Pass zero for square edges. Layout geometry is supplied by

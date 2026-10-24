@@ -760,8 +760,13 @@ Workbench has no `PanelType`, panel registry/catalog or built-in panel picker.
 The application owns creation discovery (for example, a View menu) and directly
 spawns its concrete components. For creation drags, pass an application-owned
 `PanelFactory::new(label, create)` to `panel_drag_source`, where
-`create: fn(&mut World, Entity) -> Entity` creates exactly one panel in the supplied
-area and returns it. Validate application-specific inputs before offering this
+`create: impl Fn(&mut World, Entity) -> Entity + Send + Sync + 'static` creates
+exactly one panel in the supplied area and returns it. Constructors can capture
+source data, such as a file path. `PanelFactoryPayload::with_content` retains
+typed widget data alongside the constructor so content targets can consume the
+drag before the shell offers area/tab/split targets. Eligible content targets call
+`PanelFactoryPayload::reserve_for_content` each draw pass to retain hover-feedback
+priority until release. Validate application-specific inputs before offering this
 infallible factory; Workbench does not resolve descriptive keys to constructors.
 
 Drawing queues WorkbenchRequests on the originating workspace entity. WorkbenchSystems::Apply

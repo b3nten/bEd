@@ -16,6 +16,103 @@ pub enum FileOpenMode {
     Focus,
 }
 
+/// Stable application viewer identities, independent of panel type discovery.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ViewerId {
+    #[default]
+    Code,
+    Image,
+    Model,
+    Hex,
+}
+impl ViewerId {
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Code => "code",
+            Self::Image => "image",
+            Self::Model => "model",
+            Self::Hex => "hex",
+        }
+    }
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Code => "Code",
+            Self::Image => "Image",
+            Self::Model => "Model",
+            Self::Hex => "Hex",
+        }
+    }
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "code" => Some(Self::Code),
+            "image" => Some(Self::Image),
+            "model" => Some(Self::Model),
+            "hex" => Some(Self::Hex),
+            _ => None,
+        }
+    }
+}
+struct ViewerAssociation {
+    viewer: ViewerId,
+    extensions: &'static [&'static str],
+    priority: i32,
+}
+const ASSOCIATIONS: &[ViewerAssociation] = &[
+    ViewerAssociation { viewer: ViewerId::Model, extensions: bedtime_model2::SUPPORTED_EXTENSIONS, priority: 100 },
+    ViewerAssociation {
+        viewer: ViewerId::Hex,
+        extensions: &[],
+        priority: -100,
+    },
+    ViewerAssociation {
+        viewer: ViewerId::Image,
+        extensions: bedtime_image2::SUPPORTED_EXTENSIONS,
+        priority: 100,
+    },
+    ViewerAssociation {
+        viewer: ViewerId::Code,
+        extensions: &[],
+        priority: 0,
+    },
+];
+pub fn viewers(path: &std::path::Path) -> Vec<ViewerId> {
+    let extension = path.extension().and_then(|e| e.to_str());
+    let mut candidates: Vec<_> = ASSOCIATIONS
+        .iter()
+        .filter(|rule| {
+            rule.extensions.is_empty()
+                || extension.is_some_and(|ext| {
+                    rule.extensions
+                        .iter()
+                        .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+                })
+        })
+        .collect();
+    candidates.sort_by_key(|rule| (std::cmp::Reverse(rule.priority), rule.viewer));
+    candidates.into_iter().map(|rule| rule.viewer).collect()
+}
+pub fn default_viewer(path: &std::path::Path) -> ViewerId {
+    viewers(path)[0]
+}
+pub fn tree_viewers(path: &std::path::Path) -> Vec<bedtime_filetree2::FileTreeOpenChoice> {
+    let choices = viewers(path);
+    if choices.len() < 2 {
+        return Vec::new();
+    }
+    choices
+        .into_iter()
+        .enumerate()
+        .map(|(i, viewer)| bedtime_filetree2::FileTreeOpenChoice {
+            id: viewer.id().into(),
+            label: format!(
+                "{}{}",
+                viewer.label(),
+                if i == 0 { " (default)" } else { "" }
+            ),
+        })
+        .collect()
+}
+
 /// A particular viewer load, so a later rebind cannot complete an older open.
 pub struct OpenedFile {
     pub panel: Entity,
@@ -36,6 +133,21 @@ pub fn open_file(
     path: PathBuf,
     mode: FileOpenMode,
 ) -> Result<OpenedFile, String> {
+    open_file_with(world, layout, path, mode, None, None)
+}
+
+pub fn open_file_with(
+    world: &mut World,
+    layout: Entity,
+    path: PathBuf,
+    mode: FileOpenMode,
+    requested: Option<ViewerId>,
+    origin: Option<Entity>,
+) -> Result<OpenedFile, String> {
+    let viewer = requested.unwrap_or_else(|| default_viewer(&path));
+    if !viewers(&path).contains(&viewer) {
+        return Err("This viewer does not support the file".into());
+    }
     if !crate::close::accepts_user_actions(world) {
         return Err("Cancel quit before opening a file".into());
     }
@@ -47,15 +159,22 @@ pub fn open_file(
         return Err("The workspace is still loading or has a settings error".into());
     }
     let panels = workbench.panels(layout);
-    // Viewer selection currently has one implementation: text with a metadata
-    // fallback for unsupported content. Add file-kind routing here when another
-    // viewer exists; producers must not choose a concrete viewer themselves.
-    let same = panels
-        .iter()
-        .copied()
-        .find(|&panel| crate::files::panel_path(workbench.world(), panel).as_ref() == Some(&path));
+    let same = panels.iter().copied().find(|&panel| {
+        crate::files::panel_path(workbench.world(), panel).as_ref() == Some(&path)
+            && workbench
+                .world()
+                .get::<FilePreviewPanel>(panel)
+                .is_some_and(|p| p.viewer == viewer || (requested.is_none() && !p.explicit))
+    });
     let pin = !matches!(mode, FileOpenMode::Preview);
     let panel = if let Some(panel) = same {
+        if requested.is_some() {
+            workbench
+                .world_mut()
+                .get_mut::<FilePreviewPanel>(panel)
+                .unwrap()
+                .explicit = true;
+        }
         if pin {
             workbench
                 .world_mut()
@@ -67,7 +186,8 @@ pub fn open_file(
         panel
     } else {
         let replace = panels.iter().copied().find(|&panel| {
-            workbench.world().get::<FilePreviewPanel>(panel).is_some()
+            requested.is_none()
+                && workbench.world().get::<FilePreviewPanel>(panel).is_some()
                 && crate::file_editor::can_replace(workbench.world(), panel)
                 && (crate::files::panel_path(workbench.world(), panel).is_none()
                     || workbench
@@ -87,28 +207,32 @@ pub fn open_file(
                 .ok_or("Layout has no areas")?
                 .entities()
                 .to_vec();
-            let area = panels
-                .iter()
-                .find_map(|&panel| {
-                    workbench
-                        .world()
-                        .get::<FilePreviewPanel>(panel)
-                        .and_then(|_| workbench.world().get::<InArea>(panel).map(|a| a.0))
-                })
+            let area = origin
+                .and_then(|panel| workbench.world().get::<InArea>(panel).map(|a| a.0))
                 .or_else(|| {
-                    areas
+                    panels
                         .iter()
-                        .copied()
-                        .filter(|&area| {
-                            panels_in_area(workbench.world(), area)
-                                .iter()
-                                .all(|&panel| {
-                                    workbench.world().get::<FileTreePanel>(panel).is_none()
-                                })
+                        .find_map(|&panel| {
+                            workbench
+                                .world()
+                                .get::<FilePreviewPanel>(panel)
+                                .and_then(|_| workbench.world().get::<InArea>(panel).map(|a| a.0))
                         })
-                        .max_by_key(|&area| {
-                            let rect = workbench.world().get::<Area>(area).unwrap().rect;
-                            (rect.max[0] - rect.min[0]) * (rect.max[1] - rect.min[1])
+                        .or_else(|| {
+                            areas
+                                .iter()
+                                .copied()
+                                .filter(|&area| {
+                                    panels_in_area(workbench.world(), area)
+                                        .iter()
+                                        .all(|&panel| {
+                                            workbench.world().get::<FileTreePanel>(panel).is_none()
+                                        })
+                                })
+                                .max_by_key(|&area| {
+                                    let rect = workbench.world().get::<Area>(area).unwrap().rect;
+                                    (rect.max[0] - rect.min[0]) * (rect.max[1] - rect.min[1])
+                                })
                         })
                 });
             let area = match area {
@@ -130,7 +254,22 @@ pub fn open_file(
             .get_mut::<PanelInstance>(panel)
             .unwrap()
             .preview = !pin;
+        crate::files::set_viewer(workbench.world_mut(), panel, viewer)?;
+        workbench
+            .world_mut()
+            .get_mut::<FilePreviewPanel>(panel)
+            .unwrap()
+            .explicit = requested.is_some();
         crate::files::load_preview(workbench.world_mut(), panel, path, false)?;
+        if let Some(origin) = origin {
+            let area = workbench.world().get::<InArea>(origin).unwrap().0;
+            let index = panels_in_area(workbench.world(), area)
+                .iter()
+                .position(|&p| p == origin)
+                .unwrap()
+                + 1;
+            workbench.move_tab(panel, area, index)?;
+        }
         panel
     };
     workbench.select_panel(panel)?;
@@ -144,10 +283,72 @@ pub fn open_file(
     })
 }
 
+/// A dropped file always gets a pinned viewer at the explicit destination.
+/// Loading uses the same canonical documents and async backend as ordinary opens.
+pub fn file_panel_factory(path: PathBuf) -> PanelFactory {
+    PanelFactory::new("File", move |world, area| {
+        let panel = world
+            .spawn((FilePreviewPanel::default(), InArea(area)))
+            .id();
+        // A fresh viewer has no drafts or pending edits. The loading backend
+        // records task-admission and read failures on the viewer for reporting.
+        let _ = crate::files::set_viewer(world, panel, default_viewer(&path))
+            .and_then(|_| restore_file_panel(world, panel, path.clone()));
+        panel
+    })
+}
+
 /// Session restore retains its recorded placement/viewer identity, while source
 /// loading uses the same viewer backend as newly routed file opens.
 pub fn restore_file_panel(world: &mut World, panel: Entity, path: PathBuf) -> Result<(), String> {
+    if !world.get::<FilePreviewPanel>(panel).unwrap().explicit {
+        crate::files::set_viewer(world, panel, default_viewer(&path))?;
+    }
     crate::files::load_preview(world, panel, path, false)
+}
+
+pub fn viewer_menu(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, panel: Entity) {
+    let Some(path) = crate::files::panel_path(world, panel) else {
+        return;
+    };
+    let choices = viewers(&path);
+    if choices.len() < 2 {
+        return;
+    }
+    ui.menu_button("Open With", |ui| {
+        for (i, viewer) in choices.iter().copied().enumerate() {
+            let label = format!(
+                "{}{}",
+                viewer.label(),
+                if i == 0 { " (default)" } else { "" }
+            );
+            if ui.button(label).clicked() {
+                let result = Workbench::for_entity(world, panel)
+                    .and_then(|wb| wb.panel_layout(panel))
+                    .and_then(|layout| {
+                        open_file_with(
+                            world,
+                            layout,
+                            path.clone(),
+                            FileOpenMode::Focus,
+                            Some(viewer),
+                            Some(panel),
+                        )
+                    });
+                if let Err(error) = result {
+                    request_error_dialog(
+                        world,
+                        ErrorDialog {
+                            title: "Open With".into(),
+                            message: error,
+                            details: None,
+                        },
+                    );
+                }
+                ui.close();
+            }
+        }
+    });
 }
 
 pub type FolderOpenResult = Mutex<mpsc::Receiver<Result<Entity, String>>>;
@@ -231,4 +432,39 @@ pub(crate) fn poll_folder_opens(world: &mut World) {
         }
         let _ = reply.send(result);
     }
+}
+
+#[cfg(feature = "automation")]
+pub(crate) fn automation_open(
+    world: &mut World,
+    args: serde_json::Value,
+) -> bedtime_automation2::AutomationResult {
+    let layout = args
+        .get("layout")
+        .and_then(|v| v.as_str())
+        .ok_or("layout must be an entity ID")?
+        .parse::<u64>()
+        .map(Entity::from_bits)
+        .map_err(|_| "Invalid layout ID")?;
+    let path = args
+        .get("path")
+        .and_then(|v| v.as_str())
+        .ok_or("path must be a string")?;
+    let requested = args
+        .get("viewer")
+        .map(|v| {
+            v.as_str()
+                .and_then(ViewerId::from_id)
+                .ok_or("Unknown viewer")
+        })
+        .transpose()?;
+    let opened = open_file_with(
+        world,
+        layout,
+        PathBuf::from(path),
+        FileOpenMode::Focus,
+        requested,
+        None,
+    )?;
+    Ok(serde_json::json!({"panel":opened.panel.to_bits().to_string()}))
 }

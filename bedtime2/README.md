@@ -11,6 +11,10 @@ The foundation and its optional panels live in these crates:
 
 - [`bedtime-clipboard2`](crates/bedtime-clipboard2): independently usable text/file
   clipboard, optional OS integration, in-process fallback.
+- [`bedtime-model2`](crates/bedtime-model2): glTF/GLB and STL preparation, isolated
+  main-world scenes and UI2 controls, with optional Workbench composition.
+- [`bedtime-mascots2`](crates/bedtime-mascots2): embedded Bed and Ducky scenes,
+  UI2 drawing, lazy click audio and an optional Workbench panel adapter.
 - [`bedtime-ui2`](crates/bedtime-ui2): egui/Bevy integration, themes, controls,
   asset-backed icons, effects and UI-local motion. It has no workbench dependency.
 - [`bedtime-editor2`](crates/bedtime-editor2): embeddable plain text editing,
@@ -95,3 +99,5 @@ See [stage 3](../MIGRATION/step-3.md) and the
 [workbench split](../MIGRATION/step-3-split.md).
 
 [Stage 4](../MIGRATION/step-4-egui.md) records the egui migration and input ownership model.
+
+[`bedtime-image2`](crates/bedtime-image2/README.md) supplies reusable static raster/SVG decoding and a cursor-anchored zoom/pan canvas, with optional Workbench integration. File associations remain application-owned.

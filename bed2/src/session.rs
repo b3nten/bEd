@@ -82,6 +82,10 @@ pub(crate) struct Session {
     pub(crate) visibility: bedtime_filetree2::FileTreePreferences,
     pub(crate) name: String,
     pub(crate) background_updates: bool,
+    #[serde(default)]
+    pub(crate) git_draft: String,
+    #[serde(default)]
+    pub(crate) git_panel: crate::git::GitPanelOptions,
     pub(crate) active_layout: Option<usize>,
     pub(crate) layouts: Vec<LayoutRecipe>,
 }
@@ -110,18 +114,28 @@ pub(crate) struct TabRecipe {
     pub(crate) title: String,
     pub(crate) preview: bool,
     pub(crate) file: Option<PathBuf>,
+    #[serde(default)]
+    pub(crate) viewer_explicit: bool,
+    #[serde(default)]
+    pub(crate) model_view: Option<bedtime_model2::ViewState>,
     pub(crate) tree_root: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum PanelKind {
+    Git,
     LanguageServers,
     Files,
     Code,
+    Image,
+    Model,
+    Hex,
     Structure,
     Terminal,
     Viewport,
+    Bed,
+    Ducky,
     Tasks,
     Settings,
 }
@@ -131,6 +145,9 @@ pub(crate) fn validate(session: &Session) -> Result<(), String> {
         return Err("Unsupported workspace session version".into());
     }
     session.settings.validate()?;
+    if session.git_draft.len() > 64 * 1024 || session.git_draft.contains('\0') {
+        return Err("Git commit draft exceeds 64 KiB or contains a null character".into());
+    }
     if session
         .root
         .as_ref()
@@ -182,9 +199,13 @@ pub(crate) fn validate(session: &Session) -> Result<(), String> {
                 return Err("Invalid tab selection or tab count".into());
             }
             for tab in &area.tabs {
+                if let Some(view) = &tab.model_view {
+                    if tab.kind != PanelKind::Model { return Err("Model view state on a non-model tab".into()); }
+                    view.validate()?;
+                }
                 if !text(&tab.title)
                     || tab.file.as_ref().is_some_and(|p| {
-                        tab.kind != PanelKind::Code
+                        !matches!(tab.kind, PanelKind::Code | PanelKind::Image | PanelKind::Hex | PanelKind::Model)
                             || !p.is_absolute()
                             || p.as_os_str().len() > 16384
                     })
@@ -247,7 +268,12 @@ pub(crate) fn capture(world: &World, workspace: Entity) -> Result<Session, Strin
                 {
                     PanelKind::Files
                 } else if world.get::<crate::files::FilePreviewPanel>(panel).is_some() {
-                    PanelKind::Code
+                    match world.get::<crate::files::FilePreviewPanel>(panel).unwrap().viewer {
+                        crate::opening::ViewerId::Code => PanelKind::Code,
+                        crate::opening::ViewerId::Image => PanelKind::Image,
+                        crate::opening::ViewerId::Hex => PanelKind::Hex,
+                        crate::opening::ViewerId::Model => PanelKind::Model,
+                    }
                 } else if world.get::<bed_structure2::StructurePanel>(panel).is_some() {
                     PanelKind::Structure
                 } else if world
@@ -255,10 +281,16 @@ pub(crate) fn capture(world: &World, workspace: Entity) -> Result<Session, Strin
                     .is_some()
                 {
                     PanelKind::Terminal
+                } else if world.get::<bedtime_mascots2::BedPanel>(panel).is_some() {
+                    PanelKind::Bed
+                } else if world.get::<bedtime_mascots2::DuckPanel>(panel).is_some() {
+                    PanelKind::Ducky
                 } else if world.get::<crate::cube::CubeViewport>(panel).is_some() {
                     PanelKind::Viewport
                 } else if world.get::<crate::lsp_panel::LspPanel>(panel).is_some() {
                     PanelKind::LanguageServers
+                } else if world.get::<crate::git::GitPanel>(panel).is_some() {
+                    PanelKind::Git
                 } else if world.get::<crate::tasks::TasksPanel>(panel).is_some() {
                     PanelKind::Tasks
                 } else if world.get::<crate::settings::SettingsPanel>(panel).is_some() {
@@ -281,6 +313,8 @@ pub(crate) fn capture(world: &World, workspace: Entity) -> Result<Session, Strin
                     },
                     preview: instance.preview,
                     file: crate::files::panel_path(world, panel),
+                    viewer_explicit: world.get::<crate::files::FilePreviewPanel>(panel).is_some_and(|p|p.explicit),
+                    model_view: world.get::<bedtime_model2::ModelScene>(panel).map(|scene| scene.view),
                     tree_root: world
                         .get::<bedtime_filetree2::FileTreeRoot>(panel)
                         .map(|r| r.0.clone()),
@@ -318,6 +352,8 @@ pub(crate) fn capture(world: &World, workspace: Entity) -> Result<Session, Strin
             .unwrap_or_default(),
         name: owner.name.clone(),
         background_updates: owner.background_updates,
+        git_draft: crate::git::commit_draft(world, workspace),
+        git_panel: crate::git::panel_options(world, workspace),
         active_layout: active_layout(world, workspace)
             .and_then(|e| layouts.iter().position(|&l| l == e)),
         layouts: recipes,
@@ -344,6 +380,12 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
     }) {
         return Err("Tasks or terminals started while the session was loading; live work was preserved. Explicitly retry to save the current workspace instead.".into());
     }
+    if crate::git::has_pending_operation(world, workspace) {
+        return Err(
+            "A Git operation started while the session was loading; live work was preserved."
+                .into(),
+        );
+    }
     let old: Vec<_> = world
         .get::<WorkspaceMembers>(workspace)
         .map_or(&[][..], |m| m.entities())
@@ -362,6 +404,8 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
         crate::settings::WorkspacePreferences(session.settings.clone()),
         session.visibility.clone(),
     ));
+    crate::git::restore_draft(world, workspace, session.git_draft.clone());
+    crate::git::restore_options(world, workspace, session.git_panel);
     let mut layouts = Vec::new();
     let mut reopen = Vec::new();
     let mut selections = Vec::new();
@@ -395,9 +439,19 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
             let mut panels = Vec::new();
             for tab in &recipe.tabs {
                 let panel = match tab.kind {
+                    PanelKind::Git => world
+                        .spawn((crate::git::GitPanel::default(), InArea(area)))
+                        .id(),
                     PanelKind::Files => world
                         .spawn((bedtime_filetree2::FileTreePanel::default(), InArea(area)))
                         .id(),
+                    PanelKind::Image | PanelKind::Hex | PanelKind::Model => {
+                        let panel = world
+                            .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
+                            .id();
+                        crate::files::set_viewer(world, panel, match tab.kind { PanelKind::Model => crate::opening::ViewerId::Model, PanelKind::Hex => crate::opening::ViewerId::Hex, _ => crate::opening::ViewerId::Image })?;
+                        panel
+                    }
                     PanelKind::Code => world
                         .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
                         .id(),
@@ -419,6 +473,10 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
                             .spawn((bedtime_terminal2::TerminalPanel::new(options), InArea(area)))
                             .id()
                     }
+                    PanelKind::Bed => world.spawn((bedtime_mascots2::BedPanel, InArea(area))).id(),
+                    PanelKind::Ducky => world
+                        .spawn((bedtime_mascots2::DuckPanel, InArea(area)))
+                        .id(),
                     PanelKind::Viewport => {
                         world.spawn((crate::cube::CubeViewport, InArea(area))).id()
                     }
@@ -438,8 +496,9 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
                         .entity_mut(panel)
                         .insert(bedtime_filetree2::FileTreeRoot(root.clone()));
                 }
+                if let Some(mut preview)=world.get_mut::<crate::files::FilePreviewPanel>(panel) {preview.explicit=tab.viewer_explicit;}
                 if let Some(path) = &tab.file {
-                    reopen.push((panel, path.clone(), tab.title.clone()));
+                    reopen.push((panel, path.clone(), tab.title.clone(), tab.model_view));
                 }
                 let mut metadata = world.get_mut::<PanelInstance>(panel).unwrap();
                 metadata.title = tab.title.clone();
@@ -468,7 +527,7 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
     owner.name = session.name.clone();
     owner.background_updates = session.background_updates;
     // A missing file leaves the editor/error visible; the graph is still valid.
-    for (panel, path, title) in reopen {
+    for (panel, path, title, model_view) in reopen {
         if let Err(error) = crate::opening::restore_file_panel(world, panel, path) {
             request_error_dialog(
                 world,
@@ -479,6 +538,7 @@ fn restore(world: &mut World, workspace: Entity, session: &Session) -> Result<()
                 },
             );
         }
+        if let Some(view) = model_view && let Some(mut scene) = world.get_mut::<bedtime_model2::ModelScene>(panel) { scene.view = view; }
         world.get_mut::<PanelInstance>(panel).unwrap().title = title;
     }
     Ok(())
@@ -869,6 +929,50 @@ mod tests {
         }
     }
     #[test]
+    fn image_code_and_hex_sessions_restore_explicit_viewers() {
+        use crate::opening::ViewerId;
+        let root = root();
+        let path = root.join("both.svg");
+        std::fs::write(
+            &path,
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="2"/>"#,
+        )
+        .unwrap();
+        let (mut app, owner) = host(&root, false);
+        let layout = active_layout(app.world(), owner).unwrap();
+        let area = Workbench::for_entity(app.world_mut(), owner)
+            .unwrap()
+            .destination_area(layout)
+            .unwrap();
+        for viewer in [ViewerId::Image, ViewerId::Code, ViewerId::Hex] {
+            let panel = app
+                .world_mut()
+                .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
+                .id();
+            crate::files::set_viewer(app.world_mut(), panel, viewer).unwrap();
+            app.world_mut().get_mut::<crate::files::FilePreviewPanel>(panel).unwrap().explicit=true;
+            crate::opening::restore_file_panel(app.world_mut(), panel, path.clone()).unwrap();
+        }
+        let recipe = capture(app.world(), owner).unwrap();
+        validate(&recipe).unwrap();
+        let encoded = ron::to_string(&recipe).unwrap();
+        let decoded: Session = ron::from_str(&encoded).unwrap();
+        let (mut restored, new_owner) = host(&root, false);
+        restore(restored.world_mut(), new_owner, &decoded).unwrap();
+        let recipe = capture(restored.world(), new_owner).unwrap();
+        let kinds: Vec<_> = recipe
+            .layouts
+            .iter()
+            .flat_map(|layout| &layout.areas)
+            .flat_map(|area| &area.tabs)
+            .map(|tab| tab.kind)
+            .collect();
+        assert_eq!(kinds, vec![PanelKind::Image, PanelKind::Code, PanelKind::Hex]);
+        assert_eq!(recipe, decoded);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn default_workspace_is_memory_only_even_when_root_has_a_session() {
         let root = root();
         let (mut app, owner) = host(&root, false);
@@ -994,6 +1098,93 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
+    fn git_panel_and_commit_draft_roundtrip_without_starting_workers() {
+        let root = root();
+        let (mut app, owner) = host(&root, true);
+        settle(&mut app).unwrap();
+        let layout = active_layout(app.world(), owner).unwrap();
+        let area = Workbench::for_entity(app.world_mut(), owner)
+            .unwrap()
+            .destination_area(layout)
+            .unwrap();
+        app.world_mut()
+            .spawn((crate::git::GitPanel::default(), InArea(area)));
+        crate::git::restore_draft(app.world_mut(), owner, "Keep my commit message".into());
+        crate::git::restore_options(
+            app.world_mut(),
+            owner,
+            crate::git::GitPanelOptions {
+                view: crate::git::ViewMode::Tree,
+                group_by: crate::git::GroupBy::StagedUnstaged,
+            },
+        );
+        let expected = capture(app.world(), owner).unwrap();
+        app.update();
+        settle(&mut app).unwrap();
+        let (mut restored, owner) = host(&root, true);
+        settle(&mut restored).unwrap();
+        assert_eq!(capture(restored.world(), owner).unwrap(), expected);
+        assert_eq!(
+            crate::git::commit_draft(restored.world(), owner),
+            "Keep my commit message"
+        );
+        assert_eq!(
+            restored
+                .world_mut()
+                .query::<&crate::git::GitPanel>()
+                .iter(restored.world())
+                .count(),
+            1
+        );
+        assert!(
+            restored
+                .world()
+                .get::<WorkspaceWork>(owner)
+                .unwrap()
+                .list()
+                .is_empty()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn mascot_panels_roundtrip_without_renderer_or_audio_startup() {
+        let root = root();
+        let (mut app, owner) = host(&root, true);
+        settle(&mut app).unwrap();
+        let layout = active_layout(app.world(), owner).unwrap();
+        let area = Workbench::for_entity(app.world_mut(), owner)
+            .unwrap()
+            .destination_area(layout)
+            .unwrap();
+        crate::layouts::spawn_tool(app.world_mut(), area, crate::layouts::ToolKind::Bed);
+        crate::layouts::spawn_tool(app.world_mut(), area, crate::layouts::ToolKind::Ducky);
+        let expected = capture(app.world(), owner).unwrap();
+        app.update();
+        settle(&mut app).unwrap();
+        let (mut restored, owner) = host(&root, true);
+        settle(&mut restored).unwrap();
+        assert_eq!(capture(restored.world(), owner).unwrap(), expected);
+        let kinds: Vec<_> = restored
+            .world_mut()
+            .query::<&bedtime_mascots2::MascotScene>()
+            .iter(restored.world())
+            .map(|scene| scene.kind())
+            .collect();
+        assert_eq!(kinds.len(), 2);
+        assert!(kinds.contains(&bedtime_mascots2::MascotKind::Bed));
+        assert!(kinds.contains(&bedtime_mascots2::MascotKind::Duck));
+        assert_eq!(
+            restored
+                .world_mut()
+                .query::<&bedtime_ui2::UiViewport>()
+                .iter(restored.world())
+                .count(),
+            0
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn language_server_panel_roundtrips_without_starting_workers() {
         let root = root();
         let (mut app, owner) = host(&root, true);
@@ -1068,6 +1259,8 @@ mod tests {
                 title: "Terminal".into(),
                 preview: false,
                 file: None,
+                viewer_explicit: false,
+                model_view: None,
                 tree_root: None,
             });
             recipe.layouts[0].areas[0].selected_tab = Some(0);

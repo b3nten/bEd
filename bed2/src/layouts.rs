@@ -26,21 +26,27 @@ impl LayoutSlot {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToolKind {
     LanguageServers,
+    Git,
     Files,
     Structure,
     Terminal,
     Viewport,
+    Bed,
+    Ducky,
     Tasks,
     Settings,
 }
 
 impl ToolKind {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
         Self::LanguageServers,
+        Self::Git,
         Self::Files,
         Self::Structure,
         Self::Terminal,
         Self::Viewport,
+        Self::Bed,
+        Self::Ducky,
         Self::Tasks,
         Self::Settings,
     ];
@@ -48,10 +54,13 @@ impl ToolKind {
     pub fn key(self) -> &'static str {
         match self {
             Self::LanguageServers => crate::lsp_panel::LspPanel::KEY,
+            Self::Git => crate::git::GitPanel::KEY,
             Self::Files => bedtime_filetree2::FileTreePanel::KEY,
             Self::Structure => bed_structure2::StructurePanel::KEY,
             Self::Terminal => bedtime_terminal2::TerminalPanel::KEY,
             Self::Viewport => crate::cube::CubeViewport::KEY,
+            Self::Bed => bedtime_mascots2::BedPanel::KEY,
+            Self::Ducky => bedtime_mascots2::DuckPanel::KEY,
             Self::Tasks => crate::tasks::TasksPanel::KEY,
             Self::Settings => crate::settings::SettingsPanel::KEY,
         }
@@ -60,10 +69,13 @@ impl ToolKind {
     fn panel_kind(self) -> PanelKind {
         match self {
             Self::LanguageServers => PanelKind::LanguageServers,
+            Self::Git => PanelKind::Git,
             Self::Files => PanelKind::Files,
             Self::Structure => PanelKind::Structure,
             Self::Terminal => PanelKind::Terminal,
             Self::Viewport => PanelKind::Viewport,
+            Self::Bed => PanelKind::Bed,
+            Self::Ducky => PanelKind::Ducky,
             Self::Tasks => PanelKind::Tasks,
             Self::Settings => PanelKind::Settings,
         }
@@ -97,6 +109,8 @@ impl LayoutTemplate {
             visibility: Default::default(),
             name: String::new(),
             background_updates: true,
+            git_draft: String::new(),
+            git_panel: Default::default(),
             active_layout: Some(0),
             layouts: vec![LayoutRecipe {
                 slot: None,
@@ -116,6 +130,8 @@ impl LayoutTemplate {
                                 title: String::new(),
                                 preview: false,
                                 file: None,
+                                viewer_explicit: false,
+                                model_view: None,
                                 tree_root: None,
                             })
                             .collect(),
@@ -419,6 +435,7 @@ fn apply(world: &mut World, layout: Entity, template: &LayoutTemplate) -> Result
 
 pub fn spawn_tool(world: &mut World, area: Entity, kind: ToolKind) -> Entity {
     match kind {
+        ToolKind::Git => world.spawn((crate::git::GitPanel::default(), InArea(area))).id(),
         ToolKind::LanguageServers => world.spawn((crate::lsp_panel::LspPanel, InArea(area))).id(),
         ToolKind::Files => {
             let workspace = world.get::<InWorkspace>(area).unwrap().0;
@@ -449,6 +466,8 @@ pub fn spawn_tool(world: &mut World, area: Entity, kind: ToolKind) -> Entity {
                 .id()
         }
         ToolKind::Viewport => world.spawn((crate::cube::CubeViewport, InArea(area))).id(),
+        ToolKind::Bed => world.spawn((bedtime_mascots2::BedPanel, InArea(area))).id(),
+        ToolKind::Ducky => world.spawn((bedtime_mascots2::DuckPanel, InArea(area))).id(),
         ToolKind::Tasks => world
             .spawn((crate::tasks::TasksPanel::default(), InArea(area)))
             .id(),
@@ -708,6 +727,28 @@ mod tests {
         );
         assert_eq!(read_document(app.world(), document).unwrap(), "dirty");
     }
+    #[test]
+    fn mascot_layout_defaults_preserve_both_kinds_and_create_concrete_panels() {
+        let (mut app, workspace, layout) = host();
+        let area = Workbench::for_entity(app.world_mut(), layout).unwrap().destination_area(layout).unwrap();
+        spawn_tool(app.world_mut(), area, ToolKind::Bed);
+        spawn_tool(app.world_mut(), area, ToolKind::Ducky);
+        save_current(app.world_mut(), workspace).unwrap();
+        let template = app.world().resource::<LayoutDefaults>().0[0].clone();
+        assert_eq!(template.areas[0].tools, vec![ToolKind::Bed, ToolKind::Ducky]);
+        let encoded = crate::storage::encode(&template).unwrap();
+        let decoded: LayoutTemplate = ron::de::from_bytes(&encoded).unwrap();
+        decoded.validate().unwrap();
+        assert_eq!(decoded, template);
+        let other = Workspaces::new(app.world_mut()).open("Other").entity();
+        let other_layout = active_layout(app.world(), other).unwrap();
+        app.world_mut().entity_mut(other_layout).insert(LayoutSlot::One);
+        reset_current(app.world_mut(), other).unwrap();
+        let panels = Workbench::for_entity(app.world_mut(), other).unwrap().panels(other_layout);
+        assert!(panels.iter().any(|&panel| app.world().get::<bedtime_mascots2::BedPanel>(panel).is_some()));
+        assert!(panels.iter().any(|&panel| app.world().get::<bedtime_mascots2::DuckPanel>(panel).is_some()));
+    }
+
     #[test]
     fn saved_defaults_exclude_paths_and_apply_only_on_creation_or_explicit_reset() {
         let (mut app, workspace, layout) = host();

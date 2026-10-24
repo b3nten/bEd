@@ -5,7 +5,7 @@ home directory. An explicit directory argument or **File → Open Folder…** op
 or reuses a folder workspace. Application metadata lives in the user configuration
 directory, never inside the opened project.
 
-The titlebar controls are **Terminal, Files, Structure, Settings**. Click to open
+The titlebar controls are **Terminal, Git, Files, Structure, Settings**. Click to open
 or focus a tool in the current layout; drag to create a new panel in an area or
 along its edge. **View** also offers concrete panel creation. Workbench has no
 panel-type registry or picker.
@@ -44,6 +44,8 @@ owns their canonical document bindings and save backend. `code.rs` supplies
 canvas context-menu actions, analysis execution and the application-owned
 [Structure viewer](crates/bed-structure2/README.md).
 `close.rs` owns application quit decisions and workspace worker shutdown.
+`git.rs` owns local repository operations and document coordination;
+`git/panel.rs` renders the Git panel in egui.
 All use the main World and renderer. Open another panel through **View**; empty
 areas no longer discover registered types. A concrete panel spawn selects its tab
 without changing area focus. `select_panel` and `focus_area` are independent;
@@ -53,6 +55,172 @@ selection/focus immediately as composition applies.
 The memory-only Documents and Hello World demos remain removed. Files and terminal
 helpers share the application opening route; opening a file needs no Files panel.
 The standalone library examples remain available independently.
+
+## Bed mascot
+
+**View → Bed** creates an interactive mascot panel supplied by
+[`bedtime-mascots2`](../bedtime2/crates/bedtime-mascots2/README.md). Move the pointer
+to turn the mascot and press the primary button for a squash and sound. Bed's
+patterned blanket follows the current theme accent; reduced motion freezes the
+pose while retaining click audio. Audio is opened lazily and device failure
+leaves the visuals available.
+
+Panels have independent state and cameras in the application's Bevy world.
+Hidden tabs, layouts and workspaces pause rendering and animation; closing them
+retires scene entities, image handles and playback. Sessions and saved layout
+defaults preserve kind and placement, with fresh animation and playback on restore.
+The startup layout and titlebar remain unchanged.
+
+## Model viewer
+
+GLTF, GLB and STL files open in **Model** through Files, file dragging and
+Terminal's `+open`, using the shared opening route. Open With retains Code and
+Hex alternatives. Preview/pinning, focus and placement follow ordinary file
+viewers; there is no empty model tool or titlebar button.
+
+The model canvas fills the entire panel without padding. Buttons overlay its
+top-left corner, and the smaller interaction hint overlays the bottom-right.
+The viewer ports bed1's Frame All, orbit/pan/zoom, Info, display modes, normal
+vectors and Appearance controls, including all five lighting environments,
+skybox blur/horizon, shadows, AO and exposure. Primary+Plus/Minus zoom and
+Primary+0 reframes the focused model. Animation counts and authored skeleton
+poses are supported; playback and model editing remain deferred. Rendering uses
+[`bedtime-model2`](../bedtime2/crates/bedtime-model2/README.md) in the application's
+existing Bevy world, with isolated scenes and hidden-view camera suspension.
+
+Textual `.gltf` views share canonical documents with Code and refresh from unsaved
+edits. GLB/STL sources are read-only snapshots. Relative local buffers/textures,
+including `../` paths and symlinks, resolve from the model directory; URLs and
+absolute URI paths are rejected. Sidecars use saved disk contents, with bounded
+worker reads and one-second dependency checks while visible. Returning to a view
+resumes checks; changed root sources use the existing file observation flow.
+Confirmed moves rebase relative resources without losing canonical text edits.
+Preparation and asset-loading failures show details while retaining the last
+valid scene. Different files start freshly framed; same-source reloads retain
+camera and appearance. Folder workspace sessions restore those values per tab;
+older session records default the new optional field. No bed1 session import runs.
+
+Verify with the focused crate/application commands in the model README and
+`python3 -B bedtime2/tools/smoke_models.py` after building with `automation`.
+
+## Git panel
+
+Open **Git** from the titlebar or **View → Git**. Its layout follows bed1:
+branch selection/creation and Fetch/Pull/Push/Refresh across the top, a
+virtualized Conflicts/Tracked/Untracked file tree, and a fixed commit composer with
+operation progress/cancellation below. List mode shows filenames with muted parent
+directories. Their checkboxes represent unstaged, partially staged and staged
+content; section checkboxes stage or unstage that section. Newly added files
+stay in Untracked until committed when grouped by tracked/untracked. Commit
+requires staged changes, a message and no unresolved Git conflicts. The centered submit button has an adjacent menu for
+**Commit**, **Amend**, and **Signoff**. Amend replaces HEAD with the current index
+and entered message, including message-only amendments when nothing is staged;
+working changes are not staged implicitly. Signoff adds Git's `Signed-off-by`
+trailer using the configured identity. All modes use the same managed operation,
+reviewed-status check and Git hooks. The action choice is workspace runtime state.
+
+The small settings button beside the branch picker selects **List** or **Tree**
+and groups by **None**, **Tracked and untracked**, or **Staged and unstaged**.
+Tree is built from Git's changed paths, so deleted files remain visible.
+Expandable folders contain their changed files. Files and Git share UI2's tree row painter and motion primitives: the same
+row height/indentation, filename artwork, item-sized hover/selection backgrounds,
+rainbow selection text, rotating disclosures and smoothstep movement/fading.
+Reduced motion settles immediately. Git retains status-colored file icons and
+its staging checkbox column. Folder checkboxes act on all changed descendants,
+including hidden descendants of collapsed folders. Grouped views retain a separate Conflicts
+section; ungrouped views keep conflict markers on their file rows and disable
+folder staging when descendants contain conflicts.
+
+In staged/unstaged grouping, partially staged files appear in both sections.
+The staged copy unstages that file; the unstaged copy stages its remaining
+changes. The commit count still counts each staged file once. View/group choices
+are shared by the workspace's Git panels and persisted with its session. New
+workspaces and older sessions without a saved choice default to Tree with
+tracked/untracked grouping; explicit saved choices survive. Folder expansion is
+runtime state. Changing settings or expanding a folder prepares rows from the
+cached immutable status on a managed worker, without another Git query; stale
+preparation cannot replace a newer status or choice. Tree row indexes are also
+prepared on the worker. Each panel retains motion only for its recent viewport;
+collapsing a large folder retains only previously drawn descendants for fading.
+Reopening during a collapse reverses from the displayed position/opacity. Scroll
+anchors survive row shifts; only an explicit folder collapse can replace a lost
+anchor with its visible parent.
+
+Single-click selects a file. Double-click or Enter opens it through the normal
+file-opening route. The context menu offers Open file, Stage/Unstage and confirmed
+Discard where applicable. Conflicts offer current/incoming/delete choices and
+Save and stage resolution; Git refuses to stage remaining conflict markers.
+Continue/Abort appear during supported repository operations. Delete and Abort
+require confirmation. Text diff views, hunk controls and ordinary editor/tree
+Git decorations remain deferred.
+
+Repository state, the commit draft and admitted operations belong to the
+workspace, shared across panel instances and layouts. Closing a panel preserves
+operations; closing its workspace requests cancellation and drains the backend.
+Successful commit clears only the message actually submitted, preserving a newer
+draft. Folder sessions persist Git placement and the commit draft in the existing
+centralized RON record; temporary workspaces remain memory-only. Older records
+default the new draft field to empty. Drafts are limited to 64 KiB at the session
+validation boundary.
+
+The application reuses the GUI-free `bedtime-git` backend and the installed Git
+executable, including its hooks, signing and configuration. A subdirectory
+workspace discovers and displays its parent repository within scope, but requires
+**Open repository root** before writes. Authentication requiring terminal input
+can be completed with **Open Git terminal** after an error. This is local Git
+integration; it does not install bed1's SSH workspace infrastructure.
+
+All Git and source reads run in managed background tasks. One mutation is
+admitted per workspace, redundant refresh requests coalesce, and stale scan
+epochs cannot acknowledge newer operations. Status scans run every two seconds
+with a visible panel, ten seconds with hidden panels, and stop periodic polling
+after the last panel closes. Reopening requests fresh status. File groups, order,
+counts and the single-file message hint are prepared on the worker; drawing only
+visits the visible rows. Filesystem-triggered refresh is a later optimization.
+
+Staging first saves relevant canonical documents and rechecks revision/source
+identity before dispatch. Destructive actions refuse dirty, saving, composing or
+conflicted sources and recheck after preparation. Process-local write leases
+exclude competing editor saves across overlapping workspace roots, remain alive
+through worker completion and source reconciliation, and defer autosave while
+held. Git changes reach open and retained text documents through the existing
+source-generation gate, preserving local edits and undo. Confirmed discard uses
+the backend's displayed-snapshot check. Commit also checks the last reviewed
+status before starting. These checks do not turn external Git processes into an
+atomic compare-and-swap protocol.
+
+Zed's [repository job scheduling](https://github.com/zed-industries/zed/blob/main/crates/project/src/git_store.rs)
+and [Git panel](https://github.com/zed-industries/zed/blob/main/crates/git_ui/src/git_panel.rs)
+were references for ordered work, coalesced scans, pending-state handling and
+virtualized rows. bEd2's coordinator stays application-owned because file
+identity, save policy, opening and persistence belong here. The reusable backend
+remains independent; no viewer registry or diff API is installed by this panel.
+
+Verification:
+
+```sh
+cargo test --offline --locked -p bed2 --features automation
+cargo test --offline --locked -p bedtime-git -p bedtime-ui2 -p bedtime-filetree2
+cargo build --offline --locked -p bed2 --features automation
+python3 -B bedtime2/tools/smoke_git.py
+```
+
+On 2026-10-23, all 137 ordinary application tests passed (two opt-in tests left
+ignored), including 25 Git integration/session/presentation regressions. All 20
+backend, 100 Files tree and 30 UI2 tests passed. The shared backend regressions
+now run directly through `cargo test -p bedtime-git`. Native macOS/Metal automation
+passed eleven nonblank Git captures covering all six view/group combinations,
+shared Files/Git row height, aligned checkboxes, bounded viewport motion state,
+directory collapse/stage/unstage, side-specific partial staging, 502 changes,
+centered commit labels, actual Commit/Amend/Signoff operations, confirmed discard,
+branch creation, narrow resizing and restoration of view/group choices and the
+commit draft. A 30-sample unoptimized local run measured about 0.22 ms median for
+the panel drawing function in default Tree mode with that fixture. This excludes
+whole-application/GPU frame time and background Git work. Captures and the timing
+summary are in `target/git-smoke`. The Files native regression also passed eleven
+captures after sharing the painter, including rename, system clipboard cut/paste,
+watching, injected drops, restoration and a 10,000-entry tree with 23 painted
+viewport rows (`target/shared-tree-files-smoke`). Native Linux UI was not exercised.
 
 ## Local packages and installation
 
@@ -136,7 +304,7 @@ file, and retains tree focus.
 Double-click or Enter pins the tab and focuses the editor. Modified/drafting/saving/conflicted documents are never replaced by another
 preview. Reopening a file within a workspace shares its canonical document,
 including retained edits/history after its last viewer closes. Different layouts
-have separate preview slots. Shared editor views remain a library capability; the
+have separate preview slots. Additional shared views can be created by dragging a file from Files; the
 canvas menu does not expose view creation.
 
 UTF-8 files up to 256 MiB load on managed background workers. Binary, oversized and
@@ -157,6 +325,54 @@ home contains an existing `.bed` directory. The reusable plugin chooses neither
 cwd nor storage itself. Core Workbench snapshots/restoration remain removed; application session recipes
 are described below.
 
+Files supports dragging a single file into an area, tab strip or edge split using
+Workbench's titlebar creation targets. Each drop creates a pinned viewer at that
+placement and shares canonical content/history with other viewers of the file.
+Dropping onto an eligible folder in Files retains the existing move/copy behavior.
+
+## Image viewers and Open With
+
+Image files open in the toolbar-free canvas supplied by
+[`bedtime-image2`](../bedtime2/crates/bedtime-image2/README.md), centered and
+contained in the panel. Wheel and pinch zoom at the pointer, primary-button drag
+pans, and double-click returns to fit. PNG/APNG, JPEG/JFIF, SVG, GIF, WebP, BMP,
+ICO, TIFF, TGA, PNM variants, QOI, DDS, HDR and EXR are supported; animated formats
+show their first frame. Transparency uses the normal panel background.
+
+`opening.rs` owns an explicit association table with stable viewer IDs,
+case-insensitive extensions and descending priorities. Image has priority 100 for
+its extensions; Code has priority 0 as the universal text/metadata fallback.
+Files, Git, terminal helpers and file drops all use that policy. Automatic opens
+resolve the default before looking for an existing same-file/same-viewer tab in
+the origin layout. A safe temporary preview can change viewer kind. File drops
+always create a pinned viewer at the requested placement.
+
+**Open With** appears in the file canvas and Files context menus when multiple
+viewers are supported. It lists viewers by priority and marks the default.
+Choosing another viewer opens/focuses a separate pinned tab; it preserves the
+originating tab. New tabs from a canvas appear beside it in the same area.
+Files uses normal viewer placement. Choices apply to that opening; there is no
+saved association preference or settings UI. Existing sessions retain their
+recorded Code viewers, including SVG files; new Image tabs restore as Image.
+Zoom/pan is runtime-only and starts at fit after restoration.
+
+SVG Image panels bind the same canonical text document as Code, without a hidden
+editor. Committed unsaved edits update the image after a 150 ms settling period.
+Invalid intermediate source retains the last valid image and shows an error.
+Save/conflict/autosave/close policy remains canonical, and dirty shared SVGs
+protect temporary previews from replacement. Source-generation and revision
+checks reject obsolete read/render results. Raster images are read-only source
+snapshots. Background source observation refreshes image viewers after disk
+changes, including outside the tree root; confirmed moves and deletion follow
+the common file lifecycle. SVG rasterization is refreshed for physical display
+size within a 64 MiB output budget. Hidden views defer resolution/source rendering
+until visible after their initial load; closing/replacing cancels pending work
+and releases textures. Encoded source reads are bounded to 256 MiB.
+
+Verification: `cargo test --offline --locked -p bed2 --features automation`,
+`cargo test --offline --locked -p bedtime-image2 -p bedtime-filetree2`, and native
+`python3 -B bedtime2/tools/smoke_images.py` after building with `automation`.
+
 ## Opening from the terminal
 
 Local terminals provide `+open` and `+o` through Terminal2's optional shell-command
@@ -175,9 +391,8 @@ child PATH; no separate helper binary is packaged or installed globally.
 `opening.rs` is the shared route for file-opening intentions. Files validates its
 source panel/root and supplies preview/pin/focus intent; shell commands supply
 validated runtime origin and paths. The route owns viewer selection, same-layout
-reuse, protected preview replacement and placement. Currently every file uses the
-text/metadata viewer: a PNG opens as binary metadata, until an image viewer is
-implemented. Future viewer/area rules belong here, not in the tree or terminal.
+reuse, protected preview replacement and placement. Default image associations use Image; other files use the
+text/metadata viewer. Association and area rules belong here, not in the tree or terminal.
 An existing viewer area is preferred; otherwise use the largest area without Files,
 splitting only when every area contains a tree. Reopening a file preserves its
 canonical document and unsaved edits.
@@ -668,6 +883,7 @@ python3 bedtime2/tools/smoke_open.py
 python3 bedtime2/tools/smoke_code.py
 python3 bedtime2/tools/smoke_editor.py
 python3 bedtime2/tools/smoke_filetree.py
+python3 bedtime2/tools/smoke_filetree_drag.py
 python3 bedtime2/tools/smoke_workspace_policy.py
 ```
 

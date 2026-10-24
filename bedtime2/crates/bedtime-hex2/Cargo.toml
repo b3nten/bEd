@@ -1,0 +1,10 @@
+[package]
+name = "bedtime-hex2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Embeddable read-only virtualized byte viewer"
+
+[dependencies]
+bedtime-ui2.workspace = true

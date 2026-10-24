@@ -27,7 +27,7 @@ pub(super) fn operation_title(operation: &FileTreeOperation) -> &'static str {
 
 pub(super) fn action_title(action: &Action) -> &'static str {
     match action {
-        Action::Open { .. } => "Couldn't open the item",
+        Action::Open { .. } | Action::OpenWith { .. } => "Couldn't open the item",
         Action::Copy { .. } => "Couldn't copy the items",
         Action::Cut { .. } => "Couldn't prepare the items to move",
         Action::Paste { .. } => "Couldn't paste the items",

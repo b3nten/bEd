@@ -2,10 +2,10 @@
 //! performs filesystem work; even the flattened row projection comes from work.
 use super::*;
 use bedtime_ui2::{BuiltinIcon, theme::color};
-use bedtime_workbench2::PanelPresentation;
+use bedtime_workbench2::{PanelFactoryPayload, PanelPresentation};
 use std::collections::HashSet;
 
-const INSET: f32 = 8.0;
+use bedtime_ui2::tree::{INSET, RowMotion, animation_fraction};
 
 #[derive(Default)]
 pub(crate) struct TreeView {
@@ -19,20 +19,13 @@ pub(crate) struct TreeView {
     scroll: f32,
     pending_scroll: Option<f32>,
     anchor: Option<(PathBuf, f32)>,
-    motions: HashMap<PathBuf, RowMotion>,
+    motions: HashMap<PathBuf, (RowMotion, u64)>,
     retiring: Vec<RetiringRow>,
     last_rows: Vec<(FileTreeRow, f32)>,
     time: f64,
     type_prefix: String,
     type_time: f64,
     hover_expand: Option<(PathBuf, f64)>,
-}
-struct RowMotion {
-    from: f32,
-    target: f32,
-    alpha_from: f32,
-    started: f64,
-    seen: u64,
 }
 struct RetiringRow {
     row: FileTreeRow,
@@ -66,9 +59,8 @@ impl TreeView {
             .unwrap_or(0.0);
         if delta != 0.0 {
             self.pending_scroll = Some((self.scroll + delta).max(0.0));
-            for motion in self.motions.values_mut() {
-                motion.from += delta;
-                motion.target += delta;
+            for (motion, _) in self.motions.values_mut() {
+                motion.shift(delta);
             }
             for retiring in &mut self.retiring {
                 retiring.from += delta;
@@ -213,7 +205,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
                 }
             });
     }
-    let height = (context.theme.metrics.font_size + 10.0).max(24.0);
+    let height = bedtime_ui2::tree::row_height(context);
     state.view.row_height = height;
     let mut scroll = egui::ScrollArea::vertical()
         .id_salt((panel, "files-scroll"))
@@ -237,7 +229,9 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
             state.view.reveal = Some(path);
         }
     }
-    let payload = egui::DragAndDrop::payload::<FileDrag>(ui.ctx());
+    let payload = egui::DragAndDrop::payload::<FileDrag>(ui.ctx()).or_else(|| {
+        egui::DragAndDrop::payload::<PanelFactoryPayload>(ui.ctx())?.content::<FileDrag>()
+    });
     let source_valid = payload.as_ref().is_some_and(|payload| {
         let current = if payload.panel == panel {
             payload.generation == state.generation && payload.root == snapshot.root
@@ -306,8 +300,8 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
         let frame = ui.ctx().cumulative_frame_nr();
         let mut candidates: Vec<usize> = (min.min(max)..max).collect();
         let mut seen: HashSet<usize> = candidates.iter().copied().collect();
-        for (path, motion) in &state.view.motions {
-            let (y, _) = motion_value(motion, now, context.motion);
+        for (path, (motion, _)) in &state.view.motions {
+            let (y, _) = motion.sample(now, context.motion);
             if y + height >= viewport.min.y
                 && y <= viewport.max.y
                 && let Some(index) = snapshot.row_index(path)
@@ -321,26 +315,24 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
         for index in candidates {
             let row = &snapshot.rows[index];
             let target = index as f32 * height;
-            let motion = state
+            let (motion, seen) = state
                 .view
                 .motions
                 .entry(row.path.clone())
-                .or_insert(RowMotion {
-                    from: target + 5.0,
-                    target,
-                    alpha_from: if snapshot.version > 1 { 0.0 } else { 1.0 },
-                    started: now,
-                    seen: frame,
+                .or_insert_with(|| {
+                    (
+                        RowMotion::new(
+                            target + 5.0,
+                            target,
+                            if snapshot.version > 1 { 0.0 } else { 1.0 },
+                            now,
+                        ),
+                        frame,
+                    )
                 });
-            if motion.target != target {
-                let (current, alpha) = motion_value(motion, now, context.motion);
-                motion.from = current;
-                motion.target = target;
-                motion.alpha_from = alpha;
-                motion.started = now;
-            }
-            motion.seen = frame;
-            let (y, alpha) = motion_value(motion, now, context.motion);
+            motion.retarget(target, 1.0, now, context.motion);
+            *seen = frame;
+            let (y, alpha) = motion.sample(now, context.motion);
             if alpha < 0.999 || (y - target).abs() > 0.01 {
                 state.view.animating = true;
                 ui.ctx().request_repaint();
@@ -458,7 +450,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
                 if !state.selection.contains(&row.path) {
                     state.select(&row.path, false, false);
                 }
-                response.dnd_set_drag_payload(FileDrag {
+                let drag = FileDrag {
                     panel,
                     workspace: state.workspace.unwrap(),
                     generation: state.generation,
@@ -466,9 +458,27 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
                     paths: operations::top_level_paths(
                         &state.selection.iter().cloned().collect::<Vec<_>>(),
                     ),
-                });
+                };
+                if drag.paths.len() == 1
+                    && row.kind != FileTreeEntryKind::Directory
+                    && let Some(factory) = world.get_resource::<FileTreePanelDrag>()
+                {
+                    response.dnd_set_drag_payload(PanelFactoryPayload::with_content(
+                        (factory.0)(row.path.clone()),
+                        drag,
+                    ));
+                } else {
+                    response.dnd_set_drag_payload(drag);
+                }
             }
-            response.context_menu(|ui| menu::draw(ui, &mut state, settings.read_only));
+            response.context_menu(|ui| {
+                menu::draw(
+                    ui,
+                    &mut state,
+                    settings.read_only,
+                    world.get_resource::<crate::FileTreeOpenWith>(),
+                )
+            });
             if let FileTreeDirectoryState::Failed(_) = &row.directory_state {
                 context.frame(ui).tooltip(
                     &response,
@@ -514,6 +524,9 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
             ui.ctx().request_repaint();
         }
         if let Some(directory) = &destination {
+            if payload.is_some() {
+                PanelFactoryPayload::reserve_for_content(ui.ctx());
+            }
             if let (Some(first), Some(end)) = (
                 snapshot.row_index(directory),
                 snapshot.subtree_end_index(directory),
@@ -528,8 +541,13 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
         }
         // Eligibility and destination are shared by feedback and release. An
         // invalid gesture never consumes a mutation slot or creates an error.
-        if payload.is_some() && inside && ui.input(|i| i.pointer.any_released()) {
-            egui::DragAndDrop::take_payload::<FileDrag>(ui.ctx());
+        if payload.is_some()
+            && inside
+            && ui.input(|i| i.pointer.any_released())
+            && (destination.is_some()
+                || !egui::DragAndDrop::has_payload_of_type::<PanelFactoryPayload>(ui.ctx()))
+        {
+            egui::DragAndDrop::clear_payload(ui.ctx());
             if let (Some(payload), Some(directory)) = (&payload, &destination) {
                 state.queue(Action::Transfer {
                     sources: payload.paths.clone(),
@@ -578,10 +596,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
             state.view.animating = true;
             ui.ctx().request_repaint();
         }
-        state
-            .view
-            .motions
-            .retain(|_, motion| motion.seen + 2 >= frame);
+        state.view.motions.retain(|_, (_, seen)| *seen + 2 >= frame);
         if let Some(row) = snapshot
             .rows
             .get((viewport.min.y / height).floor().max(0.0) as usize)
@@ -602,7 +617,14 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
                 ui.ctx().request_repaint();
             }
         }
-        background.context_menu(|ui| menu::draw(ui, &mut state, settings.read_only));
+        background.context_menu(|ui| {
+            menu::draw(
+                ui,
+                &mut state,
+                settings.read_only,
+                world.get_resource::<crate::FileTreeOpenWith>(),
+            )
+        });
     });
     state.view.scroll = output.state.offset.y;
     if !content_rect.contains(
@@ -679,21 +701,6 @@ pub(crate) fn transfer_allowed(sources: &[PathBuf], directory: &Path, copy: bool
                 .any(|source| source.parent() != Some(directory)))
 }
 
-fn animation_fraction(now: f64, started: f64, policy: bedtime_ui2::MotionPolicy) -> f32 {
-    if !policy.enabled {
-        return 1.0;
-    }
-    let t = ((now - started) as f32 / policy.seconds.max(0.001)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
-}
-fn motion_value(motion: &RowMotion, now: f64, policy: bedtime_ui2::MotionPolicy) -> (f32, f32) {
-    let t = animation_fraction(now, motion.started, policy);
-    (
-        motion.from + (motion.target - motion.from) * t,
-        motion.alpha_from + (1.0 - motion.alpha_from) * t,
-    )
-}
-
 fn paint_row(
     ui: &mut egui::Ui,
     context: &UiContext<'_>,
@@ -704,93 +711,44 @@ fn paint_row(
     alpha: f32,
     indent: f32,
 ) {
-    let mut painter = ui.painter().clone();
-    painter.set_opacity(alpha.clamp(0.0, 1.0));
-    let x = rect.left() + INSET + row.depth as f32 * indent;
-    let side = context.theme.metrics.font_size.min(18.0);
-    let center = egui::pos2(x + 7.0, rect.center().y);
-    let mut ink = color(if row.hidden {
-        context.theme.palette.muted
-    } else {
-        context.theme.palette.text
-    });
-    if row.kind == FileTreeEntryKind::Directory {
-        let open = state.is_expanded(&row.path);
-        let progress = bedtime_ui2::animate_expansion(
-            ui.ctx(),
-            egui::Id::new((context.view, &row.path, "arrow")),
-            open,
-            context.motion,
-        );
-        bedtime_ui2::paint_chevron(&painter, center, progress, ink);
-    }
+    let expanded = (row.kind == FileTreeEntryKind::Directory).then(|| state.is_expanded(&row.path));
     let icon = match row.kind {
-        FileTreeEntryKind::Directory if state.is_expanded(&row.path) => BuiltinIcon::FolderOpen,
+        FileTreeEntryKind::Directory if expanded == Some(true) => BuiltinIcon::FolderOpen,
         FileTreeEntryKind::Directory => BuiltinIcon::Folder,
         FileTreeEntryKind::Symlink => BuiltinIcon::Extension,
         _ => file_icon(&row.path),
     };
-    if matches!(row.directory_state, FileTreeDirectoryState::Failed(_)) {
-        ink = color(context.theme.palette.error);
-    }
-    if state
+    let ink = color(
+        if matches!(row.directory_state, FileTreeDirectoryState::Failed(_)) {
+            context.theme.palette.error
+        } else if row.hidden {
+            context.theme.palette.muted
+        } else {
+            context.theme.palette.text
+        },
+    );
+    let editing = state
         .editing
         .as_ref()
-        .is_none_or(|edit| edit.kind != EditKind::Rename || edit.path != row.path)
-    {
-        if state.selection.contains(&row.path) {
-            ink = bedtime_ui2::rainbow_ink(ui, context.motion);
-        }
-        let font = egui::FontId::proportional(context.theme.metrics.font_size);
-        let max_width = (rect.right() - x - 42.0).max(0.0);
-        let mut job = egui::text::LayoutJob::simple_singleline(row.label.to_string(), font, ink);
-        job.wrap.max_width = max_width;
-        job.wrap.max_rows = 1;
-        job.wrap.break_anywhere = true;
-        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
-        if let Some(response) = response {
-            let selected = state.selection.contains(&row.path);
-            let visuals = ui.style().interact_selectable(response, selected);
-            let fill = ui.ctx().animate_color_with_time(
-                response.id.with("row-fill"),
-                visuals.bg_fill,
-                if context.motion.enabled {
-                    context.motion.seconds
-                } else {
-                    0.0
-                },
-            );
-            if selected || response.hovered() {
-                let label_rect = egui::Rect::from_min_max(
-                    egui::pos2(x + 18.0 - 4.0, rect.top() + 1.0),
-                    egui::pos2(
-                        x + 18.0 + side + 5.0 + galley.size().x + 4.0,
-                        rect.bottom() - 1.0,
-                    ),
-                );
-                painter.rect_filled(
-                    label_rect.intersect(rect.shrink(1.0)),
-                    visuals.corner_radius,
-                    fill,
-                );
-            }
-        }
-        painter.galley(
-            egui::pos2(
-                x + 18.0 + side + 5.0,
-                rect.center().y - galley.size().y / 2.0,
-            ),
-            galley,
-            ink,
+        .is_some_and(|edit| edit.kind == EditKind::Rename && edit.path == row.path);
+    ui.push_id(&row.path, |ui| {
+        bedtime_ui2::tree::paint_row(
+            ui,
+            context,
+            bedtime_ui2::tree::Row {
+                label: (!editing).then_some(row.label.as_ref()),
+                depth: row.depth,
+                icon,
+                expanded,
+                selected: state.selection.contains(&row.path),
+                ink,
+                icon_ink: context.theme.palette.text,
+            },
+            rect,
+            response,
+            alpha,
+            indent,
         );
-    }
-    // Icon artwork is cached by UI2. A scoped child applies opacity without
-    // allocating an animation or retained widget for offscreen entries.
-    ui.scope(|ui| {
-        ui.set_opacity(alpha);
-        context
-            .frame(ui)
-            .icon_at(icon, [x + 18.0, rect.center().y - side / 2.0], side);
     });
 }
 
@@ -974,7 +932,9 @@ mod interaction_tests {
     }
 }
 
-fn file_icon(path: &Path) -> BuiltinIcon {
+/// Bundled filename artwork, without filesystem I/O. Shared by file listings
+/// such as the Files panel and application-owned changed-file trees.
+pub fn file_icon(path: &Path) -> BuiltinIcon {
     match path
         .extension()
         .and_then(|extension| extension.to_str())

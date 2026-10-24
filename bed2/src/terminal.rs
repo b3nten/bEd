@@ -8,6 +8,8 @@ use std::{ffi::OsString, path::PathBuf, sync::mpsc};
 
 pub fn install(app: &mut App) {
     app.init_resource::<ShellOpens>()
+        .add_shell_command(["+ducky"], duck_from_shell)
+        .expect("Ducky shell alias")
         .add_shell_command(["+open", "+o"], open_from_shell)
         .expect("Application shell aliases")
         .add_systems(
@@ -380,5 +382,88 @@ fn work_status(status: &bedtime_workbench2::WorkStatus) -> String {
         WorkStatus::Cancelled => "Cancelled".into(),
         WorkStatus::Finished => "Finished".into(),
         WorkStatus::Failed(error) => format!("Failed: {error}"),
+    }
+}
+
+fn duck_from_shell(world: &mut World, invocation: ShellInvocation) {
+    let result = show_duck(world, invocation.workspace, &invocation.arguments).map(|_| ());
+    invocation.reply.complete(result);
+}
+
+fn show_duck(
+    world: &mut World,
+    workspace: Entity,
+    arguments: &[OsString],
+) -> Result<Entity, String> {
+    if !arguments.is_empty() {
+        return Err("usage: +ducky".into());
+    }
+    if !crate::close::accepts_user_actions(world) {
+        return Err("Cancel quit before opening Ducky".into());
+    }
+    let layout = bedtime_workbench2::active_layout(world, workspace)
+        .ok_or("Workspace has no selected layout")?;
+    crate::layouts::open_or_focus(world, layout, crate::layouts::ToolKind::Ducky)
+}
+
+#[cfg(test)]
+mod mascot_tests {
+    use super::*;
+    use bedtime_workbench2::{Panel, PanelInstance, WorkbenchCorePlugin, Workspaces};
+
+    #[test]
+    fn duck_shell_uses_origin_workspace_reuses_panel_and_rejects_arguments() {
+        let mut app = App::new();
+        app.add_plugins(WorkbenchCorePlugin);
+        let origin = Workspaces::new(app.world_mut()).open("Origin").entity();
+        let other_id = Workspaces::new(app.world_mut()).open("Focused elsewhere");
+        let other = other_id.entity();
+        Workspaces::new(app.world_mut()).activate(other_id).unwrap();
+        let duck = show_duck(app.world_mut(), origin, &[]).unwrap();
+        assert_eq!(app.world().get::<InWorkspace>(duck).unwrap().0, origin);
+        assert_eq!(show_duck(app.world_mut(), origin, &[]).unwrap(), duck);
+        assert!(app.world().get::<bedtime_workbench2::ActiveWorkspace>(other).is_some());
+        let focused = show_duck(app.world_mut(), other, &[]).unwrap();
+        assert_ne!(focused, duck);
+        assert!(
+            show_duck(app.world_mut(), origin, &["extra".into()])
+                .unwrap_err()
+                .contains("usage")
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&PanelInstance>()
+                .iter(app.world())
+                .filter(|p| p.key == bedtime_mascots2::DuckPanel::KEY)
+                .count(),
+            2
+        );
+        let bare = app
+            .world_mut()
+            .spawn(bedtime_workbench2::Workspace::default())
+            .id();
+        assert!(show_duck(app.world_mut(), bare, &[]).is_err());
+    }
+    #[test]
+    fn duck_shell_rejects_opening_after_quit_was_requested() {
+        let mut app = App::new();
+        app.add_plugins((WorkbenchCorePlugin, crate::close::ClosePlugin))
+            .add_message::<AppExit>();
+        let owner = Workspaces::new(app.world_mut()).open("Closing").entity();
+        app.world_mut()
+            .write_message(bedtime_workbench2::CloseRequested { window: None });
+        app.update();
+        assert!(
+            show_duck(app.world_mut(), owner, &[])
+                .unwrap_err()
+                .contains("Cancel quit")
+        );
+        assert_eq!(
+            app.world_mut()
+                .query::<&bedtime_mascots2::DuckPanel>()
+                .iter(app.world())
+                .count(),
+            0
+        );
     }
 }

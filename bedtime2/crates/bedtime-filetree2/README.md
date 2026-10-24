@@ -50,6 +50,17 @@ let panel = world.spawn((
 and diagnostics. The row index is built on the worker. Paths—not lossy labels—are
 identity. Own confirmed moves remap navigation and manual hiding; external renames
 are reconciled as filesystem observations, not guessed identity changes.
+`file_icon(path)` exposes the same bundled filename artwork for other file
+listings without filesystem I/O or installing the tree plugin.
+
+Hosts may install `FileTreeOpenWith` to supply labeled opaque opening choices
+for a captured leaf path. The provider runs during drawing and must perform no
+I/O. Menus retain the ordinary root/generation capture rules; admission rechecks
+the visible leaf and current provider choices before emitting
+`FileTreeOpenWithRequested { panel, workspace, path, choice }`. The host owns
+viewer interpretation and placement. Directory/background menus omit these
+choices; multiple selection still targets the right-clicked leaf. Without the
+resource, the ordinary context menu is unchanged.
 
 ## Interaction
 
@@ -70,6 +81,11 @@ are reconciled as filesystem observations, not guessed identity changes.
 - Menu actions capture row/selection and generation. Later selection/focus changes
   cannot redirect an admitted action. Refresh remains available on a failed root's
   background even when there is no readable root row yet.
+- Hosts can install `FileTreePanelDrag` with a path-to-`PanelFactory` callback to
+  offer single-file drags to Workbench's area, tab and split targets. The callback
+  only constructs the payload; the host's viewer constructor runs after drawing
+  at the accepted destination. Folder transfer targets retain priority. Directory
+  and multi-selection drags continue to offer filesystem transfers only.
 - Internal dragging moves within the same root; Option/Primary requests a copy.
   Another root or a read-only source is a copy. Incoming OS drops always copy.
   A child-file hover selects its enclosing folder as the destination, never the
@@ -216,6 +232,7 @@ The application scenarios use temporary projects:
 ```sh
 cargo build --offline --locked -p bed2 --features automation
 python3 bedtime2/tools/smoke_filetree.py
+python3 bedtime2/tools/smoke_filetree_drag.py
 python3 bedtime2/tools/smoke_editor.py
 python3 bedtime2/tools/smoke_code.py
 ```
@@ -231,3 +248,12 @@ Rows begin directly below the panel header when no status is shown. Selection an
 hover backgrounds fit the file icon and label rather than spanning the panel; full-row
 click, drag and context-menu targets remain available. Default rows use an
 8-point left inset, 16-point indentation and font size plus 10-point row height.
+The row painter, geometry and movement/fade transition live in `bedtime_ui2::tree`
+and are also used by bEd2's Git tree. Files retains ownership of filesystem
+observations, viewport/scroll state and interactions.
+
+On 2026-10-23, the shared Files/Git painter passed all 100 Files and 30 UI2 tests
+and the native macOS smoke with eleven validated captures. Its 10,000-entry wide
+root painted 23 viewport rows; selection, rename, watcher updates, system clipboard
+cut/paste, injected drops and restoration remained covered. Artifacts are in
+`target/shared-tree-files-smoke`; the run used isolated preferences.

@@ -8,7 +8,11 @@ members = [
     "bedtime2/crates/bedtime-clipboard2",
     "bedtime2/crates/bedtime-automation2",
     "bedtime2/crates/bedtime-ui2",
+    "bedtime2/crates/bedtime-mascots2",
     "bedtime2/crates/bedtime-editor2",
+    "bedtime2/crates/bedtime-image2",
+    "bedtime2/crates/bedtime-model2",
+    "bedtime2/crates/bedtime-hex2",
     "bedtime2/crates/bedtime-lsp2",
     "bedtime2/crates/bedtime-workbench2",
     "bedtime2/crates/bedtime-terminal2",
@@ -80,6 +84,10 @@ license = "GPL-3.0-only"
 opt-level = 1
 
 [workspace.dependencies]
+bedtime-model2 = { path = "bedtime2/crates/bedtime-model2" }
+bedtime-image2 = { path = "bedtime2/crates/bedtime-image2" }
+bedtime-hex2 = { path = "bedtime2/crates/bedtime-hex2" }
+bedtime-mascots2 = { path = "bedtime2/crates/bedtime-mascots2" }
 bedtime-grammars2 = { path = "bedtime2/crates/bedtime-grammars2" }
 bedtime-treesitter2 = { path = "bedtime2/crates/bedtime-treesitter2" }
 bed-structure2 = { path = "bed2/crates/bed-structure2" }

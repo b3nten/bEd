@@ -987,7 +987,7 @@ pub(crate) fn execute_with_cancel(
                 repo.done(&["restore", "--worktree", "--", path], None)
             }
         }
-        Operation::Commit { message } => {
+        Operation::Commit { message, mode } => {
             if message.trim().is_empty() {
                 return Err(Error::new(
                     ErrorKind::InvalidInput,
@@ -1000,7 +1000,13 @@ pub(crate) fn execute_with_cancel(
                     "Resolve and stage all conflicts before committing",
                 ));
             }
-            repo.done(&["commit", "--file=-"], Some(message.as_bytes()))
+            let mut args = vec!["commit", "--file=-"];
+            match mode {
+                crate::CommitMode::Commit => {}
+                crate::CommitMode::Amend => args.push("--amend"),
+                crate::CommitMode::Signoff => args.push("--signoff"),
+            }
+            repo.done(&args, Some(message.as_bytes()))
         }
         Operation::CreateBranch { name } | Operation::SwitchBranch { name } => {
             if name.starts_with('-') || name.contains('\0') {

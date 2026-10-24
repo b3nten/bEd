@@ -10,3 +10,7 @@ serde = { workspace = true, features = ["derive"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+
+[[test]]
+name = "regressions"
+path = "../../tests/integration/git/regressions.rs"

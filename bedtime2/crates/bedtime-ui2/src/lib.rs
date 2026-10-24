@@ -12,6 +12,7 @@ mod macos_output;
 mod motion;
 mod runtime;
 pub mod theme;
+pub mod tree;
 mod viewport;
 use bevy::prelude::*;
 pub use combo_box::ComboBox;

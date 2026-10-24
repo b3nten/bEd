@@ -15,6 +15,8 @@ use std::{
 };
 
 const MAX_TEXT_BYTES: u64 = 256 * 1024 * 1024;
+mod write_access;
+pub(crate) use write_access::{FileWrites, WriteLease};
 
 /// File identity is application-owned and can follow a confirmed rename without
 /// replacing the document or losing history. Workbench source_key stays unset.
@@ -250,6 +252,13 @@ pub fn bind_loaded(
         update_binding(world, handle.id()).map_err(|e| e.to_string())?;
         handle
     };
+    if world
+        .get::<crate::files::FilePreviewPanel>(panel)
+        .is_some_and(|p| matches!(p.viewer, crate::opening::ViewerId::Image | crate::opening::ViewerId::Model))
+    {
+        bind_document_view(world, panel, handle).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
     // Detection runs only for a newly attached language. Explicit choices survive
     // reloads and sibling views; an unknown extension remains a plain text editor.
     if world
@@ -272,6 +281,13 @@ pub fn bind_loaded(
         crate::files::select_structure_source(world, panel);
     }
     Ok(())
+}
+
+/// A disk viewer never serializes the canonical editor's unsaved contents.
+pub(crate) fn disk_view_has_unsaved(world: &mut World, workspace: Entity, path: &Path) -> bool {
+    find_source(world, workspace, path).is_some_and(|handle| {
+        inspect_document(world, handle.id()).is_ok_and(|info| info.dirty || info.has_drafts || info.saving)
+    })
 }
 
 pub fn can_replace(world: &World, panel: Entity) -> bool {
@@ -367,12 +383,17 @@ fn update_binding(world: &mut World, id: DocumentId) -> Result<(), DocumentError
                 .checkpoint
                 .clone();
             let saved = world.get::<FileSource>(id.entity()).unwrap().saved.clone();
+            world.init_resource::<FileWrites>();
+            let writes = world.resource::<FileWrites>().clone();
             bind_document_save(
                 world,
                 handle,
                 DocumentSaveBinding::new(
                     Some(key),
                     move |snapshot: DocumentSaveSnapshot<TextBuffer>| {
+                        let target = fs::canonicalize(&path)
+                            .map_err(|e| DocumentSaveError::Failed(e.to_string()))?;
+                        let _lease = writes.file(&target).map_err(DocumentSaveError::Failed)?;
                         let observation = SavedText {
                             revision: snapshot.revision,
                             identity: generation,
@@ -538,4 +559,116 @@ fn save_text(
         let _ = fs::remove_file(temp);
     }
     result
+}
+
+/// Git captures source knowledge before changing disk, including viewless
+/// documents. Worker results are admitted through the usual generation gate.
+pub(crate) struct SourceCapture {
+    id: DocumentId,
+    path: PathBuf,
+    generation: u64,
+    known: Vec<TextBuffer>,
+}
+pub(crate) struct SourceObservation {
+    source: SourceCapture,
+    incoming: Result<Option<TextBuffer>, String>,
+}
+pub(crate) fn capture_sources(world: &mut World, root: &Path) -> Vec<SourceCapture> {
+    world
+        .query::<(Entity, &FileSource)>()
+        .iter(world)
+        .filter_map(|(entity, source)| {
+            let path = source.path.as_ref().filter(|p| p.starts_with(root))?;
+            let id = DocumentId(entity);
+            let info = inspect_document(world, id).ok()?;
+            let handle = cast_document::<TextBuffer>(world, id).ok()?;
+            Some(SourceCapture {
+                id,
+                path: path.clone(),
+                generation: info.source_generation,
+                known: vec![
+                    read_document(world, handle).ok()?.clone(),
+                    source.checkpoint.lock().unwrap().clone(),
+                ],
+            })
+        })
+        .collect()
+}
+pub(crate) fn read_source_observation(source: SourceCapture) -> SourceObservation {
+    let incoming = (|| {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let file = match options.open(&source.path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.to_string()),
+        };
+        if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+            return Err("Source is no longer a regular text file".into());
+        }
+        let mut bytes = Vec::new();
+        file.take(MAX_TEXT_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > MAX_TEXT_BYTES || bytes.contains(&0) {
+            return Err("Source is no longer a supported text file".into());
+        }
+        let text = TextBuffer::from(String::from_utf8(bytes).map_err(|e| e.to_string())?);
+        Ok(Some(
+            source
+                .known
+                .iter()
+                .find(|known| **known == text)
+                .cloned()
+                .unwrap_or(text),
+        ))
+    })();
+    SourceObservation { source, incoming }
+}
+pub(crate) fn apply_source_observation(
+    world: &mut World,
+    observation: SourceObservation,
+) -> Result<(), String> {
+    let SourceObservation { source, incoming } = observation;
+    if source_path(world, source.id) != Some(source.path.as_path()) {
+        return Ok(());
+    }
+    if !inspect_document(world, source.id)
+        .is_ok_and(|info| info.source_generation == source.generation)
+    {
+        return Ok(());
+    }
+    match incoming? {
+        Some(text) => {
+            let handle =
+                cast_document::<TextBuffer>(world, source.id).map_err(|e| e.to_string())?;
+            offer_document_external_update(
+                world,
+                handle,
+                source.generation,
+                text.clone(),
+                Some(SourceVersion(text.fingerprint())),
+            )
+            .map_err(|e| e.to_string())?;
+            *world
+                .get::<FileSource>(source.id.entity())
+                .unwrap()
+                .checkpoint
+                .lock()
+                .unwrap() = text;
+        }
+        None => {
+            let mut binding = world.get_mut::<FileSource>(source.id.entity()).unwrap();
+            binding.path = None;
+            binding.identity_generation.fetch_add(1, Ordering::AcqRel);
+            binding.pending_binding = true;
+            update_binding(world, source.id).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
 }

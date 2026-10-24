@@ -99,6 +99,66 @@ fn draw(control: Control, ui: &mut Ui) -> Response {
 }
 
 #[test]
+fn selectable_row_text_stays_in_place_through_hover_press_and_exit() {
+    fn text_positions(shapes: &[Shape]) -> Vec<Pos2> {
+        let mut positions = Vec::new();
+        for shape in shapes {
+            match shape {
+                Shape::Text(text) => positions.push(text.pos),
+                Shape::Vec(shapes) => positions.extend(text_positions(shapes)),
+                _ => {}
+            }
+        }
+        positions
+    }
+
+    for min_width in [0.0, 240.0] {
+        let ctx = context();
+        let outside = pos2(600.0, 400.0);
+        let paint = |time, events| {
+            render(&ctx, time, events, |ui| {
+                ui.add(Button::selectable(false, "Dropdown choice").min_size(vec2(min_width, 0.0)))
+            })
+        };
+        paint(0.0, vec![Event::PointerMoved(outside)]);
+        let (idle, shapes) = paint(0.1, vec![]);
+        let positions = text_positions(&shapes);
+        assert_eq!(positions.len(), 1);
+        let inside = idle.rect.center();
+        for (time, events) in [
+            (0.12, vec![Event::PointerMoved(inside)]),
+            (0.16, vec![]),
+            (0.4, vec![]),
+            (
+                0.42,
+                vec![Event::PointerButton {
+                    pos: inside,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers: Modifiers::NONE,
+                }],
+            ),
+            (0.7, vec![]),
+            (
+                0.72,
+                vec![Event::PointerButton {
+                    pos: inside,
+                    button: PointerButton::Primary,
+                    pressed: false,
+                    modifiers: Modifiers::NONE,
+                }],
+            ),
+            (0.74, vec![Event::PointerMoved(outside)]),
+            (1.0, vec![]),
+        ] {
+            let (response, shapes) = paint(time, events);
+            assert_eq!(response.rect, idle.rect, "Row bounds changed at {time}");
+            assert_eq!(text_positions(&shapes), positions, "Text moved at {time}");
+        }
+    }
+}
+
+#[test]
 fn native_controls_fade_hover_and_press_without_changing_callsites() {
     for control in [
         Control::Button,

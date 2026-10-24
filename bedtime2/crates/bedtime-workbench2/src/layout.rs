@@ -374,14 +374,27 @@ pub trait Panel: Component {
 /// An application-owned, infallible panel constructor for a creation drag.
 /// Validate application-specific inputs before offering the factory. It must
 /// create exactly one panel in the supplied area, and return that entity.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone)]
 pub struct PanelFactory {
     pub label: &'static str,
-    pub create: fn(&mut World, Entity) -> Entity,
+    pub create: std::sync::Arc<dyn Fn(&mut World, Entity) -> Entity + Send + Sync>,
+}
+impl std::fmt::Debug for PanelFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PanelFactory")
+            .field("label", &self.label)
+            .finish_non_exhaustive()
+    }
 }
 impl PanelFactory {
-    pub const fn new(label: &'static str, create: fn(&mut World, Entity) -> Entity) -> Self {
-        Self { label, create }
+    pub fn new(
+        label: &'static str,
+        create: impl Fn(&mut World, Entity) -> Entity + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            label,
+            create: std::sync::Arc::new(create),
+        }
     }
     pub fn of<P: Panel + Component + Default>() -> Self {
         Self::new(P::LABEL, |world, area| {

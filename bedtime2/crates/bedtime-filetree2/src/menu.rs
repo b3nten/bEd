@@ -181,7 +181,12 @@ impl Item {
 /// Draw inside the row/background Response::context_menu closure. The caller
 /// captures MenuTarget when opening the menu and supplies its read-only policy.
 /// No World, menu entities, shortcut registration or native I/O is involved.
-pub(crate) fn draw(ui: &mut egui::Ui, state: &mut FileTreePanel, read_only: bool) {
+pub(crate) fn draw(
+    ui: &mut egui::Ui,
+    state: &mut FileTreePanel,
+    read_only: bool,
+    open_with: Option<&crate::FileTreeOpenWith>,
+) {
     let target = state.menu_target.as_ref().and_then(|target| {
         target_facts(target, state.generation, &state.snapshot.root, |path| {
             state
@@ -191,6 +196,27 @@ pub(crate) fn draw(ui: &mut egui::Ui, state: &mut FileTreePanel, read_only: bool
         })
     });
     let availability = Availability::new(state, target, read_only);
+    if availability.enabled(Item::Open)
+        && let Some(provider) = open_with
+        && let Some(target) = &state.menu_target
+    {
+        let choices = (provider.0)(&target.path);
+        if !choices.is_empty() {
+            let path = target.path.clone();
+            let mut choice = None;
+            ui.menu_button("Open With", |ui| {
+                for item in choices {
+                    if ui.button(item.label).clicked() {
+                        choice = Some(item.id);
+                        ui.close();
+                    }
+                }
+            });
+            if let Some(choice) = choice {
+                state.queue(crate::Action::OpenWith { path, choice });
+            }
+        }
+    }
     let mut clicked = None;
     let mut entry = |ui: &mut egui::Ui, item, label: &str| {
         if ui

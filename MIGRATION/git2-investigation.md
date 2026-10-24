@@ -1,16 +1,18 @@
 # Git and comparison viewers for Bedtime 2
 
-Status: investigation and proposed implementation sequence, 2026-10-22.
-Git is not installed in bEd2. This proposal starts with the Git panel and text
-diffs, with image and glTF comparisons as later extensions.
+Status: Git panel implemented on 2026-10-23; comparison viewers remain proposed.
+The [application Git contract](../bed2/README.md#git-panel) records its layout,
+operations, save/source coordination, Zed references and verification. The panel
+uses bed1's backend with a new application-owned egui frontend and coordinator.
+Text diffs and image/glTF comparisons are later steps.
 
 Agreed direction: inline text diff presentation belongs inside Editor2 and is
 embedded in a diff panel through the ordinary editor drawing API. The narrow
 Git-independent integration below is proposed; direct Git coupling behind a
 feature is acceptable if implementation exposes a concrete need for it.
 
-Reuse `bedtime-git` for repository operations. Build a UI2 Git panel and text
-comparison presentation against v2 documents. Keep comparison rendering separate
+The panel reuses `bedtime-git` for repository operations. Build text comparison
+presentation against v2 documents next. Keep comparison rendering separate
 from the authority to stage, discard or replace content. Ship concrete viewers;
 introduce a shared comparison API as additional viewers need it, without adding
 a Workbench viewer registry.
@@ -94,15 +96,14 @@ Application work belongs alongside the existing integration points:
   comparison descriptors, then refresh their content on restore. Never persist
   live entities or restore a snapshot token as permission to mutate Git.
 - [`close.rs`](../bed2/src/close.rs): drain managed repository work through the
-  existing workspace/quit lifecycle. Decide whether commit drafts survive
-  workspace restart; a runtime draft can be shared without adding persistence.
+  existing workspace/quit lifecycle. Folder sessions now preserve commit drafts
+  across restart; temporary workspaces retain them only in memory.
 
 The implementation has three natural boundaries: the existing `bedtime-git`
-backend, Git-independent text comparison in `bedtime-editor2`, and a new v2
-Git session/panel with a bEd2 adapter for roots, file documents and saves.
-An optional `bedtime-git2` crate can own the session/panel if that boundary stays
-small; begin with concrete integration rather than designing host callbacks
-before the file/document transitions are working.
+backend, planned Git-independent text comparison in `bedtime-editor2`, and the
+application-owned Git session/panel in bEd2. Keep file/document transitions
+concrete here. Extracting an optional `bedtime-git2` crate would need a second
+host with a useful common boundary; it is not required for the current panel.
 
 Polling with manual refresh is enough initially. Later, debounce filesystem/save
 observations and retain occasional polling for external index/ref changes.
@@ -238,18 +239,19 @@ diffs. Selectively accepting model changes additionally needs stable matching,
 reference repair, validation and writing of all affected resources. Array indexes
 or names alone are not reliable model identity.
 
-## Suggested implementation sequence
+## Implementation sequence after the panel
 
-| Stage | Deliverable | Relative effort |
+| Stage | Deliverable | Status or relative effort |
 | --- | --- | --- |
-| 1 | Local repository session, Git panel status/refresh, staged and unstaged read-only text comparisons, open-file action, binary summary, lifecycle and session integration. | Moderate; backend reuse removes most repository logic. A unified read-only diff is a useful intermediate target. |
-| 2 | Whole-file stage/unstage, commit and confirmed discard, with canonical save/reconciliation and autosave gates. | Moderate; document/source coordination is the consequential part. Together with stage 1 this is the suggested first usable Git workflow. |
-| 3 | Editable inline text comparison, previous/next change and stage/unstage/discard ranges. | Largest core change; Editor2 geometry and save/refresh/revalidate behavior need focused coverage. Required for bed1 editable-diff parity. |
-| 4 | Branch/network controls, richer conflict UI, file-tree badges and ordinary editor gutters as selected follow-ups. | Separate increments; a three-way conflict viewer also needs base/current/incoming inputs beyond today's two-version Diff output. |
-| 5 | Image comparison, then self-contained model comparison. | Images provide a smaller second consumer before committing to public comparison APIs; model loading and rendering add substantially more work. |
+| Panel | Repository session, status/refresh, open-file action, whole-file stage/unstage/commit/discard, branch/network controls, conflict actions and lifecycle/session integration. | Implemented and verified on 2026-10-23. |
+| Inline text | Built-in Editor2 comparison presentation embedded in a diff panel, with read-only staged snapshots and a shared editable working document. | Next; geometry, hit testing and asynchronous comparison are the largest core changes. |
+| Range actions | Previous/next change and stage/unstage/discard ranges. | Reuse the existing backend after revision-bound presentation and save/refresh/revalidation are established. |
+| Other Git presentation | Three-way conflicts, file-tree badges and ordinary editor gutters. | Independent increments; a three-way viewer needs base/current/incoming inputs beyond today's two-version Diff output. |
+| Asset comparisons | Images, then self-contained models. | Images provide a smaller second consumer before public comparison APIs; model loading/rendering add substantially more work. |
 
-These are scope comparisons, not elapsed-time estimates. If editable diff parity
-is required in the first delivery, stages 1–3 belong in that scope.
+The panel was implemented first so its operations and document integration could
+be verified independently. Inline diffs are the next feature, with their rendering
+inside the existing editor rather than a second text-viewer implementation.
 
 ## Verification
 
@@ -259,7 +261,8 @@ passed against `bedtime-git` in a temporary Cargo harness with only that backend
 dependency, using offline cached dependencies. This exercises real Git in
 temporary repositories, including stale actions, literal paths, CRLF/BOM,
 renames, conflicts, linked worktrees, cancellation and a local remote.
-It establishes independent backend reuse; no v2 Git UI was implemented or tested.
+That run established independent backend reuse. Current v2 panel verification
+is recorded in the [application contract](../bed2/README.md#git-panel).
 
 The normal repository entry point for those tests is:
 

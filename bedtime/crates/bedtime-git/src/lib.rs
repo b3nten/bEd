@@ -41,6 +41,16 @@ pub enum ConflictChoice {
     Delete,
 }
 
+/// Mutually exclusive commit actions exposed by the Git composer.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub enum CommitMode {
+    #[default]
+    Commit,
+    Amend,
+    /// Add Git's Signed-off-by trailer using the configured committer identity.
+    Signoff,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub enum Operation {
     Status,
@@ -96,6 +106,8 @@ pub enum Operation {
     },
     Commit {
         message: String,
+        #[serde(default)]
+        mode: CommitMode,
     },
     CreateBranch {
         name: String,

@@ -38,7 +38,7 @@ licenses = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(licenses)
 with (destination / "NOTICE").open("ab") as bundle:
     for root in ("bedtime2/crates/bedtime-ui2/assets", "bedtime2/crates/bedtime-grammars2/grammars",
-                 "bedtime2/crates/bedtime-clipboard2"):
+                 "bedtime2/crates/bedtime-clipboard2", "bedtime2/crates/bedtime-mascots2/resources"):
         for path in sorted(licenses.source_files(repository / root)):
             asset_notice = path.suffix.lower() in {".txt", ".md", ""} and any(
                 word in path.name.upper() for word in ("LICENSE", "OFL"))

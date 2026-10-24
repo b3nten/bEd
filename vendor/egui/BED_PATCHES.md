@@ -58,6 +58,13 @@ their scrollbars. Height limits and wheel scrolling remain intact. These are
 the two presentation changes previously maintained in UI2's copied ComboBox;
 UI2 now re-exports this crate's ComboBox.
 
+Selectable rows and other buttons with `frame_when_inactive(false)` retain
+their frame's border width and margins while hiding its colors. Removing the
+inactive border also removed layout space already accounted for by the padding,
+so hovering an unselected dropdown item shifted its text by one point and
+changed its natural width by two points. Hidden and visible frames now use the
+same geometry; color transitions still run normally.
+
 ## Popup opening motion
 
 `Popup::show` owns opening motion for native menus, submenus, ComboBoxes,
@@ -100,7 +107,9 @@ cargo run -p bedtime-ui2 --example gallery --offline -- --smoke-dir target/egui-
 
 The added regression tests live in `src/widget_animation/tests.rs`. They verify
 intermediate native widget colors, continuous retargeting, immediate editing
-and click behavior, reduced motion, stable layout and state retirement.
+and click behavior, reduced motion, stable layout and state retirement. Selectable
+row coverage checks both text positions and bounds through hover, press and exit,
+at natural and expanded widths.
 `src/containers/popup_tests.rs` checks popup pivots, easing, clip transforms,
 stable input geometry, reopening, interaction and reduced motion. UI2 also
 checks that opening tooltips keep identical glyph positions, bounds, layout

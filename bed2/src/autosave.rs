@@ -116,6 +116,8 @@ fn tick(world: &mut World, now: Instant, focused: Option<(Entity, DocumentId)>) 
                 Autosave::Timer => now.saturating_duration_since(pending.edited_at) >= Duration::from_secs_f64(preferences.autosave_timeout),
             };
             let attempt = (info.revision, info.source_generation);
+            if crate::file_editor::source_path(world, info.id).is_some_and(|path|
+                world.get_resource::<crate::file_editor::FileWrites>().is_some_and(|writes| writes.blocks(path))) { continue; }
             if !due || info.saving || info.has_drafts || info.conflict || info.requires_source_refresh || !info.has_save_binding
                 || !crate::storage::ready(world, info.workspace) || pending.attempted == Some(attempt) { continue; }
             match save_document(world, info.id) {

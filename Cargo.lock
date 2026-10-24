@@ -2001,11 +2001,17 @@ dependencies = [
 name = "bed2"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "bed-structure2",
  "bedtime-automation2",
  "bedtime-editor2",
  "bedtime-filetree2",
+ "bedtime-git",
+ "bedtime-hex2",
+ "bedtime-image2",
  "bedtime-lsp2",
+ "bedtime-mascots2",
+ "bedtime-model2",
  "bedtime-terminal2",
  "bedtime-treesitter2",
  "bedtime-ui2",
@@ -2014,6 +2020,7 @@ dependencies = [
  "bevy_egui",
  "blake3",
  "fontdb",
+ "libc",
  "pulldown-cmark",
  "rfd",
  "ron",
@@ -2330,6 +2337,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedtime-hex2"
+version = "0.1.0"
+dependencies = [
+ "bedtime-ui2",
+]
+
+[[package]]
 name = "bedtime-highlight"
 version = "0.1.0"
 dependencies = [
@@ -2337,6 +2351,17 @@ dependencies = [
  "bedtime-editing",
  "serde_json",
  "tree-sitter-md",
+]
+
+[[package]]
+name = "bedtime-image2"
+version = "0.1.0"
+dependencies = [
+ "bedtime-ui2",
+ "bedtime-workbench2",
+ "bevy",
+ "image",
+ "resvg",
 ]
 
 [[package]]
@@ -2370,6 +2395,37 @@ dependencies = [
  "libc",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bedtime-mascots2"
+version = "0.1.0"
+dependencies = [
+ "bedtime-ui2",
+ "bedtime-workbench2",
+ "bevy",
+ "gltf",
+ "rodio 0.21.1",
+]
+
+[[package]]
+name = "bedtime-model2"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bedtime-ui2",
+ "bedtime-workbench2",
+ "bevy",
+ "bytemuck",
+ "draco-core",
+ "glam",
+ "gltf",
+ "half",
+ "image",
+ "meshopt",
+ "serde",
+ "serde_json",
+ "stl_io",
 ]
 
 [[package]]

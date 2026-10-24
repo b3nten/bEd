@@ -65,7 +65,7 @@ def main():
             source = project / "file with spaces.rs"
             source.write_text("fn opened_from_shell() {}\n")
             image = project / "foo.png"
-            image.write_bytes(b"\x89PNG\x00binary")
+            image.write_bytes(Path("bedtime/tests/fixtures/images/sample.png").read_bytes())
             os.environ.update(HOME=str(home), XDG_CONFIG_HOME=str(config), SHELL="/bin/sh")
             helper = root / "+open"
             helper.symlink_to(binary)
@@ -102,7 +102,7 @@ def main():
                 metadata = next(p for p in previews if p["path"] == str(image))
                 assert text["workspace"] == folder and text["pinned"]
                 assert text["content"] == source.read_text() and text["error"] is None
-                assert metadata["pinned"] and metadata["kind"] == "metadata" and metadata["error"] is None
+                assert metadata["pinned"] and metadata["kind"] == "image" and metadata["error"] is None
                 assert not app.request("app.inspect_filetree")["panels"], "Opening files needs no tree"
                 run_helper(app, panel, "+o '../file with spaces.rs'", root, "alias")
                 previews = app.request("app.inspect_filetree")["previews"]

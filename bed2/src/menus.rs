@@ -681,10 +681,12 @@ fn sync_menu_availability(world: &mut World) {
 use bevy::prelude::*;
 
 pub const PANELS: &[(&str, &str)] = &[
+    (crate::git::GitPanel::KEY, "Git"),
     (bedtime_filetree2::FileTreePanel::KEY, "Files"),
     (bed_structure2::StructurePanel::KEY, "Structure"),
     (bedtime_terminal2::TerminalPanel::KEY, "Terminal"),
     (crate::cube::CubeViewport::KEY, "3D Viewport"),
+    (bedtime_mascots2::BedPanel::KEY, "Bed"),
     (crate::tasks::TasksPanel::KEY, "Tasks & Processes"),
     (crate::lsp_panel::LspPanel::KEY, "Language Servers"),
     (crate::settings::SettingsPanel::KEY, "Settings"),
@@ -778,10 +780,12 @@ mod tests {
                 (
                     "View",
                     vec![
+                        "Git",
                         "Files",
                         "Structure",
                         "Terminal",
                         "3D Viewport",
+                        "Bed",
                         "Tasks & Processes",
                         "Language Servers",
                         "Settings",

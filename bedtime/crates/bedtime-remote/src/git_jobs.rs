@@ -220,6 +220,7 @@ mod tests {
             &mut client,
             repo.root(),
             bedtime_git::Operation::Commit {
+                mode: Default::default(),
                 message: "Slow commit".into(),
             },
         );
@@ -293,6 +294,7 @@ mod tests {
             &mut client,
             repo.root(),
             bedtime_git::Operation::Commit {
+                mode: Default::default(),
                 message: "Disconnected".into(),
             },
         );

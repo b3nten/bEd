@@ -689,7 +689,37 @@ fn hit(ui: &egui::Ui, name: &str, rect: Rect) -> (bool, bool) {
 }
 
 #[derive(Clone)]
-pub struct PanelFactoryPayload(pub PanelFactory);
+pub struct PanelFactoryPayload(
+    pub PanelFactory,
+    Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+);
+
+impl PanelFactoryPayload {
+    pub fn new(factory: PanelFactory) -> Self {
+        Self(factory, None)
+    }
+
+    /// Preserve a widget's own drop semantics while also offering area creation.
+    /// Content targets run first and can consume this entire payload.
+    pub fn with_content<T: Send + Sync + 'static>(factory: PanelFactory, content: T) -> Self {
+        Self(factory, Some(std::sync::Arc::new(content)))
+    }
+
+    pub fn content<T: Send + Sync + 'static>(&self) -> Option<std::sync::Arc<T>> {
+        self.1.as_ref()?.clone().downcast().ok()
+    }
+
+    /// Reserve this pass for a content target's feedback and release handling.
+    pub fn reserve_for_content(ctx: &egui::Context) {
+        let pass = ctx.cumulative_pass_nr();
+        ctx.data_mut(|data| data.insert_temp(egui::Id::new("workbench-content-drop-pass"), pass));
+    }
+
+    fn content_reserved(ctx: &egui::Context) -> bool {
+        ctx.data(|data| data.get_temp::<u64>(egui::Id::new("workbench-content-drop-pass")))
+            == Some(ctx.cumulative_pass_nr())
+    }
+}
 
 /// Lay out the optional application row once, within the current shell allocation.
 fn draw_status_bar(
@@ -1568,8 +1598,13 @@ fn draw(
     }
     // Content has first opportunity to take a typed egui payload. The shell
     // receives only the remaining payload, preserving widget target priority.
-    if let Some(payload) = egui::DragAndDrop::payload::<PanelFactoryPayload>(frame.ui.ctx())
-        .filter(|_| frame.ui.is_enabled() && settings.layout_editing && settings.panel_creation)
+    if let Some(payload) =
+        egui::DragAndDrop::payload::<PanelFactoryPayload>(frame.ui.ctx()).filter(|_| {
+            frame.ui.is_enabled()
+                && settings.layout_editing
+                && settings.panel_creation
+                && !PanelFactoryPayload::content_reserved(frame.ui.ctx())
+        })
     {
         if cancel {
             state.payload_cancelled = true;
@@ -1592,7 +1627,7 @@ fn draw(
                     .input(|i| i.pointer.button_released(PointerButton::Primary))
                 {
                     if let LayoutEdit::DropPanel { factory, .. } = &mut edit {
-                        *factory = payload.0;
+                        *factory = payload.0.clone();
                     }
                     egui::DragAndDrop::take_payload::<PanelFactoryPayload>(frame.ui.ctx());
                     edits.push(edit);
@@ -1646,7 +1681,7 @@ fn draw(
 /// Offer an application-provided constructor, not a registered panel type.
 /// The caller can attach ordinary egui tooltip content to the response.
 pub fn panel_drag_source(response: &egui::Response, factory: PanelFactory) {
-    response.dnd_set_drag_payload(PanelFactoryPayload(factory));
+    response.dnd_set_drag_payload(PanelFactoryPayload::new(factory));
 }
 
 // Placeholder used only while computing a drop preview; replaced by the payload

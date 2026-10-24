@@ -418,7 +418,11 @@ impl GitPanel {
             );
             if ui.button_with_size("Commit staged", [ui.content_region_avail()[0], 0.0]) {
                 let message = state.draft.clone();
-                state.mutate(Operation::Commit { message }, documents, requests);
+                state.mutate(
+                    Operation::Commit { message, mode: Default::default() },
+                    documents,
+                    requests,
+                );
             }
         }
         Ok(())

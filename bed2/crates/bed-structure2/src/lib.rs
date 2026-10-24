@@ -220,6 +220,11 @@ impl Panel for StructurePanel {
                 .id_salt(("code-structure", panel))
                 .auto_shrink([false, false])
                 .show_viewport(ui, |ui, viewport| {
+                    if observation.outline.is_empty() {
+                        egui::Frame::new().inner_margin(14).show(ui, |ui| {
+                            ui.weak("No declarations");
+                        });
+                    }
                     let origin = ui.cursor().min;
                     ui.set_min_size(egui::vec2(viewport.width(), top));
                     let first = rows.partition_point(|(_, y, h, _)| y + h < viewport.top());
@@ -301,12 +306,10 @@ impl Panel for StructurePanel {
                     state.collapsed.insert(id);
                 }
             }
-            if observation.outline.is_empty() {
-                ui.weak("No declarations");
-            }
         } else {
-            ui.add_space(12.0);
-            ui.weak("No structure available");
+            egui::Frame::new().inner_margin(14).show(ui, |ui| {
+                ui.weak("No structure available");
+            });
         }
         if let Some(activation) = activation
             && activate(world, activation).unwrap_or(false)

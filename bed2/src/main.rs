@@ -13,6 +13,10 @@ mod effects;
 mod file_editor;
 mod files;
 mod fonts;
+mod git;
+mod images;
+mod models;
+mod hex;
 mod keybindings;
 mod layouts;
 mod lsp;
@@ -33,6 +37,7 @@ fn main() -> AppExit {
 
     let mut app = App::new();
 
+    bedtime_model2::register_asset_source(&mut app);
     app.add_plugins((
         DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
@@ -56,15 +61,16 @@ fn main() -> AppExit {
         WorkbenchPlugin,
         effects::EffectsPlugin,
         cube::CubePlugin,
+        (bedtime_mascots2::MascotPlugin, bedtime_model2::ModelPlugin),
         code::CodePlugin,
         files::FilesPlugin,
         tasks::TasksPlugin,
+        git::GitPlugin,
         settings::SettingsPlugin,
         layouts::LayoutsPlugin,
         autosave::AutosavePlugin,
         session::SessionPlugin,
-        close::ClosePlugin,
-        bedtime_terminal2::TerminalPlugin,
+        (close::ClosePlugin, bedtime_terminal2::TerminalPlugin),
     ))
     .add_systems(Startup, setup);
     bedtime_workbench2::register_document_handlers(app.world_mut())
@@ -80,6 +86,32 @@ fn main() -> AppExit {
         use bedtime_automation2::AutomationAppExt;
         app.add_plugins(bedtime_automation2::AutomationPlugin::stdio())
             .init_resource::<ToolbarRects>();
+        app.register_automation_command("app.inspect_models", |world, _| {
+            let cameras: Vec<_> = world.query::<(Entity, &Camera, &ChildOf)>().iter(world).filter_map(|(entity,camera,parent)| {
+                let owner = world.get::<ChildOf>(parent.parent())?.parent();
+                world.get::<bedtime_model2::ModelScene>(owner)?;
+                Some(serde_json::json!({"panel":owner.to_bits().to_string(),"camera":entity.to_bits().to_string(),"active":camera.is_active}))
+            }).collect();
+            Ok(serde_json::json!({"cameras":cameras}))
+        });
+        app.register_automation_command("app.inspect_mascots", |world, _| {
+            let cameras: Vec<_> = world.query::<(Entity, &Camera, &Transform, &ChildOf)>().iter(world)
+                .filter_map(|(entity, camera, transform, parent)| {
+                    let owner = world.get::<ChildOf>(parent.parent())?.parent();
+                    Some((owner, entity, camera.is_active, transform.translation.to_array()))
+                }).collect();
+            Ok(serde_json::json!({ "scenes": world.query::<(Entity, &bedtime_mascots2::MascotScene)>().iter(world)
+                .map(|(entity, scene)| {
+                    let camera = cameras.iter().find(|(owner, ..)| *owner == entity);
+                    serde_json::json!({ "entity": entity.to_bits().to_string(),
+                        "kind": format!("{:?}", scene.kind()), "error": scene.error(),
+                        "active": camera.is_some_and(|c| c.2),
+                        "camera": camera.map(|c| c.1.to_bits().to_string()),
+                        "translation": camera.map(|c| c.3),
+                    })
+                }).collect::<Vec<_>>() }))
+        });
+
         app.register_automation_command("app.inspect_titlebar", |world, _| {
             Ok(serde_json::json!({ "tools": world.resource::<ToolbarRects>().0.iter().map(|(key, rect)|
                 serde_json::json!({ "key": key, "rect": { "min": [rect.min.x,rect.min.y], "max": [rect.max.x,rect.max.y] } })).collect::<Vec<_>>() }))
@@ -147,6 +179,7 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
             (BuiltinIcon::Settings, layouts::ToolKind::Settings),
             (BuiltinIcon::Structure, layouts::ToolKind::Structure),
             (BuiltinIcon::Files, layouts::ToolKind::Files),
+            (BuiltinIcon::GitBranch, layouts::ToolKind::Git),
             (BuiltinIcon::Terminal, layouts::ToolKind::Terminal),
         ] {
             let workspace = world
@@ -172,6 +205,7 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
                         layouts::ToolKind::Terminal => "Terminal",
                         layouts::ToolKind::Files => "Files",
                         layouts::ToolKind::Structure => "Structure",
+                        layouts::ToolKind::Git => "Git",
                         _ => "Settings",
                     },
                 );
@@ -184,6 +218,7 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
                                     layouts::spawn_tool(w, a, layouts::ToolKind::Terminal)
                                 })
                             }
+                            layouts::ToolKind::Git => bedtime_workbench2::PanelFactory::of::<git::GitPanel>(),
                             layouts::ToolKind::Files => bedtime_workbench2::PanelFactory::of::<
                                 bedtime_filetree2::FileTreePanel,
                             >(),

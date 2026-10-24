@@ -1,0 +1,30 @@
+[package]
+name = "bedtime-model2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Embeddable glTF/GLB and STL scenes for UI2"
+
+[features]
+default = []
+workbench = ["dep:bedtime-workbench2"]
+
+[dependencies]
+bedtime-ui2.workspace = true
+bedtime-workbench2 = { path = "../bedtime-workbench2", optional = true, default-features = false, features = ["ui"] }
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "reflect_auto_register", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_anti_alias", "bevy_log", "bevy_mikktspace", "bevy_gltf", "png", "jpeg", "webp"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+gltf.workspace = true
+draco-core.workspace = true
+meshopt = "=0.6.2"
+glam.workspace = true
+image = { workspace = true, features = ["hdr", "webp"] }
+half = { version = "2.7", default-features = false }
+bytemuck.workspace = true
+base64.workspace = true
+stl_io.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["bevy_winit", "x11", "wayland"] }

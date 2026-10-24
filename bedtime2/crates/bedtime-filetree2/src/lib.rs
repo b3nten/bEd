@@ -1,6 +1,7 @@
 //! Local filesystem panels with explicit application-supplied roots. Filesystem
 //! I/O and projection happen in workspace-managed work; opening is a buffered
-//! request for the application, never a callback from inside drawing.
+//! request for the application. Optional panel drags carry a host constructor
+//! that Workbench executes after drawing.
 mod backend;
 mod errors;
 #[cfg(target_os = "macos")]
@@ -16,6 +17,7 @@ pub use operations::{
     FileTreeOperationRequest, FileTreeOperationResult,
 };
 pub use preferences::{FileTreePreferences, FileTreeVisibility};
+pub use view::file_icon;
 
 use backend::{Backend, ViewRequest};
 use bedtime_clipboard2::Clipboard;
@@ -49,7 +51,7 @@ impl Default for FileTreeSettings {
     fn default() -> Self {
         Self {
             read_only: false,
-            indent_size: 16.0,
+            indent_size: bedtime_ui2::tree::INDENT,
         }
     }
 }
@@ -58,7 +60,7 @@ impl FileTreeSettings {
         if self.indent_size.is_finite() {
             self.indent_size.clamp(0.0, 64.0)
         } else {
-            16.0
+            bedtime_ui2::tree::INDENT
         }
     }
 }
@@ -80,6 +82,29 @@ pub struct FileTreeOpenRequested {
     pub path: PathBuf,
     pub activation: FileTreeActivation,
 }
+
+/// Optional host-owned opening choices. Called during drawing without I/O.
+#[derive(Resource)]
+pub struct FileTreeOpenWith(pub fn(&Path) -> Vec<FileTreeOpenChoice>);
+#[derive(Clone, Debug)]
+pub struct FileTreeOpenChoice {
+    pub id: String,
+    pub label: String,
+}
+/// An explicit choice, validated against the captured root and generation.
+#[derive(Message, Clone, Debug)]
+pub struct FileTreeOpenWithRequested {
+    pub panel: Entity,
+    pub workspace: Entity,
+    pub path: PathBuf,
+    pub choice: String,
+}
+
+/// Opt in to dragging one file into Workbench areas. The callback only builds
+/// a constructor during drawing; Workbench executes it at the chosen destination.
+/// Folder transfers retain priority over panel creation.
+#[derive(Resource)]
+pub struct FileTreePanelDrag(pub fn(PathBuf) -> bedtime_workbench2::PanelFactory);
 
 /// Custom workspace data is not part of Workbench's layout snapshot. Hosts use
 /// this notification to persist FileTreePreferences through their own storage.
@@ -122,6 +147,7 @@ impl Plugin for FileTreePlugin {
             .init_resource::<FileTreeClipboard>()
             .init_resource::<OperationArchive>()
             .add_message::<FileTreeOpenRequested>()
+            .add_message::<FileTreeOpenWithRequested>()
             .add_message::<FileTreePreferencesChanged>()
             .add_message::<FileTreeOperationFinished>()
             .add_systems(Update, update_filetrees.in_set(FileTreeSystems::Update));
@@ -357,6 +383,10 @@ struct MenuTarget {
 
 #[derive(Clone)]
 enum Action {
+    OpenWith {
+        path: PathBuf,
+        choice: String,
+    },
     Open {
         path: PathBuf,
         activation: FileTreeActivation,
@@ -755,6 +785,27 @@ fn apply_action(
     let hide_action = matches!(&action, Action::Hide { .. });
     let submitting_edit = matches!(&action, Action::SubmitEdit);
     let operation = match action {
+        Action::OpenWith { path, choice } => {
+            let index = state
+                .snapshot
+                .row_index(&path)
+                .ok_or("The activated row is no longer visible")?;
+            if state.snapshot.rows[index].kind != FileTreeEntryKind::Directory
+                && world
+                    .get_resource::<FileTreeOpenWith>()
+                    .is_some_and(|provider| {
+                        (provider.0)(&path).iter().any(|item| item.id == choice)
+                    })
+            {
+                world.write_message(FileTreeOpenWithRequested {
+                    panel,
+                    workspace,
+                    path,
+                    choice,
+                });
+            }
+            return Ok(());
+        }
         Action::Open { path, activation } => {
             let index = state
                 .snapshot

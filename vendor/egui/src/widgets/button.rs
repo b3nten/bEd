@@ -361,7 +361,13 @@ impl<'a> Button<'a> {
             .fallback_text_color(text_style.color);
 
         // Retrocompatibility with button settings
-        layout = if has_frame_margin && (state != WidgetState::Inactive || frame_when_inactive) {
+        layout = if has_frame_margin {
+            if state == WidgetState::Inactive && !frame_when_inactive {
+                // Hide the paint, but retain the border width and margins: button
+                // padding compensates for that border, even on an unhovered row.
+                frame.fill = Color32::TRANSPARENT;
+                frame.stroke.color = Color32::TRANSPARENT;
+            }
             layout.frame(frame)
         } else {
             layout.frame(Frame::new().inner_margin(frame.inner_margin))

@@ -1579,3 +1579,54 @@ fn owned_clipboard_transfers_selected_symlinks_not_their_canonicalized_targets()
         finish(&mut app);
     }
 }
+
+#[test]
+fn explicit_viewer_choices_are_validated_and_keep_the_origin_workspace() {
+    let fixture = Fixture::new();
+    let file = fixture.file("picture.svg", b"image");
+    let (mut app, workspace) = host();
+    app.insert_resource(FileTreeOpenWith(|_| {
+        vec![FileTreeOpenChoice {
+            id: "image".into(),
+            label: "Image".into(),
+        }]
+    }));
+    let panel = panel(&mut app, workspace, Some(&fixture.0));
+    ready(&mut app, panel, &fixture.0);
+    queue(
+        &mut app,
+        panel,
+        Action::OpenWith {
+            path: file.clone(),
+            choice: "unknown".into(),
+        },
+    );
+    app.update();
+    assert!(drain::<FileTreeOpenWithRequested>(&mut app).is_empty());
+    queue(
+        &mut app,
+        panel,
+        Action::OpenWith {
+            path: file.clone(),
+            choice: "image".into(),
+        },
+    );
+    let other = Workspaces::new(app.world_mut()).open("Other");
+    Workspaces::new(app.world_mut()).activate(other).unwrap();
+    app.update();
+    let messages = drain::<FileTreeOpenWithRequested>(&mut app);
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].workspace, workspace.entity());
+    assert_eq!(messages[0].path, file);
+    assert_eq!(messages[0].choice, "image");
+    queue(
+        &mut app,
+        panel,
+        Action::OpenWith {
+            path: fixture.0.join("missing.svg"),
+            choice: "image".into(),
+        },
+    );
+    app.update();
+    assert!(drain::<FileTreeOpenWithRequested>(&mut app).is_empty());
+}
