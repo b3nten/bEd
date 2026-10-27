@@ -482,6 +482,8 @@ dependencies = [
  "bedtime-ui",
  "bedtime-workbench",
  "bevy",
+ "ron",
+ "serde",
 ]
 
 [[package]]

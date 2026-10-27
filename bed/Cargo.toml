@@ -14,3 +14,5 @@ path = "main.rs"
 bedtime-ui.workspace = true
 bedtime-workbench.workspace = true
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }
+ron = "0.12.2"
+serde = { workspace = true, features = ["derive"] }
