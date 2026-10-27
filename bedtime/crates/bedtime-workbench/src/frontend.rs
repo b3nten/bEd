@@ -97,7 +97,7 @@ impl Workbench<'_> {
 
     /// Apply a user-originated edit with the surface's configured permissions.
     /// Direct application operations deliberately bypass this user policy.
-    pub fn user_edit(&mut self, stamp: LayoutStamp, edit: &LayoutEdit) -> Result<(), String> {
+    pub fn user_edit(&mut self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
         let settings = self
             .world
             .query::<&WorkbenchSurface>()
@@ -115,9 +115,9 @@ impl Workbench<'_> {
                 | LayoutEdit::JoinAreas { .. }
                 | LayoutEdit::DockArea { .. }
         ) {
-            self.request_panel_close(stamp, edit.clone())
+            self.request_panel_close(layout, edit.clone())
         } else {
-            self.edit(stamp, edit)
+            self.edit(layout, edit)
         }
     }
 
@@ -306,6 +306,19 @@ pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiCont
     }
 }
 
+/// Areas, their rectangles and tabs: what a gesture in progress depends on.
+fn layout_topology(world: &World, layout: Entity) -> Vec<(Entity, AreaRect, Vec<Entity>)> {
+    world
+        .get::<LayoutAreas>(layout)
+        .map_or(&[][..], |areas| areas.entities())
+        .iter()
+        .filter_map(|&area| {
+            let state = world.get::<Area>(area)?;
+            Some((area, state.rect, panels_in_area(world, area).to_vec()))
+        })
+        .collect()
+}
+
 fn observed(rect: egui::Rect) -> Rect {
     Rect::from_corners(
         Vec2::new(rect.min.x, rect.min.y),
@@ -349,32 +362,11 @@ fn titlebar_rects(
     (band, content)
 }
 
-pub fn spawn_panel(
-    world: &mut World,
-    layout: Entity,
-    title: impl Into<String>,
-    draw: fn(&mut egui::Ui, &mut World, &UiContext<'_>, Entity),
-) -> Result<Entity, String> {
-    let area = Workbench::for_entity(world, layout)?.destination_area(layout)?;
-    spawn_panel_in_area(world, area, title, draw)
-}
-
-pub fn spawn_panel_in_area(
-    world: &mut World,
-    area: Entity,
-    title: impl Into<String>,
-    draw: fn(&mut egui::Ui, &mut World, &UiContext<'_>, Entity),
-) -> Result<Entity, String> {
-    world.get::<Area>(area).ok_or("Area is unavailable")?;
-    let panel = world.spawn_empty().id();
-    Workbench::for_entity(world, area)?.attach_panel(panel, area, title.into());
-    world.get_mut::<PanelInstance>(panel).unwrap().draw = Some(draw);
-    Ok(panel)
-}
-
 #[derive(Default)]
 struct Frontend {
-    stamp: Option<LayoutStamp>,
+    /// The layout and topology last drawn; a change cancels any gesture.
+    layout: Option<Entity>,
+    topology: Vec<(Entity, AreaRect, Vec<Entity>)>,
     bounds: Rect,
     gesture: Option<Gesture>,
     area_bounds: HashMap<Entity, Rect>,
@@ -463,7 +455,7 @@ impl Tab {
         Self {
             entity,
             title: panel.title.clone(),
-            dirty: panel.dirty,
+            dirty: crate::holder_unsaved(world, entity),
             style: world
                 .get::<PanelTabStyle>(entity)
                 .copied()
@@ -780,7 +772,7 @@ fn draw(
     if !panels_visible || !content.is_positive() {
         state.gesture = None;
         state.preview = None;
-        state.stamp = None;
+        state.layout = None;
         return;
     }
     let bounds = observed(content);
@@ -800,11 +792,11 @@ fn draw(
     }) {
         state.gesture = None;
         state.preview = None;
-        state.stamp = None;
+        state.layout = None;
         return;
     }
-    let stamp = Workbench::new(world).stamp();
-    let layout = stamp.layout;
+    let layout = crate::active_layout(world).unwrap();
+    let topology = layout_topology(world, layout);
     let snapshot = Workbench::new(world).snapshot(layout).unwrap();
     let flush = settings.single_area_edge_to_edge && snapshot.geometry.areas.len() == 1;
     if flush {
@@ -819,18 +811,16 @@ fn draw(
         state.gesture = None;
         state.preview = None;
     }
-    if state.stamp != Some(stamp) || state.bounds != bounds {
+    if state.layout != Some(layout) || state.topology != topology || state.bounds != bounds {
         state.gesture = None;
         state.preview = None;
-        if state
-            .stamp
-            .is_none_or(|old| old.layout != layout || old.activation != stamp.activation)
-        {
+        if state.layout != Some(layout) {
             state.area_bounds.clear();
             state.content_fades.clear();
         }
     }
-    state.stamp = Some(stamp);
+    state.layout = Some(layout);
+    state.topology = topology;
     state.bounds = bounds;
     let focused = world.get::<Layout>(layout).unwrap().focused_area();
     let groups: Vec<_> = snapshot
@@ -1596,9 +1586,10 @@ fn draw(
         if !allows_panel_edit(settings, &edit) {
             continue;
         }
-        Workbench::new(world)
-            .requests()
-            .submit(WorkbenchRequest::UserEdit { stamp, edit });
+        world
+            .resource_mut::<crate::layout::PendingEdits>()
+            .0
+            .push((layout, edit));
     }
 }
 
@@ -1885,6 +1876,7 @@ fn corner_target(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::TestPanels;
 
     #[test]
     fn panel_fade_starts_at_display_and_advances_only_with_elapsed_ui_time() {
@@ -2129,7 +2121,20 @@ mod tests {
         app.add_plugins(WorkbenchCorePlugin);
         let active = crate::tests::layout(app.world_mut());
         let other = crate::tests::layout(app.world_mut());
-        let panel = spawn_panel(app.world_mut(), other, "Inactive", |_, _, _, _| {}).unwrap();
+        let area = Workbench::new(app.world_mut())
+            .destination_area(other)
+            .unwrap();
+        let panel = app
+            .world_mut()
+            .spawn((
+                PanelInstance {
+                    title: "Inactive".into(),
+                    draw: Some(|_, _, _, _| {}),
+                    ..default()
+                },
+                InArea(area),
+            ))
+            .id();
         assert_eq!(
             Workbench::new(app.world_mut()).panel_layout(panel).unwrap(),
             other
@@ -2149,12 +2154,12 @@ mod tests {
         let area = w.destination_area(layout).unwrap();
         let panel = w.create_panel(layout, "Application content").unwrap();
         assert!(
-            w.user_edit(w.stamp(), &LayoutEdit::ClosePanels(vec![panel]))
+            w.user_edit(w.active_layout(), &LayoutEdit::ClosePanels(vec![panel]))
                 .is_err()
         );
         assert!(
             w.user_edit(
-                w.stamp(),
+                w.active_layout(),
                 &LayoutEdit::DropPanel {
                     area,
                     factory: preview_factory(),
@@ -2167,7 +2172,7 @@ mod tests {
         );
         assert!(
             w.user_edit(
-                w.stamp(),
+                w.active_layout(),
                 &LayoutEdit::SplitArea {
                     area,
                     axis: SplitAxis::Horizontal,
@@ -2393,7 +2398,7 @@ mod tests {
                     rect.max[index] - minimum[index],
                 );
                 assert_eq!(planned.area(id).rect.max[index], expected);
-                w.edit(w.stamp(), &edit).unwrap();
+                w.edit(w.active_layout(), &edit).unwrap();
                 assert_eq!(
                     w.world.get::<Area>(source).unwrap().rect(),
                     planned.area(id).rect
@@ -2677,7 +2682,7 @@ mod tests {
                         panel_gap,
                     )
                     .unwrap();
-                    w.edit(w.stamp(), &edit).unwrap();
+                    w.edit(w.active_layout(), &edit).unwrap();
                     let destination = w.world.get::<InArea>(panel).unwrap().0;
                     let rect = w.world.get::<Area>(destination).unwrap().rect();
                     let actual_count = w.world.get::<LayoutAreas>(layout).unwrap().entities().len();

@@ -45,10 +45,7 @@ struct Close {
 }
 
 enum Target {
-    Panels {
-        stamp: LayoutStamp,
-        edit: LayoutEdit,
-    },
+    Panels { layout: Entity, edit: LayoutEdit },
     Quit,
 }
 
@@ -139,21 +136,17 @@ pub fn resolve_close(world: &mut World, choice: CloseChoice) -> Result<(), Strin
 impl Workbench<'_> {
     /// Close panels on the user's behalf (closing a tab or area, or merging areas).
     /// Closes immediately unless that would release an unsaved document.
-    pub fn request_panel_close(
-        &mut self,
-        stamp: LayoutStamp,
-        edit: LayoutEdit,
-    ) -> Result<(), String> {
+    pub fn request_panel_close(&mut self, layout: Entity, edit: LayoutEdit) -> Result<(), String> {
         if self.world.resource::<PendingClose>().0.is_some() {
             return Err("Another close is waiting for a decision".into());
         }
-        let panels = self.close_targets(stamp, &edit)?;
+        let panels = self.close_targets(layout, &edit)?;
         crate::layout::check_panel_drafts(self.world, panels.iter().copied())?;
         let documents = released_unsaved(self.world, &panels);
         if documents.is_empty() {
-            return self.edit(stamp, &edit);
+            return self.edit(layout, &edit);
         }
-        begin(self.world, Target::Panels { stamp, edit }, documents);
+        begin(self.world, Target::Panels { layout, edit }, documents);
         Ok(())
     }
 }
@@ -219,8 +212,8 @@ fn start_saves(world: &mut World, documents: &[DocumentId]) -> Vec<(DocumentId, 
 /// Returns the close if it still has work to do.
 fn finish(world: &mut World, close: Close) -> Option<Close> {
     match close.target {
-        Target::Panels { stamp, edit } => {
-            if let Err(error) = Workbench::new(world).edit(stamp, &edit) {
+        Target::Panels { layout, edit } => {
+            if let Err(error) = Workbench::new(world).edit(layout, &edit) {
                 report_error(
                     world,
                     "Close panel",
@@ -400,9 +393,9 @@ mod tests {
 
     fn close(app: &mut App, panel: Entity) {
         let mut workbench = Workbench::new(app.world_mut());
-        let stamp = workbench.stamp();
+        let layout = workbench.active_layout();
         workbench
-            .request_panel_close(stamp, LayoutEdit::ClosePanels(vec![panel]))
+            .request_panel_close(layout, LayoutEdit::ClosePanels(vec![panel]))
             .unwrap();
         app.update();
     }

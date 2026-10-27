@@ -126,7 +126,8 @@ Each step should produce a usable app. We can reorder at any point.
    foundation for workspaces).
 2. ✅ Workbench document lifetime, autosave and close/quit flow (see Decisions).
 3. ✅ Document handling cleanup (see step log).
-4. Project root + file tree panel.
+4. ✅ Workbench cleanup A + B (see step log).
+5. Project root + file tree panel.
 2. Open a file into an editor tab (opening policy; observation 1).
 3. Other viewers: image / hex / model, chosen by file type; "Open with".
 4. Save, dirty state, quit with unsaved documents (observation 4).
@@ -197,6 +198,25 @@ Each step should produce a usable app. We can reorder at any point.
   - Non-test document code went from about 2,950 to about 1,590 lines. Tests were
     rewritten around behaviour with a `TestSource` that can hold or fail reads
     and saves.
+
+- **Step 4 (workbench cleanup A + B)**, committed 2026-10-26.
+  - Removed: `native_path`, process management and `admit_operation` in
+    `ManagedWork` (tasks only now), `create_panel`/`create_panel_in_area`/
+    `spawn_panel`/`spawn_panel_in_area` (spawn `(MyPanel, InArea(area))`),
+    `Workbench::for_entity`/`require_owned`/`work()`/`requests()`/`commands()`,
+    `PanelInstance.key`/`Panel::KEY`, the `libc` dependency.
+  - Stamps and revisions are gone (`LayoutStamp`, `LayoutRevision`,
+    `LayoutSelectionRevision`, the per-frame topology diff). Gestures stay deferred:
+    each records the layout it was made in, and is dropped if that layout isn't
+    active, a named entity left it, or (border resize) the border is gone. The
+    frontend cancels an in-progress gesture by comparing last frame's topology.
+  - `WorkbenchRequests`/`WorkbenchFinished` replaced by a private `PendingEdits`
+    queue, drained once (before keyboard routing).
+  - `reconcile_workbench` → crate-private `validate_workbench`, run once per frame
+    in debug builds only (and by persistence). `PanelInstance.dirty` removed; tabs
+    ask `holder_unsaved` when drawn.
+  - Deferred: command system (C, with menus), frontend split (D), surface/shell
+    merge (D), persistence (E, with workspaces).
 
 ## Decisions
 

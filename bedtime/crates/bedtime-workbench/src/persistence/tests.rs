@@ -103,8 +103,8 @@ fn marked_data_remaps_references_and_rebuilds_runtime_without_a_catalog() {
     assert!(target.world().get::<Runtime>(restored).is_some());
     assert_eq!(target.world().resource::<Settings>(), &Settings(42));
     assert_eq!(
-        target.world().get::<PanelInstance>(restored).unwrap().key,
-        Note::KEY
+        target.world().get::<PanelInstance>(restored).unwrap().title,
+        Note::LABEL
     );
     #[cfg(feature = "ui")]
     assert!(
@@ -737,7 +737,8 @@ fn layout_replacement_cancels_retired_panel_work_without_shutting_down_the_sessi
     let mut app = app();
     let (layout, panel) = graph(app.world_mut());
     let task = Workbench::new(app.world_mut())
-        .work()
+        .world_mut()
+        .resource_mut::<ManagedWork>()
         .spawn_task(Some(panel), "Old panel", |cancel| {
             while !cancel.wait(Duration::from_millis(5)) {}
         })
@@ -754,7 +755,8 @@ fn layout_replacement_cancels_retired_panel_work_without_shutting_down_the_sessi
     assert_eq!(task.status(), WorkStatus::Cancelled);
     assert!(!app.world().resource::<ManagedWork>().is_closing());
     Workbench::new(app.world_mut())
-        .work()
+        .world_mut()
+        .resource_mut::<ManagedWork>()
         .spawn_task(None, "New session work", |_| 42)
         .unwrap();
 }

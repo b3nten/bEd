@@ -2,9 +2,6 @@
 use crate::*;
 use bevy::prelude::*;
 
-#[derive(Resource, Default)]
-pub(crate) struct LayoutSelectionRevision(pub u64);
-
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SessionSystems {
     Prepare,
@@ -14,10 +11,7 @@ pub enum SessionSystems {
 
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<ManagedWork>()
-        .init_resource::<WorkbenchRequests>()
-        .init_resource::<LayoutSelectionRevision>()
         .init_resource::<crate::layout::LayoutOrder>()
-        .init_resource::<crate::composition::ReconciledState>()
         .add_message::<CloseRequested>();
     #[cfg(feature = "ui")]
     app.init_resource::<WorkbenchUi>();
@@ -25,29 +19,24 @@ pub(crate) fn install(app: &mut App) {
     documents::install(app);
     closing::install(app);
     document_commands::install(app);
+    #[cfg(feature = "ui")]
     layout::install(app);
     #[cfg(feature = "ui")]
     shortcuts::install(app);
-    app.add_systems(PreUpdate, reconcile.in_set(SessionSystems::Prepare))
-        .add_systems(
-            PreUpdate,
-            reconcile
-                .in_set(SessionSystems::Sync)
-                .after(WorkbenchSystems::Apply),
-        )
-        .add_systems(PostUpdate, reconcile)
-        .add_systems(Last, poll_work.in_set(SessionSystems::Close));
+    app.add_systems(Last, poll_work.in_set(SessionSystems::Close));
+    #[cfg(debug_assertions)]
+    app.add_systems(Last, validate.before(SessionSystems::Close));
     #[cfg(feature = "ui")]
     app.configure_sets(
         PreUpdate,
         SessionSystems::Prepare.before(bedtime_ui::UiSystems::Draw),
     );
 }
-fn reconcile(world: &mut World) {
-    reconcile_workbench(world).expect("Invalid workbench component graph");
+#[cfg(debug_assertions)]
+fn validate(world: &mut World) {
+    validate_workbench(world).expect("Invalid workbench component graph");
 }
 pub fn shutdown_work(world: &mut World) -> Result<(), String> {
-    reconcile_workbench(world)?;
     // Saves in flight would be cancelled, and drafts lost. The quit flow waits
     // for both; this is the direct path for headless hosts and tests.
     for id in document_ids(world) {
@@ -69,14 +58,10 @@ fn poll_work(world: &mut World) {
     let exiting = world
         .get_resource::<Messages<AppExit>>()
         .is_some_and(|m| !m.is_empty());
-    let deliveries = world.resource_scope(|world, mut work: Mut<ManagedWork>| {
+    world.resource_scope(|world, mut work: Mut<ManagedWork>| {
         if exiting {
             work.shutdown();
         }
-        work.poll(|owner| world.get_entity(owner).is_ok())
+        work.poll(|owner| world.get_entity(owner).is_ok());
     });
-    for (id, deliver) in deliveries {
-        deliver(world);
-        world.resource_mut::<ManagedWork>().finish_delivery(id);
-    }
 }

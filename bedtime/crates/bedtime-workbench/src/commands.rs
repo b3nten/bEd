@@ -495,7 +495,6 @@ impl Workbench<'_> {
         panel: Entity,
         handler: impl IntoSystem<In<ContextCommandInvocation>, ContextCommandResult, M> + 'static,
     ) -> Result<Entity, String> {
-        self.require_owned(panel)?;
         install_panel_handler::<C, M>(self.world, panel, handler)
     }
 
@@ -822,6 +821,7 @@ fn dispatch(world: &mut World) {
 mod scope_tests {
     use super::*;
     use crate::WorkbenchCorePlugin;
+    use crate::tests::TestPanels;
     struct Save;
     impl ContextCommand for Save {
         const KEY: &'static str = "scope.save";

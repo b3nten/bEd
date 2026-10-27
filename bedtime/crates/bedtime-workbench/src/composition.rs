@@ -1,7 +1,7 @@
-//! Graph validation and layout bookkeeping; composition is complete before this runs.
+//! Tab styling and workbench graph validation.
+#[cfg(any(debug_assertions, feature = "persistence", test))]
 use crate::*;
 use bevy::prelude::*;
-use std::collections::HashMap;
 
 /// Optional, runtime-only tab label appearance on a panel item.
 ///
@@ -26,80 +26,12 @@ impl Default for PanelTabStyle {
     }
 }
 
-#[derive(Resource, Default)]
-pub(crate) struct ReconciledState {
-    topology: HashMap<Entity, Vec<(Entity, AreaRect, Vec<Entity>)>>,
-}
-
-fn layout_topology(world: &World, layout: Entity) -> Vec<(Entity, AreaRect, Vec<Entity>)> {
-    world
-        .get::<LayoutAreas>(layout)
-        .map_or(&[][..], |areas| areas.entities())
-        .iter()
-        .filter_map(|&area| {
-            world
-                .get::<Area>(area)
-                .map(|state| (area, state.rect, panels_in_area(world, area).to_vec()))
-        })
-        .collect()
-}
-
-// Attach/detach hooks already advance revisions. Their queued maintenance can
-// precede Bevy's target-list update, so observing an added/removed member must
-// not count the same transition twice. Detect only edits outside those hooks:
-// changed geometry or reordered members retained in both observations.
-fn untracked_topology_change(
-    old: &[(Entity, AreaRect, Vec<Entity>)],
-    new: &[(Entity, AreaRect, Vec<Entity>)],
-) -> bool {
-    let old_areas: Vec<_> = old
-        .iter()
-        .map(|row| row.0)
-        .filter(|area| new.iter().any(|row| row.0 == *area))
-        .collect();
-    let new_areas: Vec<_> = new
-        .iter()
-        .map(|row| row.0)
-        .filter(|area| old.iter().any(|row| row.0 == *area))
-        .collect();
-    if old_areas != new_areas {
-        return true;
-    }
-    new.iter().any(|(area, rect, tabs)| {
-        old.iter()
-            .find(|row| row.0 == *area)
-            .is_some_and(|(_, old_rect, old_tabs)| {
-                if rect != old_rect {
-                    return true;
-                }
-                let before: Vec<_> = old_tabs.iter().filter(|tab| tabs.contains(tab)).collect();
-                let after: Vec<_> = tabs.iter().filter(|tab| old_tabs.contains(tab)).collect();
-                before != after
-            })
-    })
-}
-
-/// Known structural transitions acknowledge their final shape when they advance
-/// the revision. Scheduled validation must not invalidate the same transition a
-/// second time after callers have already captured a fresh stamp.
-pub(crate) fn observe_topology(world: &mut World, layout: Entity) {
-    if !world.contains_resource::<ReconciledState>() {
-        return;
-    }
-    let shape = layout_topology(world, layout);
-    world
-        .resource_mut::<ReconciledState>()
-        .topology
-        .insert(layout, shape);
-}
-
-/// Resolve a composed graph immediately, or let SessionSystems::Prepare do it.
-/// Required components supply local defaults; this phase validates references
-/// and updates layout revisions. Lifecycle hooks
-/// maintain attachment order and selection markers as commands are applied.
-/// Zero layouts, areas or panels is valid. Conflicting live references
-/// and duplicate active selections return an error rather than choosing a winner.
-pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
+/// Check the layout graph: relationships point at the right kinds of entities,
+/// area rectangles tile their layout, and selections and focus are in range.
+/// Hooks keep all of this true; debug builds check it every frame, and
+/// persistence checks it before capturing or restoring.
+#[cfg(any(debug_assertions, feature = "persistence"))]
+pub(crate) fn validate_workbench(world: &mut World) -> Result<(), String> {
     world.flush();
     if world
         .query_filtered::<Entity, (With<InLayout>, Without<Area>)>()
@@ -190,30 +122,6 @@ pub fn reconcile_workbench(world: &mut World) -> Result<(), String> {
             return Err("Selected panel belongs to another area or no longer exists".into());
         }
     }
-    // Direct composition must invalidate admitted layout gestures just as the
-    // existing editing operations do. Compare topology, excluding focus/hover.
-    let topology: HashMap<_, _> = layouts
-        .iter()
-        .map(|&layout| (layout, layout_topology(world, layout)))
-        .collect();
-    let changed: Vec<_> = topology
-        .iter()
-        .filter_map(|(&layout, shape)| {
-            world
-                .resource::<ReconciledState>()
-                .topology
-                .get(&layout)
-                .is_some_and(|old| untracked_topology_change(old, shape))
-                .then_some(layout)
-        })
-        .collect();
-    for layout in changed {
-        world
-            .get_mut::<crate::layout::LayoutRevision>(layout)
-            .unwrap()
-            .0 += 1;
-    }
-    world.resource_mut::<ReconciledState>().topology = topology;
-    crate::documents::reconcile_documents(world)?;
+    crate::documents::validate_documents(world)?;
     Ok(())
 }

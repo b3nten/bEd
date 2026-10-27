@@ -23,9 +23,6 @@ bedtime-ui = { workspace = true, optional = true }
 bevy_egui = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 
-[target.'cfg(unix)'.dependencies]
-libc.workspace = true
-
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { workspace = true, optional = true }
 raw-window-handle = { version = "0.6", optional = true }

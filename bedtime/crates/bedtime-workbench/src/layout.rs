@@ -8,10 +8,7 @@ use bevy::ecs::reflect::ReflectMapEntities;
 use bevy::prelude::*;
 pub use geometry::EXTENT as LAYOUT_EXTENT;
 pub use geometry::Rect as AreaRect;
-use std::collections::{HashMap, VecDeque};
-
-#[derive(Component, Default)]
-pub(crate) struct LayoutRevision(pub u64);
+use std::collections::HashMap;
 
 /// Stable layout order. Entity allocation and archetype iteration are not order.
 #[derive(Resource, Default)]
@@ -33,13 +30,12 @@ pub fn layouts(world: &World) -> &[Entity] {
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
 #[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[require(Layout)]
-#[component(on_add = crate::membership::layout_selection_changed, on_remove = crate::membership::layout_selection_changed)]
 pub struct ActiveLayout;
 
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
 #[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
-#[require(LayoutAreas, LayoutRevision)]
+#[require(LayoutAreas)]
 #[component(on_add = crate::membership::layout_added, on_remove = crate::membership::layout_removed)]
 pub struct Layout {
     pub name: String,
@@ -94,12 +90,7 @@ impl Area {
 #[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[require(PanelPresentation, PanelLocation)]
 pub struct PanelInstance {
-    /// Descriptive application identity, never used by workbench to create a panel.
-    #[cfg_attr(feature = "persistence", reflect(ignore))]
-    pub key: String,
     pub title: String,
-    #[cfg_attr(feature = "persistence", reflect(ignore))]
-    pub dirty: bool,
     pub preview: bool,
     /// Optional ordinary drawing capability, available as soon as composition applies.
     #[cfg(feature = "ui")]
@@ -120,17 +111,9 @@ impl PanelInstance {
     /// Local presentation supplied by a concrete panel's required components.
     pub fn of<P: Panel>() -> Self {
         Self {
-            key: P::KEY.into(),
             title: P::LABEL.into(),
             #[cfg(feature = "ui")]
             draw: Some(P::draw),
-            ..default()
-        }
-    }
-
-    pub fn new(key: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
             ..default()
         }
     }
@@ -255,15 +238,6 @@ impl AreaPlacement {
     }
 }
 
-/// Captured on pointer admission. Leaving and returning to the same layout also
-/// invalidates a gesture, even if its geometry did not change.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct LayoutStamp {
-    pub(crate) layout: Entity,
-    pub(crate) revision: u64,
-    pub(crate) activation: u64,
-}
-
 #[derive(Debug, Clone)]
 pub enum LayoutEdit {
     FocusArea(Entity),
@@ -316,35 +290,11 @@ pub enum LayoutEdit {
     },
 }
 
-#[derive(Debug, Clone)]
-pub enum WorkbenchRequest {
-    ActivateLayout(Entity),
-    FocusPanel(Entity),
-    ClosePanel(Entity),
-    Edit {
-        stamp: LayoutStamp,
-        edit: LayoutEdit,
-    },
-    #[cfg(feature = "ui")]
-    UserEdit {
-        stamp: LayoutStamp,
-        edit: LayoutEdit,
-    },
-}
-
+/// Layout edits from user gestures, made while drawing and applied before
+/// keyboard routing in the same frame. Each names the layout it was made in.
+#[cfg(feature = "ui")]
 #[derive(Resource, Default)]
-pub struct WorkbenchRequests(VecDeque<WorkbenchRequest>);
-impl WorkbenchRequests {
-    pub fn submit(&mut self, request: WorkbenchRequest) {
-        self.0.push_back(request);
-    }
-}
-
-#[derive(Message, Debug)]
-pub struct WorkbenchFinished {
-    pub request: WorkbenchRequest,
-    pub result: Result<(), String>,
-}
+pub(crate) struct PendingEdits(pub Vec<(Entity, LayoutEdit)>);
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkbenchSystems {
@@ -354,9 +304,6 @@ pub enum WorkbenchSystems {
 /// Presentation contract for a concrete panel component. No catalog or initializer
 /// is installed: require `PanelInstance::of::<Self>` on the concrete component.
 pub trait Panel: Component {
-    /// Optional descriptive identity for application inspection/persistence policy.
-    /// Workbench never resolves it to a type or constructs a panel from it.
-    const KEY: &'static str = "";
     const LABEL: &'static str;
     #[cfg(feature = "ui")]
     fn draw(
@@ -399,13 +346,16 @@ impl PanelFactory {
     }
 }
 
+#[cfg(feature = "ui")]
 pub(crate) fn install(app: &mut App) {
-    app.add_message::<WorkbenchFinished>()
+    app.init_resource::<PendingEdits>()
         .configure_sets(
             PreUpdate,
-            WorkbenchSystems::Apply.after(crate::ContextCommandSystems::Dispatch),
+            WorkbenchSystems::Apply
+                .after(bedtime_ui::UiSystems::Draw)
+                .before(crate::ContextCommandSystems::CollectInput),
         )
-        .add_systems(PreUpdate, apply.in_set(WorkbenchSystems::Apply));
+        .add_systems(PreUpdate, apply_edits.in_set(WorkbenchSystems::Apply));
 }
 
 pub(crate) fn new_layout(world: &mut World, name: String) -> Entity {
@@ -507,24 +457,11 @@ impl Workbench<'_> {
         active_layout(self.world).expect("No active layout")
     }
 
-    pub fn stamp(&self) -> LayoutStamp {
-        let layout = self.active_layout();
-        LayoutStamp {
-            layout,
-            revision: self.world.get::<LayoutRevision>(layout).unwrap().0,
-            activation: self
-                .world
-                .resource::<crate::lifecycle::LayoutSelectionRevision>()
-                .0,
-        }
-    }
-
     pub fn create_layout(&mut self, name: impl Into<String>) -> Result<Entity, String> {
         Ok(new_layout(self.world, name.into()))
     }
 
     pub fn activate_layout(&mut self, layout: Entity) -> Result<(), String> {
-        self.require_owned(layout)?;
         self.world
             .get::<Layout>(layout)
             .ok_or("Layout is unavailable")?;
@@ -538,7 +475,6 @@ impl Workbench<'_> {
     }
 
     pub fn panel_layout(&self, panel: Entity) -> Result<Entity, String> {
-        self.require_owned(panel)?;
         self.world
             .get::<PanelInstance>(panel)
             .ok_or("Panel is unavailable")?;
@@ -565,7 +501,6 @@ impl Workbench<'_> {
     }
 
     pub fn destination_area(&self, layout: Entity) -> Result<Entity, String> {
-        self.require_owned(layout)?;
         self.world
             .get::<Layout>(layout)
             .ok_or("Layout is unavailable")?;
@@ -581,48 +516,7 @@ impl Workbench<'_> {
             .ok_or("Layout has no areas")?)
     }
 
-    pub fn create_panel(
-        &mut self,
-        layout: Entity,
-        title: impl Into<String>,
-    ) -> Result<Entity, String> {
-        let area = self.destination_area(layout)?;
-        self.create_panel_in_area(area, title)
-    }
-
-    pub fn create_panel_in_area(
-        &mut self,
-        area: Entity,
-        title: impl Into<String>,
-    ) -> Result<Entity, String> {
-        self.require_owned(area)?;
-        self.world.get::<Area>(area).ok_or("Area is unavailable")?;
-        let panel = self.world.spawn_empty().id();
-        self.attach_panel(panel, area, title.into());
-        Ok(panel)
-    }
-
-    pub(crate) fn attach_panel(&mut self, panel: Entity, area: Entity, title: String) {
-        self.world.entity_mut(panel).insert((
-            PanelInstance {
-                key: String::new(),
-                title,
-                dirty: false,
-                preview: false,
-                ..default()
-            },
-            InArea(area),
-        ));
-        self.world
-            .get_mut::<Area>(area)
-            .expect("Validated area")
-            .selected = Some(panel);
-        let layout = self.world.get::<InLayout>(area).unwrap().0;
-        crate::membership::topology_changed(self.world, layout);
-    }
-
     pub fn focus_area(&mut self, area: Entity) -> Result<(), String> {
-        self.require_owned(area)?;
         self.world.get::<Area>(area).ok_or("Area is unavailable")?;
         let layout = self.world.get::<InLayout>(area).unwrap().0;
         self.world.get_mut::<Layout>(layout).unwrap().focused_area = Some(area);
@@ -644,7 +538,7 @@ impl Workbench<'_> {
     }
 
     pub fn close_panel(&mut self, panel: Entity) -> Result<(), String> {
-        let layout = self.panel_layout(panel)?;
+        self.panel_layout(panel)?;
         check_panel_drafts(self.world, [panel])?;
         let area = self.world.get::<InArea>(panel).unwrap().0;
         let index = panels_in_area(self.world, area)
@@ -657,12 +551,10 @@ impl Workbench<'_> {
         if self.world.get::<Area>(area).unwrap().selected == Some(panel) {
             self.world.get_mut::<Area>(area).unwrap().selected = next;
         }
-        crate::membership::topology_changed(self.world, layout);
         Ok(())
     }
 
     pub(crate) fn snapshot(&self, layout: Entity) -> Result<GeometrySnapshot, String> {
-        self.require_owned(layout)?;
         self.world
             .get::<Layout>(layout)
             .ok_or("Layout is unavailable")?;
@@ -721,7 +613,6 @@ impl Workbench<'_> {
             let fallback = self.destination_area(layout).unwrap();
             self.world.get_mut::<Layout>(layout).unwrap().focused_area = Some(fallback);
         }
-        crate::membership::topology_changed(self.world, layout);
         mapping
     }
 
@@ -823,7 +714,6 @@ impl Workbench<'_> {
             tabs.insert(index.min(tabs.len()), panel);
             self.world.entity_mut(area).replace_related::<InArea>(&tabs);
             self.world.get_mut::<PanelInstance>(panel).unwrap().preview = false;
-            crate::membership::topology_changed(self.world, layout);
             return Ok(area);
         }
         let snapshot = self.snapshot(layout)?;
@@ -853,7 +743,6 @@ impl Workbench<'_> {
             .replace_related::<InArea>(&tabs);
         self.world.get_mut::<PanelInstance>(panel).unwrap().preview = false;
         self.world.get_mut::<Area>(destination).unwrap().selected = Some(panel);
-        crate::membership::topology_changed(self.world, layout);
         Ok(destination)
     }
 
@@ -988,7 +877,6 @@ impl Workbench<'_> {
     }
 
     pub fn delete_layout(&mut self, layout: Entity) -> Result<(), String> {
-        self.require_owned(layout)?;
         self.world
             .get::<Layout>(layout)
             .ok_or("Layout is unavailable")?;
@@ -1007,16 +895,13 @@ impl Workbench<'_> {
         Ok(())
     }
 
-    pub(crate) fn validate_edit(
-        &self,
-        stamp: LayoutStamp,
-        edit: &LayoutEdit,
-    ) -> Result<(), String> {
-        if active_layout(self.world).is_none() || self.stamp() != stamp {
-            return Err("Layout changed during interaction".into());
+    /// A deferred edit still applies if the layout it was made in is still
+    /// active and everything it names is still in that layout. A border resize
+    /// names a position instead, so that border must still be there.
+    pub(crate) fn validate_edit(&self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
+        if active_layout(self.world) != Some(layout) {
+            return Err("The layout changed during the interaction".into());
         }
-        // Entity-bearing edits must belong to the admitted layout, even when a
-        // caller supplies a current stamp with a foreign target.
         let area_of =
             |world: &World, entity: Entity| world.get::<InArea>(entity).map_or(entity, |p| p.0);
         let targets: Vec<Entity> = match edit {
@@ -1031,16 +916,27 @@ impl Workbench<'_> {
             LayoutEdit::SplitArea { area, .. } | LayoutEdit::DropPanel { area, .. } => vec![*area],
             LayoutEdit::JoinAreas { source, target, .. }
             | LayoutEdit::DockArea { source, target, .. } => vec![*source, *target],
-            LayoutEdit::ResizeBorder { .. } => Vec::new(),
+            LayoutEdit::ResizeBorder { axis, at, span, .. } => {
+                let a = axis.index();
+                let border = self.snapshot(layout)?.geometry.areas.iter().any(|area| {
+                    (area.rect.min[a] == *at || area.rect.max[a] == *at)
+                        && area.rect.min[a ^ 1] < span[1]
+                        && area.rect.max[a ^ 1] > span[0]
+                });
+                if !border {
+                    return Err("The border moved during the interaction".into());
+                }
+                Vec::new()
+            }
         };
         for e in targets {
             if self
                 .world
                 .get::<InLayout>(area_of(self.world, e))
                 .map(|r| r.0)
-                != Some(stamp.layout)
+                != Some(layout)
             {
-                return Err("Interaction target is no longer in this layout".into());
+                return Err("The interaction's target is no longer in this layout".into());
             }
         }
         Ok(())
@@ -1051,10 +947,10 @@ impl Workbench<'_> {
     /// joins/docks. Uses the same geometry planner as the edit itself.
     pub(crate) fn close_targets(
         &self,
-        stamp: LayoutStamp,
+        layout: Entity,
         edit: &LayoutEdit,
     ) -> Result<Vec<Entity>, String> {
-        self.validate_edit(stamp, edit)?;
+        self.validate_edit(layout, edit)?;
         match edit {
             LayoutEdit::ClosePanels(panels) => Ok(panels.clone()),
             LayoutEdit::CloseArea(area) => Ok(panels_in_area(self.world, *area).to_vec()),
@@ -1094,8 +990,8 @@ impl Workbench<'_> {
         }
     }
 
-    pub(crate) fn edit(&mut self, stamp: LayoutStamp, edit: &LayoutEdit) -> Result<(), String> {
-        self.validate_edit(stamp, edit)?;
+    pub(crate) fn edit(&mut self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
+        self.validate_edit(layout, edit)?;
         match edit {
             LayoutEdit::FocusArea(e) => self.focus_area(*e),
             LayoutEdit::FocusPanel(e) => self.focus_panel(*e),
@@ -1159,7 +1055,7 @@ impl Workbench<'_> {
                 span,
                 to,
                 minimum,
-            } => self.resize_border(stamp.layout, *axis, *at, *span, *to, *minimum),
+            } => self.resize_border(layout, *axis, *at, *span, *to, *minimum),
             LayoutEdit::DropPanel {
                 area,
                 factory,
@@ -1200,56 +1096,11 @@ fn valid_minimum(minimum: [i32; 2]) -> Result<(), String> {
     }
 }
 
-fn apply(world: &mut World) {
-    let requests = std::mem::take(&mut world.resource_mut::<WorkbenchRequests>().0);
-    for request in requests {
-        let mut w = Workbench::new(world);
-        let result = match &request {
-            WorkbenchRequest::ActivateLayout(e) => w.activate_layout(*e),
-            WorkbenchRequest::FocusPanel(e) => w.focus_panel(*e),
-            WorkbenchRequest::ClosePanel(e) => w.close_panel(*e),
-            WorkbenchRequest::Edit { stamp, edit } => w.edit(*stamp, edit),
-            #[cfg(feature = "ui")]
-            WorkbenchRequest::UserEdit { stamp, edit } => w.user_edit(*stamp, edit),
-        };
-        world.write_message(WorkbenchFinished { request, result });
-    }
-}
-
-/// Admit current UI focus before keyboard routing; structural edits stay queued.
 #[cfg(feature = "ui")]
-pub(crate) fn apply_focus(world: &mut World) {
-    let requests = std::mem::take(&mut world.resource_mut::<WorkbenchRequests>().0);
-    let mut structural_pending = false;
-    for request in requests {
-        if structural_pending {
-            world
-                .resource_mut::<WorkbenchRequests>()
-                .0
-                .push_back(request);
-            continue;
-        }
-        let mut w = Workbench::new(world);
-        let result = match &request {
-            WorkbenchRequest::FocusPanel(panel) => Some(w.focus_panel(*panel)),
-            WorkbenchRequest::Edit {
-                stamp,
-                edit: edit @ (LayoutEdit::FocusArea(_) | LayoutEdit::FocusPanel(_)),
-            } => Some(w.edit(*stamp, edit)),
-            WorkbenchRequest::UserEdit {
-                stamp,
-                edit: edit @ (LayoutEdit::FocusArea(_) | LayoutEdit::FocusPanel(_)),
-            } => Some(w.user_edit(*stamp, edit)),
-            _ => None,
-        };
-        if let Some(result) = result {
-            world.write_message(WorkbenchFinished { request, result });
-        } else {
-            structural_pending = true;
-            world
-                .resource_mut::<WorkbenchRequests>()
-                .0
-                .push_back(request);
-        }
+fn apply_edits(world: &mut World) {
+    let edits = std::mem::take(&mut world.resource_mut::<PendingEdits>().0);
+    for (layout, edit) in edits {
+        // A gesture overtaken by other changes is simply dropped.
+        let _ = Workbench::new(world).user_edit(layout, &edit);
     }
 }

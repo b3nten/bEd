@@ -1,5 +1,6 @@
 use super::*;
 use crate::WorkbenchCorePlugin;
+use crate::tests::TestPanels;
 use std::{
     sync::{Arc, Mutex, mpsc},
     time::{Duration, Instant},
@@ -614,11 +615,11 @@ fn panels_look_dirty_while_showing_an_unsaved_document() {
         .insert(DocumentReference::new(document.id()));
     type_text(app.world_mut(), document, 1, "b");
     app.update();
-    assert!(app.world().get::<PanelInstance>(viewer).unwrap().dirty);
+    assert!(holder_unsaved(app.world(), viewer));
     app.world_mut()
         .entity_mut(viewer)
         .remove::<DocumentReference>();
-    assert!(!app.world().get::<PanelInstance>(viewer).unwrap().dirty);
+    assert!(!holder_unsaved(app.world(), viewer));
 }
 
 #[test]

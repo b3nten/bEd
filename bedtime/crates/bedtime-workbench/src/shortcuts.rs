@@ -8,12 +8,6 @@ use std::{cmp::Reverse, collections::HashSet};
 pub(crate) fn install(app: &mut App) {
     app.add_systems(
         PreUpdate,
-        crate::layout::apply_focus
-            .after(UiSystems::Draw)
-            .before(ContextCommandSystems::CollectInput),
-    )
-    .add_systems(
-        PreUpdate,
         collect
             .in_set(ContextCommandSystems::CollectInput)
             .after(UiSystems::Draw),

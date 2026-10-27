@@ -5,14 +5,15 @@ mod composition;
 mod document_commands;
 mod documents;
 mod membership;
-pub use composition::{PanelTabStyle, reconcile_workbench};
+pub use composition::PanelTabStyle;
+#[cfg(any(debug_assertions, feature = "persistence"))]
+pub(crate) use composition::validate_workbench;
 pub use document_commands::*;
 pub use documents::*;
 mod geometry;
 mod layout;
 mod lifecycle;
 mod menus;
-pub mod native_path;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 mod work;
@@ -50,7 +51,7 @@ use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
 pub use frontend::{
     PanelFactoryPayload, Titlebar, TitlebarOwnership, WorkbenchPresentation, WorkbenchShell,
-    WorkbenchUi, panel_drag_source, spawn_panel, spawn_panel_in_area,
+    WorkbenchUi, panel_drag_source,
 };
 #[cfg(feature = "ui")]
 pub use ui::{MenuPresentation, WorkbenchUiPlugin, draw_menu_bar, draw_popup_menu};
@@ -104,32 +105,11 @@ impl<'w> Workbench<'w> {
         );
         Self { world }
     }
-    pub fn for_entity(world: &'w mut World, entity: Entity) -> Result<Self, String> {
-        world
-            .get_entity(entity)
-            .map_err(|_| "Entity is unavailable")?;
-        Ok(Self::new(world))
-    }
     pub fn world(&self) -> &World {
         self.world
     }
     pub fn world_mut(&mut self) -> &mut World {
         self.world
-    }
-    pub fn work(&mut self) -> Mut<'_, ManagedWork> {
-        self.world.resource_mut()
-    }
-    pub fn requests(&mut self) -> Mut<'_, WorkbenchRequests> {
-        self.world.resource_mut()
-    }
-    pub fn commands(&mut self) -> Mut<'_, ContextCommandRequests> {
-        self.world.resource_mut()
-    }
-    pub(crate) fn require_owned(&self, entity: Entity) -> Result<(), String> {
-        self.world
-            .get_entity(entity)
-            .map(|_| ())
-            .map_err(|_| "Entity is unavailable".into())
     }
 }
 

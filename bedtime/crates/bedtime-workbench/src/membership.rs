@@ -4,13 +4,6 @@ use bevy::{
     ecs::{lifecycle::HookContext, world::DeferredWorld},
     prelude::*,
 };
-pub(crate) fn layout_selection_changed(mut world: DeferredWorld, _: HookContext) {
-    let mut revision = world.resource_mut::<crate::lifecycle::LayoutSelectionRevision>();
-    revision.0 = revision
-        .0
-        .checked_add(1)
-        .expect("Layout selection revision exhausted");
-}
 pub(crate) fn member_changed(mut world: DeferredWorld, context: HookContext) {
     crate::commands::handler_scope_changed(&mut world, context.entity);
 }
@@ -30,7 +23,6 @@ pub(crate) fn panel_inserted(mut world: DeferredWorld, context: HookContext) {
             if let Some(mut state) = world.get_mut::<Area>(area) {
                 state.selected = Some(entity);
             }
-            bump_area(world, area);
         }
     });
 }
@@ -51,7 +43,6 @@ pub(crate) fn panel_replaced(mut world: DeferredWorld, context: HookContext) {
                     state.selected = fallback;
                 }
             }
-            bump_area(world, area);
         }
     });
 }
@@ -78,7 +69,6 @@ pub(crate) fn area_inserted(mut world: DeferredWorld, context: HookContext) {
                     state.focused_area = Some(entity);
                 }
             }
-            topology_changed(world, layout);
         }
     });
 }
@@ -96,7 +86,6 @@ pub(crate) fn area_replaced(mut world: DeferredWorld, context: HookContext) {
                     state.focused_area = fallback;
                 }
             }
-            topology_changed(world, layout);
         }
     });
 }
@@ -105,18 +94,6 @@ pub(crate) fn area_removed(mut world: DeferredWorld, context: HookContext) {
     if let Some(mut location) = world.get_mut::<crate::layout::AreaLocation>(context.entity) {
         location.0 = None;
     }
-}
-
-fn bump_area(world: &mut World, area: Entity) {
-    if let Some(layout) = world.get::<InLayout>(area).map(|r| r.0) {
-        topology_changed(world, layout);
-    }
-}
-pub(crate) fn topology_changed(world: &mut World, layout: Entity) {
-    if let Some(mut revision) = world.get_mut::<crate::layout::LayoutRevision>(layout) {
-        revision.0 += 1;
-    }
-    crate::composition::observe_topology(world, layout);
 }
 
 pub(crate) fn layout_added(mut world: DeferredWorld, context: HookContext) {

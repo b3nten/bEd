@@ -141,7 +141,6 @@ impl PanelPolicy for SettingsPanel {
 pub struct SettingsPanel;
 
 impl Panel for SettingsPanel {
-    const KEY: &'static str = "bed.settings";
     const LABEL: &'static str = "Settings";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, _: Entity) {

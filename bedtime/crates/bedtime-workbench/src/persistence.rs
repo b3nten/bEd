@@ -87,7 +87,7 @@ impl Workbench<'_> {
             .get(TypeId::of::<Layout>())
             .is_some_and(|r| r.data::<M>().is_some())
         {
-            reconcile_workbench(world)?;
+            validate_workbench(world)?;
         }
         let filter = || {
             registry
@@ -937,7 +937,7 @@ fn insert_capture<M: TypeData>(
         }
     }
     if graph {
-        reconcile_workbench(world)?;
+        validate_workbench(world)?;
     }
     Ok(remapped.entities.iter().map(|e| e.entity).collect())
 }

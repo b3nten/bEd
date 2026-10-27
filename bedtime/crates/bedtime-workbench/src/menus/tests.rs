@@ -1,4 +1,5 @@
 use super::*;
+use crate::tests::TestPanels;
 use crate::*;
 
 struct Copy;

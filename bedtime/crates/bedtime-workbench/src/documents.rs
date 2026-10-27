@@ -573,9 +573,19 @@ pub fn document_has_drafts(world: &World, id: DocumentId) -> bool {
         .any(|reference| reference.document() == id)
 }
 
-/// Check document references and keep panels' dirty flags in step with the
-/// documents they show.
-pub(crate) fn reconcile_documents(world: &mut World) -> Result<(), String> {
+/// Whether a panel (or other holder) shows unsaved work: its document is
+/// unsaved, or it has uncommitted input.
+pub fn holder_unsaved(world: &World, holder: Entity) -> bool {
+    world.get::<DocumentDraft>(holder).is_some()
+        || world
+            .get::<DocumentReference>(holder)
+            .and_then(|reference| world.get::<Document>(reference.0))
+            .is_some_and(|document| document.store.info().dirty)
+}
+
+/// Every draft has a reference, and every reference points at a document.
+#[cfg(any(debug_assertions, feature = "persistence"))]
+pub(crate) fn validate_documents(world: &mut World) -> Result<(), String> {
     for entity in world
         .query_filtered::<Entity, With<DocumentDraft>>()
         .iter(world)
@@ -584,19 +594,8 @@ pub(crate) fn reconcile_documents(world: &mut World) -> Result<(), String> {
             return Err("DocumentDraft requires a DocumentReference".into());
         }
     }
-    let mut flags = Vec::new();
-    for (holder, reference) in world.query::<(Entity, &DocumentReference)>().iter(world) {
-        let document = get_document(world, reference.document()).map_err(|e| e.to_string())?;
-        if world.get::<PanelInstance>(holder).is_some() {
-            let dirty = document.store.info().dirty || world.get::<DocumentDraft>(holder).is_some();
-            flags.push((holder, dirty));
-        }
-    }
-    for (panel, dirty) in flags {
-        let mut instance = world.get_mut::<PanelInstance>(panel).unwrap();
-        if instance.dirty != dirty {
-            instance.dirty = dirty;
-        }
+    for reference in world.query::<&DocumentReference>().iter(world) {
+        get_document(world, reference.document()).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -621,22 +620,17 @@ fn mark_referenced(
     }
 }
 
-/// A holder letting go ends its undo group, and a panel no longer showing an
-/// unsaved document stops looking dirty.
+/// A holder letting go ends its undo group.
 fn release_reference(
     discard: On<Discard<DocumentReference>>,
     references: Query<&DocumentReference>,
     mut documents: Query<&mut Document>,
-    mut panels: Query<&mut PanelInstance>,
 ) {
     let holder = discard.entity;
     if let Ok(reference) = references.get(holder)
         && let Ok(mut document) = documents.get_mut(reference.0)
     {
         document.store.detach_viewer(holder);
-    }
-    if let Ok(mut panel) = panels.get_mut(holder) {
-        panel.dirty = false;
     }
 }
 

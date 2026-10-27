@@ -100,6 +100,7 @@ impl Layout {
     }
     /// Construct a tiling at a persistence or migration boundary. Internal
     /// transitions preserve the same invariant without repeating validation.
+    #[cfg(any(debug_assertions, feature = "persistence", test))]
     pub fn from_areas(areas: Vec<Area>) -> Result<Self, &'static str> {
         if areas.is_empty() || areas.len() > 4096 {
             return Err("Missing or oversized workspace tiling");

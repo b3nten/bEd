@@ -32,7 +32,7 @@ impl Workbench<'_> {
     ) -> Result<Entity, String> {
         let registry = world.resource::<AppTypeRegistry>().clone();
         validate::<M>(&captured.dynamic, &registry.read(), CaptureScope::Layout)?;
-        reconcile_workbench(world)?;
+        validate_workbench(world)?;
         let index = layouts(world)
             .iter()
             .position(|&e| e == target)
@@ -68,7 +68,7 @@ impl Workbench<'_> {
         if selected {
             Workbench::new(world).activate_layout(root)?;
         }
-        reconcile_workbench(world)?;
+        validate_workbench(world)?;
         Ok(root)
     }
 }

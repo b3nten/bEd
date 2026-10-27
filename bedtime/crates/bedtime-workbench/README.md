@@ -48,11 +48,11 @@ close_when_requested: false. Workbench handles `CloseRequested` itself; see
 
 Workbench uses the application's World and renderer. The World is the editing
 session: there is no Workspace component, mandatory Session entity, activation
-scope or scope membership. `ManagedWork`, `WorkbenchRequests`,
-`ContextCommandRequests` and (with UI) `WorkbenchUi` are resources. Applications own
+scope or scope membership. `ManagedWork`, `ContextCommandRequests` and (with UI)
+`WorkbenchUi` are resources. Applications own
 project roots, settings and opening/closing another session.
 
-`Layout` supplies its area collection and revision state. `Area`/`PanelInstance`
+`Layout` supplies its area collection. `Area`/`PanelInstance`
 supply presentation components. A concrete panel requires
 `PanelInstance::of::<Self>()` to supply metadata and drawing immediately; ordinary
 composition requires no panel-type registration:
@@ -262,7 +262,6 @@ contract; `PanelInstance` is the ECS metadata attached to each instance:
 struct Notes { text: String }
 
 impl bedtime_workbench::Panel for Notes {
-    const KEY: &'static str = "example.notes";
     const LABEL: &'static str = "Notes";
     fn draw(ui: &mut egui::Ui, world: &mut World,
             context: &bedtime_ui::UiContext<'_>, panel: Entity) {
@@ -280,10 +279,9 @@ arbitrary associated props. The shell, panels, menus, titlebars and status rende
 application World during the same egui pass. Scheduled input,
 commands and updates remain Bevy systems. `Panel` has no initializer. Bevy
 required components supply only missing state, preserving explicit overrides in
-the spawn. `PanelInstance::of::<P>()` carries `P`'s label, descriptive key and draw
-function on that same entity. `Panel::KEY` is retained as descriptive application
-identity (an empty key is usable), not a construction registry or validated type ID.
-Entity identities keep widget state distinct. Moving tabs retains
+the spawn. `PanelInstance::of::<P>()` carries `P`'s label and draw function on
+that same entity. Spawning `(MyPanel, InArea(area))` is the one way to create a
+panel. Entity identities keep widget state distinct. Moving tabs retains
 panel and widget state.
 
 `WorkbenchSurface` owns panel rounding, suggested padding, gaps and corner hit
@@ -315,10 +313,9 @@ world.entity_mut(window).insert(WorkbenchSurface::single_panel());
 
 The same panel identity, focus and input path remains active. Application APIs
 can still create/select/rearrange panels. `TabBarVisibility` supports `Always`,
-`MultipleTabs` and `Hidden`. User gestures submit `WorkbenchRequest::UserEdit`;
-`Workbench::user_edit` applies the same permission policy to application-provided
-user commands. Ordinary `Edit` requests and direct application operations remain
-available. Custom command handlers should use `user_edit` for user layout actions.
+`MultipleTabs` and `Hidden`. `Workbench::user_edit` applies the surface's
+permission policy to a user layout action; direct application operations bypass
+it. Custom command handlers should use `user_edit` for user layout actions.
 Content padding and scrolling remain opt-in. A panel can query
 `world.get::<WorkbenchSurface>(context.surface)` for the surface's suggested
 padding and rounding, then pass them explicitly to UI's `padded` and `scroll`
@@ -499,7 +496,7 @@ theme-owned. Tab width and painting use the same shaped label, including italics
 `PanelInstance.preview` remains semantic state. Styling never sets or clears it;
 keeping or moving a preview still clears that flag. Explicit styles stay on the
 same item when it moves or becomes permanent. Style insertion, edits and removal
-are observed on the next draw without changing layout revisions. This is
+are observed on the next draw. This is
 **runtime-only appearance configuration**. Applications own any serialization
 and reapply overrides when composing their panels.
 
@@ -530,24 +527,23 @@ drag before the shell offers area/tab/split targets. Eligible content targets ca
 priority until release. Validate application-specific inputs before offering this
 infallible factory; Workbench does not resolve descriptive keys to constructors.
 
-Drawing queues the world resource WorkbenchRequests. WorkbenchSystems::Apply
-commits a batch after contextual command dispatch and publishes WorkbenchFinished.
-Gesture requests include layout revision and activation stamps; stale edits fail.
+Gestures are deferred: drawing records each edit with the layout it was made in,
+and `WorkbenchSystems::Apply` applies them after drawing, before keyboard routing.
+An edit is dropped if that layout is no longer active, if anything it names has
+left the layout, or (for a border resize) if that border no longer exists.
 
 ## Execution and external work
 
-`SessionSystems::Prepare` validates composition before drawing. UI focus observations
-precede shortcut collection, contextual dispatch and `WorkbenchSystems::Apply`.
-`SessionSystems::Sync` validates edits before Update; PostUpdate reconciles again.
+Relationship hooks keep the layout graph consistent as it changes; debug builds
+also validate it once per frame (in `Last`), panicking on a broken graph.
 `ManagedWork` polls in Last. There is one ordinary Bevy plugin lifecycle, clock,
 fixed-update loop and renderer.
 
-`Workbench::requests()`, `commands()` and `work()` borrow world resources.
 Command handlers can run without a selected layout. Application services are
 accessible directly in the same World; there is no scope forwarding.
 
 ```rust,ignore
-let task = Workbench::new(world).work().spawn_task(Some(panel), "Search", |cancel| {
+let task = world.resource_mut::<ManagedWork>().spawn_task(Some(panel), "Search", |cancel| {
     if cancel.wait(Duration::from_secs(2)) { return None; }
     Some(compute_result())
 })?;
@@ -557,35 +553,13 @@ let task = Workbench::new(world).work().spawn_task(Some(panel), "Search", |cance
 entity gives work a shorter lifetime: its removal cancels work on the next update.
 Hidden layouts do not suspend workers or polling. `spawn_task` is for disposable
 calculations: cancellation can suppress its returned value. `ManagedTask` reports
-Finished, Cancelled and Failed; in-process cancellation is cooperative. `ManagedProcess`
-provides bounded stdin, drained stdout/stderr and exit status. Output retains the
-newest 256 KiB; writes are limited to 8 KiB with 16 queued writes. `close_stdin`
-delivers EOF after queued input. PTY setup belongs to a terminal backend.
-
-For mutating work, `ManagedWork::admit_operation(owner, label, complete)` reserves
-one retained completion before execution or queue admission. It returns a single
-`OperationCompletion<T>` producer token, suitable for an existing serialized worker;
-it does not start another thread. Check `token.cancellation()` cooperatively and
-call `token.complete(actual_outcome)` even when cancellation was requested. The
-callback receives independent `OperationOutcome { cancellation_requested, result }`
-facts. A dropped/panicked producer yields an explicit error that effects may have
-occurred. Successful domain outcomes may include partial changes and domain errors.
-
-Managed work owns delivery independently of panel, executor and producer lifetimes.
-Callbacks run once on the main World in `Last` / `SessionSystems::Close`, after the
-managed resource is restored so reconciliation can use normal services. Handlers
-are trusted application code and must finish without panicking. `work_finished`
-stays false through callback consumption, including during orderly shutdown;
-cancellation never acknowledges or discards a completion. Ordinary `spawn_task`
-results retain their disposable contract. Hosts must consume domain messages and
-persist resulting changes before cancelling their storage services.
+Finished, Cancelled and Failed; cancellation is cooperative.
 
 Quitting through `CloseRequested` performs orderly exit. Headless hosts and tests
 can instead call `shutdown_work(world)` and keep updating until
 `work_finished(world)`. New document/work admissions are rejected after shutdown.
-Dropping the World alone is a fallback, not orderly shutdown. Unix process groups receive TERM then KILL after
-250 ms and are reaped. Other platforms terminate the direct child; descendant
-supervision is Unix-specific. Cooperative tasks must return after cancellation.
+Dropping the World alone is a fallback, not orderly shutdown. Tasks must return
+after cancellation.
 
 ## ContextCommands, handlers and bindings
 
@@ -776,18 +750,6 @@ cargo build --offline --locked -p bed --features automation
 python3 bedtime_old/tools/smoke_corners.py  # drives bed_old; not maintained
 ```
 
-## Native path fields
-
-`native_path::NativePath` encodes lossless platform-tagged native units without
-filesystem I/O. Unix bytes and Windows wide units use safe native constructors;
-foreign platforms are rejected. `#[serde(with = "bedtime_workbench::native_path::path")]`
-and the `option` companion work on `PathBuf` / `Option<PathBuf>` fields, accept
-legacy UTF-8 strings on read and reject NUL units. Field owners validate scope,
-normalization and size. These codecs also work without the `persistence` feature;
-Filetree uses the same record for its version-1 visibility format, unchanged.
-Opaque reflected descriptors can use these Serde field codecs directly; generic
-world serialization cannot make ordinary Serde `PathBuf` lossless.
-
 ## Optional reflected persistence
 
 Enable `persistence`. `WorkbenchCorePlugin` registers the durable Workbench types;
@@ -826,7 +788,7 @@ the entity limit. Captures may be incomplete while
 the host edits them; encoding, decoding and restore enforce the final invariants.
 Filtering structural entities also requires updating the owning ordered collections,
 selection/focus and layout-order resource. Dangling references are rejected, never
-silently repaired. Capture reconciles existing Workbench composition first.
+silently repaired. Capture validates existing Workbench composition first.
 
 M selects reflection **type data**, not an entity marker. Applications can define
 independent partitions without changing Workbench:
@@ -857,7 +819,7 @@ There are no private structural DTO components or second live ordering model.
 The relationship target lists preserve meaningful order as well as membership;
 `InLayout`/`InArea` sources are rebuilt from those lists, not saved as duplicate
 ownership authority. Missing/empty reverse lists have equivalent encodings.
-Drawing/key/dirty runtime fields are excluded from `PanelInstance`; restore retains
+Drawing runtime fields are excluded from `PanelInstance`; restore retains
 the concrete panel's required drawing defaults and applies its saved title/preview.
 
 Application-defined Bevy relationships can use the same ordered restoration path:

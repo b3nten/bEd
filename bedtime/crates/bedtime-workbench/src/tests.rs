@@ -107,7 +107,7 @@ fn deletion_retires_owned_panels_and_selects_a_surviving_layout() {
 }
 
 #[test]
-fn rejected_moves_preserve_layouts_and_stale_requests_do_not_target_new_panels() {
+fn rejected_moves_preserve_layouts() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
     let layout = w.active_layout();
@@ -116,21 +116,11 @@ fn rejected_moves_preserve_layouts_and_stale_requests_do_not_target_new_panels()
     let second = w.create_panel(other, "Second").unwrap();
     assert!(w.move_panel(first, second, None).is_err());
     assert_eq!(w.panels(layout), vec![first]);
-    w.requests().submit(WorkbenchRequest::ClosePanel(first));
-    w.requests().submit(WorkbenchRequest::FocusPanel(first));
-    app.update();
-    let results: Vec<_> = app
-        .world_mut()
-        .resource_mut::<Messages<WorkbenchFinished>>()
-        .drain()
-        .collect();
-    assert!(results[0].result.is_ok());
-    assert!(results[1].result.is_err());
-    assert!(app.world().get::<PanelInstance>(second).is_some());
+    assert!(w.world().get::<PanelInstance>(second).is_some());
 }
 
 #[test]
-fn a_splitter_request_cannot_mutate_a_replaced_layout_tree() {
+fn a_border_resize_is_refused_once_that_border_is_gone() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
     let layout = w.active_layout();
@@ -138,27 +128,37 @@ fn a_splitter_request_cannot_mutate_a_replaced_layout_tree() {
     let second = w.create_panel(layout, "Second").unwrap();
     w.move_panel(second, first, Some(SplitAxis::Horizontal))
         .unwrap();
-    let stamp = w.stamp();
-    w.requests().submit(WorkbenchRequest::Edit {
-        stamp,
-        edit: LayoutEdit::ResizeBorder {
-            axis: SplitAxis::Horizontal,
-            at: 5000,
-            span: [0, LAYOUT_EXTENT],
-            to: 8000,
-            minimum: 1,
-        },
-    });
+    let resize = LayoutEdit::ResizeBorder {
+        axis: SplitAxis::Horizontal,
+        at: 5000,
+        span: [0, LAYOUT_EXTENT],
+        to: 8000,
+        minimum: 1,
+    };
     w.move_panel(second, first, Some(SplitAxis::Vertical))
         .unwrap();
-    app.update();
-    let results: Vec<_> = app
-        .world_mut()
-        .resource_mut::<Messages<WorkbenchFinished>>()
-        .drain()
+    let before: Vec<_> = w
+        .panels(layout)
+        .iter()
+        .map(|&p| {
+            w.world()
+                .get::<Area>(w.world().get::<InArea>(p).unwrap().0)
+                .unwrap()
+                .rect()
+        })
         .collect();
-    assert!(results[0].result.is_err());
-    assert_eq!(Workbench::new(app.world_mut()).panels(layout).len(), 2);
+    assert!(w.edit(layout, &resize).is_err());
+    let after: Vec<_> = w
+        .panels(layout)
+        .iter()
+        .map(|&p| {
+            w.world()
+                .get::<Area>(w.world().get::<InArea>(p).unwrap().0)
+                .unwrap()
+                .rect()
+        })
+        .collect();
+    assert_eq!(before, after);
 }
 fn record(
     In(invocation): In<ContextCommandInvocation>,
@@ -271,7 +271,7 @@ fn disabled_and_removed_handlers_never_run_queued_requests() {
     let h2 = w.handler(second.clone(), None).unwrap();
     w.world.get_mut::<ActionEnabled>(h1).unwrap().0 = false;
     w.world.despawn(h2);
-    let mut requests = w.commands();
+    let mut requests = w.world_mut().resource_mut::<ContextCommandRequests>();
     requests.invoke_id(first.clone());
     requests.invoke_id(second.clone());
     app.update();
@@ -287,7 +287,9 @@ fn panel_handlers_override_globals_and_disabled_panel_handlers_block_fallback() 
     let second = w.create_panel(w.active_layout(), "Second").unwrap();
     let local = w.register_panel_handler::<First, _>(first, record).unwrap();
     w.focus_panel(first).unwrap();
-    w.commands().invoke::<First>();
+    w.world_mut()
+        .resource_mut::<ContextCommandRequests>()
+        .invoke::<First>();
     app.update();
     assert_eq!(app.world().resource::<Calls>().0[0].panel, Some(first));
     app.world_mut().get_mut::<ActionEnabled>(local).unwrap().0 = false;
@@ -338,7 +340,9 @@ fn handler_replacement_does_not_rewire_menu_action_types() {
         .unwrap()
         .request(item, command.clone())
         .unwrap();
-    w.commands().submit(request);
+    w.world_mut()
+        .resource_mut::<ContextCommandRequests>()
+        .submit(request);
     app.update();
     assert_eq!(app.world().resource::<Calls>().0[0].source, Some(item));
 }
@@ -379,7 +383,7 @@ fn a_batch_captures_all_panels_before_handlers_change_focus_or_destroy_targets()
     )
     .unwrap();
     w.focus_panel(a).unwrap();
-    let mut requests = w.commands();
+    let mut requests = w.world_mut().resource_mut::<ContextCommandRequests>();
     requests.invoke::<First>();
     requests.invoke::<Second>();
     app.update();
@@ -437,8 +441,12 @@ fn retiring_an_admitted_panel_handler_does_not_redirect_to_a_global_handler() {
         },
     )
     .unwrap();
-    w.commands().invoke::<First>();
-    w.commands().invoke::<Second>();
+    w.world_mut()
+        .resource_mut::<ContextCommandRequests>()
+        .invoke::<First>();
+    w.world_mut()
+        .resource_mut::<ContextCommandRequests>()
+        .invoke::<Second>();
     app.update();
     assert!(app.world().resource::<Calls>().0.is_empty());
     let results = results(&mut app);
@@ -495,7 +503,8 @@ fn ui_requests_execute_in_the_same_frame_without_application_ordering() {
     app.add_systems(
         PreUpdate,
         (|host: &mut World| {
-            Workbench::new(host).commands().invoke::<First>();
+            host.resource_mut::<ContextCommandRequests>()
+                .invoke::<First>();
         })
         .in_set(bedtime_ui::UiSystems::Draw),
     );
@@ -563,11 +572,11 @@ fn per_item_tab_style_does_not_change_preview_keep_or_move_semantics() {
     // A normal-looking preview remains a preview; an italic permanent tab does not become one.
     w.world.entity_mut(preview).insert(PanelTabStyle::default());
     w.world.entity_mut(permanent).insert(permanent_style);
-    reconcile_workbench(w.world).unwrap();
+    validate_workbench(w.world).unwrap();
     assert!(w.world.get::<PanelInstance>(preview).unwrap().preview);
     assert!(!w.world.get::<PanelInstance>(permanent).unwrap().preview);
 
-    w.edit(w.stamp(), &LayoutEdit::KeepPanel(preview)).unwrap();
+    w.edit(layout, &LayoutEdit::KeepPanel(preview)).unwrap();
     assert!(!w.world.get::<PanelInstance>(preview).unwrap().preview);
     assert_eq!(
         w.world.get::<PanelTabStyle>(preview),
@@ -584,31 +593,13 @@ fn per_item_tab_style_does_not_change_preview_keep_or_move_semantics() {
 
     w.world.get_mut::<PanelInstance>(preview).unwrap().preview = true;
     w.world.entity_mut(preview).remove::<PanelTabStyle>();
-    reconcile_workbench(w.world).unwrap();
+    validate_workbench(w.world).unwrap();
     assert!(w.world.get::<PanelInstance>(preview).unwrap().preview);
     assert!(w.world.get::<PanelTabStyle>(preview).is_none());
     assert_eq!(
         w.world.get::<PanelTabStyle>(permanent),
         Some(&permanent_style)
     );
-}
-
-#[test]
-fn tab_style_does_not_invalidate_layout_gestures() {
-    let mut app = app();
-    let w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
-    let area = w.destination_area(layout).unwrap();
-    let panel = w.world.spawn((TestPanelType, InArea(area))).id();
-    w.world.get_mut::<PanelInstance>(panel).unwrap().preview = true;
-    reconcile_workbench(w.world).unwrap();
-    let stamp = w.stamp();
-    w.world.entity_mut(panel).insert(PanelTabStyle {
-        italic: false,
-        text_opacity: 0.5,
-    });
-    reconcile_workbench(w.world).unwrap();
-    assert_eq!(w.stamp(), stamp);
 }
 
 #[test]
@@ -694,19 +685,17 @@ fn partial_area_join_preserves_the_target_tail_and_its_live_content() {
 }
 
 #[test]
-fn switching_away_and_back_invalidates_a_pending_gesture_even_without_a_geometry_change() {
+fn an_edit_for_a_layout_that_is_no_longer_active_is_refused() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
     let layout = w.active_layout();
     let area = w.destination_area(layout).unwrap();
-    let stamp = w.stamp();
     let other = w.create_layout("Other").unwrap();
     w.activate_layout(other).unwrap();
-    w.activate_layout(layout).unwrap();
     let before = w.world.get::<Area>(area).unwrap().rect();
     assert!(
         w.edit(
-            stamp,
+            layout,
             &LayoutEdit::SplitArea {
                 area,
                 axis: SplitAxis::Horizontal,
@@ -719,16 +708,6 @@ fn switching_away_and_back_invalidates_a_pending_gesture_even_without_a_geometry
     assert_eq!(w.world.get::<Area>(area).unwrap().rect(), before);
 }
 
-#[derive(Component, Default)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
-struct TestPanelType;
-impl Panel for TestPanelType {
-    const KEY: &'static str = "test.panel";
-    const LABEL: &'static str = "Test panel";
-    #[cfg(feature = "ui")]
-    fn draw(_: &mut bedtime_ui::egui::Ui, _: &mut World, _: &bedtime_ui::UiContext<'_>, _: Entity) {
-    }
-}
 #[test]
 fn invalid_creation_drop_does_not_call_the_application_factory_or_modify_geometry() {
     let mut app = app();
@@ -738,11 +717,10 @@ fn invalid_creation_drop_does_not_call_the_application_factory_or_modify_geometr
     let factory = PanelFactory::new("Must not run", |_, _| {
         panic!("Invalid drop invoked factory")
     });
-    let stamp = w.stamp();
     let original = w.world.get::<Area>(area).unwrap().rect();
     assert!(
         w.edit(
-            stamp,
+            layout,
             &LayoutEdit::DropPanel {
                 area,
                 factory,
@@ -755,7 +733,6 @@ fn invalid_creation_drop_does_not_call_the_application_factory_or_modify_geometr
     );
     assert_eq!(w.world.get::<Area>(area).unwrap().rect(), original);
     assert!(w.panels(layout).is_empty());
-    assert_eq!(w.stamp(), stamp);
 }
 
 #[test]
@@ -868,70 +845,19 @@ fn user_closure_without_unsaved_documents_closes_immediately() {
     let mut w = Workbench::new(app.world_mut());
     let layout = w.active_layout();
     let panel = w.create_panel(layout, "Nothing to save").unwrap();
-    let stamp = w.stamp();
-    w.user_edit(stamp, &LayoutEdit::ClosePanels(vec![panel]))
+    w.user_edit(layout, &LayoutEdit::ClosePanels(vec![panel]))
         .unwrap();
     assert!(w.world.get_entity(panel).is_err());
 
-    // The stamp still guards against closing from an outdated layout.
+    // An edit made in a layout that is no longer active is refused.
     let panel = w.create_panel(layout, "Stale request").unwrap();
+    let other = w.create_layout("Other").unwrap();
+    w.activate_layout(other).unwrap();
     assert!(
-        w.user_edit(stamp, &LayoutEdit::ClosePanels(vec![panel]))
+        w.user_edit(layout, &LayoutEdit::ClosePanels(vec![panel]))
             .is_err()
     );
     assert!(w.world.get_entity(panel).is_ok());
-}
-
-#[test]
-fn completed_structural_operations_are_not_invalidated_again_by_reconciliation() {
-    let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
-    let first = w.destination_area(layout).unwrap();
-    let second = w
-        .split_area(first, SplitAxis::Horizontal, 5000, [100, 100])
-        .unwrap();
-    let a = w.world.spawn((TestPanelType, InArea(first))).id();
-    let b = w.world.spawn((TestPanelType, InArea(second))).id();
-    let stamp = w.stamp();
-    reconcile_workbench(w.world).unwrap();
-    assert_eq!(
-        w.stamp(),
-        stamp,
-        "spawn is complete before a validation pass"
-    );
-    w.move_tab(a, second, 0).unwrap();
-    let stamp = w.stamp();
-    reconcile_workbench(w.world).unwrap();
-    assert_eq!(
-        w.stamp(),
-        stamp,
-        "move is complete before a validation pass"
-    );
-    assert_eq!(panels_in_area(w.world, second), &[a, b]);
-}
-
-#[test]
-fn untracked_geometry_and_retained_tab_order_changes_still_invalidate_gestures() {
-    let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
-    let first = w.destination_area(layout).unwrap();
-    let second = w
-        .split_area(first, SplitAxis::Horizontal, 5000, [100, 100])
-        .unwrap();
-    let a = w.world.spawn((TestPanelType, InArea(first))).id();
-    let b = w.world.spawn((TestPanelType, InArea(first))).id();
-    reconcile_workbench(w.world).unwrap();
-    let stamp = w.stamp();
-    w.world.get_mut::<Area>(first).unwrap().rect.max[0] = 4000;
-    w.world.get_mut::<Area>(second).unwrap().rect.min[0] = 4000;
-    reconcile_workbench(w.world).unwrap();
-    assert_ne!(w.stamp(), stamp);
-    let stamp = w.stamp();
-    w.world.entity_mut(first).replace_related::<InArea>(&[b, a]);
-    reconcile_workbench(w.world).unwrap();
-    assert_ne!(w.stamp(), stamp);
 }
 
 #[test]
@@ -965,6 +891,29 @@ fn moving_between_layouts_preserves_shared_document_and_local_state() {
         w.world().get::<Draft>(panel),
         Some(&Draft("view state".into()))
     );
+}
+
+/// Bare test panels; applications spawn their own panel components instead.
+pub(crate) trait TestPanels {
+    fn create_panel(&mut self, layout: Entity, title: &str) -> Result<Entity, String>;
+    fn create_panel_in_area(&mut self, area: Entity, title: &str) -> Result<Entity, String>;
+}
+
+impl TestPanels for Workbench<'_> {
+    fn create_panel(&mut self, layout: Entity, title: &str) -> Result<Entity, String> {
+        let area = self.destination_area(layout)?;
+        self.create_panel_in_area(area, title)
+    }
+    fn create_panel_in_area(&mut self, area: Entity, title: &str) -> Result<Entity, String> {
+        self.world()
+            .get::<Area>(area)
+            .ok_or("Area is unavailable")?;
+        let instance = PanelInstance {
+            title: title.into(),
+            ..default()
+        };
+        Ok(self.world_mut().spawn((instance, InArea(area))).id())
+    }
 }
 
 /// A layout fixture; core installation itself deliberately creates no layout.
