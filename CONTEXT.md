@@ -224,6 +224,12 @@ Each step should produce a usable app. We can reorder at any point.
   code went from ~1,490 to ~560 lines including the new stores. bed saves its
   layout to `<config>/world.ron`; restore verified in the running app.
 
+- **Step 5.2 (settings + layers)**, committed 2026-10-27.
+  `bedtime-workbench/src/settings.rs` (`Setting`, `setting!`, `Settings`,
+  `set_setting`/`clear_setting`, layers in stores). bed's `config.rs` replaced by
+  registered settings feeding an `Appearance` resource. See "Step 2" in
+  [docs/foundation.md](docs/foundation.md).
+
 ## Decisions
 
 - 2026-10-26: `config.rs` may move to bedtime later; it stays in bed for now.

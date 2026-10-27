@@ -45,14 +45,7 @@ fn app() -> App {
 }
 
 fn note(world: &mut World, area: Entity, text: &str) -> Entity {
-    world
-        .spawn((
-            Note {
-                text: text.into(),
-            },
-            InArea(area),
-        ))
-        .id()
+    world.spawn((Note { text: text.into() }, InArea(area))).id()
 }
 
 fn texts(world: &World, area: Entity) -> Vec<String> {
@@ -79,7 +72,9 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
     note(world, left, "c");
     note(world, right, "d");
     // A panel with nothing persisted can't be rebuilt, so it's left out.
-    Workbench::new(world).create_panel_in_area(left, "Bare").unwrap();
+    Workbench::new(world)
+        .create_panel_in_area(left, "Bare")
+        .unwrap();
     world.get_mut::<Area>(left).unwrap().selected = Some(b);
     world.get_mut::<Layout>(layout).unwrap().focused_area = Some(right);
     let saved = capture::<WorkbenchStore>(world).unwrap();
@@ -94,13 +89,20 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
     assert_eq!(names, ["Test", "Second"]);
     let layout = active_layout(world).unwrap();
     assert_eq!(world.get::<Layout>(layout).unwrap().name, "Test");
-    let areas = world.get::<LayoutAreas>(layout).unwrap().entities().to_vec();
+    let areas = world
+        .get::<LayoutAreas>(layout)
+        .unwrap()
+        .entities()
+        .to_vec();
     let (left, right) = (areas[0], areas[1]);
     assert_eq!(texts(world, left), ["a", "b", "c"]);
     assert_eq!(texts(world, right), ["d"]);
     let selected = world.get::<Area>(left).unwrap().selected.unwrap();
     assert_eq!(world.get::<Note>(selected).unwrap().text, "b");
-    assert_eq!(world.get::<Layout>(layout).unwrap().focused_area, Some(right));
+    assert_eq!(
+        world.get::<Layout>(layout).unwrap().focused_area,
+        Some(right)
+    );
     assert_eq!(world.get::<Area>(right).unwrap().rect().min[0], 6000);
     let restored = panels_in_area(world, left)[0];
     assert!(world.get::<Runtime>(restored).is_some());
@@ -129,7 +131,11 @@ fn resources_are_saved_in_their_store() {
 
     source.persist_in::<Counter, OtherStore>();
     let world = source.world_mut();
-    assert!(!capture::<WorkbenchStore>(world).unwrap().contains("Counter"));
+    assert!(
+        !capture::<WorkbenchStore>(world)
+            .unwrap()
+            .contains("Counter")
+    );
     let saved = capture::<OtherStore>(world).unwrap();
 
     let mut target = app();
@@ -149,37 +155,64 @@ fn references_to_entities_that_arent_saved_are_refused() {
     assert!(error.contains("Pointer"));
 }
 
-/// An in-memory backend that counts writes.
+/// An in-memory backend that counts writes and versions each entry.
 #[derive(Clone, Default)]
-struct MemoryBackend(Arc<Mutex<(HashMap<String, Vec<u8>>, usize)>>);
+pub(crate) struct MemoryBackend(Arc<Mutex<MemoryState>>);
+
+#[derive(Default)]
+struct MemoryState {
+    entries: HashMap<String, (Vec<u8>, u64)>,
+    writes: usize,
+}
 
 impl MemoryBackend {
-    fn world(&self) -> Option<String> {
-        let entries = self.0.lock().unwrap();
-        entries
-            .0
-            .get("world")
-            .map(|bytes| String::from_utf8(bytes.clone()).unwrap())
+    pub(crate) fn text(&self, entry: &str) -> Option<String> {
+        let state = self.0.lock().unwrap();
+        state
+            .entries
+            .get(entry)
+            .map(|(bytes, _)| String::from_utf8(bytes.clone()).unwrap())
     }
-    fn writes(&self) -> usize {
-        self.0.lock().unwrap().1
+    fn world(&self) -> Option<String> {
+        self.text("world")
+    }
+    pub(crate) fn writes(&self) -> usize {
+        self.0.lock().unwrap().writes
     }
 }
 
 impl StoreBackend for MemoryBackend {
     fn read(&self, entry: &str) -> Result<Option<Vec<u8>>, String> {
-        Ok(self.0.lock().unwrap().0.get(entry).cloned())
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .entries
+            .get(entry)
+            .map(|(b, _)| b.clone()))
     }
     fn write(&self, entry: &str, bytes: &[u8]) -> Result<(), String> {
         let mut state = self.0.lock().unwrap();
-        state.0.insert(entry.into(), bytes.to_vec());
-        state.1 += 1;
+        let version = state.entries.get(entry).map_or(0, |(_, v)| v + 1);
+        state
+            .entries
+            .insert(entry.into(), (bytes.to_vec(), version));
+        state.writes += 1;
         Ok(())
+    }
+    fn version(&self, entry: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .entries
+            .get(entry)
+            .map(|(_, v)| v.to_string()))
     }
 }
 
 /// Saving runs about once a second, and always when the app exits.
-fn save_now(app: &mut App) {
+pub(crate) fn save_now(app: &mut App) {
     app.world_mut().write_message(AppExit::Success);
     app.update();
     app.world_mut().resource_mut::<Messages<AppExit>>().clear();
@@ -218,8 +251,35 @@ fn saved_data_that_cant_be_restored_is_never_overwritten() {
     let mut app = app();
     app.add_store::<WorkbenchStore>(backend.clone());
     app.update();
-    assert!(app.world().resource::<Stores>().error::<WorkbenchStore>().is_some());
+    assert!(
+        app.world()
+            .resource::<Stores>()
+            .error::<WorkbenchStore>()
+            .is_some()
+    );
     crate::tests::layout(app.world_mut());
     save_now(&mut app);
     assert_eq!(backend.world().unwrap(), "not a world");
+}
+
+#[test]
+fn directory_stores_keep_one_file_per_entry() {
+    let directory = std::env::temp_dir().join(format!("bedtime-store-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&directory);
+    let store = DirectoryStore::new(directory.join("nested"));
+    assert_eq!(store.read("world").unwrap(), None);
+    assert_eq!(store.version("world").unwrap(), None);
+    store.write("world", b"first").unwrap();
+    assert_eq!(store.read("world").unwrap().as_deref(), Some(&b"first"[..]));
+    assert!(directory.join("nested/world.ron").exists());
+    assert!(store.version("world").unwrap().is_some());
+    store.write("world", b"second").unwrap();
+    assert_eq!(
+        store.read("world").unwrap().as_deref(),
+        Some(&b"second"[..])
+    );
+    // Nothing is left behind from the atomic write.
+    let files = std::fs::read_dir(directory.join("nested")).unwrap().count();
+    assert_eq!(files, 1);
+    std::fs::remove_dir_all(&directory).unwrap();
 }

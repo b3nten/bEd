@@ -16,6 +16,8 @@ mod lifecycle;
 mod menus;
 #[cfg(feature = "persistence")]
 pub mod persistence;
+#[cfg(feature = "persistence")]
+pub mod settings;
 mod work;
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument, close_prompt, resolve_close};
 pub use commands::*;
@@ -72,7 +74,10 @@ impl Plugin for WorkbenchCorePlugin {
     fn build(&self, app: &mut App) {
         lifecycle::install(app);
         #[cfg(feature = "persistence")]
-        persistence::register(app);
+        {
+            persistence::register(app);
+            settings::install(app);
+        }
     }
 }
 

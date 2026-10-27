@@ -1,7 +1,7 @@
 # Foundation: stores, persistence, settings, workspaces, commands
 
-Status (2026-10-27): **step 1 (stores and persistence) built**; the rest is the
-agreed design, not built yet. Update this file as decisions change during the build.
+Status (2026-10-27): **steps 1–2 (stores, persistence, settings) built**; the
+rest is the agreed design, not built yet. Update this file as decisions change during the build.
 
 The goal is a foundation solid enough that everything after it is "bring in a
 plugin": file tree, editor, viewers, terminal. Those plugins should only need to
@@ -304,6 +304,28 @@ As designed, with these specifics and differences:
 - A type in the saved file that isn't registered (e.g. a plugin that's no longer
   loaded) fails the whole restore; the store is then blocked and its file kept.
 - bed stores `WorkbenchStore` in its config directory until workspaces exist.
+
+### Step 2: settings and layers
+
+As designed (`bedtime-workbench/src/settings.rs`), with these specifics:
+
+- Layer values are stored as raw RON (`ron::value::RawValue`), not `ron::Value`,
+  which loses enum variant names. Unknown keys survive untouched.
+- `get` decodes from the layers each call; no cache yet.
+- Which layers a setting may use is `Setting::allowed_in(StoreId)`; the macro's
+  `only_in = [Store, ...]` generates it. `StoreId::of::<S>()` names a store as a value.
+- Settings layers load in `PreStartup` before world data (`StoreSystems`), then
+  `apply` runs for every registered setting. Saves happen about once a second when
+  a layer changed, and on exit. Layer files are checked for outside changes about
+  once a second and reloaded.
+- bed: `config.rs` is gone. Appearance settings are `setting!` definitions that
+  feed an `Appearance` resource, applied to the theme/surface by one system. bed's
+  stores live in `<config>/global/` (`GlobalStore`) and `<config>/workbench/`
+  (`WorkbenchStore`, until workspaces exist). Files from earlier steps at the top
+  of the config directory are no longer read.
+- Not done: app-level defaults, a settings UI showing which layer a value comes
+  from (bed's panel only edits the global layer), skipping an empty `world`
+  entry for stores with nothing persisted (bed writes an empty `global/world.ron`).
 
 ## Build order
 

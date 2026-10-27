@@ -6,7 +6,6 @@ use bedtime_workbench::{
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::PathBuf;
 
-mod config;
 mod panels;
 mod settings;
 
@@ -36,17 +35,16 @@ fn main() -> AppExit {
         }),
         UiPlugin,
         WorkbenchPlugin,
-        settings::SettingsPlugin {
-            path: config
-                .as_ref()
-                .map(|directory| directory.join("settings.ron")),
-        },
+        settings::SettingsPlugin,
     ))
     .add_systems(Startup, setup);
-    // Until workspaces exist, the layout is saved alongside the global settings.
-    if let Some(directory) = config {
-        app.add_store::<WorkbenchStore>(DirectoryStore::new(directory));
+    // Until workspaces exist, there's one workbench store in the config directory.
+    let global = config.as_ref().map(|directory| directory.join("global"));
+    if let (Some(directory), Some(global)) = (&config, &global) {
+        app.add_store::<settings::GlobalStore>(DirectoryStore::new(global))
+            .add_store::<WorkbenchStore>(DirectoryStore::new(directory.join("workbench")));
     }
+    app.insert_resource(settings::GlobalLocation(global));
     app.run()
 }
 

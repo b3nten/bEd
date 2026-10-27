@@ -16,10 +16,7 @@ use std::collections::HashMap;
     feature = "persistence",
     derive(Reflect, Clone, bevy::ecs::entity::MapEntities)
 )]
-#[cfg_attr(
-    feature = "persistence",
-    reflect(Resource, MapEntities, Persist)
-)]
+#[cfg_attr(feature = "persistence", reflect(Resource, MapEntities, Persist))]
 pub(crate) struct LayoutOrder(#[cfg_attr(feature = "persistence", entities)] pub Vec<Entity>);
 pub fn layouts(world: &World) -> &[Entity] {
     &world.resource::<LayoutOrder>().0

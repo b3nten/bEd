@@ -11,7 +11,7 @@
 //! A panel with nothing persisted is left out of the save.
 mod stores;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 pub use stores::*;
 
@@ -82,7 +82,11 @@ pub fn capture<S: Store>(world: &mut World) -> Result<String, String> {
             .iter()
             .flat_map(|archetype| archetype.entities())
             .map(|entity| entity.id())
-            .filter(|&entity| world.get::<bevy::ecs::resource::IsResource>(entity).is_none())
+            .filter(|&entity| {
+                world
+                    .get::<bevy::ecs::resource::IsResource>(entity)
+                    .is_none()
+            })
             .collect()
     } else {
         Vec::new()
@@ -93,7 +97,9 @@ pub fn capture<S: Store>(world: &mut World) -> Result<String, String> {
         .extract_entities(entities.into_iter())
         .extract_resources()
         .build();
-    dynamic.entities.retain(|entity| !entity.components.is_empty());
+    dynamic
+        .entities
+        .retain(|entity| !entity.components.is_empty());
     leave_out_unsaved_panels(&mut dynamic);
     check_references(&dynamic, &registry)?;
     for components in dynamic
@@ -126,7 +132,10 @@ pub fn restore<S: Store>(world: &mut World, text: &str) -> Result<(), String> {
     }
     let with_entities = TypeId::of::<S>() == TypeId::of::<WorkbenchStore>();
     if !with_entities && !dynamic.entities.is_empty() {
-        return Err(format!("Only WorkbenchStore holds entities, not {}", type_name::<S>()));
+        return Err(format!(
+            "Only WorkbenchStore holds entities, not {}",
+            type_name::<S>()
+        ));
     }
     let routing = world.resource::<PersistRouting>();
     for value in dynamic
@@ -140,15 +149,26 @@ pub fn restore<S: Store>(world: &mut World, text: &str) -> Result<(), String> {
             .and_then(|info| registry.get(info.type_id()))
             .ok_or_else(|| format!("{} isn't registered", value.reflect_type_path()))?;
         if registration.data::<ReflectPersist>().is_none() {
-            return Err(format!("{} isn't marked Persist", value.reflect_type_path()));
+            return Err(format!(
+                "{} isn't marked Persist",
+                value.reflect_type_path()
+            ));
         }
         if registration.data::<ReflectResource>().is_some()
             && routing.store_of(registration.type_id()) != TypeId::of::<S>()
         {
-            return Err(format!("{} belongs in another store", value.reflect_type_path()));
+            return Err(format!(
+                "{} belongs in another store",
+                value.reflect_type_path()
+            ));
         }
     }
-    if dynamic.entities.iter().any(|e| value::<Layout>(e).is_some()) && !layouts(world).is_empty() {
+    if dynamic
+        .entities
+        .iter()
+        .any(|e| value::<Layout>(e).is_some())
+        && !layouts(world).is_empty()
+    {
         return Err("Layouts can only be restored into an empty workbench".into());
     }
 

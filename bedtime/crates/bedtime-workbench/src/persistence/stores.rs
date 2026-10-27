@@ -23,6 +23,32 @@ const WORLD_ENTRY: &str = "world";
 /// A store's identity. Implemented by empty marker types.
 pub trait Store: Send + Sync + 'static {}
 
+/// A store type as a value, e.g. for saying which settings layer to change.
+#[derive(Clone, Copy, Debug)]
+pub struct StoreId {
+    id: TypeId,
+    name: &'static str,
+}
+
+impl StoreId {
+    pub fn of<S: Store>() -> Self {
+        Self {
+            id: TypeId::of::<S>(),
+            name: type_name::<S>(),
+        }
+    }
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+}
+
+impl PartialEq for StoreId {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+impl Eq for StoreId {}
+
 /// The workbench's own store: layouts, areas, panels and their persisted
 /// components, and persisted resources not redirected elsewhere.
 pub struct WorkbenchStore;
@@ -128,6 +154,13 @@ struct StoreState {
 }
 
 impl Stores {
+    pub(crate) fn backend(&self, store: StoreId) -> Option<Arc<dyn StoreBackend>> {
+        self.0
+            .iter()
+            .find(|state| state.id == store.id)
+            .map(|state| state.backend.clone())
+    }
+
     /// Why store `S` isn't being saved, or why its last save failed.
     pub fn error<S: Store>(&self) -> Option<&str> {
         self.0
@@ -174,10 +207,21 @@ impl StoreAppExt for App {
     }
 }
 
+/// Settings layers load before world data, so restored panels see final values.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum StoreSystems {
+    LoadSettings,
+    Load,
+}
+
 pub(super) fn install(app: &mut App) {
+    app.configure_sets(
+        PreStartup,
+        StoreSystems::LoadSettings.before(StoreSystems::Load),
+    );
     app.init_resource::<Stores>()
         .init_resource::<PersistRouting>()
-        .add_systems(PreStartup, load_stores)
+        .add_systems(PreStartup, load_stores.in_set(StoreSystems::Load))
         .add_systems(Last, save_stores.before(SessionSystems::Close));
 }
 
@@ -224,7 +268,11 @@ fn save_stores(world: &mut World, mut last: Local<Option<Instant>>) {
     for index in 0..count {
         let (backend, capture, blocked) = {
             let store = &world.resource::<Stores>().0[index];
-            (store.backend.clone(), store.capture, store.blocked.is_some())
+            (
+                store.backend.clone(),
+                store.capture,
+                store.blocked.is_some(),
+            )
         };
         if blocked {
             continue;
