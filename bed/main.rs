@@ -2,22 +2,29 @@ use bedtime_ui::{BuiltinIcon, UiContext, UiPlugin, egui};
 use bedtime_workbench::{
     PanelFactory, Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface, panel_drag_source,
     persistence::{DirectoryStore, StoreAppExt, WorkbenchStore},
+    settings::SettingsAppExt,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use workspace::Workspace;
 
 mod panels;
 mod settings;
+mod workspace;
 
 use settings::SettingsPanel;
 
 fn main() -> AppExit {
     let config = config_directory();
+    let workspace = Workspace::from_args();
+    let title = workspace.as_ref().map_or("bEd".into(), |workspace| {
+        format!("{} — bEd", workspace.name())
+    });
     let mut app = App::new();
     app.add_plugins((
         DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "bEd".into(),
+                title,
                 resolution: (960, 640).into(),
                 titlebar_show_title: false,
                 titlebar_transparent: true,
@@ -38,14 +45,46 @@ fn main() -> AppExit {
         settings::SettingsPlugin,
     ))
     .add_systems(Startup, setup);
-    // Until workspaces exist, there's one workbench store in the config directory.
-    let global = config.as_ref().map(|directory| directory.join("global"));
-    if let (Some(directory), Some(global)) = (&config, &global) {
-        app.add_store::<settings::GlobalStore>(DirectoryStore::new(global))
-            .add_store::<WorkbenchStore>(DirectoryStore::new(directory.join("workbench")));
+    stores(&mut app, config.as_deref(), workspace);
+    app.run()
+}
+
+/// Where things are saved. Global settings and data go in `<config>/global`.
+/// The workbench (layout, panels, workspace settings) goes in the workspace's
+/// store, or in `<config>/workbench` when no folder is open.
+fn stores(app: &mut App, config: Option<&Path>, workspace: Option<Workspace>) {
+    let global = config.map(|config| config.join("global"));
+    if let Some(global) = &global {
+        app.add_store::<settings::GlobalStore>(DirectoryStore::new(global));
     }
     app.insert_resource(settings::GlobalLocation(global));
-    app.run()
+    let Some(workspace) = workspace else {
+        if let Some(config) = config {
+            app.add_store::<WorkbenchStore>(DirectoryStore::new(config.join("workbench")));
+        }
+        return;
+    };
+    // Workspace settings override global ones. Without a claimed store they
+    // still apply, but only in memory.
+    app.add_settings_layer::<WorkbenchStore>();
+    if let Some(config) = config {
+        let directory = workspace.store_directory(config);
+        match workspace::lock(&directory, &workspace) {
+            Ok(Some(lock)) => {
+                app.add_store::<WorkbenchStore>(DirectoryStore::new(directory))
+                    .insert_resource(lock);
+            }
+            Ok(None) => {
+                let held = format!("{} is in use by another instance", directory.display());
+                app.insert_resource(workspace::Unclaimed(held));
+            }
+            Err(error) => {
+                app.insert_resource(workspace::Unclaimed(error));
+            }
+        }
+    }
+    app.insert_resource(workspace)
+        .add_systems(Update, workspace::report_unclaimed);
 }
 
 /// `$BED_CONFIG_DIR`, else `$XDG_CONFIG_HOME/bed`, else `~/.config/bed`.

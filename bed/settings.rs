@@ -2,11 +2,11 @@
 //!
 //! Each setting writes into `Appearance` when its value changes; one system
 //! applies `Appearance` to the theme and workbench surface.
-use crate::panels::PanelPolicy;
+use crate::{panels::PanelPolicy, workspace::Workspace};
 use bedtime_ui::{UiContext, UsesTheme, egui, themes};
 use bedtime_workbench::{
     Panel, PanelInstance, WindowBlur, WorkbenchSurface,
-    persistence::{ReflectPersist, Store, StoreId, Stores},
+    persistence::{ReflectPersist, Store, StoreId, Stores, WorkbenchStore},
     setting,
     settings::{Setting, Settings, SettingsAppExt, clear_setting, set_setting},
 };
@@ -157,23 +157,28 @@ impl Panel for SettingsPanel {
     const LABEL: &'static str = "Settings";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, _: Entity) {
-        let global = StoreId::of::<GlobalStore>();
         egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
-            let path = world.resource::<GlobalLocation>().0.as_ref();
-            ui.label(
-                egui::RichText::new(
-                    path.map(|path| path.join("settings.ron").display().to_string())
-                        .unwrap_or("Not saved: no configuration directory".into()),
-                )
-                .small()
-                .weak(),
-            );
-            let errors = [
-                world.resource::<Settings>().error(global),
+            let layer = choose_layer(ui, world);
+            let location = if layer == StoreId::of::<GlobalStore>() {
                 world
-                    .resource::<Stores>()
-                    .error::<GlobalStore>()
-                    .map(str::to_owned),
+                    .resource::<GlobalLocation>()
+                    .0
+                    .as_ref()
+                    .map(|path| path.join("settings.ron").display().to_string())
+                    .unwrap_or("Not saved: no configuration directory".into())
+            } else {
+                "Saved with this workspace; overrides global settings".into()
+            };
+            ui.label(egui::RichText::new(location).small().weak());
+            let stores = world.resource::<Stores>();
+            let store_error = if layer == StoreId::of::<GlobalStore>() {
+                stores.error::<GlobalStore>()
+            } else {
+                stores.error::<WorkbenchStore>()
+            };
+            let errors = [
+                world.resource::<Settings>().error(layer),
+                store_error.map(str::to_owned),
             ];
             for error in errors.into_iter().flatten() {
                 ui.colored_label(ui.visuals().error_fg_color, error);
@@ -182,7 +187,7 @@ impl Panel for SettingsPanel {
 
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Appearance");
-                row::<Theme>(ui, world, |ui, theme| {
+                row::<Theme>(ui, world, layer, |ui, theme| {
                     let before = *theme;
                     egui::ComboBox::from_label("Theme")
                         .selected_text(format!("{theme:?}"))
@@ -192,7 +197,7 @@ impl Panel for SettingsPanel {
                         });
                     before != *theme
                 });
-                row::<FontSize>(ui, world, |ui, size| {
+                row::<FontSize>(ui, world, layer, |ui, size| {
                     ui.add(
                         egui::Slider::new(size, FONT_SIZE)
                             .text("Font size")
@@ -201,25 +206,25 @@ impl Panel for SettingsPanel {
                     .changed()
                 });
                 ui.separator();
-                row::<WindowOpacity>(ui, world, |ui, opacity| {
+                row::<WindowOpacity>(ui, world, layer, |ui, opacity| {
                     ui.add(egui::Slider::new(opacity, OPACITY).text("Window opacity"))
                         .changed()
                 });
                 if cfg!(target_os = "macos") {
-                    row::<WindowBlurSetting>(ui, world, |ui, blur| {
+                    row::<WindowBlurSetting>(ui, world, layer, |ui, blur| {
                         context.frame(ui).toggle(blur, "Window blur").changed()
                     });
                 }
                 ui.separator();
-                row::<PanelOpacity>(ui, world, |ui, opacity| {
+                row::<PanelOpacity>(ui, world, layer, |ui, opacity| {
                     ui.add(egui::Slider::new(opacity, OPACITY).text("Panel opacity"))
                         .changed()
                 });
-                row::<PanelRadius>(ui, world, |ui, radius| {
+                row::<PanelRadius>(ui, world, layer, |ui, radius| {
                     ui.add(egui::Slider::new(radius, PANEL_RADIUS).text("Panel radius"))
                         .changed()
                 });
-                row::<PanelGap>(ui, world, |ui, gap| {
+                row::<PanelGap>(ui, world, layer, |ui, gap| {
                     ui.add(egui::Slider::new(gap, PANEL_GAP).text("Panel gap"))
                         .changed()
                 });
@@ -228,27 +233,56 @@ impl Panel for SettingsPanel {
     }
 }
 
-/// One setting's editor. Changes go to the global layer; a reset button shows
-/// when the global layer holds a value, and clears it back to the default.
+/// Which layer the panel edits: global, or (with a folder open) the workspace.
+fn choose_layer(ui: &mut egui::Ui, world: &World) -> StoreId {
+    let Some(workspace) = world.get_resource::<Workspace>() else {
+        return StoreId::of::<GlobalStore>();
+    };
+    let id = ui.id().with("settings-layer");
+    let mut editing_workspace = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut editing_workspace, false, "Global");
+        ui.selectable_value(
+            &mut editing_workspace,
+            true,
+            format!("Workspace: {}", workspace.name()),
+        );
+    });
+    ui.data_mut(|data| data.insert_temp(id, editing_workspace));
+    if editing_workspace {
+        StoreId::of::<WorkbenchStore>()
+    } else {
+        StoreId::of::<GlobalStore>()
+    }
+}
+
+/// One setting's editor, showing the resolved value. Changes go to `layer`.
+/// When `layer` holds a value, ↶ clears it so the value is inherited again.
 fn row<S: Setting>(
     ui: &mut egui::Ui,
     world: &mut World,
+    layer: StoreId,
     edit: impl FnOnce(&mut egui::Ui, &mut S::Value) -> bool,
 ) {
-    let global = StoreId::of::<GlobalStore>();
-    let mut value = world.resource::<Settings>().get::<S>();
-    let set_here = world.resource::<Settings>().get_in::<S>(global).is_some();
+    let settings = world.resource::<Settings>();
+    let mut value = settings.get::<S>();
+    let set_here = settings.get_in::<S>(layer).is_some();
+    let inherited = !set_here && layer != StoreId::of::<GlobalStore>();
     ui.horizontal(|ui| {
         if edit(ui, &mut value) {
-            let _ = set_setting::<S>(world, global, value);
+            let _ = set_setting::<S>(world, layer, value);
         }
-        if set_here
-            && ui
-                .small_button("↶")
-                .on_hover_text("Reset to default")
-                .clicked()
-        {
-            let _ = clear_setting::<S>(world, global);
+        if set_here {
+            let hint = if layer == StoreId::of::<GlobalStore>() {
+                "Reset to default"
+            } else {
+                "Use the global value"
+            };
+            if ui.small_button("↶").on_hover_text(hint).clicked() {
+                let _ = clear_setting::<S>(world, layer);
+            }
+        } else if inherited {
+            ui.weak("inherited");
         }
     });
 }

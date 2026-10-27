@@ -26,7 +26,8 @@ need to write this again?* If yes, it probably belongs in Bedtime.
 
 ## Repository map
 
-- `bed/` — the new app. Currently a minimal window + empty workbench (`bed/main.rs`).
+- `bed/` — the new app: window, workbench, settings (`settings.rs`), workspaces
+  (`workspace.rs`), panel opening policy (`panels.rs`). Run `bed [folder]`.
 - `bed_old/` — the previous app, kept as reference only. Not in the workspace.
 - `bedtime/crates/` — the maintained library: `bedtime-workbench`, `bedtime-ui`,
   `bedtime-document`, `bedtime-clipboard`.
@@ -229,6 +230,11 @@ Each step should produce a usable app. We can reorder at any point.
   `set_setting`/`clear_setting`, layers in stores). bed's `config.rs` replaced by
   registered settings feeding an `Appearance` resource. See "Step 2" in
   [docs/foundation.md](docs/foundation.md).
+
+- **Step 5.3 (workspaces in bed)**, committed 2026-10-27.
+  `bed/workspace.rs`: `bed <folder>`, store under `<config>/workspaces/<hash>/`
+  with a lock, workspace settings layer, Global/Workspace selector in the
+  Settings panel. See "Step 3" in [docs/foundation.md](docs/foundation.md).
 
 ## Decisions
 

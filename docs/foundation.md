@@ -1,7 +1,7 @@
 # Foundation: stores, persistence, settings, workspaces, commands
 
-Status (2026-10-27): **steps 1–2 (stores, persistence, settings) built**; the
-rest is the agreed design, not built yet. Update this file as decisions change during the build.
+Status (2026-10-27): **steps 1–3 (stores, persistence, settings, workspaces)
+built**; the rest is the agreed design, not built yet. Update this file as decisions change during the build.
 
 The goal is a foundation solid enough that everything after it is "bring in a
 plugin": file tree, editor, viewers, terminal. Those plugins should only need to
@@ -327,6 +327,27 @@ As designed (`bedtime-workbench/src/settings.rs`), with these specifics:
   from (bed's panel only edits the global layer), skipping an empty `world`
   entry for stores with nothing persisted (bed writes an empty `global/world.ron`).
 
+### Step 3: workspaces (bed)
+
+`bed/workspace.rs`, wired in `bed/main.rs` (`stores`):
+
+- `bed <folder>` opens a workspace; a path that isn't a folder is reported and
+  bed starts without one. Without a folder, the workbench is stored in
+  `<config>/workbench` as before.
+- The store is `<config>/workspaces/<FNV-1a hash of the canonical path>/` (stable
+  across Rust versions), with `path.txt` naming the folder and a `lock` file.
+- **Lock** (settles the open question): a second instance on the same folder
+  can't claim the lock, so its `WorkbenchStore` isn't bound. It still runs, its
+  workspace settings layer lives in memory only, and it shows a dialog saying
+  its layout won't be saved. The OS releases the lock on exit or crash.
+- The workspace settings layer (`WorkbenchStore`) sits above `GlobalStore`. The
+  Settings panel has a Global / Workspace selector; rows show "inherited" when a
+  workspace value comes from below, and ↶ clears the selected layer.
+- `Workspace { root }` resource; the window title is "<folder> — bEd".
+- Not yet: "Open Folder…" (launch another instance), "Open Recent", restoring
+  the last workspace when started without a folder. These arrive with commands
+  and menus (step 4/5).
+
 ## Build order
 
 Each step depends on the one before.
@@ -349,7 +370,5 @@ Each step depends on the one before.
   layer, e.g. `app.set_default::<Keybinding<C>>(chords)`.
 - Format versioning: how stored world data and settings handle renamed types or
   fields (reflected type paths are part of the format today).
-- Whether bed needs a lock so the same folder can't be open in two instances
-  (bed_old had an OS lock).
 - Where errors from stores and settings are reported (error dialog, a settings
   panel status line, or both).
