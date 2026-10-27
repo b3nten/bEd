@@ -1,6 +1,6 @@
 //! Worker-owned Unix PTY transport using the operating system PTY/process APIs.
 //! The worker owns parsing, optional graphics decoding and terminal mutations.
-//! Legacy spawn helpers own a thread; prepared workers run on their caller.
+//! Prepared workers run on the caller admitted by Workbench.
 //! Shell setup affects only the child, never host cwd/env/signal handlers.
 use std::io;
 use std::thread;
@@ -32,7 +32,6 @@ use std::{
         atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
         mpsc,
     },
-    thread::JoinHandle,
     time::{Duration, Instant},
 };
 
@@ -41,7 +40,6 @@ pub const MAX_QUEUED_WRITE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_QUEUED_REPLY_BYTES: usize = 4 * 1024 * 1024;
 const REPLY_READ_WATERMARK: usize = 1024 * 1024;
 pub const OUTPUT_CHUNK_BYTES: usize = 16 * 1024;
-pub const OUTPUT_QUEUE_CHUNKS: usize = 64;
 const COMMAND_CAPACITY: usize = 64;
 const PROCESS_TITLE_INTERVAL: Duration = Duration::from_millis(400);
 const ACTIVE_POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -74,43 +72,8 @@ pub struct PtyOptions {
     pub env_remove: Vec<String>,
 }
 
-impl PtyOptions {
-    /// Run an interactive remote login shell through the system SSH client.
-    /// The target directory is never used as a local child working directory.
-    #[cfg(feature = "remote")]
-    pub fn for_ssh(&self, target: &bedtime_remote::SshTarget, root: &str) -> io::Result<Self> {
-        if target.host.is_empty()
-            || target.host.starts_with('-')
-            || target.host.chars().any(char::is_whitespace)
-            || target.host.contains('\0')
-            || !root.starts_with('/')
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "SSH terminals require a host and absolute remote root",
-            ));
-        }
-        let mut options = self.clone();
-        options.working_directory = None;
-        options.shell = Some(TerminalShell::new(
-            "ssh",
-            vec![
-                "-tt".into(),
-                "--".into(),
-                target.host.clone(),
-                format!(
-                    "cd {} && exec \"${{SHELL:-/bin/sh}}\" -l",
-                    bedtime_remote::shell_quote(root)?
-                ),
-            ],
-        ));
-        Ok(options)
-    }
-}
-
 #[derive(Debug)]
 pub enum PtyEvent {
-    Output(Vec<u8>),
     Exited(Option<ExitStatus>),
     Error(String),
 }
@@ -194,8 +157,6 @@ pub enum TerminalCommand {
 
 pub struct TerminalPty {
     commands: Option<mpsc::SyncSender<PtyCommand>>,
-    output: Option<Mutex<mpsc::Receiver<PtyEvent>>>,
-    worker: Option<JoinHandle<()>>,
     poller: Arc<Poller>,
     stop: Arc<AtomicBool>,
     alive: Arc<AtomicBool>,
@@ -217,7 +178,6 @@ pub struct TerminalWorker {
     size: WindowSize,
     terminal: Terminal,
     commands: mpsc::Receiver<PtyCommand>,
-    output: mpsc::SyncSender<PtyEvent>,
     poller: Arc<Poller>,
     stop: Arc<AtomicBool>,
     alive: Arc<AtomicBool>,
@@ -228,45 +188,16 @@ pub struct TerminalWorker {
     status: Arc<Mutex<VecDeque<PtyEvent>>>,
     cleanup_confirmed: Arc<AtomicBool>,
     started: bool,
-    capture_output: bool,
 }
 
 impl TerminalPty {
-    pub fn spawn(options: &PtyOptions, size: WindowSize) -> io::Result<Self> {
-        Self::spawn_owned(
-            options,
-            size,
-            Terminal::new(size.num_cols as usize, size.num_lines as usize),
-            true,
-        )
-    }
-
-    /// Production sessions publish snapshots; raw output is only captured by
-    /// the transport fixture API above, avoiding output backpressure on the UI.
-    pub fn spawn_terminal(
-        options: &PtyOptions,
-        size: WindowSize,
-        terminal: Terminal,
-    ) -> io::Result<Self> {
-        Self::spawn_owned(options, size, terminal, false)
-    }
-
     /// Allocate a bounded handle and its blocking owner without starting a
     /// process or thread. Input can be queued before `run`; the PID is then 0.
     /// Shell defaults are resolved now, without modifying host cwd/environment.
     pub fn prepare_terminal(
-        options: PtyOptions,
-        size: WindowSize,
-        terminal: Terminal,
-    ) -> io::Result<(Self, TerminalWorker)> {
-        Self::prepare_owned(options, size, terminal, false)
-    }
-
-    fn prepare_owned(
         mut options: PtyOptions,
         size: WindowSize,
         mut terminal: Terminal,
-        capture_output: bool,
     ) -> io::Result<(Self, TerminalWorker)> {
         validate_size(size)?;
         let shell = platform::shell(&options)?;
@@ -283,21 +214,18 @@ impl TerminalPty {
         let foreground_process = Arc::new(Mutex::new(None));
         let poller = Arc::new(Poller::new()?);
         let (commands, receiver) = mpsc::sync_channel(COMMAND_CAPACITY);
-        let (sender, output) = mpsc::sync_channel(OUTPUT_QUEUE_CHUNKS);
         let stop = Arc::new(AtomicBool::new(false));
         // A prepared session accepts bounded input, even before its child starts.
         let alive = Arc::new(AtomicBool::new(true));
         let process_id = Arc::new(AtomicU32::new(0));
         let cleanup_confirmed = Arc::new(AtomicBool::new(false));
-        // Only lifecycle events go here (one exit and at most one run error).
-        // They cannot be lost behind, or block on, captured raw output.
+        // One exit and at most one run error; terminal content uses snapshots.
         let status = Arc::new(Mutex::new(VecDeque::new()));
         let worker = TerminalWorker {
             options,
             size,
             terminal,
             commands: receiver,
-            output: sender,
             poller: poller.clone(),
             stop: stop.clone(),
             alive: alive.clone(),
@@ -308,12 +236,9 @@ impl TerminalPty {
             status: status.clone(),
             cleanup_confirmed: cleanup_confirmed.clone(),
             started: false,
-            capture_output,
         };
         let handle = Self {
             commands: Some(commands),
-            output: Some(Mutex::new(output)),
-            worker: None,
             poller,
             stop,
             alive,
@@ -327,33 +252,6 @@ impl TerminalPty {
             status,
         };
         Ok((handle, worker))
-    }
-
-    fn spawn_owned(
-        options: &PtyOptions,
-        size: WindowSize,
-        terminal: Terminal,
-        capture_output: bool,
-    ) -> io::Result<Self> {
-        let (mut handle, mut worker) =
-            Self::prepare_owned(options.clone(), size, terminal, capture_output)?;
-        // Preserve v1's synchronous child/setup errors and immediately usable PID.
-        let mut backend = platform::Pty::spawn(&worker.options, size)?;
-        worker.started = true;
-        unsafe {
-            backend.register(&handle.poller, Event::readable(0), PollMode::Oneshot)?;
-        }
-        handle
-            .process_id
-            .store(backend.process_id(), Ordering::Release);
-        handle.worker = Some(
-            thread::Builder::new()
-                .name("bed-terminal-pty".into())
-                .spawn(move || {
-                    let _ = worker.run_backend(backend, || false);
-                })?,
-        );
-        Ok(handle)
     }
 
     pub fn snapshot(&self) -> Arc<TerminalSnapshot> {
@@ -499,53 +397,18 @@ impl TerminalPty {
         }
     }
 
-    /// At most 1 MiB per poll keeps a busy child from monopolizing a UI frame.
+    /// Drain bounded lifecycle notifications; terminal bytes stay on the worker.
     pub fn poll(&mut self) -> Vec<PtyEvent> {
-        // Lock lifecycle publication before draining output, so a concurrent
-        // final read cannot make Exited overtake its captured bytes.
-        let mut status = self.status.lock().unwrap();
-        let mut events: Vec<_> = self
-            .output
-            .iter()
-            .flat_map(|receiver| {
-                receiver
-                    .lock()
-                    .unwrap()
-                    .try_iter()
-                    .take(OUTPUT_QUEUE_CHUNKS)
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        events.extend(status.drain(..));
-        events
+        self.status.lock().unwrap().drain(..).collect()
     }
 
-    /// Request shutdown. A prepared/external worker is never joined here: its
-    /// admitting owner must wait for `TerminalWorker::run` to finish cleanup.
-    /// The legacy `spawn` APIs retain their bounded thread-join behavior.
+    /// Request shutdown without waiting. The admitting owner waits for
+    /// `TerminalWorker::run` to finish PTY/process cleanup.
     pub fn shutdown(&mut self) {
         self.alive.store(false, Ordering::Release);
         self.stop.store(true, Ordering::Release);
-        // Dropping both channels releases queued reservations and unblocks an
-        // output-capturing worker before waiting for process cleanup.
         self.commands = None;
-        self.output = None;
         let _ = self.poller.notify();
-        let Some(worker) = self.worker.take() else {
-            return;
-        };
-        let deadline = Instant::now() + Duration::from_millis(500);
-        loop {
-            if worker.is_finished() {
-                let _ = worker.join();
-                return;
-            }
-            if Instant::now() >= deadline {
-                return;
-            }
-            // A detached slow cleanup owns all of its data and OS resources.
-            thread::park_timeout(Duration::from_millis(2));
-        }
     }
 }
 
@@ -590,7 +453,6 @@ impl TerminalWorker {
                     run_worker(
                         &mut backend,
                         &self.commands,
-                        &self.output,
                         &self.stop,
                         &self.poller,
                         &self.foreground_process,
@@ -601,7 +463,6 @@ impl TerminalWorker {
                         &self.cleanup_confirmed,
                         &self.status,
                         &cancelled,
-                        self.capture_output,
                     )
                 });
         // This is the admitting task's cleanup, never a detached follow-up.
@@ -721,7 +582,6 @@ fn parse_output(
 fn run_worker(
     backend: &mut platform::Pty,
     commands: &mpsc::Receiver<PtyCommand>,
-    output: &mpsc::SyncSender<PtyEvent>,
     stop: &AtomicBool,
     poller: &Arc<Poller>,
     foreground_process: &Mutex<Option<String>>,
@@ -732,7 +592,6 @@ fn run_worker(
     cleanup_confirmed: &AtomicBool,
     status: &Mutex<VecDeque<PtyEvent>>,
     cancelled: &impl Fn() -> bool,
-    capture_output: bool,
 ) -> io::Result<()> {
     let mut writes: VecDeque<QueuedWrite> = VecDeque::new();
     // Protocol replies cannot consume reservations already accepted from the
@@ -875,9 +734,6 @@ fn run_worker(
                 Ok(length) => {
                     bytes.truncate(length);
                     parse_output(terminal, &bytes, &mut writes, &reply_budget, !child_exited)?;
-                    if capture_output && output.send(PtyEvent::Output(bytes)).is_err() {
-                        return Ok(());
-                    }
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     drained = true;
@@ -918,9 +774,6 @@ fn run_worker(
                     }));
                 writes.clear();
                 exited = true;
-                if capture_output {
-                    return Ok(());
-                }
             }
         }
         for event in terminal.flush_sync() {
@@ -1429,7 +1282,7 @@ mod platform {
                 return Ok(());
             }
             // Delete before closing, including when the worker unwinds or a
-            // legacy thread fails to spawn after registering its descriptor.
+            // an owner fails after registering its descriptor.
             let deregister = self.deregister();
             self.request_stop();
             // Closing before waitpid is essential on macOS: even SIGKILL can
@@ -1576,6 +1429,7 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread::JoinHandle;
 
     fn size() -> WindowSize {
         WindowSize {
@@ -1726,7 +1580,6 @@ mod tests {
         assert_eq!(pty.process_id(), 0);
         assert!(matches!(pty.poll().as_slice(), [PtyEvent::Error(_)]));
         assert!(pty.poll().is_empty());
-        assert!(TerminalPty::spawn(&missing_shell(), size()).is_err());
     }
 
     #[test]
@@ -1864,7 +1717,6 @@ mod tests {
                 match event {
                     PtyEvent::Exited(status) => exit = status,
                     PtyEvent::Error(error) => panic!("{error}"),
-                    PtyEvent::Output(_) => panic!("prepared production worker captured raw output"),
                 }
             }
             exit.is_some()
@@ -2007,7 +1859,6 @@ mod tests {
                 match event {
                     PtyEvent::Exited(_) => stopped = true,
                     PtyEvent::Error(error) => panic!("{error}"),
-                    PtyEvent::Output(_) => unreachable!(),
                 }
             }
             stopped
@@ -2016,58 +1867,6 @@ mod tests {
         assert_ne!(pid, 0);
         assert_eq!(unsafe { libc::kill(pid as _, 0) }, -1);
         running.finish().unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn legacy_spawn_keeps_synchronous_pid_and_captured_output_before_exit() {
-        let mut pty = TerminalPty::spawn(&shell_options("printf RAW_END; exit 9"), size()).unwrap();
-        assert_ne!(pty.process_id(), 0);
-        let mut output = Vec::new();
-        let mut exit = None;
-        wait_until(|| {
-            for event in pty.poll() {
-                match event {
-                    PtyEvent::Output(bytes) => output.extend(bytes),
-                    PtyEvent::Exited(status) => {
-                        assert!(output.ends_with(b"RAW_END"));
-                        exit = status;
-                    }
-                    PtyEvent::Error(error) => panic!("{error}"),
-                }
-            }
-            exit.is_some()
-        });
-        assert_eq!(exit.unwrap().code(), Some(9));
-        pty.shutdown();
-    }
-
-    #[cfg(feature = "remote")]
-    #[test]
-    fn ssh_terminal_uses_remote_root_and_literal_shell_quoting() {
-        let target = bedtime_remote::SshTarget {
-            host: "user@host".into(),
-            agent: "bedtime-remote-agent".into(),
-        };
-        let base = PtyOptions {
-            working_directory: Some(PathBuf::from("/local/project")),
-            ..Default::default()
-        };
-        let remote = base.for_ssh(&target, "/remote/a'b $(touch bad)").unwrap();
-        assert!(remote.working_directory.is_none());
-        let shell = remote.shell.unwrap();
-        assert_eq!(shell.program, "ssh");
-        assert_eq!(&shell.args[..3], &["-tt", "--", "user@host"]);
-        assert_eq!(
-            shell.args[3],
-            "cd '/remote/a'\\''b $(touch bad)' && exec \"${SHELL:-/bin/sh}\" -l"
-        );
-        assert_eq!(
-            base.working_directory,
-            Some(PathBuf::from("/local/project"))
-        );
-        assert!(base.for_ssh(&target, "relative").is_err());
-        assert!(base.for_ssh(&target, "/nul\0path").is_err());
     }
 
     #[test]

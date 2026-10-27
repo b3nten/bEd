@@ -1,0 +1,24 @@
+[package]
+name = "bedtime-hex"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Embeddable read-only virtualized byte viewer"
+
+[features]
+default = []
+workbench = ["dep:bevy", "dep:bedtime-workbench", "dep:bedtime-clipboard"]
+automation = ["workbench", "dep:serde_json"]
+
+[dependencies]
+bedtime-ui.workspace = true
+
+bedtime-workbench = { path = "../bedtime-workbench", default-features = false, features = ["ui"], optional = true }
+bevy = { workspace = true, features = ["std"], optional = true }
+serde_json = { workspace = true, optional = true }
+
+bedtime-clipboard = { workspace = true, optional = true }
+
+[dev-dependencies]
+bedtime-filesystem.workspace = true

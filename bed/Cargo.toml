@@ -1,98 +1,16 @@
 [package]
 name = "bed"
-default-run = "bed"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
-description = "A desktop application platform and IDE"
 publish = false
 license.workspace = true
-
-[features]
-test-support = ["dep:bedtime-test-fixtures"]
-
-[dependencies]
-bedtime-test-fixtures = { path = "../bedtime/crates/bedtime-test-fixtures", optional = true }
-bedtime-storage = { workspace = true }
-bedtime-files = { workspace = true, features = ["workspace-services"] }
-bedtime-lsp = { workspace = true }
-bedtime-highlight = { workspace = true }
-bedtime-remote = { workspace = true }
-rfd = { workspace = true }
-bedtime-keybindings = { workspace = true }
-bedtime-workbench = { workspace = true }
-bedtime-documents = { workspace = true, features = ["ide-services"] }
-bedtime-plugin-idle = { workspace = true, features = ["mascots"] }
-bedtime-plugin-automation = { workspace = true, features = ["documents"] }
-bedtime-desktop = { workspace = true, features = ["scene", "preview"] }
-bedtime-core = { workspace = true, features = ["language-services", "remote", "layouts"] }
-bedtime-plugin-layouts = { workspace = true }
-bevy = { workspace = true, features = ["std"] }
-bedtime-plugin-color-picker = { workspace = true }
-bedtime-plugin-mascots = { workspace = true }
-bedtime-plugin-git = { workspace = true }
-bedtime = { workspace = true, features = ["language-services", "remote", "layouts"] }
-bedtime-editor-widgets = { workspace = true, features = ["language-services"] }
-bedtime-terminal = { workspace = true }
-bedtime-plugin-file-explorer = { workspace = true }
-bedtime-plugin-file-search = { workspace = true }
-bedtime-plugin-terminal = { workspace = true, features = ["desktop", "remote"] }
-bedtime-plugin-workspaces = { workspace = true, features = ["remote", "mascots"] }
-bedtime-plugin-settings = { workspace = true }
-bedtime-api = { workspace = true, features = ["gpu", "language-services", "documents"] }
-bedtime-plugin-editor = { workspace = true, features = ["language-services"] }
-bedtime-plugin-debugger = { workspace = true }
-bedtime-plugin-source-outline = { workspace = true }
-bedtime-plugin-image-viewer = { workspace = true }
-bedtime-plugin-model-viewer = { workspace = true }
-bedtime-plugin-font-viewer = { workspace = true }
-bedtime-plugin-audio-player = { workspace = true }
-bedtime-plugin-csv-table = { workspace = true }
-bedtime-plugin-markdown-preview = { workspace = true }
-bedtime-plugin-json-tree = { workspace = true }
-bedtime-plugin-sqlite-browser = { workspace = true }
-bedtime-plugin-http-client = { workspace = true }
-bedtime-editing = { workspace = true }
-bedtime-ui = { workspace = true, features = ["imgui", "gpu"] }
-bedtime-debugger = { workspace = true }
-bedtime-plugin-effects = { workspace = true, features = ["desktop"] }
-dear-imgui-rs = { workspace = true }
-dear-imgui-sys = { workspace = true }
-dear-imgui-wgpu = { workspace = true }
-winit = { workspace = true }
-wgpu = { workspace = true }
-serde_json = { workspace = true }
-
-
-[dev-dependencies]
-bedtime-plugin-csv-table = { workspace = true, features = ["test-support"] }
-bedtime-plugin-debugger = { workspace = true, features = ["test-support"] }
+description = "Minimal Bevy application with a Bedtime workbench"
 
 [[bin]]
 name = "bed"
-path = "src/main.rs"
-test = false
-bench = false
+path = "main.rs"
 
-[[bin]]
-name = "bed-test-fixture"
-path = "../bedtime/tests/support/fixture_main.rs"
-required-features = ["test-support"]
-test = false
-bench = false
-
-[[test]]
-name = "integration"
-path = "tests/integration/main.rs"
-required-features = ["test-support"]
-
-[[bin]]
-name = "bed-native-fixture"
-path = "tests/native/fixture.rs"
-required-features = ["test-support"]
-test = false
-bench = false
-
-[[test]]
-name = "native"
-path = "tests/native/main.rs"
-required-features = ["test-support"]
+[dependencies]
+bedtime-ui.workspace = true
+bedtime-workbench.workspace = true
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }

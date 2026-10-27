@@ -1,1636 +1,1008 @@
 use super::*;
-use api::{CommandResult, PanelCreation};
-use std::{cell::Cell, rc::Rc, sync::Mutex};
-use workspace::tiling::Layout;
-
-pub(super) static IMGUI_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-fn imgui_context() -> dear_imgui_rs::Context {
-    let mut context = dear_imgui_rs::Context::create();
-    context
-        .io_mut()
-        .set_config_flags(dear_imgui_rs::ConfigFlags::DOCKING_ENABLE);
-    context
-        .set_ini_filename::<std::path::PathBuf>(None)
-        .unwrap();
-    context
-        .font_atlas()
-        .try_claim_legacy_renderer()
-        .unwrap()
-        .build();
-    context
+fn local_mut<T: Resource<Mutability = bevy::ecs::component::Mutable>>(
+    world: &mut World,
+) -> Mut<'_, T> {
+    world.resource_mut::<T>()
 }
 
-// Raw ImGui fixtures explicitly own the same UI lifecycle as a desktop frontend.
+struct First;
+impl ContextCommand for First {
+    const KEY: &'static str = "tests.first";
+    const LABEL: &'static str = "First";
+}
+
+struct Second;
+impl ContextCommand for Second {
+    const KEY: &'static str = "tests.second";
+    const LABEL: &'static str = "Second";
+}
+
+struct Collision;
+impl ContextCommand for Collision {
+    const KEY: &'static str = First::KEY;
+    const LABEL: &'static str = "Collision";
+}
+
 #[derive(Resource, Default)]
-pub(super) struct RequestedUiTheme(pub bedtime_ui::appearance::UiTheme);
-pub(super) fn prepare_ui(world: &mut World, context: &mut dear_imgui_rs::Context) {
-    world.init_resource::<RequestedUiTheme>();
-    let mut theme = world.resource::<RequestedUiTheme>().0.clone();
-    // Raw fixtures initially leave FontSizeBase at zero; their default font is 13px.
-    theme.fonts.size = context.style().font_size_base().max(13.0);
-    let mut runtime = world
-        .remove_non_send::<bedtime_ui::UiRuntime>()
-        .unwrap_or_else(|| bedtime_ui::UiRuntime::new(context));
-    let mut fonts = world
-        .remove_non_send::<bedtime_ui::font::UiFonts>()
-        .unwrap_or_default();
-    runtime.prepare(context, &theme, &mut fonts).unwrap();
-    context
-        .font_atlas()
-        .try_claim_legacy_renderer()
-        .unwrap()
-        .build();
-    world.insert_non_send(runtime);
-    world.insert_non_send(fonts);
-}
-pub(super) fn draw_with_ui(world: &mut World, ui: &Ui, draw: impl FnOnce(&mut World, &Ui)) {
-    let context = world.non_send::<bedtime_ui::UiRuntime>().frame_context();
-    world.non_send_mut::<bedtime_ui::UiRuntime>().begin(ui);
-    context.scope(|| draw(world, ui));
-    world.non_send_mut::<bedtime_ui::UiRuntime>().end(ui);
-}
-
-struct CounterPanel(Entity);
-
-impl Panel for CounterPanel {
-    fn title(&self, _world: &World) -> String {
-        "Counter".into()
-    }
-
-    fn draw(
-        &mut self,
-        ui: &Ui,
-        _: &mut World,
-        requests: &mut Vec<WorkbenchAction>,
-        _shortcuts: &bedtime_api::workbench::ShortcutInput,
-    ) {
-        if ui.button("Close") || _shortcuts.take(ui, "test.close") {
-            requests.push(WorkbenchAction::ClosePanel(self.0));
-        }
-    }
-
-    fn save(&self, _world: &World) -> Value {
-        json!({"count":7})
-    }
-}
-
-fn factory(In(input): In<PanelCreation>) -> PanelResult {
-    Ok(Box::new(CounterPanel(input.entity)))
-}
-
-fn open(In(input): In<CommandInvocation>) -> CommandResult {
-    Ok(vec![WorkbenchAction::OpenPanel {
-        panel_type: "test.counter".into(),
-        state: Value::Null,
-        area: Some(input.area),
-    }])
-}
+struct Calls(Vec<ContextCommandInvocation>);
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchPlugin);
-    register(app.world_mut(), "test", |registrar| {
-        registrar.panel("test.counter", "Counter", factory);
-        registrar.command("test.open", "Open Counter", open);
-        registrar.panel_shortcut("test.close", "Close Counter", "test.counter", &[]);
-        registrar.menu("test.open");
-    })
-    .unwrap();
+    app.add_plugins(WorkbenchCorePlugin)
+        .init_resource::<Calls>();
+    register_context_command::<First>(app.world_mut()).unwrap();
+    register_context_command::<Second>(app.world_mut()).unwrap();
+    crate::tests::layout(app.world_mut());
     app
 }
 
 #[test]
-fn panel_focus_hooks_follow_explicit_requests_and_changed_observations() {
-    #[derive(Resource, Default)]
-    struct Focused(Vec<Entity>);
+fn last_layout_can_be_deleted() {
     let mut app = app();
-    app.init_resource::<Focused>();
-    let focus = app.world_mut().register_system(
-        |In(entity): In<Entity>, mut focused: ResMut<Focused>| -> Result<(), String> {
-            focused.0.push(entity);
+    let layout = Workbench::new(app.world_mut()).active_layout();
+    Workbench::new(app.world_mut())
+        .delete_layout(layout)
+        .unwrap();
+    assert_eq!(active_layout(app.world()), None);
+    app.update();
+}
+
+#[derive(Component, PartialEq, Debug)]
+struct Draft(String);
+
+#[test]
+fn switching_layouts_retains_panel_instances_and_their_state() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.active_layout();
+    let panel = w.create_panel(first, "Notes").unwrap();
+    let second = w.create_layout("Other").unwrap();
+    w.world
+        .entity_mut(panel)
+        .insert(Draft("keep this draft".into()));
+    w.activate_layout(second).unwrap();
+    assert_eq!(w.active_layout(), second);
+    w.activate_layout(first).unwrap();
+    assert_eq!(
+        w.world.get::<Draft>(panel),
+        Some(&Draft("keep this draft".into()))
+    );
+    assert_eq!(w.panels(first), vec![panel]);
+}
+
+#[test]
+fn panels_can_split_regroup_and_close_without_retiring_other_panels() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let first = w.create_panel(layout, "First").unwrap();
+    let second = w.create_panel(layout, "Second").unwrap();
+    let third = w.create_panel(layout, "Third").unwrap();
+    w.world.entity_mut(first).insert(Draft("first".into()));
+    w.move_panel(second, first, Some(SplitAxis::Horizontal))
+        .unwrap();
+    w.move_panel(third, second, Some(SplitAxis::Vertical))
+        .unwrap();
+    w.move_panel(first, third, None).unwrap();
+    assert_eq!(w.panels(layout).len(), 3);
+    w.close_panel(third).unwrap();
+    w.close_panel(second).unwrap();
+    assert!(w.world.get_entity(third).is_err());
+    assert_eq!(w.world.get::<Draft>(first), Some(&Draft("first".into())));
+    assert_eq!(w.panels(layout), vec![first]);
+    w.focus_panel(first).unwrap();
+    assert_eq!(w.focused_panel(layout), Some(first));
+}
+
+#[test]
+fn deletion_retires_owned_panels_and_selects_a_surviving_layout() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.active_layout();
+    let panel = w.create_panel(first, "Disposable").unwrap();
+    let second = w.create_layout("Survives").unwrap();
+    w.delete_layout(first).unwrap();
+    assert_eq!(w.active_layout(), second);
+    assert!(w.world.get_entity(panel).is_err());
+}
+
+#[test]
+fn rejected_moves_preserve_layouts_and_stale_requests_do_not_target_new_panels() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let first = w.create_panel(layout, "First").unwrap();
+    let other = w.create_layout("Other").unwrap();
+    let second = w.create_panel(other, "Second").unwrap();
+    assert!(w.move_panel(first, second, None).is_err());
+    assert_eq!(w.panels(layout), vec![first]);
+    w.requests().submit(WorkbenchRequest::ClosePanel(first));
+    w.requests().submit(WorkbenchRequest::FocusPanel(first));
+    app.update();
+    let results: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Messages<WorkbenchFinished>>()
+        .drain()
+        .collect();
+    assert!(results[0].result.is_ok());
+    assert!(results[1].result.is_err());
+    assert!(app.world().get::<PanelInstance>(second).is_some());
+}
+
+#[test]
+fn a_splitter_request_cannot_mutate_a_replaced_layout_tree() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let first = w.create_panel(layout, "First").unwrap();
+    let second = w.create_panel(layout, "Second").unwrap();
+    w.move_panel(second, first, Some(SplitAxis::Horizontal))
+        .unwrap();
+    let stamp = w.stamp();
+    w.requests().submit(WorkbenchRequest::Edit {
+        stamp,
+        edit: LayoutEdit::ResizeBorder {
+            axis: SplitAxis::Horizontal,
+            at: 5000,
+            span: [0, LAYOUT_EXTENT],
+            to: 8000,
+            minimum: 1,
+        },
+    });
+    w.move_panel(second, first, Some(SplitAxis::Vertical))
+        .unwrap();
+    app.update();
+    let results: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Messages<WorkbenchFinished>>()
+        .drain()
+        .collect();
+    assert!(results[0].result.is_err());
+    assert_eq!(Workbench::new(app.world_mut()).panels(layout).len(), 2);
+}
+fn record(
+    In(invocation): In<ContextCommandInvocation>,
+    mut calls: ResMut<Calls>,
+) -> ContextCommandResult {
+    calls.0.push(invocation);
+    Ok(())
+}
+fn results(app: &mut App) -> Vec<ContextCommandFinished> {
+    app.world_mut()
+        .resource_mut::<Messages<ContextCommandFinished>>()
+        .drain()
+        .collect()
+}
+
+#[test]
+fn typed_commands_run_in_submission_order_and_report_handler_errors() {
+    let mut app = app();
+    let first = Workbench::new(app.world_mut())
+        .register_handler::<First, _>(record)
+        .unwrap();
+    let second = Workbench::new(app.world_mut())
+        .register_handler::<Second, _>(
+            |In(_): In<ContextCommandInvocation>| -> ContextCommandResult {
+                Err("expected failure".into())
+            },
+        )
+        .unwrap();
+    let source = app.world_mut().spawn_empty().id();
+    let mut requests = local_mut::<ContextCommandRequests>(app.world_mut());
+    requests.submit(ContextCommandRequest {
+        command: first.clone(),
+        source: Some(source),
+        context: InvocationContext::Global,
+    });
+    requests.invoke_id(second.clone());
+    requests.invoke::<First>();
+    app.update();
+    assert_eq!(
+        app.world().resource::<Calls>().0,
+        [
+            ContextCommandInvocation {
+                command: first.clone(),
+                source: Some(source),
+                panel: None,
+                context: InvocationContext::Global,
+            },
+            ContextCommandInvocation {
+                command: first.clone(),
+                source: None,
+                panel: None,
+                context: InvocationContext::Focused,
+            }
+        ]
+    );
+    let completed = results(&mut app);
+    assert_eq!(
+        completed
+            .iter()
+            .map(|r| r.invocation.command.clone())
+            .collect::<Vec<_>>(),
+        [first.clone(), second, first]
+    );
+    assert!(completed[0].result.is_ok());
+    assert_eq!(completed[1].result, Err("expected failure".into()));
+    assert!(completed[2].result.is_ok());
+}
+#[test]
+fn stable_keys_round_trip_without_persisting_types_or_handler_entities() {
+    let mut old = app();
+    let command = Workbench::new(old.world_mut())
+        .register_handler::<First, _>(record)
+        .unwrap();
+    let saved = serde_json::to_string(&command).unwrap();
+    assert_eq!(saved, "\"tests.first\"");
+    let loaded: ContextCommandId = serde_json::from_str(&saved).unwrap();
+    let mut new = app();
+    new.world_mut().spawn_empty();
+    Workbench::new(new.world_mut())
+        .register_handler::<First, _>(record)
+        .unwrap();
+    assert_eq!(
+        Workbench::new(new.world_mut()).command_by_key(loaded.as_str()),
+        Some(ContextCommandId::of::<First>())
+    );
+    assert_eq!(
+        Workbench::new(new.world_mut()).command_by_key("missing.command"),
+        None
+    );
+}
+#[test]
+fn key_and_scope_collisions_do_not_replace_handlers() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.register_handler::<First, _>(record).unwrap();
+    assert!(w.register_handler::<First, _>(record).is_err());
+    assert!(w.register_handler::<Collision, _>(record).is_err());
+    assert_eq!(w.command_by_key(First::KEY), Some(first));
+    let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
+    w.register_panel_handler::<First, _>(panel, record).unwrap();
+    assert!(w.register_panel_handler::<First, _>(panel, record).is_err());
+}
+#[test]
+fn disabled_and_removed_handlers_never_run_queued_requests() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.register_handler::<First, _>(record).unwrap();
+    let second = w.register_handler::<Second, _>(record).unwrap();
+    let h1 = w.handler(first.clone(), None).unwrap();
+    let h2 = w.handler(second.clone(), None).unwrap();
+    w.world.get_mut::<ActionEnabled>(h1).unwrap().0 = false;
+    w.world.despawn(h2);
+    let mut requests = w.commands();
+    requests.invoke_id(first.clone());
+    requests.invoke_id(second.clone());
+    app.update();
+    assert!(app.world().resource::<Calls>().0.is_empty());
+    assert!(results(&mut app).iter().all(|r| r.result.is_err()));
+}
+#[test]
+fn panel_handlers_override_globals_and_disabled_panel_handlers_block_fallback() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let command = w.register_handler::<First, _>(record).unwrap();
+    let first = w.create_panel(w.active_layout(), "First").unwrap();
+    let second = w.create_panel(w.active_layout(), "Second").unwrap();
+    let local = w.register_panel_handler::<First, _>(first, record).unwrap();
+    w.focus_panel(first).unwrap();
+    w.commands().invoke::<First>();
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0[0].panel, Some(first));
+    app.world_mut().get_mut::<ActionEnabled>(local).unwrap().0 = false;
+    local_mut::<ContextCommandRequests>(app.world_mut()).invoke::<First>();
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+    assert!(results(&mut app).last().unwrap().result.is_err());
+    Workbench::new(app.world_mut()).focus_panel(second).unwrap();
+    assert!(command_available(
+        app.world_mut(),
+        command,
+        InvocationContext::Focused
+    ));
+    local_mut::<ContextCommandRequests>(app.world_mut()).invoke::<First>();
+    app.update();
+    assert_eq!(
+        app.world().resource::<Calls>().0.last().unwrap().panel,
+        Some(second)
+    );
+    Workbench::new(app.world_mut()).close_panel(first).unwrap();
+    assert!(app.world().get_entity(local).is_err());
+}
+#[test]
+fn handler_replacement_does_not_rewire_menu_action_types() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let command = w.register_handler::<First, _>(record).unwrap();
+    let root = w
+        .world
+        .spawn(Menu {
+            label: "Context".into(),
+        })
+        .id();
+    let item = w
+        .world
+        .spawn((MenuItem::new("First"), InMenu(root), Invokes::of::<First>()))
+        .id();
+    let old = w.handler(command.clone(), None).unwrap();
+    w.world.despawn(old);
+    assert!(
+        menu_snapshot(w.world, root, InvocationContext::Global)
+            .unwrap()
+            .request(item, command.clone())
+            .is_none()
+    );
+    w.register_handler::<First, _>(record).unwrap();
+    let request = menu_snapshot(w.world, root, InvocationContext::Global)
+        .unwrap()
+        .request(item, command.clone())
+        .unwrap();
+    w.commands().submit(request);
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0[0].source, Some(item));
+}
+#[test]
+fn handlers_enqueue_followups_without_reentrant_execution() {
+    let mut app = app();
+    Workbench::new(app.world_mut())
+        .register_handler::<Second, _>(record)
+        .unwrap();
+    Workbench::new(app.world_mut())
+        .register_handler::<First, _>(
+            |In(_invocation): In<ContextCommandInvocation>,
+             mut requests: ResMut<ContextCommandRequests>|
+             -> ContextCommandResult {
+                requests.invoke::<Second>();
+                Ok(())
+            },
+        )
+        .unwrap();
+    local_mut::<ContextCommandRequests>(app.world_mut()).invoke::<First>();
+    app.update();
+    assert!(app.world().resource::<Calls>().0.is_empty());
+    assert_eq!(results(&mut app).len(), 1);
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+}
+#[test]
+fn a_batch_captures_all_panels_before_handlers_change_focus_or_destroy_targets() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let a = w.create_panel(w.active_layout(), "A").unwrap();
+    let b = w.create_panel(w.active_layout(), "B").unwrap();
+    w.register_panel_handler::<Second, _>(a, record).unwrap();
+    w.register_handler::<First, _>(
+        move |In(_): In<ContextCommandInvocation>, world: &mut World| -> ContextCommandResult {
+            Workbench::new(world).focus_panel(b)
+        },
+    )
+    .unwrap();
+    w.focus_panel(a).unwrap();
+    let mut requests = w.commands();
+    requests.invoke::<First>();
+    requests.invoke::<Second>();
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0[0].panel, Some(a));
+}
+#[test]
+fn keybindings_resolve_independently_from_handlers_and_conflicts_reserve_input() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    w.register_handler::<First, _>(record).unwrap();
+    w.register_handler::<Second, _>(record).unwrap();
+    let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
+    w.register_panel_handler::<Second, _>(panel, record)
+        .unwrap();
+    let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyK);
+    w.world.spawn(Binding::new::<First>(chord));
+    w.world
+        .spawn((Binding::new::<Second>(chord), InPanel(panel)));
+    w.world.resource_mut::<BindingInput>().0.push(BindingPress {
+        chord,
+        repeat: false,
+        context: InvocationContext::Focused,
+    });
+    app.update();
+    assert_eq!(
+        app.world().resource::<Calls>().0[0].command,
+        ContextCommandId::of::<Second>()
+    );
+
+    app.world_mut()
+        .spawn((Binding::new::<First>(chord), InPanel(panel)));
+    app.world_mut()
+        .resource_mut::<BindingInput>()
+        .0
+        .push(BindingPress {
+            chord,
+            repeat: false,
+            context: InvocationContext::Focused,
+        });
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+}
+
+#[test]
+fn retiring_an_admitted_panel_handler_does_not_redirect_to_a_global_handler() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let panel = w.create_panel(w.active_layout(), "Closing").unwrap();
+    w.register_handler::<Second, _>(record).unwrap();
+    w.register_panel_handler::<Second, _>(panel, record)
+        .unwrap();
+    w.register_handler::<First, _>(
+        move |_: In<ContextCommandInvocation>, world: &mut World| -> ContextCommandResult {
+            Workbench::new(world).close_panel(panel)
+        },
+    )
+    .unwrap();
+    w.commands().invoke::<First>();
+    w.commands().invoke::<Second>();
+    app.update();
+    assert!(app.world().resource::<Calls>().0.is_empty());
+    let results = results(&mut app);
+    assert!(results[0].result.is_ok());
+    assert!(results[1].result.is_err());
+}
+
+#[test]
+fn normalized_shortcuts_do_not_repeat_unless_enabled() {
+    let mut app = app();
+    Workbench::new(app.world_mut())
+        .register_handler::<First, _>(record)
+        .unwrap();
+    let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyK);
+    let binding = app.world_mut().spawn(Binding::new::<First>(chord)).id();
+    for repeat in [false, true] {
+        app.world_mut()
+            .resource_mut::<BindingInput>()
+            .0
+            .push(BindingPress {
+                chord,
+                repeat,
+                context: InvocationContext::Focused,
+            });
+    }
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+
+    app.world_mut().get_mut::<Binding>(binding).unwrap().repeat = true;
+    app.world_mut()
+        .resource_mut::<BindingInput>()
+        .0
+        .push(BindingPress {
+            chord,
+            repeat: true,
+            context: InvocationContext::Focused,
+        });
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 2);
+}
+#[cfg(feature = "ui")]
+#[test]
+fn ui_requests_execute_in_the_same_frame_without_application_ordering() {
+    let mut app = App::new();
+    app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin));
+    register_context_command::<First>(app.world_mut()).unwrap();
+    register_context_command::<Second>(app.world_mut()).unwrap();
+    crate::tests::layout(app.world_mut());
+    {
+        let mut w = Workbench::new(app.world_mut());
+        w.world_mut().init_resource::<Calls>();
+        w.register_handler::<First, _>(record).unwrap();
+    }
+    app.add_systems(
+        PreUpdate,
+        (|host: &mut World| {
+            Workbench::new(host).commands().invoke::<First>();
+        })
+        .in_set(bedtime_ui::UiSystems::Draw),
+    );
+    app.update();
+    assert_eq!(
+        Workbench::new(app.world_mut())
+            .world()
+            .resource::<Calls>()
+            .0
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn closing_content_retains_its_area_but_moving_the_last_tab_closes_its_footprint() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let first = w.destination_area(layout).unwrap();
+    let second = w
+        .split_area(first, SplitAxis::Horizontal, 5000, [100, 100])
+        .unwrap();
+    let panel = w.create_panel_in_area(second, "Second").unwrap();
+    let rect = w.world.get::<Area>(second).unwrap().rect();
+    w.close_panel(panel).unwrap();
+    assert_eq!(w.world.get::<Area>(second).unwrap().rect(), rect);
+    assert!(panels_in_area(w.world, second).is_empty());
+    let panel = w.create_panel_in_area(second, "Moved").unwrap();
+    w.world.entity_mut(panel).insert(Draft("retained".into()));
+    w.move_tab(panel, first, 0).unwrap();
+    assert!(w.world.get_entity(second).is_err());
+    assert_eq!(w.world.get::<InArea>(panel).unwrap().0, first);
+    assert_eq!(
+        w.world.get::<Area>(first).unwrap().rect(),
+        AreaRect {
+            min: [0, 0],
+            max: [LAYOUT_EXTENT; 2]
+        }
+    );
+    assert_eq!(w.world.get::<Draft>(panel), Some(&Draft("retained".into())));
+}
+
+#[test]
+fn per_item_tab_style_does_not_change_preview_keep_or_move_semantics() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let area = w.destination_area(layout).unwrap();
+    let preview = w.create_panel_in_area(area, "Preview").unwrap();
+    let permanent = w.create_panel_in_area(area, "Permanent").unwrap();
+    assert_eq!(
+        PanelTabStyle::default(),
+        PanelTabStyle {
+            italic: false,
+            text_opacity: 1.0,
+        }
+    );
+    assert!(w.world.get::<PanelTabStyle>(preview).is_none());
+    let permanent_style = PanelTabStyle {
+        italic: true,
+        text_opacity: 0.6,
+    };
+    w.world.get_mut::<PanelInstance>(preview).unwrap().preview = true;
+    // A normal-looking preview remains a preview; an italic permanent tab does not become one.
+    w.world.entity_mut(preview).insert(PanelTabStyle::default());
+    w.world.entity_mut(permanent).insert(permanent_style);
+    reconcile_workbench(w.world).unwrap();
+    assert!(w.world.get::<PanelInstance>(preview).unwrap().preview);
+    assert!(!w.world.get::<PanelInstance>(permanent).unwrap().preview);
+
+    w.edit(w.stamp(), &LayoutEdit::KeepPanel(preview)).unwrap();
+    assert!(!w.world.get::<PanelInstance>(preview).unwrap().preview);
+    assert_eq!(
+        w.world.get::<PanelTabStyle>(preview),
+        Some(&PanelTabStyle::default())
+    );
+    w.world.get_mut::<PanelInstance>(permanent).unwrap().preview = true;
+    w.move_tab(permanent, area, 0).unwrap();
+    assert!(!w.world.get::<PanelInstance>(permanent).unwrap().preview);
+    assert_eq!(
+        w.world.get::<PanelTabStyle>(permanent),
+        Some(&permanent_style)
+    );
+    assert_eq!(panels_in_area(w.world, area), &[permanent, preview]);
+
+    w.world.get_mut::<PanelInstance>(preview).unwrap().preview = true;
+    w.world.entity_mut(preview).remove::<PanelTabStyle>();
+    reconcile_workbench(w.world).unwrap();
+    assert!(w.world.get::<PanelInstance>(preview).unwrap().preview);
+    assert!(w.world.get::<PanelTabStyle>(preview).is_none());
+    assert_eq!(
+        w.world.get::<PanelTabStyle>(permanent),
+        Some(&permanent_style)
+    );
+}
+
+#[test]
+fn tab_style_does_not_invalidate_layout_gestures() {
+    let mut app = app();
+    let w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let area = w.destination_area(layout).unwrap();
+    let panel = w.world.spawn((TestPanelType, InArea(area))).id();
+    w.world.get_mut::<PanelInstance>(panel).unwrap().preview = true;
+    reconcile_workbench(w.world).unwrap();
+    let stamp = w.stamp();
+    w.world.entity_mut(panel).insert(PanelTabStyle {
+        italic: false,
+        text_opacity: 0.5,
+    });
+    reconcile_workbench(w.world).unwrap();
+    assert_eq!(w.stamp(), stamp);
+}
+
+#[test]
+fn tab_reordering_uses_destination_order_after_removing_the_source() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let area = w.destination_area(layout).unwrap();
+    let a = w.create_panel_in_area(area, "A").unwrap();
+    let b = w.create_panel_in_area(area, "B").unwrap();
+    let c = w.create_panel_in_area(area, "C").unwrap();
+    w.world.get_mut::<PanelInstance>(a).unwrap().preview = true;
+    w.move_tab(a, area, 2).unwrap();
+    assert_eq!(panels_in_area(w.world, area), &[b, c, a]);
+    assert!(!w.world.get::<PanelInstance>(a).unwrap().preview);
+    w.move_tab(c, area, 0).unwrap();
+    assert_eq!(panels_in_area(w.world, area), &[c, b, a]);
+    assert_eq!(w.focused_panel(layout), Some(c));
+}
+
+#[test]
+fn all_four_tab_edges_split_without_recreating_the_panel_and_keep_an_empty_source() {
+    for axis in [SplitAxis::Horizontal, SplitAxis::Vertical] {
+        for high in [false, true] {
+            let mut app = app();
+            let mut w = Workbench::new(app.world_mut());
+            let layout = w.active_layout();
+            let original = w.destination_area(layout).unwrap();
+            let panel = w.create_panel_in_area(original, "One").unwrap();
+            w.world.entity_mut(panel).insert(Draft("canonical".into()));
+            let destination = w
+                .split_tab(panel, original, axis, high, [100, 100])
+                .unwrap();
+            assert_eq!(
+                w.world.get::<LayoutAreas>(layout).unwrap().entities().len(),
+                2
+            );
+            assert!(panels_in_area(w.world, original).is_empty());
+            assert_eq!(w.world.get::<InArea>(panel).unwrap().0, destination);
+            assert_eq!(
+                w.world.get::<Draft>(panel),
+                Some(&Draft("canonical".into()))
+            );
+            let r = w.world.get::<Area>(destination).unwrap().rect();
+            let i = axis.index();
+            assert_eq!(if high { r.min[i] } else { r.max[i] }, 5000);
+        }
+    }
+}
+
+#[test]
+fn partial_area_join_preserves_the_target_tail_and_its_live_content() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let left = w.destination_area(layout).unwrap();
+    let right = w
+        .split_area(left, SplitAxis::Horizontal, 5000, [100, 100])
+        .unwrap();
+    let lower = w
+        .split_area(left, SplitAxis::Vertical, 5000, [100, 100])
+        .unwrap();
+    let source = w.create_panel_in_area(lower, "Lower").unwrap();
+    let target = w.create_panel_in_area(right, "Right").unwrap();
+    w.join_areas(lower, right, [100, 100]).unwrap();
+    assert_eq!(
+        w.world.get::<Area>(lower).unwrap().rect(),
+        AreaRect {
+            min: [0, 5000],
+            max: [10000, 10000]
+        }
+    );
+    assert_eq!(
+        w.world.get::<Area>(right).unwrap().rect(),
+        AreaRect {
+            min: [5000, 0],
+            max: [10000, 5000]
+        }
+    );
+    assert_eq!(w.world.get::<InArea>(source).unwrap().0, lower);
+    assert_eq!(w.world.get::<InArea>(target).unwrap().0, right);
+    assert_eq!(w.focused_panel(layout), Some(source));
+}
+
+#[test]
+fn switching_away_and_back_invalidates_a_pending_gesture_even_without_a_geometry_change() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let area = w.destination_area(layout).unwrap();
+    let stamp = w.stamp();
+    let other = w.create_layout("Other").unwrap();
+    w.activate_layout(other).unwrap();
+    w.activate_layout(layout).unwrap();
+    let before = w.world.get::<Area>(area).unwrap().rect();
+    assert!(
+        w.edit(
+            stamp,
+            &LayoutEdit::SplitArea {
+                area,
+                axis: SplitAxis::Horizontal,
+                at: 5000,
+                minimum: [100, 100]
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(w.world.get::<Area>(area).unwrap().rect(), before);
+}
+
+#[derive(Component, Default)]
+#[require(PanelInstance = PanelInstance::of::<Self>())]
+struct TestPanelType;
+impl Panel for TestPanelType {
+    const KEY: &'static str = "test.panel";
+    const LABEL: &'static str = "Test panel";
+    #[cfg(feature = "ui")]
+    fn draw(_: &mut bedtime_ui::egui::Ui, _: &mut World, _: &bedtime_ui::UiContext<'_>, _: Entity) {
+    }
+}
+#[test]
+fn invalid_creation_drop_does_not_call_the_application_factory_or_modify_geometry() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let area = w.destination_area(layout).unwrap();
+    let factory = PanelFactory::new("Must not run", |_, _| {
+        panic!("Invalid drop invoked factory")
+    });
+    let stamp = w.stamp();
+    let original = w.world.get::<Area>(area).unwrap().rect();
+    assert!(
+        w.edit(
+            stamp,
+            &LayoutEdit::DropPanel {
+                area,
+                factory,
+                index: 0,
+                split: Some((SplitAxis::Horizontal, false)),
+                minimum: [6000, 6000]
+            }
+        )
+        .is_err()
+    );
+    assert_eq!(w.world.get::<Area>(area).unwrap().rect(), original);
+    assert!(w.panels(layout).is_empty());
+    assert_eq!(w.stamp(), stamp);
+}
+
+#[test]
+fn global_bindings_use_panel_handlers_and_panel_bindings_use_workbench_handlers() {
+    #[derive(Resource, Default)]
+    struct Scopes(Vec<&'static str>);
+    let mut app = app();
+    app.init_resource::<Scopes>();
+    let mut w = Workbench::new(app.world_mut());
+    let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
+    w.register_context_command::<Second>().unwrap();
+    assert!(!command_available(
+        w.world,
+        ContextCommandId::of::<Second>(),
+        InvocationContext::Focused
+    ));
+    w.register_handler::<First, _>(
+        |_: In<ContextCommandInvocation>, mut scopes: ResMut<Scopes>| -> ContextCommandResult {
+            scopes.0.push("workbench");
             Ok(())
         },
-    );
-    register(app.world_mut(), "focus", |registrar| {
-        registrar.panel(
-            "focus.panel",
-            "Focus fixture",
-            move |In(creation): In<PanelCreation>, world: &mut World| -> PanelResult {
-                world
-                    .entity_mut(creation.entity)
-                    .insert(api::PanelFocus(focus));
-                Ok(Box::new(CounterPanel(creation.entity)))
-            },
-        );
-    })
-    .unwrap();
-    let first = open_panel(
-        app.world_mut(),
-        json!({"panel_type":"focus.panel"}),
-        None,
-        None,
     )
     .unwrap();
-    let second = open_panel(
-        app.world_mut(),
-        json!({"panel_type":"focus.panel"}),
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(
-        app.world().resource::<Focused>().0,
-        [first, second],
-        "newly installed frontends receive initial focus"
-    );
-    focus_panel(app.world_mut(), first);
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::ObserveFocus(first));
-    process_requests(app.world_mut());
-    assert_eq!(
-        app.world().resource::<Focused>().0,
-        [first, second, first],
-        "observing the selected widget does not focus it again"
-    );
-
-    // The native window has acknowledged the explicit focus. A later native
-    // selection may now move to another panel and focus its owned widget.
-    app.world_mut()
-        .get_mut::<PanelPresentation>(first)
-        .unwrap()
-        .focus = false;
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::ObserveFocus(second));
-    process_requests(app.world_mut());
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::FocusPanel(second));
-    process_requests(app.world_mut());
-    assert_eq!(
-        app.world().resource::<Focused>().0,
-        [first, second, first, second, second],
-        "an explicit request refocuses even the selected widget"
-    );
-    focus_panel(app.world_mut(), first);
-    let saved = save(app.world_mut());
-    restore(app.world_mut(), &saved).unwrap();
-    let restored = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    assert_eq!(
-        app.world().resource::<Focused>().0.last(),
-        Some(&restored),
-        "restoration finishes with the saved widget, regardless of factory order"
-    );
-}
-
-fn invoke(app: &mut App, command: &str) {
-    let request = capture_command(app.world(), command, Value::Null);
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::Invoke(request));
-}
-
-#[test]
-fn command_availability_is_checked_when_delayed_requests_execute() {
-    let mut app = app();
-    for (enabled, visible) in [(false, true), (true, false)] {
-        let command = capture_command(app.world(), "test.open", Value::Null);
-        let id = app
-            .world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .submit(WorkbenchAction::Invoke(command));
-        app.world_mut()
-            .resource_mut::<api::CommandPresentations>()
-            .0
-            .insert(
-                "test.open".into(),
-                api::CommandPresentation {
-                    enabled,
-                    visible,
-                    label: None,
-                    ..Default::default()
-                },
-            );
-        process_requests(app.world_mut());
-        assert_eq!(
-            app.world_mut()
-                .resource_mut::<WorkbenchRequests>()
-                .take_result(id)
-                .unwrap()
-                .unwrap(),
-            WorkbenchOutcome::Ignored
-        );
-        assert!(
-            save(app.world_mut())["panels"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
-    }
-    app.world_mut()
-        .resource_mut::<api::CommandPresentations>()
-        .0
-        .clear();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    assert_eq!(save(app.world_mut())["panels"].as_array().unwrap().len(), 1);
-}
-
-#[test]
-fn invocation_facts_follow_the_canonical_source_and_exact_arguments() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let first = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let second = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let frontend = app.world_mut().spawn(api::PanelOwner(first)).id();
-    for (fact_arguments, source, arguments, opens_panel) in [
-        (Value::Null, frontend, Value::Null, false),
-        (Value::Null, second, Value::Null, true),
-        (Value::Null, first, json!({"target":1}), true),
-        (json!({"target":1}), first, json!({"target":1}), false),
-        (json!({"target":1}), first, json!({"target":2}), true),
-    ] {
-        app.world_mut()
-            .resource_mut::<api::CommandPresentations>()
-            .0
-            .insert(
-                "test.open".into(),
-                api::CommandPresentation {
-                    enabled: false,
-                    scope: api::CommandPresentationScope::Invocation {
-                        source: Some(first),
-                        arguments: fact_arguments,
-                    },
-                    ..Default::default()
-                },
-            );
-        let receipt =
-            app.world_mut()
-                .resource_mut::<WorkbenchRequests>()
-                .submit(WorkbenchAction::Invoke(CommandInvocation {
-                    command: "test.open".into(),
-                    source: Some(source),
-                    area: 1,
-                    arguments,
-                }));
-        process_requests(app.world_mut());
-        let expected = if opens_panel {
-            WorkbenchOutcome::Opened(app.world().resource::<WorkbenchLayout>().focused.unwrap())
-        } else {
-            WorkbenchOutcome::Ignored
-        };
-        assert_eq!(
-            app.world_mut()
-                .resource_mut::<WorkbenchRequests>()
-                .take_result(receipt),
-            Some(Ok(expected))
-        );
-    }
-    app.world_mut()
-        .resource_mut::<api::CommandPresentations>()
-        .0
-        .insert(
-            "test.open".into(),
-            api::CommandPresentation {
-                enabled: false,
-                ..Default::default()
-            },
-        );
-    let receipt =
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .submit(WorkbenchAction::Invoke(CommandInvocation {
-                command: "test.open".into(),
-                source: Some(second),
-                area: 1,
-                arguments: json!({"target":1}),
-            }));
-    process_requests(app.world_mut());
-    assert_eq!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_result(receipt),
-        Some(Ok(WorkbenchOutcome::Ignored))
-    );
-}
-
-#[test]
-fn host_prepares_panels_before_factories_and_preserves_failed_inputs() {
-    #[derive(Component)]
-    struct Association;
-    let mut app = app();
-    register(app.world_mut(), "prepared", |registrar| {
-        registrar.panel(
-            "prepared.panel",
-            "Prepared",
-            |In(input): In<PanelCreation>, world: &mut World| -> PanelResult {
-                if world.get::<Association>(input.entity).is_none() {
-                    return Err("Document association is missing".into());
-                }
-                Ok(Box::new(CounterPanel(input.entity)))
-            },
-        );
-    })
-    .unwrap();
-    app.world_mut()
-        .insert_resource(PanelPreparation(|world, entity| {
-            world.entity_mut(entity).insert(Association);
+    w.register_panel_handler::<Second, _>(
+        panel,
+        |_: In<ContextCommandInvocation>, mut scopes: ResMut<Scopes>| -> ContextCommandResult {
+            scopes.0.push("panel");
             Ok(())
-        }));
-    let prepared = open_panel(
-        app.world_mut(),
-        json!({"panel_type":"prepared.panel", "state":{"document":"canonical"}}),
-        None,
-        None,
+        },
     )
     .unwrap();
-    assert!(app.world().get::<Association>(prepared).is_some());
-    assert!(
-        app.world()
-            .get::<PanelRecord>(prepared)
-            .unwrap()
-            .unavailable
-            .is_none()
-    );
-    app.world_mut().insert_resource(PanelPreparation(|_, _| {
-        Err("Document cannot be restored".into())
-    }));
-    let failed = open_panel(
-        app.world_mut(),
-        json!({"panel_type":"prepared.panel", "state":{"document":"retain-on-failure"}}),
-        None,
-        None,
-    )
-    .unwrap();
-    assert_eq!(
-        app.world()
-            .get::<PanelRecord>(failed)
-            .unwrap()
-            .unavailable
-            .as_deref(),
-        Some("Document cannot be restored")
-    );
-    let saved = save(app.world_mut());
-    assert!(
-        saved["panels"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|record| record["state"]["document"] == "retain-on-failure")
-    );
-}
-
-#[test]
-fn suspended_panels_keep_state_without_editor_or_slot_integration() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let hidden = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    app.world_mut()
-        .entity_mut(hidden)
-        .insert(api::PanelSuspended);
-    app.world_mut().resource_mut::<WorkbenchLayout>().focused = None;
-    let empty = TilingState::default().to_value([]);
-    apply_layout(app.world_mut(), &empty).unwrap();
-    assert!(
-        recent_panel(
-            app.world_mut(),
-            &bedtime_api::PanelTypeId::new("test.counter")
-        )
-        .is_none()
-    );
-    focus_panel(app.world_mut(), hidden);
-    observe_focus(app.world_mut(), hidden);
-    assert!(app.world().resource::<WorkbenchLayout>().focused.is_none());
-    assert_eq!(
-        panel_state(app.world_mut(), hidden).unwrap(),
-        json!({"count":7})
-    );
-    assert!(
-        save(app.world_mut())["panels"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let active = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    assert_ne!(active, hidden);
-    assert_ne!(
-        app.world().get::<PanelPresentation>(hidden).unwrap().id,
-        app.world().get::<PanelPresentation>(active).unwrap().id
-    );
-    assert_eq!(save(app.world_mut())["panels"].as_array().unwrap().len(), 1);
-}
-
-#[test]
-fn transient_panels_are_omitted_from_persisted_content_focus_and_layout() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let transient = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    app.world_mut()
-        .entity_mut(transient)
-        .insert(api::PanelPersistence(false));
-    let value = save(app.world_mut());
-    assert_eq!(value["panels"].as_array().unwrap().len(), 1);
-    assert!(value["focused"].is_null());
-    let persisted = value["panels"][0]["id"].as_u64().unwrap();
-    let tiling = TilingState::from_value(&value["tiling"], [persisted]).unwrap();
-    assert!(tiling.area_for(persisted).is_some());
-    let transient_id = app.world().get::<PanelPresentation>(transient).unwrap().id;
-    assert!(tiling.area_for(transient_id).is_none());
-    assert!(
-        app.world().get::<PanelRecord>(transient).is_some(),
-        "saving leaves the live launcher open"
-    );
-}
-
-#[derive(Component)]
-struct PresentationDraft(u32);
-
-#[test]
-fn retained_presentation_commands_keep_their_source_and_close_the_owner_after_preflight() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let owner = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let child = app
-        .world_mut()
-        .spawn((
-            api::PanelOwner(owner),
-            PresentationDraft(7),
-            PanelRecord {
-                panel_type: "test.counter".into(),
-                serialized: json!({"state":{"count":7}}),
-                unavailable: None,
-            },
-        ))
-        .id();
-    install_panel_frontend(app.world_mut(), child, Box::new(CounterPanel(child))).unwrap();
-    register(app.world_mut(), "presentation", |registrar| {
-        registrar.command(
-            "presentation.edit",
-            "Edit presentation",
-            |In(invocation): In<CommandInvocation>, world: &mut World| -> CommandResult {
-                let source = invocation.source.unwrap();
-                world.get_mut::<PresentationDraft>(source).unwrap().0 += 1;
-                Ok(vec![WorkbenchAction::FocusPanel(source)])
-            },
-        );
-    })
-    .unwrap();
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::Invoke(CommandInvocation {
-            command: "presentation.edit".into(),
-            source: Some(child),
-            area: 1,
-            arguments: Value::Null,
-        }));
-    process_requests(app.world_mut());
-    assert_eq!(app.world().get::<PresentationDraft>(child).unwrap().0, 8);
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().focused,
-        Some(owner)
-    );
-    assert_eq!(
-        save(app.world_mut())["panels"].as_array().unwrap().len(),
-        1,
-        "retained content is not an additional layout panel"
-    );
-    app.insert_resource(WorkbenchClosePolicy(|world, entity| {
-        assert!(
-            world.get::<PanelPresentation>(entity).is_some(),
-            "close preflight receives the owner"
-        );
-        Ok(false)
-    }));
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::ClosePanel(child));
-    process_requests(app.world_mut());
-    assert!(app.world().get::<PresentationDraft>(child).is_some());
-    assert!(commit_close(app.world_mut(), owner));
-    assert!(app.world().get_entity(child).is_err());
-    assert!(app.world().get_entity(owner).is_err());
-    assert!(take_panel_frontend(app.world_mut(), child).is_none());
-}
-
-#[test]
-fn registration_failure_publishes_neither_definitions_nor_system_entities() {
-    let mut app = app();
-    let before = app.world_mut().query::<Entity>().iter(app.world()).count();
-    let error = register(app.world_mut(), "other", |registrar| {
-        registrar.command("other.valid", "Valid", open);
-        registrar.panel("test.invalid_namespace", "Invalid", factory);
-    })
-    .unwrap_err();
-    assert!(error.contains("Invalid or duplicate contribution"));
-    assert!(
-        app.world()
-            .resource::<WorkbenchRegistry>()
-            .command(&bedtime_api::CommandId::new("other.valid"))
-            .is_none()
-    );
-    assert_eq!(
-        app.world_mut().query::<Entity>().iter(app.world()).count(),
-        before
-    );
-    register(app.world_mut(), "other", |registrar| {
-        registrar.command("other.valid", "Valid", open)
-    })
-    .unwrap();
-    assert_eq!(
-        app.world()
-            .resource::<WorkbenchRegistry>()
-            .commands()
-            .iter()
-            .map(|entry| entry.id.clone())
-            .collect::<Vec<_>>(),
-        ["test.open", "other.valid"]
-    );
-}
-
-#[derive(Resource, Default)]
-struct Observed(bool);
-
-fn observe(_: In<CommandInvocation>, world: &mut World) -> CommandResult {
-    let focused = world.resource::<WorkbenchLayout>().focused.unwrap();
-    world.resource_mut::<Observed>().0 = world.get::<PanelRecord>(focused).is_some();
-    Ok(Vec::new())
-}
-
-#[test]
-fn command_effects_commit_before_the_next_fifo_command() {
-    let mut app = app();
-    app.init_resource::<Observed>();
-    register(app.world_mut(), "observer", |registrar| {
-        registrar.command("observer.check", "Check", observe)
-    })
-    .unwrap();
-    invoke(&mut app, "test.open");
-    invoke(&mut app, "observer.check");
-    process_requests(app.world_mut());
-    assert!(app.world().resource::<Observed>().0);
-    assert!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_errors()
-            .is_empty()
-    );
-}
-
-#[test]
-fn unavailable_feature_roundtrip_preserves_opaque_state_and_restores_when_installed() {
-    let mut app = app();
-    let mut layout = TilingState::new(Layout::default());
-    layout.assign(41, 1);
-    let saved = json!({"version":1,"panels":[{
-        "id":41,"panel_type":"omitted.counter","state":{"count":12},
-        "viewer":"omitted.format","input":{"path":"sample.bin"},"future_field":[1,2,3]
-    }],"focused":41,"focused_area":1,"tiling":layout.to_value([41])});
-    restore(app.world_mut(), &saved).unwrap();
-    assert_eq!(save(app.world_mut()), saved);
-    let entity = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    assert!(
-        app.world()
-            .get::<PanelRecord>(entity)
-            .unwrap()
-            .unavailable
-            .is_some()
-    );
-    register(app.world_mut(), "omitted", |registrar| {
-        registrar.panel("omitted.counter", "Counter", factory)
-    })
-    .unwrap();
-    restore(app.world_mut(), &saved).unwrap();
-    let restored = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    assert_ne!(restored, entity);
-    assert!(app.world().get_entity(entity).is_err());
-    assert!(
-        app.world()
-            .get::<PanelRecord>(restored)
-            .unwrap()
-            .unavailable
-            .is_none()
-    );
-    assert_eq!(
-        save(app.world_mut())["panels"][0]["future_field"],
-        json!([1, 2, 3])
-    );
-}
-
-#[test]
-fn captured_command_does_not_target_an_entity_replacing_its_saved_id() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let old = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let stale = capture_command(app.world(), "test.open", Value::Null);
-    let saved = save(app.world_mut());
-    restore(app.world_mut(), &saved).unwrap();
-    let replacement = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    assert_ne!(old, replacement);
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::Invoke(stale));
-    process_requests(app.world_mut());
-    assert_eq!(
-        app.world_mut()
-            .query::<&PanelRecord>()
-            .iter(app.world())
-            .count(),
-        1
-    );
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().focused,
-        Some(replacement)
-    );
-}
-
-#[test]
-fn invalid_restore_preserves_live_entities_state_and_layout() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let entity = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let saved = save(app.world_mut());
-    for field in ["focused", "tiling"] {
-        let mut invalid = saved.clone();
-        invalid[field] = json!(999);
-        assert!(restore(app.world_mut(), &invalid).is_err());
-        assert!(app.world().get::<PanelRecord>(entity).is_some());
-        assert_eq!(save(app.world_mut()), saved);
+    let global = KeyChord::new(Modifiers::CONTROL, KeyCode::Equal);
+    let local = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyD);
+    w.world.spawn(Binding::new::<Second>(global));
+    w.world
+        .spawn((Binding::new::<First>(local), InPanel(panel)));
+    for chord in [global, local] {
+        w.world.resource_mut::<BindingInput>().0.push(BindingPress {
+            chord,
+            repeat: false,
+            context: InvocationContext::Focused,
+        });
     }
-}
-
-#[test]
-fn restored_selection_requests_only_the_saved_tab_and_exhausted_ids_fail_cleanly() {
-    let mut app = app();
-    let mut tiling = TilingState::default();
-    tiling.assign(1, 1);
-    tiling.assign(u32::MAX as u64, 1);
-    let saved = json!({"version":1,"panels":[
-        {"id":1,"panel_type":"test.counter","state":{}},
-        {"id":u32::MAX,"panel_type":"test.counter","state":{}}
-    ],"focused":1,"tiling":tiling.to_value([1,u32::MAX as u64])});
-    restore(app.world_mut(), &saved).unwrap();
-    let focus_flags = app
-        .world_mut()
-        .query::<&PanelPresentation>()
-        .iter(app.world())
-        .map(|panel| (panel.id, panel.focus))
-        .collect::<HashMap<_, _>>();
-    assert!(focus_flags[&1]);
-    assert!(!focus_flags[&(u32::MAX as u64)]);
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
+    app.update();
     assert_eq!(
-        app.world_mut()
-            .query::<&PanelRecord>()
-            .iter(app.world())
-            .count(),
-        2
-    );
-    assert_eq!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_errors(),
-        ["Panel IDs exhausted"]
+        app.world().resource::<Scopes>().0,
+        vec!["panel", "workbench"]
     );
 }
-
 #[test]
-fn requested_focus_survives_frontend_observations_across_tiled_areas() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
+fn unavailable_panel_binding_does_not_retry_the_shadowed_workbench_binding() {
     let mut app = app();
-    let mut tiling = TilingState::default();
-    tiling.assign(1, 1);
-    tiling.assign(2, 1);
-    tiling.split_tab(2, 1, 0, true, [100, 100]);
-    restore(
-        app.world_mut(),
-        &json!({"version":1,"panels":[
-        {"id":1,"panel_type":"test.counter","state":{}},
-        {"id":2,"panel_type":"test.counter","state":{}}
-    ],"focused":1,"tiling":tiling.to_value([1,2])}),
-    )
-    .unwrap();
-    let entities = app
-        .world_mut()
-        .query::<(Entity, &PanelPresentation)>()
-        .iter(app.world())
-        .map(|(entity, panel)| (panel.id, entity))
-        .collect::<HashMap<_, _>>();
-    let mut context = imgui_context();
-    for id in [1, 2, 1] {
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .push(WorkbenchAction::FocusPanel(entities[&id]));
-        process_requests(app.world_mut());
-        for _ in 0..3 {
-            context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
-                [800.0, 600.0],
-                1.0 / 60.0,
-            ));
-            render_ui(app.world_mut(), context.frame());
-            drop(context.render_legacy());
-            process_requests(app.world_mut());
-            assert_eq!(
-                app.world().resource::<WorkbenchLayout>().focused,
-                Some(entities[&id])
-            );
-        }
-    }
+    let mut w = Workbench::new(app.world_mut());
+    w.register_handler::<First, _>(record).unwrap();
+    w.register_context_command::<Second>().unwrap();
+    let panel = w.create_panel(w.active_layout(), "Panel").unwrap();
+    let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyS);
+    w.world.spawn(Binding::new::<First>(chord));
+    w.world
+        .spawn((Binding::new::<Second>(chord), InPanel(panel)));
+    w.world.resource_mut::<BindingInput>().0.push(BindingPress {
+        chord,
+        repeat: false,
+        context: InvocationContext::Focused,
+    });
+    app.update();
+    assert!(app.world().resource::<Calls>().0.is_empty());
+
+    assert!(results(&mut app)[0].result.is_err());
 }
 
 #[test]
-fn closing_and_reopening_a_tab_preserves_queued_focus_until_the_native_window_draws() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
+fn extra_modifiers_do_not_match_a_shortcut() {
     let mut app = app();
-    app.init_resource::<RequestedUiTheme>();
+    Workbench::new(app.world_mut())
+        .register_handler::<First, _>(record)
+        .unwrap();
+    let chord = KeyChord::new(Modifiers::PRIMARY.resolved(), KeyCode::KeyS);
+    app.world_mut().spawn(Binding::new::<First>(chord));
     app.world_mut()
-        .resource_mut::<RequestedUiTheme>()
+        .resource_mut::<BindingInput>()
         .0
-        .motion
-        .enabled = false;
-    let mut context = imgui_context();
-    let draw = |app: &mut App, context: &mut dear_imgui_rs::Context| {
-        context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
-            [800.0, 600.0],
-            1.0 / 60.0,
-        ));
-        prepare_ui(app.world_mut(), context);
-        draw_with_ui(app.world_mut(), context.frame(), crate::render_ui);
-        drop(context.render_legacy());
-    };
-    let original = open_panel(
-        app.world_mut(),
-        json!({"panel_type":"test.counter"}),
-        Some(1),
-        None,
-    )
-    .unwrap();
-    let surviving = open_panel(
-        app.world_mut(),
-        json!({"panel_type":"test.counter"}),
-        Some(1),
-        None,
-    )
-    .unwrap();
-    focus_panel(app.world_mut(), original);
-    for _ in 0..6 {
-        draw(&mut app, &mut context);
-        process_requests(app.world_mut());
-    }
-    assert!(
-        app.world()
-            .get::<api::PanelGeometry>(original)
-            .unwrap()
-            .visible
-    );
-    assert!(commit_close(app.world_mut(), original));
-    assert_eq!(app.world().resource::<WorkbenchLayout>().focused, None);
+        .push(BindingPress {
+            chord: KeyChord::new(
+                Modifiers::PRIMARY.resolved() | Modifiers::SHIFT,
+                KeyCode::KeyS,
+            ),
+            repeat: false,
+            context: InvocationContext::Focused,
+        });
+    app.update();
+    assert!(app.world().resource::<Calls>().0.is_empty());
 
-    // Closing the selected native window reveals the surviving tab. Capture
-    // that native fact while an earlier application open is still queued.
-    let surviving_id = app.world().get::<PanelPresentation>(surviving).unwrap().id;
-    let name = std::ffi::CString::new(format!("###bed_tab_{surviving_id}")).unwrap();
-    context.binding().with_bound_context(|| unsafe {
-        dear_imgui_rs::sys::igSetWindowFocus_Str(name.as_ptr());
-    });
-    let open =
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .submit(WorkbenchAction::OpenPanel {
-                panel_type: "test.counter".into(),
-                state: Value::Null,
-                area: Some(1),
-            });
-    draw(&mut app, &mut context);
-    assert!(
-        app.world()
-            .resource::<WorkbenchRequests>()
-            .pending
-            .iter()
-            .any(|request| matches!(request.action, WorkbenchAction::ObserveFocus(panel) if panel == surviving)),
-        "the frontend must capture the surviving tab's native focus before the queued open"
-    );
-    process_requests(app.world_mut());
-    let WorkbenchOutcome::Opened(reopened) = app
-        .world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .take_result(open)
-        .unwrap()
-        .unwrap()
-    else {
-        panic!("queued open did not create a tab");
-    };
-    let reopened_id = app.world().get::<PanelPresentation>(reopened).unwrap().id;
-    assert_ne!(reopened, original);
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().focused,
-        Some(reopened)
-    );
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().tiling.areas[0].selected,
-        Some(reopened_id)
-    );
+    app.world_mut()
+        .resource_mut::<BindingInput>()
+        .0
+        .push(BindingPress {
+            chord,
+            repeat: false,
+            context: InvocationContext::Focused,
+        });
+    app.update();
+    assert_eq!(app.world().resource::<Calls>().0.len(), 1);
+}
 
-    // Native docking may draw the new window immediately or need another
-    // frame. A skipped first Begin must leave the focus request pending.
-    draw(&mut app, &mut context);
-    if !app
-        .world()
-        .get::<api::PanelGeometry>(reopened)
-        .is_some_and(|geometry| geometry.visible)
+#[cfg(feature = "ui")]
+#[test]
+fn user_closure_waits_for_application_approval_and_revalidates_the_layout() {
+    let mut app = app();
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let panel = w.create_panel(layout, "Pending approval").unwrap();
+    let stamp = w.stamp();
+    w.user_edit(stamp, &LayoutEdit::ClosePanels(vec![panel]))
+        .unwrap();
+    assert!(w.world.get_entity(panel).is_ok());
+    let request = w
+        .world
+        .resource_mut::<Messages<PanelCloseRequested>>()
+        .drain()
+        .next()
+        .unwrap();
+    w.commit_close(&request).unwrap();
+    assert!(w.world.get_entity(panel).is_err());
+    let panel = w.create_panel(layout, "Stale approval").unwrap();
+    w.user_edit(w.stamp(), &LayoutEdit::ClosePanels(vec![panel]))
+        .unwrap();
+    let request = w
+        .world
+        .resource_mut::<Messages<PanelCloseRequested>>()
+        .drain()
+        .next()
+        .unwrap();
+    w.create_panel(layout, "New structure").unwrap();
+    assert!(w.commit_close(&request).is_err());
+    assert!(w.world.get_entity(panel).is_ok());
+}
+
+#[cfg(feature = "ui")]
+#[test]
+fn direct_marker_leave_and_return_invalidates_pending_close_approval() {
     {
-        assert!(
-            app.world()
-                .get::<PanelPresentation>(reopened)
-                .unwrap()
-                .focus,
-            "a window that has not drawn must retain its requested native focus"
-        );
-    }
-    process_requests(app.world_mut());
-    for _ in 0..6 {
-        draw(&mut app, &mut context);
-        process_requests(app.world_mut());
-        assert_eq!(
-            app.world().resource::<WorkbenchLayout>().focused,
-            Some(reopened)
-        );
-    }
-    let presentation = app.world().get::<PanelPresentation>(reopened).unwrap();
-    assert!(
-        !presentation.focus,
-        "native focus must acknowledge the request"
-    );
-    assert_ne!(presentation.dock_id, 0);
-    assert!(
-        app.world()
-            .get::<api::PanelGeometry>(reopened)
-            .unwrap()
-            .visible
-    );
-    assert!(
-        !app.world()
-            .get::<api::PanelGeometry>(surviving)
-            .unwrap()
-            .visible
-    );
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().tiling.areas[0].tabs,
-        [surviving_id, reopened_id]
-    );
-}
-
-#[test]
-fn foreign_presentation_targets_cannot_mutate_generic_panels_with_the_same_saved_id() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let owned = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let id = app.world().get::<PanelPresentation>(owned).unwrap().id;
-    // The editor uses this shared presentation component, but owns its panel
-    // lifecycle separately. Its saved IDs can legitimately overlap ours.
-    let mut foreign_presentation = PanelPresentation::new(id);
-    foreign_presentation.focus = false;
-    let foreign = app.world_mut().spawn(foreign_presentation.clone()).id();
-    let before = app.world().resource::<WorkbenchLayout>().clone();
-    let mut requests = app.world_mut().resource_mut::<WorkbenchRequests>();
-    requests.push(WorkbenchAction::FocusPanel(foreign));
-    requests.push(WorkbenchAction::SplitPanel {
-        panel: foreign,
-        axis: 0,
-        high: true,
-    });
-    requests.push(WorkbenchAction::ClosePanel(foreign));
-    process_requests(app.world_mut());
-    assert_eq!(app.world().resource::<WorkbenchLayout>(), &before);
-    assert_eq!(
-        app.world().get::<PanelPresentation>(foreign),
-        Some(&foreign_presentation)
-    );
-    assert!(app.world().get::<PanelRecord>(owned).is_some());
-
-    // Registered editor commands deliberately accept sources in the shared
-    // world even though generic panel lifecycle actions do not own them.
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::Invoke(CommandInvocation {
-            command: "test.open".into(),
-            source: Some(foreign),
-            area: 1,
-            arguments: Value::Null,
-        }));
-    process_requests(app.world_mut());
-    assert_eq!(
-        app.world_mut()
-            .query::<&PanelRecord>()
-            .iter(app.world())
-            .count(),
-        2
-    );
-    assert_eq!(
-        app.world().get::<PanelPresentation>(foreign),
-        Some(&foreign_presentation)
-    );
-    assert!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_errors()
-            .is_empty()
-    );
-}
-
-#[derive(Component)]
-struct WidgetState(i64);
-
-struct MutableWidget(Entity);
-
-impl Panel for MutableWidget {
-    fn title(&self, world: &World) -> String {
-        format!("Value {}", world.get::<WidgetState>(self.0).unwrap().0)
-    }
-
-    fn draw(
-        &mut self,
-        ui: &Ui,
-        world: &mut World,
-        requests: &mut Vec<WorkbenchAction>,
-        _shortcuts: &bedtime_api::workbench::ShortcutInput,
-    ) {
-        world.get_mut::<WidgetState>(self.0).unwrap().0 += 1;
-        ui.text(self.title(world));
-        requests.push(WorkbenchAction::ClosePanel(self.0));
-    }
-
-    fn save(&self, world: &World) -> Value {
-        json!({"value":world.get::<WidgetState>(self.0).unwrap().0})
+        let mut app = app();
+        let mut w = Workbench::new(app.world_mut());
+        let layout = w.active_layout();
+        let panel = w.create_panel(layout, "Keep until valid approval").unwrap();
+        w.user_edit(w.stamp(), &LayoutEdit::ClosePanels(vec![panel]))
+            .unwrap();
+        let request = w
+            .world
+            .resource_mut::<Messages<PanelCloseRequested>>()
+            .drain()
+            .next()
+            .unwrap();
+        w.world.entity_mut(layout).remove::<ActiveLayout>();
+        w.world.entity_mut(layout).insert(ActiveLayout);
+        assert!(w.commit_close(&request).is_err());
+        assert!(w.world.get_entity(panel).is_ok());
     }
 }
 
 #[test]
-fn application_compositor_updates_world_widget_state_and_returns_deferred_intentions() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
+fn completed_structural_operations_are_not_invalidated_again_by_reconciliation() {
     let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let entity = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    app.world_mut().entity_mut(entity).insert(WidgetState(41));
-    let previous = install_panel_frontend(app.world_mut(), entity, Box::new(MutableWidget(entity)))
-        .unwrap()
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let first = w.destination_area(layout).unwrap();
+    let second = w
+        .split_area(first, SplitAxis::Horizontal, 5000, [100, 100])
         .unwrap();
-    assert_eq!(previous.title(app.world()), "Counter");
-
-    let mut context = imgui_context();
-    context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
-        [800.0, 600.0],
-        1.0 / 60.0,
-    ));
-    let ui = context.frame();
-    let mut actions = Vec::new();
-    ui.window("application compositor").build(|| {
-        actions = render_panel(app.world_mut(), entity, ui).unwrap();
-    });
-    drop(context.render_legacy());
-    assert_eq!(app.world().get::<WidgetState>(entity).unwrap().0, 42);
-    assert_eq!(panel_title(app.world_mut(), entity).unwrap(), "Value 42");
+    let a = w.world.spawn((TestPanelType, InArea(first))).id();
+    let b = w.world.spawn((TestPanelType, InArea(second))).id();
+    let stamp = w.stamp();
+    reconcile_workbench(w.world).unwrap();
     assert_eq!(
-        panel_state(app.world_mut(), entity).unwrap(),
-        json!({"value":42})
+        w.stamp(),
+        stamp,
+        "spawn is complete before a validation pass"
     );
-    assert!(
-        matches!(actions.as_slice(), [WorkbenchAction::ClosePanel(target)] if *target == entity)
-    );
-    assert!(app.world().get::<PanelRecord>(entity).is_some());
+    w.move_tab(a, second, 0).unwrap();
+    let stamp = w.stamp();
+    reconcile_workbench(w.world).unwrap();
     assert_eq!(
-        app.world().resource::<WorkbenchLayout>().focused,
-        Some(entity)
+        w.stamp(),
+        stamp,
+        "move is complete before a validation pass"
     );
-    for action in actions {
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .push(action);
-    }
-    process_requests(app.world_mut());
-    assert!(app.world().get_entity(entity).is_err());
-}
-
-#[derive(Resource, Default)]
-struct CloseGate {
-    ready: bool,
-    calls: Vec<Entity>,
-}
-
-fn wait_for_save(world: &mut World, entity: Entity) -> Result<bool, String> {
-    assert!(!world.contains_resource::<UiLoan>());
-    let mut gate = world.resource_mut::<CloseGate>();
-    gate.calls.push(entity);
-    Ok(gate.ready)
+    assert_eq!(panels_in_area(w.world, second), &[a, b]);
 }
 
 #[test]
-fn deferred_close_keeps_the_frontend_and_layout_until_application_commits() {
+fn untracked_geometry_and_retained_tab_order_changes_still_invalidate_gestures() {
     let mut app = app();
-    app.init_resource::<CloseGate>()
-        .insert_resource(WorkbenchClosePolicy(wait_for_save));
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let entity = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let saved = save(app.world_mut());
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::ClosePanel(entity));
-    process_requests(app.world_mut());
-    assert_eq!(app.world().resource::<CloseGate>().calls, [entity]);
-    assert_eq!(save(app.world_mut()), saved);
-    assert_eq!(panel_title(app.world_mut(), entity).unwrap(), "Counter");
-    assert!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_errors()
-            .is_empty()
-    );
-
-    app.world_mut().resource_mut::<CloseGate>().ready = true;
-    assert!(commit_close(app.world_mut(), entity));
-    assert!(!commit_close(app.world_mut(), entity));
-    assert_eq!(app.world().resource::<CloseGate>().calls, [entity]);
-    assert!(app.world().get_entity(entity).is_err());
-    assert!(
-        app.world()
-            .resource::<WorkbenchLayout>()
-            .tiling
-            .areas
-            .iter()
-            .all(|area| area.tabs.is_empty())
-    );
-
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let next = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::ClosePanel(next));
-    process_requests(app.world_mut());
-    assert!(app.world().get_entity(next).is_err());
-    assert_eq!(app.world().resource::<CloseGate>().calls, [entity, next]);
-}
-
-#[derive(Resource)]
-struct RestoreCloseGate {
-    blocked: Entity,
-    calls: Vec<Entity>,
-}
-
-fn restore_close_policy(world: &mut World, entity: Entity) -> Result<bool, String> {
-    let mut gate = world.resource_mut::<RestoreCloseGate>();
-    gate.calls.push(entity);
-    Ok(entity != gate.blocked)
+    let mut w = Workbench::new(app.world_mut());
+    let layout = w.active_layout();
+    let first = w.destination_area(layout).unwrap();
+    let second = w
+        .split_area(first, SplitAxis::Horizontal, 5000, [100, 100])
+        .unwrap();
+    let a = w.world.spawn((TestPanelType, InArea(first))).id();
+    let b = w.world.spawn((TestPanelType, InArea(first))).id();
+    reconcile_workbench(w.world).unwrap();
+    let stamp = w.stamp();
+    w.world.get_mut::<Area>(first).unwrap().rect.max[0] = 4000;
+    w.world.get_mut::<Area>(second).unwrap().rect.min[0] = 4000;
+    reconcile_workbench(w.world).unwrap();
+    assert_ne!(w.stamp(), stamp);
+    let stamp = w.stamp();
+    w.world.entity_mut(first).replace_related::<InArea>(&[b, a]);
+    reconcile_workbench(w.world).unwrap();
+    assert_ne!(w.stamp(), stamp);
 }
 
 #[test]
-fn restore_preflights_all_panels_before_removing_an_approved_sibling() {
+fn moving_between_layouts_preserves_shared_document_and_local_state() {
     let mut app = app();
-    invoke(&mut app, "test.open");
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let blocked = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let old = app
-        .world_mut()
-        .query_filtered::<Entity, With<PanelRecord>>()
-        .iter(app.world())
-        .collect::<Vec<_>>();
-    let saved = save(app.world_mut());
-    app.insert_resource(RestoreCloseGate {
-        blocked,
-        calls: Vec::new(),
-    })
-    .insert_resource(WorkbenchClosePolicy(restore_close_policy));
-    let mut replacement_layout = TilingState::default();
-    replacement_layout.assign(41, 1);
-    let replacement = json!({"version":1,"panels":[
-        {"id":41,"panel_type":"test.counter","state":{}}
-    ],"focused":41,"tiling":replacement_layout.to_value([41])});
-    assert!(
-        restore(app.world_mut(), &replacement)
-            .unwrap_err()
-            .contains("waiting")
-    );
-    assert_eq!(app.world().resource::<RestoreCloseGate>().calls, old);
-    assert_eq!(save(app.world_mut()), saved);
-    for &entity in &old {
-        assert_eq!(panel_title(app.world_mut(), entity).unwrap(), "Counter");
-    }
-    app.world_mut().remove_resource::<WorkbenchClosePolicy>();
-    restore(app.world_mut(), &replacement).unwrap();
-    for entity in old {
-        assert!(app.world().get_entity(entity).is_err());
-    }
-    assert_eq!(save(app.world_mut())["panels"][0]["id"], 41);
-}
-
-struct PanickingWidget {
-    entity: Entity,
-    draft: i64,
-    draws: Rc<Cell<usize>>,
-}
-
-impl Panel for PanickingWidget {
-    fn title(&self, _world: &World) -> String {
-        "Draft".into()
-    }
-
-    fn draw(
-        &mut self,
-        _ui: &Ui,
-        _world: &mut World,
-        requests: &mut Vec<WorkbenchAction>,
-        _shortcuts: &bedtime_api::workbench::ShortcutInput,
-    ) {
-        self.draws.set(self.draws.get() + 1);
-        self.draft = 999;
-        requests.push(WorkbenchAction::ClosePanel(self.entity));
-        unsafe {
-            dear_imgui_rs::sys::igBegin(
-                c"unfinished extension window".as_ptr(),
-                std::ptr::null_mut(),
-                0,
-            );
-        }
-        panic!("widget draw failed");
-    }
-
-    fn save(&self, _world: &World) -> Value {
-        json!({"draft":self.draft})
-    }
-}
-
-#[test]
-fn panicking_surface_discards_intentions_and_retains_its_entry_state_after_transfer() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let entity = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let draws = Rc::new(Cell::new(0));
-    install_panel_frontend(
-        app.world_mut(),
-        entity,
-        Box::new(PanickingWidget {
-            entity,
-            draft: 7,
-            draws: Rc::clone(&draws),
-        }),
+    let mut w = Workbench::new(app.world_mut());
+    let first = w.active_layout();
+    let panel = w.create_panel(first, "Viewer").unwrap();
+    let document = open_memory_document(
+        w.world_mut(),
+        "text".to_owned(),
+        DocumentOptions::loaded("File"),
     )
     .unwrap();
-    let mut context = imgui_context();
-    context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
-        [800.0, 600.0],
-        1.0 / 60.0,
-    ));
-    let ui = context.frame();
-    let mut failure = None;
-    ui.window("application compositor").build(|| {
-        failure = Some(render_panel(app.world_mut(), entity, ui).unwrap_err());
-        ui.text("The application still draws after recovery");
-    });
-    drop(context.render_legacy());
-    assert!(failure.unwrap().contains("widget draw failed"));
-    assert_eq!(draws.get(), 1);
+    bind_document_view(w.world_mut(), panel, document).unwrap();
+    w.world_mut()
+        .entity_mut(panel)
+        .insert(Draft("view state".into()));
+    let second = w.create_layout("Other").unwrap();
+    let area = w.destination_area(second).unwrap();
+    w.relocate_panel(panel, area).unwrap();
     assert_eq!(
-        panel_state(app.world_mut(), entity).unwrap(),
-        json!({"draft":7})
+        w.world().get::<DocumentView>(panel).unwrap().document(),
+        document.id()
     );
-    assert!(app.world().get::<PanelRecord>(entity).is_some());
-    process_requests(app.world_mut());
-    assert!(app.world().get::<PanelRecord>(entity).is_some());
-    let quarantined = take_panel_frontend(app.world_mut(), entity).unwrap();
-    assert!(
-        install_panel_frontend(app.world_mut(), entity, quarantined)
-            .unwrap()
-            .is_none()
-    );
-    context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
-        [800.0, 600.0],
-        1.0 / 60.0,
-    ));
-    let ui = context.frame();
-    ui.window("application compositor").build(|| {
-        assert!(
-            render_panel(app.world_mut(), entity, ui)
-                .unwrap()
-                .is_empty()
-        );
-    });
-    drop(context.render_legacy());
-    assert_eq!(draws.get(), 1, "a damaged frontend must never run again");
     assert_eq!(
-        panel_state(app.world_mut(), entity).unwrap(),
-        json!({"draft":7})
-    );
-    assert!(commit_close(app.world_mut(), entity));
-}
-
-#[test]
-fn tracked_close_completes_only_after_the_deferred_entity_is_retired() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    app.insert_resource(WorkbenchClosePolicy(|_, _| Ok(false)));
-    let request = app
-        .world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .submit(WorkbenchAction::ClosePanel(panel));
-    process_requests(app.world_mut());
-    assert!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_result(request)
-            .is_none()
-    );
-    assert!(app.world().get::<PanelRecord>(panel).is_some());
-    assert!(commit_close(app.world_mut(), panel));
-    process_requests(app.world_mut());
-    assert_eq!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_result(request),
-        Some(Ok(WorkbenchOutcome::Closed(panel)))
+        w.world().get::<Draft>(panel),
+        Some(&Draft("view state".into()))
     );
 }
 
-#[derive(Resource, Default)]
-struct DeferredCloseDecision {
-    cancel: bool,
-    groups: Vec<Vec<Entity>>,
-}
-
-fn deferred_close_decision(world: &mut World, _: Entity) -> Result<bool, String> {
-    let group = world.resource::<ClosingPanels>().0.clone();
-    let mut decision = world.resource_mut::<DeferredCloseDecision>();
-    decision.groups.push(group);
-    if decision.cancel {
-        Err("Operation cancelled".into())
-    } else {
-        Ok(false)
+/// A layout fixture; core installation itself deliberately creates no layout.
+pub(crate) fn layout(world: &mut World) -> Entity {
+    let layout = crate::layout::new_layout(world, "Test".into());
+    if active_layout(world).is_none() {
+        world.entity_mut(layout).insert(ActiveLayout);
     }
-}
-
-#[test]
-fn deferred_close_cancellation_completes_the_receipt_and_keeps_the_panel() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let saved = save(app.world_mut());
-    app.init_resource::<DeferredCloseDecision>()
-        .insert_resource(WorkbenchClosePolicy(deferred_close_decision));
-    let request = app
-        .world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .submit(WorkbenchAction::ClosePanel(panel));
-    process_requests(app.world_mut());
-    poll_request_results(app.world_mut());
-    assert!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_result(request)
-            .is_none()
-    );
-    assert_eq!(
-        app.world().resource::<DeferredCloseDecision>().groups,
-        [vec![panel], vec![panel]]
-    );
-    app.world_mut()
-        .resource_mut::<DeferredCloseDecision>()
-        .cancel = true;
-    poll_request_results(app.world_mut());
-    assert_eq!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_result(request),
-        Some(Err("Operation cancelled".into()))
-    );
-    assert_eq!(save(app.world_mut()), saved);
-    assert!(app.world().get::<PanelRecord>(panel).is_some());
-    assert!(
-        app.world()
-            .resource::<WorkbenchRequests>()
-            .waiting
-            .is_empty()
-    );
-}
-
-#[test]
-fn deferred_layout_cancellation_retries_the_complete_close_group_without_retiring_it() {
-    let mut app = app();
-    let mut panels = Vec::new();
-    for _ in 0..2 {
-        invoke(&mut app, "test.open");
-        process_requests(app.world_mut());
-        panels.push(app.world().resource::<WorkbenchLayout>().focused.unwrap());
-    }
-    let saved = save(app.world_mut());
-    app.init_resource::<DeferredCloseDecision>()
-        .insert_resource(WorkbenchClosePolicy(deferred_close_decision));
-    let request =
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .submit(WorkbenchAction::SetLayout {
-                tiling: TilingState::default().to_value(std::iter::empty()),
-                close: panels.clone(),
-            });
-    process_requests(app.world_mut());
-    assert!(waiting_for_layout(app.world()));
-    app.world_mut()
-        .resource_mut::<DeferredCloseDecision>()
-        .cancel = true;
-    poll_request_results(app.world_mut());
-    assert_eq!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_result(request),
-        Some(Err("Operation cancelled".into()))
-    );
-    assert_eq!(save(app.world_mut()), saved);
-    assert!(
-        panels
-            .iter()
-            .all(|panel| app.world().get::<PanelRecord>(*panel).is_some())
-    );
-    assert!(
-        app.world()
-            .resource::<DeferredCloseDecision>()
-            .groups
-            .iter()
-            .all(|group| group == &panels)
-    );
-    assert!(!waiting_for_layout(app.world()));
-}
-
-#[test]
-fn an_untracked_deferred_close_retries_the_policy_until_approved() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let panel = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    app.init_resource::<CloseGate>()
-        .insert_resource(WorkbenchClosePolicy(wait_for_save));
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::ClosePanel(panel));
-    process_requests(app.world_mut());
-    assert!(app.world().get::<PanelRecord>(panel).is_some());
-    app.world_mut().resource_mut::<CloseGate>().ready = true;
-    poll_request_results(app.world_mut());
-    assert!(app.world().get_entity(panel).is_err());
-    assert_eq!(app.world().resource::<CloseGate>().calls, [panel, panel]);
-    assert!(
-        app.world()
-            .resource::<WorkbenchRequests>()
-            .waiting
-            .is_empty()
-    );
-}
-
-#[test]
-fn external_admission_preserves_command_receipts_in_the_shared_resolver() {
-    let mut app = app();
-    app.insert_resource(WorkbenchRequestMode::External);
-    let id = app
-        .world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .submit(WorkbenchAction::Invoke(CommandInvocation {
-            command: "test.open".into(),
-            source: None,
-            area: 1,
-            arguments: Value::Null,
-        }));
-    process_requests(app.world_mut());
-    assert!(app.world().resource::<WorkbenchLayout>().focused.is_none());
-    let queued = app
-        .world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .take_next()
-        .unwrap();
-    assert_eq!(queued.id, Some(id));
-    assert_eq!(resolve_tracked_request(app.world_mut(), queued), id);
-    let opened = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    assert_eq!(
-        app.world_mut()
-            .resource_mut::<WorkbenchRequests>()
-            .take_result(id),
-        Some(Ok(WorkbenchOutcome::Opened(opened)))
-    );
-    assert!(app.world().get::<PanelRecord>(opened).is_some());
-    assert!(
-        app.world()
-            .resource::<WorkbenchRequests>()
-            .pending
-            .is_empty()
-    );
-}
-
-#[test]
-fn splitting_the_focused_panel_updates_its_area_and_roundtrips_exactly() {
-    for axis in [0, 1] {
-        let mut app = app();
-        invoke(&mut app, "test.open");
-        process_requests(app.world_mut());
-        let source = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-        let panel_id = app.world().get::<PanelPresentation>(source).unwrap().id;
-        let original_area = app.world().resource::<WorkbenchLayout>().focused_area;
-        let id = app.world_mut().resource_mut::<WorkbenchRequests>().submit(
-            WorkbenchAction::SplitPanel {
-                panel: source,
-                axis,
-                high: true,
-            },
-        );
-        process_requests(app.world_mut());
-        assert_eq!(
-            app.world_mut()
-                .resource_mut::<WorkbenchRequests>()
-                .take_result(id),
-            Some(Ok(WorkbenchOutcome::Applied))
-        );
-        let layout = app.world().resource::<WorkbenchLayout>();
-        assert_eq!(layout.focused, Some(source));
-        assert_ne!(layout.focused_area, original_area);
-        assert_eq!(layout.focused_area, layout.tiling.area_for(panel_id));
-        let saved = save(app.world_mut());
-        restore(app.world_mut(), &saved).unwrap();
-        assert_eq!(save(app.world_mut()), saved);
-    }
-}
-
-#[test]
-fn applying_a_tab_move_updates_focused_area_while_preserving_explicit_area_focus() {
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let source = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let panel_id = app.world().get::<PanelPresentation>(source).unwrap().id;
-    let mut tiling = app.world().resource::<WorkbenchLayout>().tiling.clone();
-    let destination = tiling.layout.split(1, 0, 5000, 100).unwrap();
-    tiling.add_area(destination);
-    tiling.assign(panel_id, destination);
-    let ids = tiling
-        .areas
-        .iter()
-        .flat_map(|area| area.tabs.iter().copied())
-        .collect::<Vec<_>>();
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::SetLayout {
-            tiling: tiling.to_value(ids.clone()),
-            close: Vec::new(),
-        });
-    process_requests(app.world_mut());
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().focused,
-        Some(source)
-    );
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().focused_area,
-        Some(destination)
-    );
-    let saved = save(app.world_mut());
-    restore(app.world_mut(), &saved).unwrap();
-    assert_eq!(save(app.world_mut()), saved);
-    focus_area(app.world_mut(), 1);
-    apply_layout(app.world_mut(), &tiling.to_value(ids)).unwrap();
-    assert_eq!(app.world().resource::<WorkbenchLayout>().focused, None);
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().focused_area,
-        Some(1)
-    );
-}
-
-#[test]
-fn showing_a_panel_uses_its_recent_focus_and_creating_is_distinct() {
-    let mut app = app();
-    for _ in 0..2 {
-        invoke(&mut app, "test.open");
-        process_requests(app.world_mut());
-    }
-    let newest = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let older = app
-        .world_mut()
-        .query::<Entity>()
-        .iter(app.world())
-        .find(|e| *e != newest && app.world().get::<PanelRecord>(*e).is_some())
-        .unwrap();
-    focus_panel(app.world_mut(), older);
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::ShowPanel {
-            panel_type: "test.counter".into(),
-            state: Value::Null,
-            area: None,
-        });
-    process_requests(app.world_mut());
-    assert_eq!(
-        app.world().resource::<WorkbenchLayout>().focused,
-        Some(older)
-    );
-    assert_eq!(
-        app.world_mut()
-            .query::<&PanelRecord>()
-            .iter(app.world())
-            .count(),
-        2
-    );
-    commit_close(app.world_mut(), older);
-    assert_eq!(
-        recent_panel(
-            app.world_mut(),
-            &bedtime_api::PanelTypeId::new("test.counter")
-        ),
-        Some(newest)
-    );
-    commit_close(app.world_mut(), newest);
-    app.world_mut()
-        .resource_mut::<WorkbenchRequests>()
-        .push(WorkbenchAction::ShowPanel {
-            panel_type: "test.counter".into(),
-            state: Value::Null,
-            area: None,
-        });
-    process_requests(app.world_mut());
-    assert!(app.world().resource::<WorkbenchLayout>().focused.is_some());
-    assert_eq!(
-        app.world_mut()
-            .query::<&PanelRecord>()
-            .iter(app.world())
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn individual_panel_rendering_refreshes_bindings_each_frame() {
-    let _lock = IMGUI_TEST_LOCK.lock().unwrap();
-    let mut app = app();
-    invoke(&mut app, "test.open");
-    process_requests(app.world_mut());
-    let entity = app.world().resource::<WorkbenchLayout>().focused.unwrap();
-    let action = app
-        .world()
-        .resource::<WorkbenchRegistry>()
-        .shortcuts()
-        .iter()
-        .find(|a| a.id == "test.close")
-        .unwrap()
-        .clone();
-    app.world_mut().init_non_send::<WorkbenchShortcuts>();
-    let mut context = imgui_context();
-    for (shortcut, key) in [
-        ("F12", dear_imgui_rs::Key::F12),
-        ("F11", dear_imgui_rs::Key::F11),
-    ] {
-        app.world_mut()
-            .non_send_mut::<WorkbenchShortcuts>()
-            .overrides
-            .replace(
-                &action,
-                (shortcut == "F11").then_some(0),
-                shortcut.parse().unwrap(),
-            )
-            .unwrap();
-        context.io_mut().add_key_event(key, true);
-        context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
-            [600.0, 400.0],
-            1.0 / 60.0,
-        ));
-        let ui = context.frame();
-        let mut requests = Vec::new();
-        ui.window("Direct rendering").focused(true).build(|| {
-            requests = render_panel(app.world_mut(), entity, ui).unwrap();
-        });
-        assert!(
-            matches!(requests.as_slice(),[WorkbenchAction::ClosePanel(closed)] if *closed==entity)
-        );
-        drop(context.render_legacy());
-        context.io_mut().add_key_event(key, false);
-        context.prepare_frame(dear_imgui_rs::FramePrepareOptions::new(
-            [600.0, 400.0],
-            1.0 / 60.0,
-        ));
-        let _ = context.frame();
-        drop(context.render_legacy());
-    }
+    layout
 }

@@ -1,0 +1,525 @@
+//! Whole-workbench post-processing. Input and rendering use the same frame settings.
+use crate::settings::{GlobalPreferences, ProjectPreferences, Settings};
+use bedtime_ui::{UiSystems, egui};
+use bedtime_workbench::{ActiveLayout, WorkbenchCamera};
+use bevy::{
+    asset::{embedded_asset, load_embedded_asset},
+    core_pipeline::{Core2d, FullscreenShader, upscaling::upscaling},
+    prelude::*,
+    render::{
+        Render, RenderApp, RenderStartup, RenderSystems,
+        extract_component::{
+            ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
+            UniformComponentPlugin,
+        },
+        render_resource::{
+            binding_types::{sampler, texture_2d, uniform_buffer},
+            *,
+        },
+        renderer::{RenderContext, RenderDevice, ViewQuery},
+        view::ViewTarget,
+    },
+};
+use bevy_egui::{EguiInput, EguiPreUpdateSet, render::egui_pass};
+
+pub struct EffectsPlugin;
+impl Plugin for EffectsPlugin {
+    fn build(&self, app: &mut App) {
+        embedded_asset!(app, "effects.wesl");
+        #[cfg(test)]
+        embedded_asset!(app, "effects/fixtures/original_bloom.wesl");
+        app.add_plugins((
+            ExtractComponentPlugin::<EffectsFrame>::default(),
+            ExtractComponentPlugin::<EffectUniform>::default(),
+            UniformComponentPlugin::<EffectUniform>::default(),
+        ))
+        .add_systems(
+            PreUpdate,
+            prepare_input
+                .after(EguiPreUpdateSet::ProcessInput)
+                .before(UiSystems::Draw),
+        );
+        app.sub_app_mut(RenderApp)
+            .add_systems(RenderStartup, prepare_pipeline)
+            .add_systems(
+                Render,
+                prepare_targets.in_set(RenderSystems::PrepareBindGroups),
+            )
+            .add_systems(
+                Core2d,
+                render
+                    .after(egui_pass)
+                    .before(UiSystems::PrepareOutput)
+                    .before(upscaling),
+            );
+    }
+}
+
+#[derive(Component, Clone, Copy, ExtractComponent)]
+#[extract_app(RenderApp)]
+struct EffectsFrame {
+    enabled: bool,
+    scene: (Option<Entity>, Option<Entity>),
+}
+
+#[derive(Component, Clone, Copy, ShaderType, ExtractComponent)]
+#[extract_app(RenderApp)]
+struct EffectUniform {
+    // Scanlines, vignette, bloom, noise.
+    light: Vec4,
+    // Curvature, pixel grid, persistence, pulse.
+    geometry: Vec4,
+    // Real elapsed seconds, frame-rate-independent persistence decay.
+    clock: Vec4,
+}
+
+impl EffectUniform {
+    fn new(settings: &Settings, time: &Time<Real>) -> Self {
+        Self {
+            light: Vec4::new(
+                settings.scanline_intensity,
+                settings.vignette_intensity,
+                settings.bloom_intensity,
+                settings.noise_intensity,
+            ),
+            geometry: Vec4::new(
+                settings.curvature_intensity,
+                settings.pixel_grid_intensity,
+                settings.burn_in_intensity,
+                settings.pulse_intensity,
+            ),
+            clock: Vec4::new(
+                time.elapsed_secs(),
+                settings
+                    .burn_in_intensity
+                    .powf((time.delta_secs() * 240.0).max(0.001)),
+                0.0,
+                0.0,
+            ),
+        }
+    }
+}
+
+#[derive(Default)]
+struct PointerState {
+    camera: Option<Entity>,
+    raw: Option<egui::Pos2>,
+    mapped: Option<egui::Pos2>,
+}
+
+fn prepare_input(
+    mut commands: Commands,
+    global: Res<GlobalPreferences>,
+    preferences: Option<Res<ProjectPreferences>>,
+    layouts: Query<Entity, With<ActiveLayout>>,
+    mut cameras: Query<(Entity, &mut EguiInput), With<WorkbenchCamera>>,
+    time: Res<Time<Real>>,
+    mut pointer: Local<PointerState>,
+) {
+    let settings = preferences
+        .as_ref()
+        .map(|p| p.0.resolve(&global.0))
+        .unwrap_or_else(|| global.0.clone());
+    let scene = (None, layouts.iter().next());
+    for (camera, mut input) in &mut cameras {
+        if pointer.camera != Some(camera) {
+            *pointer = PointerState {
+                camera: Some(camera),
+                ..default()
+            };
+        }
+        let curvature = if settings.effects_enabled {
+            settings.curvature_intensity
+        } else {
+            0.0
+        };
+        if let Some(rect) = input.screen_rect {
+            map_events(&mut input, rect, curvature, &mut pointer);
+        }
+        // Capture before drawing settings. Changes made by this UI pass take effect
+        // together for input and rendering on the next frame.
+        commands.entity(camera).insert((
+            EffectUniform::new(&settings, &time),
+            EffectsFrame {
+                enabled: settings.effects_enabled,
+                scene,
+            },
+        ));
+    }
+}
+
+/// The shader maps display UV to source UV, so input uses the same function,
+/// not its inverse. Radial symmetry makes this identical in top-origin egui UV.
+fn source_position(position: egui::Pos2, rect: egui::Rect, curvature: f32) -> egui::Pos2 {
+    if curvature == 0.0 || rect.width() <= 0.0 || rect.height() <= 0.0 {
+        return position;
+    }
+    let uv = (position - rect.min) / rect.size();
+    let center = uv - egui::vec2(0.5, 0.5);
+    let warped = egui::vec2(0.5, 0.5) + center * (1.0 + curvature * 0.25 * center.length_sq());
+    let uv = warped.clamp(egui::vec2(0.001, 0.001), egui::vec2(0.999, 0.999));
+    rect.min + uv * rect.size()
+}
+
+fn map_events(
+    input: &mut egui::RawInput,
+    rect: egui::Rect,
+    curvature: f32,
+    pointer: &mut PointerState,
+) {
+    let mut moved = false;
+    for event in &mut input.events {
+        match event {
+            egui::Event::PointerMoved(position) => {
+                pointer.raw = Some(*position);
+                *position = source_position(*position, rect, curvature);
+                pointer.mapped = Some(*position);
+                moved = true;
+            }
+            egui::Event::PointerButton { pos, .. } => {
+                pointer.raw = Some(*pos);
+                *pos = source_position(*pos, rect, curvature);
+            }
+            egui::Event::Touch { pos, .. } => *pos = source_position(*pos, rect, curvature),
+            egui::Event::PointerGone => {
+                pointer.raw = None;
+                pointer.mapped = None;
+            }
+            _ => {}
+        }
+    }
+    // egui retains its last pointer coordinate. Reproject a stationary pointer
+    // when curvature or viewport size changes, including when disabled.
+    if !moved && let Some(raw) = pointer.raw {
+        let mapped = source_position(raw, rect, curvature);
+        if pointer.mapped != Some(mapped) {
+            input.events.insert(0, egui::Event::PointerMoved(mapped));
+            pointer.mapped = Some(mapped);
+        }
+    }
+}
+
+#[derive(Resource)]
+struct EffectPipeline {
+    layout: BindGroupLayoutDescriptor,
+    sampler: Sampler,
+    crt: CachedRenderPipelineId,
+    burn: CachedRenderPipelineId,
+    bloom_downsample: CachedRenderPipelineId,
+    bloom_horizontal: CachedRenderPipelineId,
+    bloom_vertical: CachedRenderPipelineId,
+}
+
+const BLOOM_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
+
+fn prepare_pipeline(
+    mut commands: Commands,
+    device: Res<RenderDevice>,
+    assets: Res<AssetServer>,
+    fullscreen: Res<FullscreenShader>,
+    cache: Res<PipelineCache>,
+) {
+    let layout = BindGroupLayoutDescriptor::new(
+        "bEd effects",
+        &BindGroupLayoutEntries::sequential(
+            ShaderStages::FRAGMENT,
+            (
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                sampler(SamplerBindingType::Filtering),
+                uniform_buffer::<EffectUniform>(true),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+                texture_2d(TextureSampleType::Float { filterable: true }),
+            ),
+        ),
+    );
+    let shader = load_embedded_asset!(assets.as_ref(), "effects.wesl");
+    let pipeline = |entry: &'static str, format| {
+        cache.queue_render_pipeline(RenderPipelineDescriptor {
+            label: Some(format!("bEd {entry}").into()),
+            layout: vec![layout.clone()],
+            vertex: fullscreen.to_vertex_state(),
+            fragment: Some(FragmentState {
+                shader: shader.clone(),
+                entry_point: Some(entry.into()),
+                targets: vec![Some(ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: ColorWrites::ALL,
+                })],
+                ..default()
+            }),
+            ..default()
+        })
+    };
+    commands.insert_resource(EffectPipeline {
+        crt: pipeline("crt", TextureFormat::Rgba8UnormSrgb),
+        burn: pipeline("burn", TextureFormat::Rgba8UnormSrgb),
+        bloom_downsample: pipeline("bloom_downsample", BLOOM_FORMAT),
+        bloom_horizontal: pipeline("bloom_horizontal", BLOOM_FORMAT),
+        bloom_vertical: pipeline("bloom_vertical", BLOOM_FORMAT),
+        layout,
+        sampler: device.create_sampler(&SamplerDescriptor {
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..default()
+        }),
+    });
+}
+
+#[derive(Component)]
+struct History {
+    textures: [Texture; 2],
+    views: [TextureView; 2],
+    previous: usize,
+    valid: bool,
+    // Only effect values and visible scene identity invalidate history; unrelated
+    // editor/appearance settings and the continuously advancing clock do not.
+    values: (Vec4, Vec4),
+    scene: (Option<Entity>, Option<Entity>),
+}
+
+#[derive(Component)]
+struct BloomTextures {
+    textures: [Texture; 2],
+    views: [TextureView; 2],
+}
+
+fn bloom_extent(size: Extent3d) -> Extent3d {
+    Extent3d {
+        width: size.width.div_ceil(2).max(1),
+        height: size.height.div_ceil(2).max(1),
+        depth_or_array_layers: 1,
+    }
+}
+
+fn prepare_targets(
+    mut commands: Commands,
+    device: Res<RenderDevice>,
+    mut cameras: Query<(
+        Entity,
+        &ViewTarget,
+        &EffectsFrame,
+        &EffectUniform,
+        Option<&mut History>,
+        Option<&BloomTextures>,
+    )>,
+) {
+    for (entity, target, frame, uniform, history, bloom) in &mut cameras {
+        let size = target.main_texture().size();
+        if !frame.enabled || uniform.light.z == 0.0 {
+            if bloom.is_some() {
+                commands.entity(entity).remove::<BloomTextures>();
+            }
+        } else {
+            let size = bloom_extent(size);
+            if bloom.is_none_or(|bloom| bloom.textures[0].size() != size) {
+                let textures = std::array::from_fn(|_| {
+                    device.create_texture(&TextureDescriptor {
+                        label: Some("bEd reduced bloom"),
+                        size,
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: TextureDimension::D2,
+                        format: BLOOM_FORMAT,
+                        usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    })
+                });
+                let views = textures
+                    .each_ref()
+                    .map(|texture| texture.create_view(&TextureViewDescriptor::default()));
+                commands
+                    .entity(entity)
+                    .insert(BloomTextures { textures, views });
+            }
+        }
+        if !frame.enabled || uniform.geometry.z == 0.0 {
+            if history.is_some() {
+                commands.entity(entity).remove::<History>();
+            }
+            continue;
+        }
+        let values = (uniform.light, uniform.geometry);
+        if let Some(mut history) = history {
+            if history.textures[0].size() == size {
+                if history.values != values || history.scene != frame.scene {
+                    history.valid = false;
+                    history.values = values;
+                    history.scene = frame.scene;
+                }
+                continue;
+            }
+        }
+        let textures = std::array::from_fn(|_| {
+            device.create_texture(&TextureDescriptor {
+                label: Some("bEd phosphor history"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: TextureDimension::D2,
+                format: TextureFormat::Rgba8UnormSrgb,
+                usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+        });
+        let views = textures
+            .each_ref()
+            .map(|texture| texture.create_view(&TextureViewDescriptor::default()));
+        commands.entity(entity).insert(History {
+            textures,
+            views,
+            previous: 0,
+            valid: false,
+            values,
+            scene: frame.scene,
+        });
+    }
+}
+
+fn render(
+    view: ViewQuery<(
+        &ViewTarget,
+        &EffectsFrame,
+        &DynamicUniformIndex<EffectUniform>,
+        Option<&mut History>,
+        Option<&BloomTextures>,
+    )>,
+    effects: Res<EffectPipeline>,
+    cache: Res<PipelineCache>,
+    uniforms: Res<ComponentUniforms<EffectUniform>>,
+    mut ctx: RenderContext,
+) {
+    let (target, frame, index, history, bloom) = view.into_inner();
+    if !frame.enabled || target.main_texture_format() != TextureFormat::Rgba8UnormSrgb {
+        return;
+    }
+    let Some(crt) = cache.get_render_pipeline(effects.crt) else {
+        return;
+    };
+    let Some(binding) = uniforms.uniforms().binding() else {
+        return;
+    };
+    let burn = if history.is_some() {
+        let Some(burn) = cache.get_render_pipeline(effects.burn) else {
+            return;
+        };
+        Some(burn)
+    } else {
+        None
+    };
+    let bloom_pipelines = if bloom.is_some() {
+        let (Some(downsample), Some(horizontal), Some(vertical)) = (
+            cache.get_render_pipeline(effects.bloom_downsample),
+            cache.get_render_pipeline(effects.bloom_horizontal),
+            cache.get_render_pipeline(effects.bloom_vertical),
+        ) else {
+            return;
+        };
+        Some((downsample, horizontal, vertical))
+    } else {
+        None
+    };
+    // All fallible prerequisites must be resolved before this flips the target.
+    let post = target.post_process_write();
+    let mut pass = |source: &TextureView,
+                    previous: &TextureView,
+                    bloom: &TextureView,
+                    output: &TextureView,
+                    pipeline: &RenderPipeline,
+                    label: &'static str| {
+        let group = ctx.render_device().create_bind_group(
+            label,
+            &cache.get_bind_group_layout(&effects.layout),
+            &BindGroupEntries::sequential((
+                source,
+                &effects.sampler,
+                binding.clone(),
+                previous,
+                bloom,
+            )),
+        );
+        let mut pass = ctx
+            .command_encoder()
+            .begin_render_pass(&RenderPassDescriptor {
+                label: Some(label),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: output,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: Operations::default(),
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &group, &[index.index()]);
+        pass.draw(0..3, 0..1);
+    };
+    let source = if let (Some(history), Some(burn)) = (history, burn) {
+        let history = history.into_inner();
+        let next = 1 - history.previous;
+        let previous = if history.valid {
+            &history.views[history.previous]
+        } else {
+            post.source
+        };
+        pass(
+            post.source,
+            previous,
+            post.source,
+            &history.views[next],
+            burn,
+            "bEd phosphor persistence",
+        );
+        history.previous = next;
+        history.valid = true;
+        &history.views[next]
+    } else {
+        post.source
+    };
+    let bloom_source =
+        if let (Some(bloom), Some((downsample, horizontal, vertical))) = (bloom, bloom_pipelines) {
+            pass(
+                source,
+                source,
+                source,
+                &bloom.views[0],
+                downsample,
+                "bEd bloom downsample",
+            );
+            pass(
+                &bloom.views[0],
+                source,
+                source,
+                &bloom.views[1],
+                horizontal,
+                "bEd bloom horizontal",
+            );
+            pass(
+                &bloom.views[1],
+                source,
+                source,
+                &bloom.views[0],
+                vertical,
+                "bEd bloom vertical",
+            );
+            &bloom.views[0]
+        } else {
+            source
+        };
+    pass(
+        source,
+        source,
+        bloom_source,
+        post.destination,
+        crt,
+        "bEd CRT",
+    );
+}
+
+#[cfg(test)]
+mod gpu_tests;
+#[cfg(test)]
+mod tests;

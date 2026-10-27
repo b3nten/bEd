@@ -1,2 +1,0 @@
-mod panel;
-mod transactions;

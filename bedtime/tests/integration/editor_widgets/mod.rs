@@ -1,2 +1,0 @@
-mod embedding;
-mod views;

@@ -37,3 +37,6 @@ project is assets/bEd.icon, including Assets/bed-svgrepo-com.svg, whose embedded
 notice credits SVG Repo. These source assets are not installed. Packages retain
 the exported PNG as resources/icons/bed.png and generate macOS standard/Retina
 ICNS or Linux hicolor PNG sizes for the application launcher.
+
+UI 2 additions sun.svg, moon.svg and save.svg are original Bedtime artwork,
+licensed under the workspace LICENSE. They are not upstream Lucide imports.

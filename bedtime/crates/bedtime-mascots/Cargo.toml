@@ -1,0 +1,21 @@
+[package]
+name = "bedtime-mascots"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Embeddable ECS Bed and Ducky scenes for Bedtime UI"
+
+[features]
+default = []
+workbench = ["dep:bedtime-workbench"]
+
+[dependencies]
+bedtime-ui.workspace = true
+bedtime-workbench = { path = "../bedtime-workbench", optional = true, default-features = false, features = ["ui"] }
+bevy = { workspace = true, features = ["std", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "png"] }
+gltf.workspace = true
+rodio.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_winit", "bevy_log", "x11", "wayland"] }

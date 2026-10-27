@@ -1,0 +1,18 @@
+[package]
+name = "bedtime-clipboard"
+version.workspace = true
+edition = "2024"
+publish = false
+license = "MIT OR Apache-2.0"
+description = "Independent text and file clipboard with an in-process fallback for Bevy"
+
+[features]
+default = []
+system_clipboard = ["dep:arboard"]
+
+[dependencies]
+bevy_app = { version = "=0.20.0", default-features = false, features = ["std"] }
+bevy_ecs = { version = "=0.20.0", default-features = false, features = ["std"] }
+
+[target.'cfg(all(any(unix, windows), not(any(target_os = "android", target_os = "ios"))))'.dependencies]
+arboard = { workspace = true, optional = true }

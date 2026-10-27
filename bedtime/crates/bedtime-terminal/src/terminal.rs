@@ -1,6 +1,6 @@
 //! Rio owns the terminal state machine. The PTY worker is its only writer;
 //! the frontend receives immutable viewport snapshots.
-use bedtime_ui::color::{blend, ensure_contrast};
+use crate::color::{blend, ensure_contrast};
 use rio_graphics::{ColorType, GraphicData, atlas_image_key, kitty_image_key};
 use rio_vt::{
     ansi::{
@@ -291,17 +291,6 @@ impl TerminalSnapshot {
         self.selection
             .iter()
             .any(|span| span.row == row && col >= span.start && col < span.end)
-    }
-
-    #[cfg(feature = "ui")]
-    pub(crate) fn faint_color(&self, color: TerminalColor) -> Option<[u8; 3]> {
-        let TerminalColor::Indexed(index) = color else {
-            return None;
-        };
-        self.faint_palette
-            .as_ref()
-            .filter(|_| index < 16 || index == 258)
-            .map(|palette| palette[index])
     }
 }
 
@@ -1597,7 +1586,10 @@ mod text_only_tests {
         terminal.feed(format!("\x1b]11;#{r:02x}{g:02x}{b:02x}\x07").as_bytes());
         let overridden = terminal.snapshot();
         assert_eq!(overridden.palette, initial.palette);
-        assert!(overridden.background_is_overridden, "An equal RGB is still an explicit OSC override");
+        assert!(
+            overridden.background_is_overridden,
+            "An equal RGB is still an explicit OSC override"
+        );
         theme.background = [0.3, 0.2, 0.1, 0.0];
         terminal.set_theme(&theme);
         assert!(terminal.snapshot().background_is_overridden);
@@ -1606,7 +1598,10 @@ mod text_only_tests {
         assert!(!reset.background_is_overridden);
         assert_ne!(reset.palette[259], initial.palette[259]);
         terminal.feed(b"\x1b]11;#123456\x07\x1bc");
-        assert!(!terminal.snapshot().background_is_overridden, "A full terminal reset restores host ownership");
+        assert!(
+            !terminal.snapshot().background_is_overridden,
+            "A full terminal reset restores host ownership"
+        );
     }
 
     #[test]

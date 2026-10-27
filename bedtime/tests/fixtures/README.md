@@ -1,82 +1,16 @@
-# Regression fixtures
+# Shared viewer fixtures
 
-These committed baselines are consumed by ordinary Rust tests. They preserve
-expected behavior while Bed evolves; builds and tests require no original C++
-checkout or upstream regeneration tools. Source attribution remains in
-[NOTICE](../../../NOTICE) and the accompanying licenses.
+These assets are used by the retained application/library tests, examples and
+native smoke scripts. Tests do not require an upstream checkout or network.
 
-## Highlighting
+- `gltf/cube.gltf` and `gltf/cube.glb` are original synthetic fixtures with cube
+  geometry and an embedded checker texture. `gltf/generate.py` regenerates them.
+- `gltf/LittlestTokyo.glb` exercises Draco decoding and static skinning. The
+  unchanged upstream model is by glenatron under CC BY 4.0; its source and
+  attribution are recorded in [gltf/licence.txt](gltf/licence.txt).
+- `images/sample.png` is a small image-decoding and file-opening fixture.
+- `fonts/DejaVuSans.ttf` exercises rejection of font bytes as images; its original
+  license is retained in [fonts/DejaVuSans-LICENSE.txt](fonts/DejaVuSans-LICENSE.txt).
 
-`highlight.json` retains source samples from ned commit
-`2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff` for the original 17 languages.
-Bed now uses Arborium's grammars and queries, so exact upstream colors and
-capture ranges are no longer a baseline. Behavioral tests cover Markdown,
-embedded languages, byte offsets, editing, cancellation and theme changes;
-all 112 bundled grammars must compile their highlight and injection queries.
-
-```sh
-cargo bedtime-test highlight::behavior
-```
-
-## Editor painting and measurements
-
-`views.json` records vertices, packed colors, triangle order and byte text
-measurements from the same ned revision's `TextView`, `CaretView`, `GutterView`
-and `EditorUtils`. The original ImGui version is recorded in the fixture.
-Fourteen cases cover selections, carets, syntax and Git markers, clipping,
-Unicode/malformed UTF-8/NUL, diagnostic ranges and rainbow phases.
-
-Both the captured baseline and Rust comparison use the stb font loader and a
-deliberately fractional `A` advance. Tests compare geometry within 0.0001px and
-colors/index order exactly; font-atlas UV packing is excluded. Bed's compact
-gutter comparison accounts for the 6px removed from the original trailing
-padding. These are paint/measurement checks, not GPU, FreeType rasterization,
-whole-frame layout or tooltip activation tests.
-
-```sh
-cargo bedtime-test editor_widgets::views
-```
-
-## Terminals
-
-Terminal protocol scenarios are authored directly in `bedtime/crates/bedtime-terminal/tests`.
-The presentation suite covers text, styles, colors, Unicode and cursor shapes;
-PTY and input regressions exercise live shells, process cleanup and negotiated
-keyboard/paste behavior. Imported terminal adapter fixtures are no longer used.
-
-```sh
-cargo bedtime-test terminal::
-```
-
-## Model viewers
-
-`gltf/cube.glb` and `gltf/cube.gltf` are original synthetic fixtures containing
-the same cube geometry and embedded checker texture in binary and JSON forms.
-Their small generator remains available:
-
-```sh
-python3 bedtime/tests/fixtures/gltf/generate.py
-cargo test --locked -p bedtime-plugin-model-viewer
-```
-
-Draco tests also use `gltf/LittlestTokyo.glb`, including its 71 compressed
-primitives, eight skinned meshes and four textures. Malformed-stream tests
-isolate a small primitive from that asset. Opt-in native GPU tests and the
-launcher's `viewers_smoke` example check rendering and lifecycle behavior separately
-from these loader fixtures.
-
-`LittlestTokyo.glb` is **Littlest Tokyo** by
-[glenatron](https://sketchfab.com/glenatron), licensed under
-[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-[Original model on Sketchfab](https://sketchfab.com/models/94b24a60dc1b48248de50bf087c0f042).
-It was obtained unchanged from the
-[three.js r180 mirror](https://github.com/mrdoob/three.js/blob/r180/examples/models/gltf/LittlestTokyo.glb),
-retaining the original attribution and licence in its asset metadata. The
-complete fixture is checked in so loader tests run without downloads. It is
-4,133,072 bytes; its SHA-256 is
-`8375c2aa6808e28ad1cb9c0d43e1513f57ffd7865244bf66bbbd5bb0e907e06d`.
-Attribution is also retained alongside the fixture in [gltf/licence.txt](gltf/licence.txt).
-
-`fonts/` retains Source Code Pro and DejaVu Sans only for font-viewer and SVG
-regressions, together with their licenses. They are not runtime assets and are
-not copied into desktop packages. Runtime fonts are exclusively Paper Mono.
+These are development assets. Packages embed their own runtime fonts, icons,
+models and environment maps with notices beside their owning libraries.

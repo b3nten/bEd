@@ -1,133 +1,57 @@
 [workspace]
 members = [
     "bed",
-    "bed2",
-    "bed2/crates/bed-structure2",
-    "bedtime2/crates/bedtime-treesitter2",
-    "bedtime2/crates/bedtime-grammars2",
-    "bedtime2/crates/bedtime-clipboard2",
-    "bedtime2/crates/bedtime-automation2",
-    "bedtime2/crates/bedtime-ui2",
-    "bedtime2/crates/bedtime-mascots2",
-    "bedtime2/crates/bedtime-editor2",
-    "bedtime2/crates/bedtime-document2",
-    "bedtime2/crates/bedtime-image2",
-    "bedtime2/crates/bedtime-model2",
-    "bedtime2/crates/bedtime-hex2",
-    "bedtime2/crates/bedtime-lsp2",
-    "bedtime2/crates/bedtime-workbench2",
-    "bedtime2/crates/bedtime-terminal2",
-    "bedtime2/crates/bedtime-filetree2",
-    "bedtime2/crates/bedtime-filesystem2",
-    "bedtime/crates/bedtime-sqlite",
-    "bedtime/crates/bedtime-keybindings",
-    "bedtime/crates/bedtime-plugin-automation",
-    "bedtime/crates/bedtime-plugin-idle",
-    "bedtime/crates/bedtime-editing",
-    "bedtime/crates/bedtime-files",
-    "bedtime/crates/bedtime-highlight",
-    "bedtime/crates/bedtime-lsp",
-    "bedtime/crates/bedtime-debugger",
-    "bedtime/crates/bedtime-documents",
-    "bedtime/crates/bedtime-remote",
-    "bedtime/crates/bedtime-remote-agent",
-    "bedtime/crates/bedtime-ui",
-    "bedtime/crates/bedtime-editor-widgets",
-    "bedtime/crates/bedtime-terminal",
-    "bedtime/crates/bedtime-plugin-effects",
-    "bedtime/crates/bedtime-api",
-    "bedtime/crates/bedtime-workbench",
-    "bedtime/crates/bedtime-desktop",
-    "bedtime/crates/bedtime-core",
-    "bedtime/crates/bedtime-storage",
-    "bedtime/crates/bedtime-plugin-layouts",
-    "bedtime/examples/layouts",
-    "bedtime/examples/terminal",
-    "bedtime/examples/editor",
-    "bedtime/examples/model",
-    "bedtime/examples/gameplay/game",
-    "bedtime/examples/gameplay/editor",
-    "bedtime/examples/gameplay/runtime",
-    "bedtime/crates/bedtime-plugin-editor",
-    "bedtime/crates/bedtime-plugin-debugger",
-    "bedtime/crates/bedtime-plugin-git",
+    "bed_old",
+    "bed_old/crates/bed-structure",
+    "bedtime/crates/bedtime-automation",
+    "bedtime/crates/bedtime-clipboard",
+    "bedtime/crates/bedtime-document",
+    "bedtime/crates/bedtime-editor",
+    "bedtime/crates/bedtime-filesystem",
+    "bedtime/crates/bedtime-filetree",
     "bedtime/crates/bedtime-git",
-    "bedtime/crates/bedtime-plugin-file-explorer",
-    "bedtime/crates/bedtime-plugin-file-search",
-    "bedtime/crates/bedtime-plugin-terminal",
-    "bedtime/crates/bedtime-plugin-workspaces",
-    "bedtime/crates/bedtime-plugin-color-picker",
-    "bedtime/crates/bedtime-plugin-mascots",
-    "bedtime/crates/bedtime-plugin-settings",
-    "bedtime/crates/bedtime-plugin-source-outline",
-    "bedtime/crates/bedtime-plugin-image-viewer",
-    "bedtime/crates/bedtime-plugin-model-viewer",
-    "bedtime/crates/bedtime-plugin-font-viewer",
-    "bedtime/crates/bedtime-plugin-audio-player",
-    "bedtime/crates/bedtime-plugin-csv-table",
-    "bedtime/crates/bedtime-plugin-markdown-preview",
-    "bedtime/crates/bedtime-plugin-json-tree",
-    "bedtime/crates/bedtime-plugin-sqlite-browser",
-    "bedtime/crates/bedtime-plugin-http-client",
-    "bedtime/crates/bedtime",
-    "bedtime/crates/bedtime-test-fixtures",
+    "bedtime/crates/bedtime-grammars",
+    "bedtime/crates/bedtime-hex",
+    "bedtime/crates/bedtime-image",
+    "bedtime/crates/bedtime-lsp",
+    "bedtime/crates/bedtime-mascots",
+    "bedtime/crates/bedtime-model",
+    "bedtime/crates/bedtime-terminal",
+    "bedtime/crates/bedtime-treesitter",
+    "bedtime/crates/bedtime-ui",
+    "bedtime/crates/bedtime-workbench",
 ]
 default-members = ["bed"]
-exclude = ["vendor/arboard", "vendor/dear-imgui-sys", "vendor/dear-imgui-wgpu", "vendor/egui", "vendor/freetype-sys", "vendor/rio-vt"]
+exclude = ["vendor/arboard", "vendor/egui", "vendor/rio-vt"]
 resolver = "3"
 
 [workspace.package]
 version = "0.1.0"
 license = "GPL-3.0-only"
 
-# Keep workspace code easy to debug while reducing dependency code and unwind
-# tables below macOS's compact-unwind limit. The test profile inherits this.
+# Optimize dependencies while keeping workspace code easy to debug.
 [profile.dev.package."*"]
 opt-level = 1
 
 [workspace.dependencies]
-bedtime-document2 = { path = "bedtime2/crates/bedtime-document2" }
-bedtime-model2 = { path = "bedtime2/crates/bedtime-model2" }
-bedtime-image2 = { path = "bedtime2/crates/bedtime-image2" }
-bedtime-hex2 = { path = "bedtime2/crates/bedtime-hex2" }
-bedtime-mascots2 = { path = "bedtime2/crates/bedtime-mascots2" }
-bedtime-grammars2 = { path = "bedtime2/crates/bedtime-grammars2" }
-bedtime-treesitter2 = { path = "bedtime2/crates/bedtime-treesitter2" }
-bed-structure2 = { path = "bed2/crates/bed-structure2" }
-bedtime-automation2 = { path = "bedtime2/crates/bedtime-automation2" }
-bedtime-clipboard2 = { path = "bedtime2/crates/bedtime-clipboard2", default-features = false }
-bedtime-ui2 = { path = "bedtime2/crates/bedtime-ui2" }
-bedtime-editor2 = { path = "bedtime2/crates/bedtime-editor2" }
-bedtime-lsp2 = { path = "bedtime2/crates/bedtime-lsp2" }
-bedtime-workbench2 = { path = "bedtime2/crates/bedtime-workbench2" }
-bedtime-terminal2 = { path = "bedtime2/crates/bedtime-terminal2" }
-bedtime-filetree2 = { path = "bedtime2/crates/bedtime-filetree2" }
-bedtime-filesystem2 = { path = "bedtime2/crates/bedtime-filesystem2" }
-bedtime-sqlite = { path = "bedtime/crates/bedtime-sqlite", version = "0.1.0" }
-bedtime-keybindings = { path = "bedtime/crates/bedtime-keybindings" }
-bedtime-plugin-idle = { path = "bedtime/crates/bedtime-plugin-idle" }
-bedtime-plugin-automation = { path = "bedtime/crates/bedtime-plugin-automation" }
-bedtime-desktop = { path = "bedtime/crates/bedtime-desktop" }
-bedtime-core = { path = "bedtime/crates/bedtime-core" }
-bedtime-storage = { path = "bedtime/crates/bedtime-storage" }
-bedtime-plugin-layouts = { path = "bedtime/crates/bedtime-plugin-layouts" }
+bedtime-document = { path = "bedtime/crates/bedtime-document" }
+bedtime-model = { path = "bedtime/crates/bedtime-model" }
+bedtime-image = { path = "bedtime/crates/bedtime-image" }
+bedtime-hex = { path = "bedtime/crates/bedtime-hex" }
+bedtime-mascots = { path = "bedtime/crates/bedtime-mascots" }
+bedtime-grammars = { path = "bedtime/crates/bedtime-grammars" }
+bedtime-treesitter = { path = "bedtime/crates/bedtime-treesitter" }
+bed-structure = { path = "bed_old/crates/bed-structure" }
+bedtime-automation = { path = "bedtime/crates/bedtime-automation" }
+bedtime-clipboard = { path = "bedtime/crates/bedtime-clipboard", default-features = false }
+bedtime-ui = { path = "bedtime/crates/bedtime-ui" }
+bedtime-editor = { path = "bedtime/crates/bedtime-editor" }
+bedtime-lsp = { path = "bedtime/crates/bedtime-lsp" }
 bedtime-workbench = { path = "bedtime/crates/bedtime-workbench" }
-bedtime-api = { path = "bedtime/crates/bedtime-api", default-features = false }
-bedtime-plugin-color-picker = { path = "bedtime/crates/bedtime-plugin-color-picker" }
-bedtime-plugin-mascots = { path = "bedtime/crates/bedtime-plugin-mascots" }
+bedtime-terminal = { path = "bedtime/crates/bedtime-terminal" }
+bedtime-filetree = { path = "bedtime/crates/bedtime-filetree" }
+bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
 bedtime-git = { path = "bedtime/crates/bedtime-git" }
-bedtime-plugin-git = { path = "bedtime/crates/bedtime-plugin-git" }
-bedtime = { path = "bedtime/crates/bedtime" }
-bedtime-editor-widgets = { path = "bedtime/crates/bedtime-editor-widgets" }
-bedtime-plugin-file-explorer = { path = "bedtime/crates/bedtime-plugin-file-explorer" }
-bedtime-plugin-file-search = { path = "bedtime/crates/bedtime-plugin-file-search" }
-bedtime-plugin-terminal = { path = "bedtime/crates/bedtime-plugin-terminal" }
-bedtime-plugin-workspaces = { path = "bedtime/crates/bedtime-plugin-workspaces", default-features = false }
-bedtime-plugin-settings = { path = "bedtime/crates/bedtime-plugin-settings" }
-dear-imgui-rs = { version = "=0.18.0", features = ["build-from-source", "freetype"] }
-dear-imgui-sys = { version = "=0.18.0", features = ["bundled-freetype"] }
-dear-imgui-wgpu = { version = "=0.18.0", default-features = false, features = ["wgpu-30"] }
-winit = "=0.30.13"
 wgpu = "=30.0.1"
 bevy = { version = "=0.20.0", default-features = false }
 egui = "=0.36.2"
@@ -137,13 +61,8 @@ arboard = { version = "=3.6.1", default-features = false, features = ["wayland-d
 rfd = "=0.17.2"
 serde_json = "1"
 pulldown-cmark = "=0.13.4"
-jsonc-parser = "=0.33.2"
-reqwest = { version = "=0.13.5", default-features = false, features = ["rustls", "http2", "system-proxy", "gzip", "brotli", "deflate"] }
-tokio = { version = "=1.53.2", features = ["rt", "sync", "time", "net", "macros"] }
 fontdb = { version = "=0.24.0", default-features = false, features = ["std", "fs", "fontconfig"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-harfrust = "=0.14.0"
-wuff = { version = "=0.2.9", default-features = false, features = ["brotli"] }
 flate2 = "=1.1.10"
 gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "extensions", "KHR_materials_unlit", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
 draco-core = { version = "=2.2.1", default-features = false, features = ["decoder", "edgebreaker_valence_decode", "legacy_bitstream_decode"] }
@@ -151,54 +70,22 @@ glam = "=0.33.12"
 bytemuck = { version = "=1.25.2", features = ["derive"] }
 base64 = "=0.22.1"
 serde = "=1.0.229"
-regex = "=1.12.3"
-glob = "=0.3.4"
-globset = "=0.4.18"
 resvg = { version = "=0.48.1", default-features = false }
-git2 = { version = "=0.21.0", default-features = false, features = ["vendored-libgit2"] }
 rio-vt = { version = "=0.5.28", default-features = false, features = ["graphics"] }
 rio-graphics = "=0.5.28"
-swash = "=0.2.10"
-ttf-parser = "=0.25.1"
 polling = "=3.11.0"
 unicode-width = "=0.2.2"
 trash = "=5.2.9"
 rodio = { version = "=0.21.1", default-features = false, features = ["playback", "symphonia-all"] }
-object = { version = "=0.37.3", default-features = false, features = ["read", "std"] }
-chrono = { version = "=0.4.45", default-features = false, features = ["std"] }
 libc = "=0.2.190"
 muda = { version = "=0.21.0", default-features = false }
 objc2 = "=0.6.5"
 objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSGeometry", "NSObject", "NSThread", "NSObjCRuntime"] }
 objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "AppKitDefines", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSEvent", "NSFont", "NSFontDescriptor", "NSGraphics", "NSGraphicsContext", "NSImage", "NSLayoutAnchor", "NSLayoutConstraint", "NSResponder", "NSStackView", "NSText", "NSTextField", "NSTitlebarAccessoryViewController", "NSUserInterfaceLayout", "NSView", "NSViewController", "NSVisualEffectView", "NSWindow", "objc2-quartz-core", "objc2-core-graphics", "objc2-core-foundation"] }
 objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
-bedtime-plugin-editor = { path = "bedtime/crates/bedtime-plugin-editor" }
-bedtime-plugin-debugger = { path = "bedtime/crates/bedtime-plugin-debugger" }
-bedtime-editing = { path = "bedtime/crates/bedtime-editing" }
-bedtime-files = { path = "bedtime/crates/bedtime-files" }
-bedtime-highlight = { path = "bedtime/crates/bedtime-highlight" }
-bedtime-lsp = { path = "bedtime/crates/bedtime-lsp" }
-bedtime-documents = { path = "bedtime/crates/bedtime-documents" }
-bedtime-ui = { path = "bedtime/crates/bedtime-ui", default-features = false }
-bedtime-terminal = { path = "bedtime/crates/bedtime-terminal" }
-bedtime-debugger = { path = "bedtime/crates/bedtime-debugger" }
-bedtime-plugin-effects = { path = "bedtime/crates/bedtime-plugin-effects" }
-bedtime-remote = { path = "bedtime/crates/bedtime-remote" }
-bedtime-plugin-source-outline = { path = "bedtime/crates/bedtime-plugin-source-outline" }
-bedtime-plugin-image-viewer = { path = "bedtime/crates/bedtime-plugin-image-viewer" }
-bedtime-plugin-model-viewer = { path = "bedtime/crates/bedtime-plugin-model-viewer" }
-bedtime-plugin-font-viewer = { path = "bedtime/crates/bedtime-plugin-font-viewer" }
-bedtime-plugin-audio-player = { path = "bedtime/crates/bedtime-plugin-audio-player" }
-bedtime-plugin-csv-table = { path = "bedtime/crates/bedtime-plugin-csv-table" }
-bedtime-plugin-markdown-preview = { path = "bedtime/crates/bedtime-plugin-markdown-preview" }
-bedtime-plugin-json-tree = { path = "bedtime/crates/bedtime-plugin-json-tree" }
-bedtime-plugin-sqlite-browser = { path = "bedtime/crates/bedtime-plugin-sqlite-browser" }
-bedtime-plugin-http-client = { path = "bedtime/crates/bedtime-plugin-http-client" }
 
 [patch.crates-io]
 bevy_render = { path = "vendor/bevy_render" }
 egui = { path = "vendor/egui" }
 rio-vt = { path = "vendor/rio-vt" }
 arboard = { path = "vendor/arboard" }
-dear-imgui-sys = { path = "vendor/dear-imgui-sys" }
-dear-imgui-wgpu = { path = "vendor/dear-imgui-wgpu" }

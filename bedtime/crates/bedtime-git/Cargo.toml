@@ -13,4 +13,4 @@ libc = { workspace = true }
 
 [[test]]
 name = "regressions"
-path = "../../tests/integration/git/regressions.rs"
+path = "tests/regressions.rs"

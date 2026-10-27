@@ -12,3 +12,5 @@ __pycache__/
 *.pyc
 
 .bed
+# Local reference checkout retained outside the maintained source tree.
+/references/zed/
