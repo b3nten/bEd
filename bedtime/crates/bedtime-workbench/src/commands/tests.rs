@@ -1,0 +1,373 @@
+use super::*;
+use crate::{Workbench, WorkbenchCorePlugin, tests::TestPanels};
+
+const CTRL_F: KeyChord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyF);
+
+struct Find;
+impl ContextCommand for Find {
+    const KEY: &'static str = "edit.find";
+    const LABEL: &'static str = "Find";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[CTRL_F];
+}
+
+struct ToggleBackfaces;
+impl ContextCommand for ToggleBackfaces {
+    const KEY: &'static str = "model.toggle_backfaces";
+    const LABEL: &'static str = "Toggle Backfaces";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[CTRL_F];
+}
+
+struct Zoom;
+impl ContextCommand for Zoom {
+    const KEY: &'static str = "view.zoom";
+    const LABEL: &'static str = "Zoom";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::Equal)];
+    const REPEATS: bool = true;
+}
+
+/// Who ran: the command, and whether it was the panel's handler.
+#[derive(Resource, Default)]
+struct Calls(Vec<(&'static str, &'static str, Option<Entity>)>);
+
+fn record(world: &mut World, command: &'static str, scope: &'static str, panel: Option<Entity>) {
+    world
+        .resource_mut::<Calls>()
+        .0
+        .push((command, scope, panel));
+}
+
+fn find_global(world: &mut World, i: ContextCommandInvocation) -> ContextCommandResult {
+    record(world, "find", "global", i.panel);
+    Ok(())
+}
+fn find_in_panel(world: &mut World, i: ContextCommandInvocation) -> ContextCommandResult {
+    record(world, "find", "panel", i.panel);
+    Ok(())
+}
+fn toggle_in_panel(world: &mut World, i: ContextCommandInvocation) -> ContextCommandResult {
+    record(world, "toggle", "panel", i.panel);
+    Ok(())
+}
+fn zoom(world: &mut World, i: ContextCommandInvocation) -> ContextCommandResult {
+    record(world, "zoom", "global", i.panel);
+    Ok(())
+}
+
+fn app() -> App {
+    let mut app = App::new();
+    app.add_plugins(WorkbenchCorePlugin)
+        .init_resource::<Calls>()
+        .register_command::<Find>()
+        .register_command::<ToggleBackfaces>()
+        .add_command_handler::<Zoom>(zoom);
+    crate::tests::layout(app.world_mut());
+    app
+}
+
+fn panel(app: &mut App) -> Entity {
+    let mut workbench = Workbench::new(app.world_mut());
+    let layout = workbench.active_layout();
+    workbench.create_panel(layout, "Panel").unwrap()
+}
+
+fn press(app: &mut App, chord: KeyChord, repeat: bool) {
+    app.world_mut()
+        .resource_mut::<BindingInput>()
+        .0
+        .push(BindingPress {
+            chord,
+            repeat,
+            context: InvocationContext::Focused,
+        });
+    app.update();
+}
+
+fn calls(app: &mut App) -> Vec<(&'static str, &'static str, Option<Entity>)> {
+    std::mem::take(&mut app.world_mut().resource_mut::<Calls>().0)
+}
+
+fn results(app: &mut App) -> Vec<ContextCommandResult> {
+    app.world_mut()
+        .resource_mut::<Messages<ContextCommandFinished>>()
+        .drain()
+        .map(|finished| finished.result)
+        .collect()
+}
+
+#[test]
+fn a_shared_chord_runs_the_command_handled_in_the_most_specific_scope() {
+    let mut app = app();
+    let editor = panel(&mut app);
+    app.world_mut()
+        .entity_mut(editor)
+        .insert(CommandHandler::<Find>::new(find_in_panel));
+    let viewer = panel(&mut app);
+    app.world_mut()
+        .entity_mut(viewer)
+        .insert(CommandHandler::<ToggleBackfaces>::new(toggle_in_panel));
+    let neither = panel(&mut app);
+
+    Workbench::new(app.world_mut()).focus_panel(editor).unwrap();
+    press(&mut app, CTRL_F, false);
+    assert_eq!(calls(&mut app), [("find", "panel", Some(editor))]);
+
+    Workbench::new(app.world_mut()).focus_panel(viewer).unwrap();
+    press(&mut app, CTRL_F, false);
+    assert_eq!(calls(&mut app), [("toggle", "panel", Some(viewer))]);
+
+    // Nothing handles either command here, and there's no global handler.
+    Workbench::new(app.world_mut())
+        .focus_panel(neither)
+        .unwrap();
+    press(&mut app, CTRL_F, false);
+    assert!(calls(&mut app).is_empty());
+
+    // With a global Find, it runs where no panel claims the chord...
+    app.world_mut()
+        .resource_mut::<CommandRegistry>()
+        .set_global_handler::<Find>(Some(find_global));
+    press(&mut app, CTRL_F, false);
+    assert_eq!(calls(&mut app), [("find", "global", Some(neither))]);
+    // ...but the viewer's own command still beats it.
+    Workbench::new(app.world_mut()).focus_panel(viewer).unwrap();
+    press(&mut app, CTRL_F, false);
+    assert_eq!(calls(&mut app), [("toggle", "panel", Some(viewer))]);
+}
+
+#[test]
+fn a_panel_handling_two_commands_on_one_chord_is_a_conflict() {
+    let mut app = app();
+    let panel = panel(&mut app);
+    app.world_mut().entity_mut(panel).insert((
+        CommandHandler::<Find>::new(find_in_panel),
+        CommandHandler::<ToggleBackfaces>::new(toggle_in_panel),
+    ));
+    press(&mut app, CTRL_F, false);
+    assert!(calls(&mut app).is_empty());
+    let conflicts: Vec<_> = app
+        .world_mut()
+        .resource_mut::<Messages<BindingConflict>>()
+        .drain()
+        .collect();
+    assert_eq!(conflicts.len(), 1);
+    assert_eq!(conflicts[0].commands.len(), 2);
+
+    // Rebinding one of them resolves it.
+    app.world_mut().resource_mut::<Keybindings>().set(
+        ContextCommandId::of::<ToggleBackfaces>(),
+        vec![KeyChord::new(Modifiers::CONTROL, KeyCode::KeyB)],
+    );
+    press(&mut app, CTRL_F, false);
+    assert_eq!(calls(&mut app), [("find", "panel", Some(panel))]);
+}
+
+#[test]
+fn a_panel_handler_wins_and_a_disabled_one_blocks_the_global_handler() {
+    let mut app = app();
+    app.world_mut()
+        .resource_mut::<CommandRegistry>()
+        .set_global_handler::<Find>(Some(find_global));
+    let panel = panel(&mut app);
+    app.world_mut()
+        .entity_mut(panel)
+        .insert(CommandHandler::<Find>::new(find_in_panel));
+    let invoke = |app: &mut App, context| {
+        app.world_mut()
+            .resource_mut::<ContextCommandRequests>()
+            .submit(ContextCommandRequest {
+                command: ContextCommandId::of::<Find>(),
+                context,
+            });
+        app.update();
+    };
+    invoke(&mut app, InvocationContext::Focused);
+    invoke(&mut app, InvocationContext::Global);
+    assert_eq!(
+        calls(&mut app),
+        [("find", "panel", Some(panel)), ("find", "global", None)]
+    );
+
+    app.world_mut()
+        .get_mut::<CommandHandler<Find>>(panel)
+        .unwrap()
+        .enabled = false;
+    let world = app.world();
+    let find = ContextCommandId::of::<Find>();
+    assert!(!command_available(world, &find, InvocationContext::Focused));
+    assert!(command_available(world, &find, InvocationContext::Global));
+    invoke(&mut app, InvocationContext::Focused);
+    assert!(calls(&mut app).is_empty());
+    assert!(results(&mut app).last().unwrap().is_err());
+
+    app.world_mut()
+        .entity_mut(panel)
+        .remove::<CommandHandler<Find>>();
+    invoke(&mut app, InvocationContext::Focused);
+    assert_eq!(calls(&mut app), [("find", "global", Some(panel))]);
+}
+
+#[test]
+fn requests_run_in_order_and_requests_from_handlers_run_next_frame() {
+    fn again(world: &mut World, i: ContextCommandInvocation) -> ContextCommandResult {
+        record(world, "find", "global", i.panel);
+        world
+            .resource_mut::<ContextCommandRequests>()
+            .invoke::<Zoom>();
+        Err("Not found".into())
+    }
+    let mut app = app();
+    app.world_mut()
+        .resource_mut::<CommandRegistry>()
+        .set_global_handler::<Find>(Some(again));
+    let mut requests = app.world_mut().resource_mut::<ContextCommandRequests>();
+    requests.invoke::<Zoom>();
+    requests.invoke::<Find>();
+    app.update();
+    let names: Vec<_> = calls(&mut app).into_iter().map(|call| call.0).collect();
+    assert_eq!(names, ["zoom", "find"]);
+    assert_eq!(results(&mut app), [Ok(()), Err("Not found".into())]);
+    app.update();
+    assert_eq!(calls(&mut app).len(), 1);
+}
+
+#[test]
+fn held_keys_repeat_only_commands_that_repeat_and_modifiers_match_exactly() {
+    let mut app = app();
+    let zoom = KeyChord::primary(KeyCode::Equal);
+    press(&mut app, zoom.resolved(), false);
+    press(&mut app, zoom, true);
+    assert_eq!(calls(&mut app).len(), 2);
+    press(
+        &mut app,
+        KeyChord::new(Modifiers::PRIMARY | Modifiers::SHIFT, KeyCode::Equal),
+        false,
+    );
+    assert!(calls(&mut app).is_empty());
+
+    app.world_mut()
+        .resource_mut::<CommandRegistry>()
+        .set_global_handler::<Find>(Some(find_global));
+    press(&mut app, CTRL_F, true);
+    assert!(calls(&mut app).is_empty());
+}
+
+#[test]
+fn menu_hints_show_the_chord_that_would_run_the_command() {
+    let mut app = app();
+    let panel = panel(&mut app);
+    app.world_mut()
+        .entity_mut(panel)
+        .insert(CommandHandler::<ToggleBackfaces>::new(toggle_in_panel));
+    app.world_mut()
+        .resource_mut::<CommandRegistry>()
+        .set_global_handler::<Find>(Some(find_global));
+    let world = app.world();
+    let find = ContextCommandId::of::<Find>();
+    // Ctrl+F toggles backfaces in this panel, so Find shows no shortcut here.
+    assert_eq!(shortcut_for(world, &find, InvocationContext::Focused), None);
+    assert_eq!(
+        shortcut_for(world, &find, InvocationContext::Global),
+        Some(CTRL_F)
+    );
+}
+
+#[test]
+#[should_panic(expected = "Two commands use the key")]
+fn two_commands_cannot_share_a_key() {
+    struct Impostor;
+    impl ContextCommand for Impostor {
+        const KEY: &'static str = Find::KEY;
+        const LABEL: &'static str = "Impostor";
+    }
+    app().register_command::<Impostor>();
+}
+
+#[cfg(feature = "persistence")]
+mod keybinding_settings {
+    use super::*;
+    use crate::persistence::{StoreId, WorkbenchStore};
+    use crate::settings::{SettingsAppExt, clear_setting, set_setting};
+
+    struct GlobalStore;
+    impl crate::persistence::Store for GlobalStore {}
+
+    #[test]
+    fn chords_read_and_write_as_portable_text() {
+        for text in [
+            "Primary+S",
+            "Primary+Shift+Z",
+            "Ctrl+Alt+Enter",
+            "F5",
+            "Meta+1",
+        ] {
+            let chord: KeyChord = text.parse().unwrap();
+            assert_eq!(chord.to_string(), text);
+        }
+        assert_eq!(
+            "cmd+shift+z".parse::<KeyChord>().unwrap(),
+            KeyChord::new(Modifiers::META | Modifiers::SHIFT, KeyCode::KeyZ)
+        );
+        assert!("Primary+".parse::<KeyChord>().is_err());
+        assert!("Hyper+S".parse::<KeyChord>().is_err());
+        assert!("Primary+Banana".parse::<KeyChord>().is_err());
+        assert_eq!(
+            ron::to_string(&KeyChord::primary(KeyCode::KeyS)).unwrap(),
+            "\"Primary+S\""
+        );
+    }
+
+    #[test]
+    fn a_layer_replaces_a_commands_keys_and_an_empty_list_unbinds_it() {
+        let mut app = app();
+        app.add_settings_layer::<GlobalStore>()
+            .add_settings_layer::<WorkbenchStore>();
+        app.update();
+        let (global, workspace) = (
+            StoreId::of::<GlobalStore>(),
+            StoreId::of::<WorkbenchStore>(),
+        );
+        let find = ContextCommandId::of::<Find>();
+        let keys = |app: &App| app.world().resource::<Keybindings>().keys(&find).to_vec();
+        let ctrl = |key| KeyChord::new(Modifiers::CONTROL, key);
+        assert_eq!(keys(&app), [CTRL_F]);
+
+        let world = app.world_mut();
+        set_setting::<Keybinding<Find>>(world, global, vec![ctrl(KeyCode::KeyB)]).unwrap();
+        set_setting::<Keybinding<Find>>(world, workspace, vec![ctrl(KeyCode::KeyD)]).unwrap();
+        assert_eq!(keys(&app), [ctrl(KeyCode::KeyD)], "not both");
+
+        let world = app.world_mut();
+        set_setting::<Keybinding<Find>>(world, workspace, vec![]).unwrap();
+        assert!(keys(&app).is_empty());
+        clear_setting::<Keybinding<Find>>(app.world_mut(), workspace).unwrap();
+        assert_eq!(keys(&app), [ctrl(KeyCode::KeyB)]);
+
+        // The same, for UIs that only have the command's id.
+        assert_eq!(keys_in(app.world(), &find, workspace), None);
+        set_keys_in(app.world_mut(), &find, workspace, Some(vec![CTRL_F])).unwrap();
+        assert_eq!(keys_in(app.world(), &find, workspace), Some(vec![CTRL_F]));
+        assert_eq!(keys(&app), [CTRL_F]);
+        set_keys_in(app.world_mut(), &find, global, None).unwrap();
+        assert_eq!(keys_in(app.world(), &find, global), None);
+    }
+}
+
+#[cfg(feature = "ui")]
+#[test]
+fn requests_made_while_drawing_run_in_the_same_frame() {
+    let mut app = App::new();
+    app.add_plugins((WorkbenchCorePlugin, crate::WorkbenchUiPlugin))
+        .init_resource::<Calls>()
+        .add_command_handler::<Zoom>(zoom)
+        .add_systems(
+            PreUpdate,
+            (|world: &mut World| {
+                world
+                    .resource_mut::<ContextCommandRequests>()
+                    .invoke::<Zoom>();
+            })
+            .in_set(bedtime_ui::UiSystems::Draw),
+        );
+    app.update();
+    assert_eq!(calls(&mut app).len(), 1);
+}

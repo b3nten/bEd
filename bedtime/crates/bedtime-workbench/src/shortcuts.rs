@@ -46,11 +46,9 @@ fn collect(world: &mut World) {
     let text = capture.text || ctx.text_edit_focused();
     let mut seen = HashSet::new();
     let mut chords: Vec<_> = world
-        .query::<(Entity, &Binding, Option<&InPanel>)>()
-        .iter(world)
-        .filter(|(_, _, scope)| scope.is_none_or(|scope| Some(scope.0) == panel))
-        .filter_map(|(_, binding, _)| {
-            let chord = KeyChord::new(binding.chord.modifiers.resolved(), binding.chord.key);
+        .resource::<Keybindings>()
+        .chords()
+        .filter_map(|chord| {
             let key = bevy_to_egui_physical_key(&chord.key)?;
             if !seen.insert(chord) || text && conflicts_with_text(key, chord.modifiers) {
                 return None;
@@ -182,25 +180,34 @@ mod tests {
         const KEY: &'static str = "test.other";
         const LABEL: &'static str = "Other";
     }
+    struct Repeating;
+    impl ContextCommand for Repeating {
+        const KEY: &'static str = "test.repeating";
+        const LABEL: &'static str = "Repeating";
+        const REPEATS: bool = true;
+    }
     #[derive(Resource, Default)]
     struct Calls(Vec<ContextCommandId>);
 
-    fn record(
-        invocation: In<ContextCommandInvocation>,
-        mut calls: ResMut<Calls>,
-    ) -> ContextCommandResult {
-        calls.0.push(invocation.command.clone());
+    fn record(world: &mut World, invocation: ContextCommandInvocation) -> ContextCommandResult {
+        world.resource_mut::<Calls>().0.push(invocation.command);
         Ok(())
+    }
+
+    fn bind<C: ContextCommand>(app: &mut App, chord: KeyChord) {
+        app.world_mut()
+            .resource_mut::<Keybindings>()
+            .set(ContextCommandId::of::<C>(), vec![chord]);
     }
 
     fn app() -> (App, Entity, egui::Context) {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin))
-            .init_resource::<Calls>();
+            .init_resource::<Calls>()
+            .add_command_handler::<Save>(record)
+            .add_command_handler::<Other>(record)
+            .add_command_handler::<Repeating>(record);
         crate::tests::layout(app.world_mut());
-        let mut workbench = Workbench::new(app.world_mut());
-        workbench.register_handler::<Save, _>(record).unwrap();
-        workbench.register_handler::<Other, _>(record).unwrap();
         let surface = app
             .world_mut()
             .spawn((
@@ -276,13 +283,9 @@ mod tests {
     #[test]
     fn world_shortcut_collection_continues_after_the_last_layout_is_removed() {
         let (mut app, surface, ctx) = app();
-        let world = app.world_mut();
-        let layout = active_layout(world).unwrap();
-        world.despawn(layout);
-        world.spawn(Binding::new::<Save>(KeyChord::new(
-            Modifiers::PRIMARY,
-            KeyCode::KeyS,
-        )));
+        let layout = active_layout(app.world()).unwrap();
+        app.world_mut().despawn(layout);
+        bind::<Save>(&mut app, KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS));
         frame(
             &mut app,
             surface,
@@ -299,13 +302,7 @@ mod tests {
     #[test]
     fn widget_consumption_and_binding_repeat_policy_are_respected() {
         let (mut app, surface, ctx) = app();
-        let binding = app
-            .world_mut()
-            .spawn(Binding::new::<Save>(KeyChord::new(
-                Modifiers::PRIMARY,
-                KeyCode::KeyS,
-            )))
-            .id();
+        bind::<Save>(&mut app, KeyChord::primary(KeyCode::KeyS));
         frame(
             &mut app,
             surface,
@@ -322,7 +319,9 @@ mod tests {
             |_| {},
         );
         assert_eq!(app.world().resource::<Calls>().0.len(), 1);
-        app.world_mut().get_mut::<Binding>(binding).unwrap().repeat = true;
+        // Only commands that repeat run again while the keys are held.
+        bind::<Save>(&mut app, KeyChord::primary(KeyCode::KeyX));
+        bind::<Repeating>(&mut app, KeyChord::primary(KeyCode::KeyS));
         frame(
             &mut app,
             surface,
@@ -348,10 +347,7 @@ mod tests {
     #[test]
     fn exact_modifiers_and_event_order_survive_egui_shortcut_consumption() {
         let (mut app, surface, ctx) = app();
-        app.world_mut().spawn(Binding::new::<Save>(KeyChord::new(
-            Modifiers::PRIMARY,
-            KeyCode::KeyS,
-        )));
+        bind::<Save>(&mut app, KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS));
         let shifted = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
         frame(
             &mut app,
@@ -361,10 +357,10 @@ mod tests {
             |_| {},
         );
         assert!(app.world().resource::<Calls>().0.is_empty());
-        app.world_mut().spawn(Binding::new::<Other>(KeyChord::new(
-            Modifiers::PRIMARY | Modifiers::SHIFT,
-            KeyCode::KeyS,
-        )));
+        bind::<Other>(
+            &mut app,
+            KeyChord::new(Modifiers::PRIMARY | Modifiers::SHIFT, KeyCode::KeyS),
+        );
         frame(
             &mut app,
             surface,
@@ -411,17 +407,15 @@ mod tests {
     #[test]
     fn text_editing_reserves_noop_edits_and_enter_but_allows_save() {
         let (mut app, surface, ctx) = app();
-        for chord in [
-            KeyChord::new(Modifiers::default(), KeyCode::Delete),
-            KeyChord::new(Modifiers::default(), KeyCode::Enter),
-            KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyC),
-        ] {
-            app.world_mut().spawn(Binding::new::<Other>(chord));
-        }
-        app.world_mut().spawn(Binding::new::<Save>(KeyChord::new(
-            Modifiers::PRIMARY,
-            KeyCode::KeyS,
-        )));
+        app.world_mut().resource_mut::<Keybindings>().set(
+            ContextCommandId::of::<Other>(),
+            vec![
+                KeyChord::new(Modifiers::default(), KeyCode::Delete),
+                KeyChord::new(Modifiers::default(), KeyCode::Enter),
+                KeyChord::primary(KeyCode::KeyC),
+            ],
+        );
+        bind::<Save>(&mut app, KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS));
         let id = egui::Id::new("text");
         let mut text = String::new();
         ctx.memory_mut(|memory| memory.request_focus(id));
@@ -471,10 +465,7 @@ mod tests {
     #[test]
     fn modals_and_unfocused_workbench_windows_block_shortcuts() {
         let (mut app, surface, ctx) = app();
-        app.world_mut().spawn(Binding::new::<Save>(KeyChord::new(
-            Modifiers::PRIMARY,
-            KeyCode::KeyS,
-        )));
+        bind::<Save>(&mut app, KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS));
         frame(
             &mut app,
             surface,

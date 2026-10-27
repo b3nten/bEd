@@ -1,6 +1,7 @@
 use bedtime_ui::{BuiltinIcon, UiContext, UiPlugin, egui};
 use bedtime_workbench::{
-    PanelFactory, Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface, panel_drag_source,
+    ContextCommandId, ContextCommandRequests, InvocationContext, PanelFactory, Titlebar,
+    WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface, panel_drag_source,
     persistence::{DirectoryStore, StoreAppExt, WorkbenchStore},
     settings::SettingsAppExt,
 };
@@ -12,7 +13,7 @@ mod panels;
 mod settings;
 mod workspace;
 
-use settings::SettingsPanel;
+use settings::{OpenSettings, SettingsPanel};
 
 fn main() -> AppExit {
     let config = config_directory();
@@ -121,13 +122,20 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
             .frame(ui)
             .icon_button_sized(BuiltinIcon::Settings, 16.0)
             .interact(egui::Sense::click_and_drag());
-        context.frame(ui).tooltip(&response, "Settings");
-        let factory = PanelFactory::of::<SettingsPanel>();
-        panel_drag_source(&response, factory.clone());
-        if response.clicked()
-            && let Err(error) = panels::open_panel::<SettingsPanel>(world, (), factory)
-        {
-            warn!("Cannot open settings: {error}");
+        let shortcut = bedtime_workbench::shortcut_for(
+            world,
+            &ContextCommandId::of::<OpenSettings>(),
+            InvocationContext::Global,
+        );
+        let tooltip = shortcut.map_or("Settings".into(), |chord| {
+            format!("Settings ({})", chord.label())
+        });
+        context.frame(ui).tooltip(&response, tooltip);
+        panel_drag_source(&response, PanelFactory::of::<SettingsPanel>());
+        if response.clicked() {
+            world
+                .resource_mut::<ContextCommandRequests>()
+                .invoke::<OpenSettings>();
         }
     });
 }

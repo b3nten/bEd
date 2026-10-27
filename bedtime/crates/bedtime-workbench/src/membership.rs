@@ -4,9 +4,6 @@ use bevy::{
     ecs::{lifecycle::HookContext, world::DeferredWorld},
     prelude::*,
 };
-pub(crate) fn member_changed(mut world: DeferredWorld, context: HookContext) {
-    crate::commands::handler_scope_changed(&mut world, context.entity);
-}
 /// Relationship hooks queue one coherent maintenance operation. They do not
 /// execute application initialization, I/O, or close negotiation.
 pub(crate) fn panel_inserted(mut world: DeferredWorld, context: HookContext) {

@@ -1,7 +1,7 @@
 //! Abstract ordered menus. Native and egui presenters use the same snapshots.
 use crate::{
     ContextCommandId, ContextCommandRequest, InvocationContext, Invokes, KeyChord,
-    commands::shortcut_for,
+    command_available, shortcut_for,
 };
 use bevy::prelude::*;
 use std::collections::HashSet;
@@ -94,7 +94,6 @@ impl MenuSnapshot {
                 } if *entity == source && *enabled && *current == Some(target.clone()) => {
                     Some(ContextCommandRequest {
                         command: target.clone(),
-                        source: Some(source),
                         context: *context,
                     })
                 }
@@ -106,7 +105,7 @@ impl MenuSnapshot {
 }
 
 /// Snapshot a menu bar or contextual menu root. No native window is required.
-/// Root/descendant InvocationContext components override the supplied context.
+/// InvocationContext components on the root or its entries override `context`.
 pub fn menu_snapshot(
     world: &mut World,
     root: Entity,
@@ -115,9 +114,6 @@ pub fn menu_snapshot(
     if world.get::<MenuBar>(root).is_none() && world.get::<Menu>(root).is_none() {
         return Err("Menu root is unavailable".into());
     }
-    let context = world
-        .get::<crate::InPanel>(root)
-        .map_or(context, |p| InvocationContext::Panel(p.0));
     let context = capture_context(world, context);
     let mut visited = HashSet::from([root]);
     let entries = read_entries(world, root, &mut visited, context)?;
@@ -156,14 +152,6 @@ fn read_entries(
         .map_or_else(Vec::new, |e| e.0.clone());
     let mut entries = Vec::new();
     for entity in children {
-        // Panel-owned entries participate only in that panel's menu context.
-        // Both presenters use this snapshot, including native activation checks.
-        if world
-            .get::<crate::InPanel>(entity)
-            .is_some_and(|owner| context != InvocationContext::Panel(owner.0))
-        {
-            continue;
-        }
         if !visited.insert(entity) {
             return Err("Menus must form an acyclic tree".into());
         }
@@ -193,19 +181,12 @@ fn read_entries(
                 }
                 let target = world.get::<Invokes>(entity).map(|a| a.0.clone());
                 let enabled = item.enabled
-                    && target.clone().is_some_and(|t| {
-                        crate::commands::resolve(
-                            world,
-                            ContextCommandRequest {
-                                command: t,
-                                source: Some(entity),
-                                context,
-                            },
-                        )
-                        .1
-                        .is_ok()
-                    });
-                let shortcut = target.clone().and_then(|t| shortcut_for(world, t, context));
+                    && target
+                        .as_ref()
+                        .is_some_and(|t| command_available(world, t, context));
+                let shortcut = target
+                    .as_ref()
+                    .and_then(|t| shortcut_for(world, t, context));
                 entries.push(MenuNode::Item {
                     entity,
                     label: item.label,

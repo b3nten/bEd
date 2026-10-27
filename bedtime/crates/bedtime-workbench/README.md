@@ -75,7 +75,7 @@ Hooks maintain order and nearby selection/focus fallbacks immediately when
 relationships apply. Reconciliation validates the graph and stale gestures; it is
 not deferred panel initialization.
 
-`InLayout`/`LayoutAreas`, `InArea`/`AreaPanels` and `InPanel`/`PanelCommandParts`
+`InLayout`/`LayoutAreas` and `InArea`/`AreaPanels`
 are linked Bevy relationships. Retiring a layout retires its areas and panels.
 `Workbench::relocate_panel` moves between layouts while retaining document links
 and managed work. Closing the last viewer retains the canonical document.
@@ -561,65 +561,58 @@ can instead call `shutdown_work(world)` and keep updating until
 Dropping the World alone is a fallback, not orderly shutdown. Tasks must return
 after cancellation.
 
-## ContextCommands, handlers and bindings
+## Commands, handlers and keybindings
 
-`ContextCommand` declares a namespaced KEY and LABEL. `ContextCommandId` is the
-serializable string identity; Rust TypeId and handler entity numbers are not
-part of identity. Definitions, bindings, handlers and menu placements are
-independent. Typed helpers are conveniences for constructing the same stable ID.
+A command is a marker type with a stable dotted `KEY`, a `LABEL`, and optional
+`DEFAULT_KEYS` and `REPEATS` (whether held keys run it again).
 
 ```rust,ignore
 struct Save;
 impl ContextCommand for Save {
-    const KEY: &'static str = "example.save";
+    const KEY: &'static str = "document.save";
     const LABEL: &'static str = "Save";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyS)];
 }
-register_context_command::<Save>(world)?; // Metadata, independent of handlers.
-install_global_handler::<Save, _>(world, save_application)?;
-install_panel_handler::<Save, _>(world, panel, save_panel)?;
-world.spawn(Binding::new::<Save>(KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS)));
-world.spawn((MenuItem::new("Save"), InMenu(file_menu), Invokes::of::<Save>()));
+
+app.register_command::<Save>();              // known, bindable, listed
+app.add_command_handler::<Save>(save_focused); // also sets its global handler
+commands.spawn((MyEditor, CommandHandler::<Save>::new(save_editor))); // panel handler
 ```
 
-Installing a handler does not register command metadata. Definition registration
-and handler installation work without a selected layout. One handler per command
-and scope is permitted. `Workbench::register_handler` installs a world handler;
-the free `install_global_handler` installs a world handler. As a direct function
-alternative to Bevy system handlers, attach `CommandHandler::<Save>::new(call)`
-to its panel (or an unscoped entity for world scope). This installs no
-command definition and runs no application code during composition. A panel's
-`InPanel` ownership retires separately owned handlers, bindings and menu roots
-when the panel closes. Menu descendants inherit their root's lifetime.
+There is one kind of handler, `fn(&mut World, ContextCommandInvocation) ->
+ContextCommandResult`. A command has at most one global handler, kept in
+`CommandRegistry` (`set_global_handler::<C>`), and any panel may carry a
+`CommandHandler<C>` component. When a command runs for a panel, that panel's
+handler wins; otherwise the global handler runs, and is told the panel too. A
+disabled panel handler makes the command unavailable in that panel rather
+than falling back.
 
-Bindings form a nearest-scope overlay by chord: panel, then world.
-Handler lookup independently follows panel → world by command ID.
-A world binding can use a panel handler; a panel binding can use a world handler.
-Disabled local handlers block fallback. Handler errors and stale admitted targets
-never reroute to another handler/binding. Admission captures handler generation and
-scope identity, so replaced or retargeted handlers reject an old request rather
-than executing the new capability under stale admission.
+`Keybindings` is a plain table from command to chords, filled with each
+command's defaults on registration. With the `persistence` feature, each
+command's chords are also the setting `keys.<KEY>` (`Keybinding<C>`), so they
+live in settings layers like any other setting: a higher layer's list replaces
+lower ones for that command, and an empty list unbinds it. Chords are written
+portably, e.g. `"Primary+Shift+Z"` (Primary is Cmd on macOS, Ctrl elsewhere).
+`keys_in` and `set_keys_in` read and write one layer's chords by command id, for
+settings UIs.
 
-Modifiers match exactly; PRIMARY resolves to Cmd on macOS and Ctrl elsewhere.
-Chords retain physical Bevy KeyCode identity. Repeats default to disabled. A
-selected binding reserves its input even when unavailable. Same-scope conflicts
-reserve the chord, execute nothing and publish `BindingConflict`.
+Commands may share a chord. Pressing it runs the bound command handled in the
+most specific scope: the focused panel, then global. If the same scope handles
+several of them, nothing runs and `BindingConflict` is sent. Modifiers match
+exactly.
 
-The resource `ContextCommandRequests` accepts typed `invoke::<Save>()`,
-`invoke_id(id)` or requests with `InvocationContext::{Focused, Global, Panel(entity)}`.
-Dispatch admits one batch before execution, captures panel/handler targets and
-generations, checks availability and publishes `ContextCommandFinished`.
-Follow-ups wait for the next dispatch; requests submitted after PreUpdate dispatch
-execute next frame.
+`ContextCommandRequests` queues commands (`invoke::<Save>()`, or a request with
+`InvocationContext::{Focused, Global, Panel(entity)}`). Dispatch runs them in
+order in `PreUpdate` and sends `ContextCommandFinished` with each result.
+Requests made by handlers run next frame. `command_available` and
+`shortcut_for` answer the same questions for menus.
 
 ## Menus
 
 Native and egui presenters consume the same abstract menu snapshots. Availability
-uses the selected handler. Shortcut hints use effective bindings in that same
-context, excluding shadowed shortcuts. `InPanel` menu roots target their panel.
-Within a menu tree, `InPanel` entries appear only when the snapshot's context
-targets that panel; use it on a top-level menu to contribute a focus-only menu
-to both native and egui bars. Other roots normally use the focused panel.
-Explicit invocation contexts can also be attached to roots or descendants.
+uses the handler that would run. Shortcut hints show the chord that would run
+the item's command in that context. Roots normally use the focused panel;
+explicit invocation contexts can be attached to roots or descendants.
 Snapshot requests reject removed,
 disabled, detached or retargeted menu items.
 
@@ -645,8 +638,7 @@ hint and the ordinary keyboard route.
 
 The UI adapter reads only the explicit WorkbenchCamera's egui context, after
 drawing and applying panel focus observations. It uses `consume_shortcut` for
-registered bindings, retaining exact modifier matching, event order and repeat
-policy. Widgets can consume a shortcut first. Text editing reserves typing,
+the chords in `Keybindings`, retaining exact modifier matching and event order. Widgets can consume a shortcut first. Text editing reserves typing,
 navigation and clipboard keys, including no-op edits and Enter ending focus;
 unrelated chords such as Save remain available. Popups/modals and an unfocused
 workbench window suppress workbench keyboard shortcuts.

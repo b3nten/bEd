@@ -5,7 +5,8 @@
 use crate::{panels::PanelPolicy, workspace::Workspace};
 use bedtime_ui::{UiContext, UsesTheme, egui, themes};
 use bedtime_workbench::{
-    Panel, PanelInstance, WindowBlur, WorkbenchSurface,
+    CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, KeyChord, Panel,
+    PanelFactory, PanelInstance, WindowBlur, WorkbenchSurface,
     persistence::{ReflectPersist, Store, StoreId, Stores, WorkbenchStore},
     setting,
     settings::{Setting, Settings, SettingsAppExt, clear_setting, set_setting},
@@ -98,6 +99,20 @@ impl Default for Appearance {
     }
 }
 
+mod keys;
+
+pub struct OpenSettings;
+impl ContextCommand for OpenSettings {
+    const KEY: &'static str = "app.open_settings";
+    const LABEL: &'static str = "Open Settings";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::Comma)];
+}
+
+fn open_settings(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+    let factory = PanelFactory::of::<SettingsPanel>();
+    crate::panels::open_panel::<SettingsPanel>(world, (), factory).map(|_| ())
+}
+
 pub struct SettingsPlugin;
 
 impl Plugin for SettingsPlugin {
@@ -112,6 +127,7 @@ impl Plugin for SettingsPlugin {
             .register_setting::<PanelOpacity>()
             .register_setting::<PanelRadius>()
             .register_setting::<PanelGap>()
+            .add_command_handler::<OpenSettings>(open_settings)
             .add_systems(Update, apply_appearance);
     }
 }
@@ -228,6 +244,8 @@ impl Panel for SettingsPanel {
                     ui.add(egui::Slider::new(gap, PANEL_GAP).text("Panel gap"))
                         .changed()
                 });
+                ui.add_space(12.0);
+                keys::section(ui, world, layer);
             });
         });
     }
@@ -267,24 +285,32 @@ fn row<S: Setting>(
     let settings = world.resource::<Settings>();
     let mut value = settings.get::<S>();
     let set_here = settings.get_in::<S>(layer).is_some();
-    let inherited = !set_here && layer != StoreId::of::<GlobalStore>();
     ui.horizontal(|ui| {
         if edit(ui, &mut value) {
             let _ = set_setting::<S>(world, layer, value);
         }
-        if set_here {
-            let hint = if layer == StoreId::of::<GlobalStore>() {
-                "Reset to default"
-            } else {
-                "Use the global value"
-            };
-            if ui.small_button("↶").on_hover_text(hint).clicked() {
-                let _ = clear_setting::<S>(world, layer);
-            }
-        } else if inherited {
-            ui.weak("inherited");
+        if layer_state(ui, layer, set_here) {
+            let _ = clear_setting::<S>(world, layer);
         }
     });
+}
+
+/// After a setting's editor: ↶ when `layer` holds a value (returns whether it
+/// was clicked), or a note that the value is inherited.
+fn layer_state(ui: &mut egui::Ui, layer: StoreId, set_here: bool) -> bool {
+    let global = layer == StoreId::of::<GlobalStore>();
+    if set_here {
+        let hint = if global {
+            "Reset to default"
+        } else {
+            "Use the global value"
+        };
+        return ui.small_button("↶").on_hover_text(hint).clicked();
+    }
+    if !global {
+        ui.weak("inherited");
+    }
+    false
 }
 
 #[cfg(test)]
@@ -308,5 +334,28 @@ mod tests {
         assert_eq!(world.resource::<Appearance>().font_size, 72.0);
         clear_setting::<FontSize>(world, global).unwrap();
         assert_eq!(world.resource::<Appearance>().font_size, 15.5);
+    }
+
+    #[test]
+    fn the_open_settings_keys_open_one_settings_panel() {
+        use bedtime_workbench::{BindingInput, BindingPress, InvocationContext};
+        let mut app = App::new();
+        app.add_plugins((WorkbenchCorePlugin, SettingsPlugin));
+        app.update();
+        let chord = KeyChord::primary(KeyCode::Comma);
+        for _ in 0..2 {
+            app.world_mut()
+                .resource_mut::<BindingInput>()
+                .0
+                .push(BindingPress {
+                    chord,
+                    repeat: false,
+                    context: InvocationContext::Focused,
+                });
+            app.update();
+        }
+        let world = app.world_mut();
+        let panels = world.query::<&SettingsPanel>().iter(world).count();
+        assert_eq!(panels, 1);
     }
 }

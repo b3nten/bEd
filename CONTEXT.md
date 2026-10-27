@@ -236,6 +236,13 @@ Each step should produce a usable app. We can reorder at any point.
   with a lock, workspace settings layer, Global/Workspace selector in the
   Settings panel. See "Step 3" in [docs/foundation.md](docs/foundation.md).
 
+- **Step 5.4 (commands + keybindings)**, committed 2026-10-27.
+  `bedtime-workbench/src/commands.rs` rewritten: `CommandRegistry` (global
+  handlers), `CommandHandler<C>` on panels, `Keybindings` table, `Keybinding<C>`
+  setting per command, dispatch by handler scope. bed: `OpenSettings` command,
+  Keyboard Shortcuts section in Settings. See "Step 4" in
+  [docs/foundation.md](docs/foundation.md).
+
 ## Decisions
 
 - 2026-10-26: `config.rs` may move to bedtime later; it stays in bed for now.

@@ -1,7 +1,7 @@
 # Foundation: stores, persistence, settings, workspaces, commands
 
-Status (2026-10-27): **steps 1–3 (stores, persistence, settings, workspaces)
-built**; the rest is the agreed design, not built yet. Update this file as decisions change during the build.
+Status (2026-10-27): **steps 1–4 (stores, persistence, settings, workspaces,
+commands and keybindings) built**; the rest is the agreed design, not built yet. Update this file as decisions change during the build.
 
 The goal is a foundation solid enough that everything after it is "bring in a
 plugin": file tree, editor, viewers, terminal. Those plugins should only need to
@@ -347,6 +347,42 @@ As designed (`bedtime-workbench/src/settings.rs`), with these specifics:
 - Not yet: "Open Folder…" (launch another instance), "Open Recent", restoring
   the last workspace when started without a folder. These arrive with commands
   and menus (step 4/5).
+
+### Step 4: commands and keybindings
+
+As designed (`bedtime-workbench/src/commands.rs`), with these specifics:
+
+- `ContextCommand` gained `DEFAULT_KEYS` and `REPEATS` (repeat is a property of
+  the command now, not of each binding). `app.register_command::<C>()` makes a
+  command known and registers its `Keybinding<C>` setting (`keys.<KEY>`);
+  `app.add_command_handler::<C>(f)` also sets its global handler.
+- One handler type, `fn(&mut World, ContextCommandInvocation) -> Result`. Global
+  handlers live in `CommandRegistry`; panel handlers are `CommandHandler<C>`
+  components. The registry finds a panel's handler through a function stored at
+  registration, so there's no handler index, no handler entities and no
+  generation counters. A global handler is told the panel it runs for (Save
+  uses it to find the focused document).
+- Requests carry only command and context; handlers and targets are resolved
+  when each request runs. The "admitted handler" revalidation is gone.
+- Removed: `InPanel`/`PanelCommandParts` (only commands used them), `Binding`
+  entities, `ActionEnabled`, `ContextCommandInfo` entities,
+  `register_context_command`, `install_global_handler`/`install_panel_handler`,
+  `Workbench::register_handler` and friends, panel-owned menu entries, and
+  `register_document_shortcuts` (Save/Undo/Redo now have default keys;
+  `register_document_handlers` still opts into their handlers). Their keys are
+  `document.save`, `document.undo`, `document.redo`.
+- Chords are stored as text: `"Primary+Shift+Z"`, `"Ctrl+Enter"`, `"F5"`.
+  `Primary` is Cmd on macOS, Ctrl elsewhere; parsing accepts Cmd/Super/Meta,
+  Control, Option, and is case-insensitive.
+- `keys_in` / `set_keys_in` give settings UIs per-layer access by command id.
+- bed: `OpenSettings` (`app.open_settings`, Primary+,) is the first app command.
+  The titlebar gear invokes it and shows its shortcut in the tooltip. The
+  Settings panel has a Keyboard Shortcuts section: click a command's keys and
+  press new ones (recorded with Primary for the platform's main modifier),
+  ↶/inherited per layer as for other settings, and "Also bound to …" notes.
+- Not done: recording a chord can also trigger that chord's command (the
+  shortcut collector still sees it); recording sets a single chord, replacing
+  any others the command had.
 
 ## Build order
 
