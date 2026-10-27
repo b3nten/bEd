@@ -863,58 +863,23 @@ fn extra_modifiers_do_not_match_a_shortcut() {
 
 #[cfg(feature = "ui")]
 #[test]
-fn user_closure_waits_for_application_approval_and_revalidates_the_layout() {
+fn user_closure_without_unsaved_documents_closes_immediately() {
     let mut app = app();
     let mut w = Workbench::new(app.world_mut());
     let layout = w.active_layout();
-    let panel = w.create_panel(layout, "Pending approval").unwrap();
+    let panel = w.create_panel(layout, "Nothing to save").unwrap();
     let stamp = w.stamp();
     w.user_edit(stamp, &LayoutEdit::ClosePanels(vec![panel]))
         .unwrap();
-    assert!(w.world.get_entity(panel).is_ok());
-    let request = w
-        .world
-        .resource_mut::<Messages<PanelCloseRequested>>()
-        .drain()
-        .next()
-        .unwrap();
-    w.commit_close(&request).unwrap();
     assert!(w.world.get_entity(panel).is_err());
-    let panel = w.create_panel(layout, "Stale approval").unwrap();
-    w.user_edit(w.stamp(), &LayoutEdit::ClosePanels(vec![panel]))
-        .unwrap();
-    let request = w
-        .world
-        .resource_mut::<Messages<PanelCloseRequested>>()
-        .drain()
-        .next()
-        .unwrap();
-    w.create_panel(layout, "New structure").unwrap();
-    assert!(w.commit_close(&request).is_err());
-    assert!(w.world.get_entity(panel).is_ok());
-}
 
-#[cfg(feature = "ui")]
-#[test]
-fn direct_marker_leave_and_return_invalidates_pending_close_approval() {
-    {
-        let mut app = app();
-        let mut w = Workbench::new(app.world_mut());
-        let layout = w.active_layout();
-        let panel = w.create_panel(layout, "Keep until valid approval").unwrap();
-        w.user_edit(w.stamp(), &LayoutEdit::ClosePanels(vec![panel]))
-            .unwrap();
-        let request = w
-            .world
-            .resource_mut::<Messages<PanelCloseRequested>>()
-            .drain()
-            .next()
-            .unwrap();
-        w.world.entity_mut(layout).remove::<ActiveLayout>();
-        w.world.entity_mut(layout).insert(ActiveLayout);
-        assert!(w.commit_close(&request).is_err());
-        assert!(w.world.get_entity(panel).is_ok());
-    }
+    // The stamp still guards against closing from an outdated layout.
+    let panel = w.create_panel(layout, "Stale request").unwrap();
+    assert!(
+        w.user_edit(stamp, &LayoutEdit::ClosePanels(vec![panel]))
+            .is_err()
+    );
+    assert!(w.world.get_entity(panel).is_ok());
 }
 
 #[test]
@@ -981,7 +946,9 @@ fn moving_between_layouts_preserves_shared_document_and_local_state() {
         DocumentOptions::loaded("File"),
     )
     .unwrap();
-    bind_document_view(w.world_mut(), panel, document).unwrap();
+    w.world_mut()
+        .entity_mut(panel)
+        .insert(DocumentReference::new(document.id()));
     w.world_mut()
         .entity_mut(panel)
         .insert(Draft("view state".into()));
@@ -989,7 +956,10 @@ fn moving_between_layouts_preserves_shared_document_and_local_state() {
     let area = w.destination_area(second).unwrap();
     w.relocate_panel(panel, area).unwrap();
     assert_eq!(
-        w.world().get::<DocumentView>(panel).unwrap().document(),
+        w.world()
+            .get::<DocumentReference>(panel)
+            .unwrap()
+            .document(),
         document.id()
     );
     assert_eq!(

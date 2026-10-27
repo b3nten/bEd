@@ -140,7 +140,7 @@ pub fn request_definition(world: &mut World, panel: Entity) -> Result<(), String
 }
 pub fn request_definition_at(world: &mut World, panel: Entity, byte: usize) -> Result<(), String> {
     let document = world
-        .get::<DocumentView>(panel)
+        .get::<DocumentReference>(panel)
         .ok_or("No document is attached")?
         .document();
     let info = inspect_document(world, document).map_err(|e| e.to_string())?;
@@ -180,7 +180,7 @@ pub fn request_definition_at(world: &mut World, panel: Entity, byte: usize) -> R
 }
 /// LanguageQuery state is independent of definition navigation: a hover cannot cancel F12.
 pub fn language_activity(world: &World, panel: Entity) -> Option<Arc<ServerActivity>> {
-    let document = world.get::<DocumentView>(panel)?.document();
+    let document = world.get::<DocumentReference>(panel)?.document();
     let binding = world.get::<DocumentLsp>(document.0)?;
     let server = world.get::<ManagedServer>(binding.server)?;
     (server.lifecycle == ServerLifecycle::Running && server.handle.status() == ServerStatus::Ready)
@@ -192,7 +192,7 @@ pub fn request_query(
     query: LanguageQuery,
 ) -> Result<RequestOrigin, String> {
     let document = world
-        .get::<DocumentView>(panel)
+        .get::<DocumentReference>(panel)
         .ok_or("No document is attached")?
         .document();
     let info = inspect_document(world, document).map_err(|e| e.to_string())?;
@@ -235,7 +235,7 @@ pub fn cancel_query(world: &mut World, panel: Entity, kind: QueryKind) {
         .queries
         .retain(|q| q.origin.panel != panel.to_bits() || q.query.kind() != kind);
     if let Some(server) = world
-        .get::<DocumentView>(panel)
+        .get::<DocumentReference>(panel)
         .and_then(|v| world.get::<DocumentLsp>(v.document().0))
         .and_then(|s| world.get::<ManagedServer>(s.server))
     {
@@ -304,7 +304,7 @@ fn binding_current(world: &World, origin: &RequestOrigin) -> bool {
     let Some(panel) = Entity::try_from_bits(origin.panel) else {
         return false;
     };
-    let Some(view) = world.get::<DocumentView>(panel) else {
+    let Some(view) = world.get::<DocumentReference>(panel) else {
         return false;
     };
     let doc = view.document();
@@ -535,9 +535,9 @@ fn update(world: &mut World) {
         }
     }
     let viewers: HashSet<_> = world
-        .query_filtered::<&DocumentView, With<WorkbenchEditor>>()
+        .query_filtered::<&DocumentReference, With<WorkbenchEditor>>()
         .iter(world)
-        .map(DocumentView::document)
+        .map(DocumentReference::document)
         .collect();
     let attached: Vec<_> = world
         .query_filtered::<Entity, With<DocumentLsp>>()
@@ -781,7 +781,7 @@ fn update(world: &mut World) {
         }
     }
     let panels: Vec<_> = world
-        .query_filtered::<(Entity, &DocumentView), With<WorkbenchEditor>>()
+        .query_filtered::<(Entity, &DocumentReference), With<WorkbenchEditor>>()
         .iter(world)
         .map(|(p, v)| (p, v.document()))
         .collect();

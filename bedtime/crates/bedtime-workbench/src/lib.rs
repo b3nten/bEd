@@ -1,4 +1,5 @@
 //! Composable workbench services; the application supplies Bevy's window and renderer.
+mod closing;
 mod commands;
 mod composition;
 mod document_commands;
@@ -19,6 +20,7 @@ pub mod native_path;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 mod work;
+pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument, close_prompt, resolve_close};
 pub use commands::*;
 pub use layout::*;
 pub use lifecycle::*;
@@ -57,7 +59,9 @@ pub use frontend::{
 #[cfg(feature = "ui")]
 pub use ui::{MenuPresentation, WorkbenchUiPlugin, draw_menu_bar, draw_popup_menu};
 
-/// Application close intention, shared by native window requests and commands.
+/// A request to quit, from the native window or an application command.
+/// Workbench handles it: unsaved documents are saved or asked about, background
+/// work finishes, then `AppExit` is sent.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct CloseRequested {
     pub window: Option<Entity>,

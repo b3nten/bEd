@@ -601,7 +601,9 @@ fn layout_replacement_rebuilds_owned_data_and_preserves_other_layouts_resources_
         DocumentOptions::unsaved("Draft"),
     )
     .unwrap();
-    bind_document_view(app.world_mut(), panel, document).unwrap();
+    app.world_mut()
+        .entity_mut(panel)
+        .insert(DocumentReference::new(document.id()));
     let capture =
         Workbench::capture_layout::<ReflectWorkbenchPersist>(app.world_mut(), layout).unwrap();
     assert!(capture.dynamic.resources.is_empty());
@@ -682,7 +684,9 @@ fn invalid_or_cross_scope_layout_data_and_drafts_preserve_the_live_layout() {
         DocumentOptions::loaded("Draft"),
     )
     .unwrap();
-    bind_document_view(app.world_mut(), panel, document).unwrap();
+    app.world_mut()
+        .entity_mut(panel)
+        .insert(DocumentReference::new(document.id()));
     app.world_mut().entity_mut(panel).insert(DocumentDraft);
     let capture =
         Workbench::capture_layout::<ReflectWorkbenchPersist>(app.world_mut(), layout).unwrap();

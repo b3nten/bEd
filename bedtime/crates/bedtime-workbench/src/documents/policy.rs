@@ -1,17 +1,35 @@
-//! Standard save policies, independent of application settings and rendering.
+//! Autosave. Applications choose the policy through the `DocumentAutosave`
+//! resource; workbench applies it to every document.
 use super::*;
 use std::{
     collections::{BTreeMap, BTreeSet},
     time::{Duration, Instant},
 };
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocumentAutosavePolicy {
     Never,
     AfterIdle(Duration),
     OnFocusChange,
 }
+/// The session's autosave policy. With any policy other than `Never`, closing the
+/// last view of an unsaved document saves it instead of asking.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DocumentAutosave(pub DocumentAutosavePolicy);
+
+impl Default for DocumentAutosave {
+    fn default() -> Self {
+        Self(DocumentAutosavePolicy::Never)
+    }
+}
+
+impl DocumentAutosave {
+    pub fn enabled(self) -> bool {
+        self.0 != DocumentAutosavePolicy::Never
+    }
+}
+
 #[derive(Resource, Default)]
-pub struct Autosaves {
+pub(crate) struct Autosaves {
     documents: BTreeMap<DocumentId, Pending>,
     focused: Option<(Entity, DocumentId)>,
     saves: bevy::ecs::message::MessageCursor<DocumentSaveFinished>,
@@ -23,8 +41,28 @@ struct Pending {
     attempted: Option<(u64, u64)>,
     work: Option<WorkId>,
 }
+pub(crate) fn autosave(world: &mut World) {
+    if world.resource::<ManagedWork>().is_closing() {
+        return;
+    }
+    let policy = world.resource::<DocumentAutosave>().0;
+    let focused = crate::active_layout(world).and_then(|layout| {
+        let panel = Workbench::new(world).focused_panel(layout)?;
+        Some((panel, world.get::<DocumentReference>(panel)?.document()))
+    });
+    let errors = tick_document_autosave(world, Instant::now(), focused, policy, true);
+    for error in errors {
+        crate::closing::report_error(
+            world,
+            "Autosave failed",
+            "A document couldn't be saved automatically.",
+            error,
+        );
+    }
+}
+
 /// Admit due saves and return failures for the host's normal error presentation.
-pub fn tick_document_autosave(
+fn tick_document_autosave(
     world: &mut World,
     now: Instant,
     focused: Option<(Entity, DocumentId)>,
@@ -122,75 +160,4 @@ pub fn tick_document_autosave(
         }
     });
     errors
-}
-
-#[derive(Clone)]
-pub struct DocumentSaveAll {
-    snapshot: Vec<(DocumentId, u64)>,
-    awaited: Vec<DocumentId>,
-}
-impl DocumentSaveAll {
-    pub fn poll(&self, world: &World) -> Result<bool, String> {
-        let snapshot = save_snapshot(world)?;
-        if snapshot != self.snapshot {
-            return Err(
-                "Documents changed while Save All was pending. Review them before quitting.".into(),
-            );
-        }
-        let infos: Vec<_> = self
-            .snapshot
-            .iter()
-            .map(|(id, _)| inspect_document(world, *id).map_err(|e| e.to_string()))
-            .collect::<Result<_, _>>()?;
-        if infos.iter().any(|i| i.saving) {
-            return Ok(false);
-        }
-        for info in infos {
-            if self.awaited.contains(&info.id) {
-                if let Some(error) = info.last_save_error {
-                    return Err(format!("Save failed for {:?}: {error}", info.title));
-                }
-            }
-        }
-        crate::preflight_session_close(world, crate::SessionCloseMode::Saved)?;
-        Ok(true)
-    }
-}
-fn save_snapshot(world: &World) -> Result<Vec<(DocumentId, u64)>, String> {
-    document_ids(world)
-        .into_iter()
-        .map(|id| {
-            inspect_document(world, id)
-                .map(|i| (id, i.revision))
-                .map_err(|e| e.to_string())
-        })
-        .collect()
-}
-pub fn begin_document_save_all(world: &mut World) -> Result<DocumentSaveAll, String> {
-    let snapshot = save_snapshot(world)?;
-    let mut infos = Vec::new();
-    for (id, _) in &snapshot {
-        let info = inspect_document(world, *id).map_err(|e| e.to_string())?;
-        if info.has_drafts
-            || info.conflict
-            || info.requires_source_refresh
-            || (info.dirty && !info.has_save_binding)
-        {
-            return Err(format!(
-                "Resolve unsaved work or source conflicts for {:?} before quitting",
-                info.title
-            ));
-        }
-        infos.push(info);
-    }
-    let mut awaited = Vec::new();
-    for info in infos {
-        if info.saving {
-            awaited.push(info.id);
-        } else if info.dirty {
-            save_document(world, info.id).map_err(|e| e.to_string())?;
-            awaited.push(info.id);
-        }
-    }
-    Ok(DocumentSaveAll { snapshot, awaited })
 }

@@ -23,6 +23,7 @@ pub(crate) fn install(app: &mut App) {
     app.init_resource::<WorkbenchUi>();
     commands::install(app);
     documents::install(app);
+    closing::install(app);
     document_commands::install(app);
     layout::install(app);
     #[cfg(feature = "ui")]

@@ -14,8 +14,12 @@ fn host() -> (App, DocumentHandle<TextBuffer>, Entity, Entity) {
     let layout = workbench.active_layout();
     let first = workbench.create_panel(layout, "First").unwrap();
     let second = workbench.create_panel(layout, "Second").unwrap();
-    bind_text_editor(workbench.world_mut(), first, document).unwrap();
-    bind_text_editor(workbench.world_mut(), second, document).unwrap();
+    for panel in [first, second] {
+        workbench.world_mut().entity_mut(panel).insert((
+            WorkbenchEditor::default(),
+            DocumentReference::new(document.id()),
+        ));
+    }
     (app, document, first, second)
 }
 
@@ -120,7 +124,6 @@ fn composition_blocks_save_history_rebind_and_retirement_until_cleared() {
         Err(DocumentError::Drafts)
     );
     assert!(preflight_session_close(app.world(), SessionCloseMode::Discard).is_err());
-    assert!(unbind_text_editor(app.world_mut(), first).is_err());
     let mut other_group = None;
     let mut other = WorkbenchTextSession {
         world: app.world_mut(),
@@ -142,13 +145,14 @@ fn composition_blocks_save_history_rebind_and_retirement_until_cleared() {
     );
     assert_eq!(read_document(app.world(), document).unwrap(), "original");
     app.world_mut().entity_mut(first).remove::<DocumentDraft>();
-    assert!(
-        unbind_text_editor(app.world_mut(), first)
-            .unwrap()
-            .is_some()
-    );
+    app.world_mut()
+        .entity_mut(first)
+        .remove::<(WorkbenchEditor, DocumentReference)>();
     assert_eq!(
-        app.world().get::<DocumentView>(second).unwrap().document(),
+        app.world()
+            .get::<DocumentReference>(second)
+            .unwrap()
+            .document(),
         document.id()
     );
     assert_eq!(read_document(app.world(), document).unwrap(), "original");

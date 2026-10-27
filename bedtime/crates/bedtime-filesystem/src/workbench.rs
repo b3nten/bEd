@@ -50,7 +50,7 @@ impl FileDocumentPanel {
 }
 fn project_panels(world: &mut World) {
     let panels: Vec<_> = world
-        .query_filtered::<(Entity, &DocumentView), With<FileDocumentPanel>>()
+        .query_filtered::<(Entity, &DocumentReference), With<FileDocumentPanel>>()
         .iter(world)
         .map(|(p, v)| (p, v.document()))
         .collect();
@@ -69,7 +69,7 @@ fn project_panels(world: &mut World) {
                 metadata.preview = false;
             }
             if !retained {
-                let _ = unbind_document_view(world, panel);
+                world.entity_mut(panel).remove::<DocumentReference>();
             }
             callback(world, panel, FileDocumentLocation::Missing { retained });
             if !retained

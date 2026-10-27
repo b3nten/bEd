@@ -21,7 +21,7 @@
 //!     workbench.create_panel(layout, "Notes")?
 //! };
 //! while inspect_document(app.world(), document.id())?.load_state == DocumentLoadState::Loading { app.update(); std::thread::yield_now(); }
-//! bind_document_view(app.world_mut(), panel, document)?;
+//! app.world_mut().entity_mut(panel).insert(DocumentReference::new(document.id()));
 //! edit_document(app.world_mut(), document, 0, TextChange {
 //!     range: 5..5, replacement: " world".into(),
 //! }, EditOptions::new("Append"))?;
@@ -32,7 +32,10 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 use crate::{ManagedWork, PanelInstance, WorkId, Workbench};
-use bevy::prelude::*;
+use bevy::{
+    ecs::lifecycle::{Discard, Insert},
+    prelude::*,
+};
 use std::{
     any::{Any, TypeId, type_name},
     collections::HashMap,
@@ -171,38 +174,70 @@ impl Document {
     }
 }
 
-/// A non-owning reference: retiring a viewer never retires its document.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct DocumentView {
-    document: DocumentId,
-    model_type: TypeId,
-    model_name: &'static str,
-}
+/// A reference to a document. On a panel it is the document the panel shows; on
+/// any other entity (a child of a panel showing several documents, or a plugin's
+/// own holder) it simply keeps the document open. A document that has been
+/// referenced is released once its last reference goes (see `closing`).
+///
+/// Insert it directly: `(MyViewer, DocumentReference::new(id), InArea(area))`.
+/// Remove or replace it to stop showing the document. Commit or cancel any
+/// `DocumentDraft` on the holder first.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[relationship(relationship_target = DocumentReferences)]
+pub struct DocumentReference(Entity);
 
-impl DocumentView {
+impl DocumentReference {
+    pub fn new(document: DocumentId) -> Self {
+        Self(document.0)
+    }
     pub fn document(&self) -> DocumentId {
-        self.document
+        DocumentId(self.0)
     }
 }
 
-/// Detach a viewer without retiring its document. Applications must resolve
-/// viewer-local drafts first; local panel state is otherwise left untouched.
-pub fn unbind_document_view(
-    world: &mut World,
-    panel: Entity,
-) -> Result<Option<DocumentId>, DocumentError> {
-    check_panel_document_draft(world, panel)?;
-    let view = world.get::<DocumentView>(panel).copied();
-    if let Some(view) = view {
-        if let Some(mut document) = world.get_mut::<Document>(view.document.0) {
-            document.state.detach_viewer(panel);
-        }
-        world.entity_mut(panel).remove::<DocumentView>();
-        if let Some(mut metadata) = world.get_mut::<PanelInstance>(panel) {
-            metadata.dirty = false;
-        }
+/// The entities referencing a document, maintained by Bevy.
+#[derive(Component, Debug, Default)]
+#[relationship_target(relationship = DocumentReference)]
+pub struct DocumentReferences(Vec<Entity>);
+
+impl DocumentReferences {
+    pub fn holders(&self) -> &[Entity] {
+        &self.0
     }
-    Ok(view.map(|view| view.document))
+}
+
+/// A document that has been referenced at least once. Documents never
+/// referenced are left to whoever opened them.
+#[derive(Component)]
+pub(crate) struct Referenced;
+
+fn mark_referenced(
+    insert: On<Insert<DocumentReference>>,
+    references: Query<&DocumentReference>,
+    mut commands: Commands,
+) {
+    if let Ok(reference) = references.get(insert.entity) {
+        commands.entity(reference.0).try_insert(Referenced);
+    }
+}
+
+/// A holder letting go ends its undo group, and a panel no longer showing an
+/// unsaved document stops looking dirty.
+fn release_reference(
+    discard: On<Discard<DocumentReference>>,
+    references: Query<&DocumentReference>,
+    mut documents: Query<&mut Document>,
+    mut panels: Query<&mut PanelInstance>,
+) {
+    let holder = discard.entity;
+    if let Ok(reference) = references.get(holder)
+        && let Ok(mut document) = documents.get_mut(reference.0)
+    {
+        document.state.detach_viewer(holder);
+    }
+    if let Ok(mut panel) = panels.get_mut(holder) {
+        panel.dirty = false;
+    }
 }
 
 /// Application declaration that a bound panel has uncommitted input. Remove it
@@ -640,44 +675,6 @@ pub fn redo_document(world: &mut World, id: DocumentId) -> Result<u64, DocumentE
     world.get_mut::<Document>(id.0).unwrap().state.undo(true)
 }
 
-pub fn bind_document_view<M: DocumentModel>(
-    world: &mut World,
-    panel: Entity,
-    handle: DocumentHandle<M>,
-) -> Result<(), DocumentError> {
-    validate_mutation(world, handle.id)?;
-    let document = get_document(world, handle.id)?;
-    if document.model_type != TypeId::of::<M>() {
-        return Err(DocumentError::WrongModel {
-            expected: type_name::<M>(),
-            actual: document.model_name,
-        });
-    }
-    if world.get::<PanelInstance>(panel).is_none() {
-        return Err(DocumentError::InvalidPanel(panel));
-    }
-    if let Some(view) = world.get::<DocumentView>(panel) {
-        if view.model_type != TypeId::of::<M>() {
-            return Err(DocumentError::WrongModel {
-                expected: view.model_name,
-                actual: type_name::<M>(),
-            });
-        }
-        if view.document == handle.id {
-            return Ok(());
-        }
-    }
-    check_panel_document_draft(world, panel)?;
-    let dirty = document.state.info().dirty;
-    world.entity_mut(panel).insert(DocumentView {
-        document: handle.id,
-        model_type: TypeId::of::<M>(),
-        model_name: type_name::<M>(),
-    });
-    world.get_mut::<PanelInstance>(panel).unwrap().dirty = dirty;
-    Ok(())
-}
-
 pub fn panel_has_draft(world: &World, panel: Entity) -> bool {
     world.get::<DocumentDraft>(panel).is_some()
 }
@@ -691,10 +688,13 @@ pub fn check_panel_document_draft(world: &World, panel: Entity) -> Result<(), Do
 }
 
 pub fn document_has_drafts(world: &World, id: DocumentId) -> bool {
-    let Some(mut query) = world.try_query_filtered::<&DocumentView, With<DocumentDraft>>() else {
+    let Some(mut query) = world.try_query_filtered::<&DocumentReference, With<DocumentDraft>>()
+    else {
         return false;
     };
-    query.iter(world).any(|view| view.document == id)
+    query
+        .iter(world)
+        .any(|reference| reference.document() == id)
 }
 
 pub(crate) fn install_save_binding<M: DocumentModel>(
@@ -934,14 +934,6 @@ pub fn check_document_close(
     Ok(())
 }
 
-pub fn check_session_documents(world: &World) -> Result<(), DocumentError> {
-    validate_session(world)?;
-    for id in document_ids(world) {
-        check_document_close(world, id, false)?;
-    }
-    Ok(())
-}
-
 pub fn close_document(world: &mut World, id: DocumentId) -> Result<(), DocumentError> {
     retire_document(world, id, false)
 }
@@ -966,10 +958,13 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
     }
     crate::reconcile_workbench(world).map_err(DocumentError::InvalidGraph)?;
     check_document_close(world, id, discard)?;
+    // Close the panels showing it; despawning the document drops other references.
     let panels: Vec<_> = world
-        .query::<(Entity, &DocumentView)>()
-        .iter(world)
-        .filter_map(|(entity, view)| (view.document == id).then_some(entity))
+        .get::<DocumentReferences>(id.0)
+        .map_or(&[][..], |references| references.holders())
+        .iter()
+        .copied()
+        .filter(|&holder| world.get::<PanelInstance>(holder).is_some())
         .collect();
     let mut workbench = Workbench::new(world);
     // Validate every viewer before retiring any of them.
@@ -1007,19 +1002,18 @@ pub fn reconcile_document_views(world: &mut World) -> Result<(), String> {
         .query_filtered::<Entity, With<DocumentDraft>>()
         .iter(world)
     {
-        if world.get::<DocumentView>(entity).is_none() {
-            return Err("DocumentDraft requires a bound DocumentView".into());
+        if world.get::<DocumentReference>(entity).is_none() {
+            return Err("DocumentDraft requires a DocumentReference".into());
         }
     }
     let mut dirty = Vec::new();
-    for (panel, view) in world.query::<(Entity, &DocumentView)>().iter(world) {
-        if world.get::<PanelInstance>(panel).is_none() {
-            return Err("DocumentView requires PanelInstance".into());
+    for (holder, reference) in world.query::<(Entity, &DocumentReference)>().iter(world) {
+        let document =
+            get_document(world, reference.document()).map_err(|error| error.to_string())?;
+        if world.get::<PanelInstance>(holder).is_none() {
+            continue;
         }
-        let document = get_document(world, view.document).map_err(|error| error.to_string())?;
-        if document.model_type != view.model_type {
-            return Err("DocumentView model does not match its document".into());
-        }
+        let panel = holder;
         dirty.push((
             panel,
             document.state.info().dirty || panel_has_draft(world, panel),
@@ -1036,6 +1030,8 @@ pub fn reconcile_document_views(world: &mut World) -> Result<(), String> {
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<SaveDestinations>()
         .add_message::<DocumentSaveFinished>()
+        .add_observer(mark_referenced)
+        .add_observer(release_reference)
         .add_systems(
             PreUpdate,
             (sources::poll_sources, poll_saves_system)
@@ -1108,10 +1104,10 @@ fn validate_mutation(world: &World, id: DocumentId) -> Result<(), DocumentError>
 }
 
 fn validate_viewer(world: &World, viewer: Entity, id: DocumentId) -> Result<(), DocumentError> {
-    let view = world
-        .get::<DocumentView>(viewer)
+    let reference = world
+        .get::<DocumentReference>(viewer)
         .ok_or(DocumentError::InvalidPanel(viewer))?;
-    if view.document != id || world.get::<PanelInstance>(viewer).is_none() {
+    if reference.document() != id {
         return Err(DocumentError::InvalidPanel(viewer));
     }
     Ok(())

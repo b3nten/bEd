@@ -529,8 +529,12 @@ fn explicit_groups_merge_only_consecutive_edits_and_never_reopen() {
     let document = text(app.world_mut(), "a");
     let first = panel(app.world_mut(), "First");
     let second = panel(app.world_mut(), "Second");
-    bind_document_view(app.world_mut(), first, document).unwrap();
-    bind_document_view(app.world_mut(), second, document).unwrap();
+    app.world_mut()
+        .entity_mut(first)
+        .insert(DocumentReference::new(document.id()));
+    app.world_mut()
+        .entity_mut(second)
+        .insert(DocumentReference::new(document.id()));
     let group = begin_document_undo_group(app.world_mut(), document.id(), first).unwrap();
     edit_document(
         app.world_mut(),
@@ -662,8 +666,12 @@ fn drafts_explicitly_block_save_history_and_retirement_in_every_viewer() {
     let document = text(app.world_mut(), "base");
     let first = panel(app.world_mut(), "First");
     let second = panel(app.world_mut(), "Second");
-    bind_document_view(app.world_mut(), first, document).unwrap();
-    bind_document_view(app.world_mut(), second, document).unwrap();
+    app.world_mut()
+        .entity_mut(first)
+        .insert(DocumentReference::new(document.id()));
+    app.world_mut()
+        .entity_mut(second)
+        .insert(DocumentReference::new(document.id()));
     install_save_binding(
         app.world_mut(),
         document,
@@ -696,10 +704,6 @@ fn drafts_explicitly_block_save_history_and_retirement_in_every_viewer() {
         discard_document(app.world_mut(), document.id()),
         Err(DocumentError::Drafts)
     );
-    assert_eq!(
-        check_session_documents(app.world()),
-        Err(DocumentError::Drafts)
-    );
     reconcile_document_views(app.world_mut()).unwrap();
     assert!(app.world().get::<PanelInstance>(second).unwrap().dirty);
     assert_eq!(read_document(app.world(), document).unwrap(), "committed");
@@ -723,7 +727,9 @@ fn saves_acknowledge_only_the_captured_model_and_survive_last_viewer_close() {
     )
     .unwrap();
     let viewer = panel(app.world_mut(), "Viewer");
-    bind_document_view(app.world_mut(), viewer, document).unwrap();
+    app.world_mut()
+        .entity_mut(viewer)
+        .insert(DocumentReference::new(document.id()));
     let (binding, release, snapshots) =
         controlled_save(Some("global://destination"), Ok(Some("v1".into())));
     install_save_binding(app.world_mut(), document, binding.clone()).unwrap();
@@ -977,7 +983,9 @@ fn saves_and_external_observations_close_explicit_groups() {
     let mut app = app();
     let document = text(app.world_mut(), "a");
     let viewer = panel(app.world_mut(), "Viewer");
-    bind_document_view(app.world_mut(), viewer, document).unwrap();
+    app.world_mut()
+        .entity_mut(viewer)
+        .insert(DocumentReference::new(document.id()));
     let group = begin_document_undo_group(app.world_mut(), document.id(), viewer).unwrap();
     assert_eq!(
         offer_document_external_update(app.world_mut(), document, 0, "a".into(), None).unwrap(),
@@ -1399,7 +1407,9 @@ fn stale_source_observations_are_atomic_and_dont_end_current_groups() {
     let document = text(app.world_mut(), "base");
     offer(app.world_mut(), document, "incoming", "v2");
     let viewer = panel(app.world_mut(), "Viewer");
-    bind_document_view(app.world_mut(), viewer, document).unwrap();
+    app.world_mut()
+        .entity_mut(viewer)
+        .insert(DocumentReference::new(document.id()));
     let group = begin_document_undo_group(app.world_mut(), document.id(), viewer).unwrap();
     assert_eq!(
         offer_document_external_update(
@@ -1431,9 +1441,15 @@ fn explicit_discard_closes_all_bound_viewers_but_not_other_documents() {
     let first = panel(app.world_mut(), "First");
     let second = panel(app.world_mut(), "Second");
     let unrelated = panel(app.world_mut(), "Unrelated");
-    bind_document_view(app.world_mut(), first, document).unwrap();
-    bind_document_view(app.world_mut(), second, document).unwrap();
-    bind_document_view(app.world_mut(), unrelated, other).unwrap();
+    app.world_mut()
+        .entity_mut(first)
+        .insert(DocumentReference::new(document.id()));
+    app.world_mut()
+        .entity_mut(second)
+        .insert(DocumentReference::new(document.id()));
+    app.world_mut()
+        .entity_mut(unrelated)
+        .insert(DocumentReference::new(other.id()));
     replace(app.world_mut(), document, "local");
     offer(app.world_mut(), document, "remote", "v2");
     assert_eq!(
@@ -1454,7 +1470,9 @@ fn reconciliation_rejects_invalid_references_ownership_and_unbound_drafts_withou
     let mut app = app();
     let document = text(app.world_mut(), "base");
     let viewer = panel(app.world_mut(), "Viewer");
-    bind_document_view(app.world_mut(), viewer, document).unwrap();
+    app.world_mut()
+        .entity_mut(viewer)
+        .insert(DocumentReference::new(document.id()));
     replace(app.world_mut(), document, "dirty");
     let draft = panel(app.world_mut(), "Unbound draft");
     app.world_mut().entity_mut(draft).insert(DocumentDraft);
@@ -1463,8 +1481,11 @@ fn reconciliation_rejects_invalid_references_ownership_and_unbound_drafts_withou
     app.world_mut().entity_mut(draft).remove::<DocumentDraft>();
     reconcile_document_views(app.world_mut()).unwrap();
     assert!(app.world().get::<PanelInstance>(viewer).unwrap().dirty);
+    // Views are a relationship: despawning the document removes them rather
+    // than leaving dangling references.
     app.world_mut().despawn(document.id().entity());
-    assert!(reconcile_document_views(app.world_mut()).is_err());
+    assert!(app.world().get::<DocumentReference>(viewer).is_none());
+    reconcile_document_views(app.world_mut()).unwrap();
 }
 
 #[test]
@@ -1607,7 +1628,9 @@ fn retirement_during_drawing_is_rejected_without_closing_viewers() {
     let mut app = app();
     let document = text(app.world_mut(), "base");
     let viewer = panel(app.world_mut(), "Viewer");
-    bind_document_view(app.world_mut(), viewer, document).unwrap();
+    app.world_mut()
+        .entity_mut(viewer)
+        .insert(DocumentReference::new(document.id()));
     app.world_mut()
         .get_resource_mut::<crate::WorkbenchUi>()
         .unwrap()
@@ -1636,8 +1659,12 @@ fn viewers_share_documents_across_layouts_and_do_not_own_them() {
     let first = w.create_panel(w.active_layout(), "One").unwrap();
     let other = w.create_layout("Other").unwrap();
     let second = w.create_panel(other, "Two").unwrap();
-    bind_document_view(w.world_mut(), first, document).unwrap();
-    bind_document_view(w.world_mut(), second, document).unwrap();
+    w.world_mut()
+        .entity_mut(first)
+        .insert(DocumentReference::new(document.id()));
+    w.world_mut()
+        .entity_mut(second)
+        .insert(DocumentReference::new(document.id()));
     w.close_panel(first).unwrap();
     w.delete_layout(other).unwrap();
     assert_eq!(read_document(w.world(), document).unwrap(), "base");

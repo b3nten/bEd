@@ -53,8 +53,12 @@ fn a_draft_in_another_layout_blocks_shutdown_before_any_work_is_cancelled() {
     let b = Workbench::new(world)
         .create_panel(second, "Second")
         .unwrap();
-    bind_document_view(world, a, document).unwrap();
-    bind_document_view(world, b, document).unwrap();
+    world
+        .entity_mut(a)
+        .insert(DocumentReference::new(document.id()));
+    world
+        .entity_mut(b)
+        .insert(DocumentReference::new(document.id()));
     world.entity_mut(b).insert(DocumentDraft);
     assert!(shutdown_work(world).is_err());
     assert!(!world.resource::<ManagedWork>().is_closing());

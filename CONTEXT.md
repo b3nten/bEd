@@ -45,8 +45,11 @@ execution; no abstraction just to organize code).
 ```sh
 cargo check -p bed
 cargo run -p bed
-cargo test -p bedtime-workbench   # or whichever crate changed
+cargo test -p bedtime-workbench --all-features   # or whichever crate changed
 ```
+
+Use `--all-features`: many integration tests (editor, hex, LSP workbench) are
+behind features and silently don't run otherwise.
 
 ## bed_old feature inventory
 
@@ -114,9 +117,10 @@ step, not decisions.
 Each step should produce a usable app. We can reorder at any point.
 
 0. ✅ Window, workbench surface, camera, close request → exit (current `bed/main.rs`).
-1. 🔄 Global settings: resource, config file, Settings panel (chosen first as the
+1. ✅ Global settings: resource, config file, Settings panel (chosen first as the
    foundation for workspaces).
-1b. Project root + file tree panel.
+2. 🔄 Workbench document lifetime, autosave and close/quit flow (see Decisions).
+2b. Project root + file tree panel.
 2. Open a file into an editor tab (opening policy; observation 1).
 3. Other viewers: image / hex / model, chosen by file type; "Open with".
 4. Save, dirty state, quit with unsaved documents (observation 4).
@@ -133,7 +137,7 @@ Each step should produce a usable app. We can reorder at any point.
 
 - **Step 0** — minimal shell exists in `bed/main.rs` (`UiPlugin` + `WorkbenchPlugin`,
   close request exits immediately).
-- **Step 1 (global settings)**, implemented 2026-10-26 and awaiting review.
+- **Step 1 (global settings)**, committed 2026-10-26 (`a7bcabe`).
   `bed/config.rs` mirrors any serde resource to a RON file: a synchronous read
   while the plugin builds (so there is no "not loaded yet" state), a write 500 ms
   after the last change and on `AppExit`, and an unreadable file is never
@@ -143,6 +147,25 @@ Each step should produce a usable app. We can reorder at any point.
   `$XDG_CONFIG_HOME/bed`, else `~/.config/bed`. Deliberately dropped from bed_old:
   multi-instance three-way merge, lock file, periodic re-read, async I/O,
   "storage ready" gates.
+
+- **Step 2 (document lifetime / close / quit)**, implemented 2026-10-26 and awaiting review.
+  New `bedtime-workbench/src/closing.rs` (release of unviewed documents, close and
+  quit flow, `close_prompt`/`resolve_close`), prompt UI in `dialogs.rs`.
+  `DocumentView` became the public `DocumentReference` relationship
+  (`DocumentReferences` on the document). Any entity may hold one; on a panel it's
+  the document shown. Viewers are spawned as `(Viewer, DocumentReference::new(id),
+  InArea(area))`; `bind_document_view`, `unbind_document_view`, `bind_text_editor`
+  and `unbind_text_editor` were removed. Observers mark documents as referenced
+  and clear undo groups and panel dirty flags when a reference goes. The editor's
+  document id is now only a private cache key for its view state. Closing a panel
+  also counts references held by its child entities (e.g. a diff panel's sides). Autosave is the `DocumentAutosave` resource
+  plus a workbench system. Removed: `PanelCloseRequested`, `commit_close`, public
+  `close_targets`, `begin_document_save_all`/`DocumentSaveAll`,
+  `check_session_documents`, public `tick_document_autosave`. bed no longer
+  handles closes or `CloseRequested`. `bed_old` was excluded from the workspace,
+  since it can't build against the new API.
+  Not done yet: a manual test of the prompt in the running app (bed can't open
+  documents yet).
 
 ## Decisions
 
@@ -161,11 +184,24 @@ Each step should produce a usable app. We can reorder at any point.
   in the same area (e.g. two `main.rs` views scrolled to different places), so the
   same factory serves both paths and workbench needs no change.
 
-## Open questions
+- 2026-10-26: **Workbench owns document lifetime, autosave and close/quit prompts.**
+  Apps don't implement any of it; extension points come later if an app needs them.
+  - A document lives while something holds a `DocumentReference` to it (panels,
+    their child entities, or any plugin/app entity). Unreferenced documents are
+    released at the end of the frame. LSP/Structure/Git only *observe* documents.
+  - Closing panels (tab, split, merge): if no dirty document loses its last
+    reference, close now. Dirty with autosave on: save, then close once it succeeds.
+    Autosave off: workbench prompts Save / Discard / Cancel. A failed save never
+    closes; it prompts with the error (Retry / Discard / Cancel). Closing one of
+    several viewers never prompts.
+  - Quit: workbench handles `CloseRequested` with the same flow for all dirty
+    documents (Save all / Discard all / Cancel), finishes background work, then
+    sends `AppExit`. Apps hook `AppExit` for their own flushing.
+  - Decision logic is in workbench core (headless-testable via a resolve call);
+    the dialog is drawn by the `ui` feature.
+  - Autosave policy is a workbench resource the app sets from its settings.
 
-- Workbench silently does nothing on tab/split close unless the app handles
-  `PanelCloseRequested` (bed: `panels::approve_closes`). That was an easy trap in
-  step 1. Should workbench approve by default, with apps opting in to veto?
+## Open questions
 
 - Should viewer switching ("Open with") replace the panel, or should one panel
   host several viewers? (Decide in step 2/3.)

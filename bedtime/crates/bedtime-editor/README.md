@@ -35,10 +35,10 @@ text mutation in a getter. Every accepted edit goes through `TextSession::edit`.
 
 `MemoryTextSession` is the standalone in-memory implementation. Multiple views borrow
 the same owner. With `workbench`, `TextBuffer` implements `DocumentModel` using
-`BufferEdit`, and `bind_text_editor` attaches a `WorkbenchEditor` to an existing
-document panel. `draw_editor` connects drawing to that document's canonical
-revision/history; it installs no panel, window, renderer or file policy itself.
-Closing a Workbench viewer retains its document under the existing contract.
+`BufferEdit`. A panel shows a document by holding `WorkbenchEditor` and a
+`DocumentReference` to it; `draw_editor` connects drawing to that document's
+canonical revision/history. It installs no panel, window, renderer or file policy
+itself. Replacing the reference shows another document and resets view state.
 
 ## Positions and changes
 

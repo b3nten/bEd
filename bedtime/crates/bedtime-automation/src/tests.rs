@@ -299,7 +299,9 @@ mod workbench {
             DocumentOptions::loaded("Notes"),
         )
         .unwrap();
-        bind_document_view(app.world_mut(), panel, document).unwrap();
+        app.world_mut()
+            .entity_mut(panel)
+            .insert(DocumentReference::new(document.id()));
         let result = call(
             &mut app,
             json!({"id":3,"op":"panel.move","panel":entity_id(panel),"area":entity_id(second_area)}),
@@ -307,7 +309,10 @@ mod workbench {
         assert!(result.get("result").is_some(), "{result}");
         assert_eq!(app.world().get::<InArea>(panel).unwrap().0, second_area);
         assert_eq!(
-            app.world().get::<DocumentView>(panel).unwrap().document(),
+            app.world()
+                .get::<DocumentReference>(panel)
+                .unwrap()
+                .document(),
             document.id()
         );
         assert_eq!(read_document(app.world(), document).unwrap(), "Shared");

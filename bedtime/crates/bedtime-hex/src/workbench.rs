@@ -638,7 +638,7 @@ fn poll_loads(world: &mut World) {
 
 pub fn update(world: &mut World) {
     let viewed: Vec<_> = world
-        .query_filtered::<(Entity, &DocumentView), With<HexPanel>>()
+        .query_filtered::<(Entity, &DocumentReference), With<HexPanel>>()
         .iter(world)
         .map(|(p, v)| (p, v.document()))
         .collect();

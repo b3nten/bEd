@@ -42,7 +42,9 @@ pub(crate) fn draw_active(
     world: &mut World,
     context: &bedtime_ui::UiContext<'_>,
 ) {
-    let modal_this_frame = crate::dialogs::draw(ui.ctx(), world, context.surface);
+    // Errors first: a failed save may explain what the close prompt then asks about.
+    let modal_this_frame = crate::dialogs::draw(ui.ctx(), world, context.surface)
+        || crate::dialogs::draw_close_prompt(ui.ctx(), world, context.surface);
     // Keep the shell's ID scope stable whether or not a dialog is visible.
     let mut shell = bedtime_ui::egui::UiBuilder::new().id_salt("workbench-shell");
     if modal_this_frame {

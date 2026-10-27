@@ -340,15 +340,6 @@ impl WorkbenchRequests {
     }
 }
 
-/// A user intention, not permission to destroy entities. Applications may retain
-/// it while prompting/saving, reject it, or call `Workbench::commit_close`.
-/// The captured stamp prevents delayed approval from targeting a changed layout.
-#[derive(Message, Clone, Debug)]
-pub struct PanelCloseRequested {
-    pub stamp: LayoutStamp,
-    pub edit: LayoutEdit,
-}
-
 #[derive(Message, Debug)]
 pub struct WorkbenchFinished {
     pub request: WorkbenchRequest,
@@ -410,7 +401,6 @@ impl PanelFactory {
 
 pub(crate) fn install(app: &mut App) {
     app.add_message::<WorkbenchFinished>()
-        .add_message::<PanelCloseRequested>()
         .configure_sets(
             PreUpdate,
             WorkbenchSystems::Apply.after(crate::ContextCommandSystems::Dispatch),
@@ -1057,31 +1047,15 @@ impl Workbench<'_> {
     }
 
     /// Submit a close intention for application policy. This never destroys data.
-    pub fn request_panel_close(
-        &mut self,
+    /// The panels a destructive edit would remove, including those removed by
+    /// joins/docks. Uses the same geometry planner as the edit itself.
+    pub(crate) fn close_targets(
+        &self,
         stamp: LayoutStamp,
-        edit: LayoutEdit,
-    ) -> Result<(), String> {
-        self.validate_edit(stamp, &edit)?;
-        if !matches!(
-            edit,
-            LayoutEdit::ClosePanels(_)
-                | LayoutEdit::CloseArea(_)
-                | LayoutEdit::JoinAreas { .. }
-                | LayoutEdit::DockArea { .. }
-        ) {
-            return Err("Not a destructive layout edit".into());
-        }
-        self.world
-            .write_message(PanelCloseRequested { stamp, edit });
-        Ok(())
-    }
-
-    /// Read-only preflight for application close policy, including the exact
-    /// panels removed by joins/docks. Uses the same geometry planner as commit.
-    pub fn close_targets(&self, request: &PanelCloseRequested) -> Result<Vec<Entity>, String> {
-        self.validate_edit(request.stamp, &request.edit)?;
-        match &request.edit {
+        edit: &LayoutEdit,
+    ) -> Result<Vec<Entity>, String> {
+        self.validate_edit(stamp, edit)?;
+        match edit {
             LayoutEdit::ClosePanels(panels) => Ok(panels.clone()),
             LayoutEdit::CloseArea(area) => Ok(panels_in_area(self.world, *area).to_vec()),
             LayoutEdit::JoinAreas {
@@ -1095,7 +1069,7 @@ impl Workbench<'_> {
                 minimum,
                 ..
             } => {
-                let placement = if let LayoutEdit::DockArea { placement, .. } = &request.edit {
+                let placement = if let LayoutEdit::DockArea { placement, .. } = edit {
                     Some(*placement)
                 } else {
                     None
@@ -1118,20 +1092,6 @@ impl Workbench<'_> {
             }
             _ => Err("Not a destructive layout edit".into()),
         }
-    }
-
-    /// Commit an application-approved intention, revalidating its captured target.
-    pub fn commit_close(&mut self, request: &PanelCloseRequested) -> Result<(), String> {
-        if !matches!(
-            request.edit,
-            LayoutEdit::ClosePanels(_)
-                | LayoutEdit::CloseArea(_)
-                | LayoutEdit::JoinAreas { .. }
-                | LayoutEdit::DockArea { .. }
-        ) {
-            return Err("Not a destructive layout edit".into());
-        }
-        self.edit(request.stamp, &request.edit)
     }
 
     pub(crate) fn edit(&mut self, stamp: LayoutStamp, edit: &LayoutEdit) -> Result<(), String> {

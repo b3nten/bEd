@@ -1,7 +1,6 @@
 use bedtime_ui::{BuiltinIcon, UiContext, UiPlugin, egui};
 use bedtime_workbench::{
-    CloseRequested, PanelFactory, Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface,
-    panel_drag_source,
+    PanelFactory, Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface, panel_drag_source,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::PathBuf;
@@ -24,6 +23,11 @@ fn main() -> AppExit {
                     titlebar_transparent: true,
                     fullsize_content_view: true,
                     transparent: true,
+                    composite_alpha_mode: if cfg!(target_os = "macos") {
+                        bevy::window::CompositeAlphaMode::PostMultiplied
+                    } else {
+                        bevy::window::CompositeAlphaMode::Auto
+                    },
                     ..default()
                 }),
                 close_when_requested: false,
@@ -36,7 +40,6 @@ fn main() -> AppExit {
             },
         ))
         .add_systems(Startup, setup)
-        .add_systems(Update, (close, panels::approve_closes))
         .run()
 }
 
@@ -83,10 +86,4 @@ fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) 
             warn!("Cannot open settings: {error}");
         }
     });
-}
-
-fn close(mut requests: MessageReader<CloseRequested>, mut exit: MessageWriter<AppExit>) {
-    if requests.read().count() > 0 {
-        exit.write(AppExit::Success);
-    }
 }

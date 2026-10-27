@@ -5,54 +5,20 @@ use bedtime_ui::UiContext;
 use bedtime_workbench::*;
 use bevy::prelude::*;
 
+/// Editor state for a panel. The document shown is the panel's
+/// `DocumentReference`: spawn `(WorkbenchEditor::default(), DocumentReference::new(id))`,
+/// and replace the reference to show another document.
 #[derive(Component, Default)]
 pub struct WorkbenchEditor {
     pub view: EditorView,
     group: Option<DocumentUndoGroup>,
-    document: Option<DocumentId>,
+    /// The document `view`'s scroll/caret state belongs to. When the panel's
+    /// reference changes, that state is reset on the next draw.
+    state_for: Option<DocumentId>,
 }
 
-/// Bind a panel to a text document, resetting presentation only when rebinding.
-/// Existing draft preflight remains authoritative.
-pub fn bind_text_editor(
-    world: &mut World,
-    panel: Entity,
-    document: DocumentHandle<TextBuffer>,
-) -> Result<(), DocumentError> {
-    let same = world
-        .get::<DocumentView>(panel)
-        .is_some_and(|view| view.document() == document.id());
-    bind_document_view(world, panel, document)?;
-    if !same || world.get::<WorkbenchEditor>(panel).is_none() {
-        world.entity_mut(panel).insert(WorkbenchEditor {
-            document: Some(document.id()),
-            ..Default::default()
-        });
-    }
-    Ok(())
-}
-
-pub fn unbind_text_editor(
-    world: &mut World,
-    panel: Entity,
-) -> Result<Option<DocumentId>, DocumentError> {
-    check_panel_document_draft(world, panel)?;
-    if let Some(mut editor) = world.entity_mut(panel).take::<WorkbenchEditor>() {
-        if let (Some(document), Some(group)) = (editor.document, editor.group.take()) {
-            let _ = end_document_undo_group(world, document, group);
-        }
-    }
-    Ok(world
-        .entity_mut(panel)
-        .take::<DocumentView>()
-        .map(|view| view.document()))
-}
-
-/// Whether this panel's canonical text canvas (not its Find fields or host
-/// controls) owns egui keyboard focus. Hosts use this to route native Edit actions
-/// without accidentally undoing a document while a different text field is active.
 pub fn editor_has_focus(world: &World, panel: Entity, context: &egui::Context) -> bool {
-    world.get::<DocumentView>(panel).is_some_and(|view| {
+    world.get::<DocumentReference>(panel).is_some_and(|view| {
         context.memory(|memory| memory.focused())
             == Some(egui::Id::new(("bedtime.editor", panel, view.document())))
     })
@@ -67,7 +33,7 @@ pub fn draw_editor(
     panel: Entity,
 ) -> Result<EditorOutput, EditorError> {
     let document = world
-        .get::<DocumentView>(panel)
+        .get::<DocumentReference>(panel)
         .ok_or_else(|| EditorError("Editor has no document".into()))?
         .document();
     let handle = cast_document::<TextBuffer>(world, document).map_err(error)?;
@@ -77,7 +43,7 @@ pub fn draw_editor(
         .entity_mut(panel)
         .take::<WorkbenchEditor>()
         .unwrap_or_default();
-    if editor.document != Some(document) {
+    if editor.state_for != Some(document) {
         if world.get::<DocumentDraft>(panel).is_some() {
             world.entity_mut(panel).insert(editor);
             return Err(EditorError(
@@ -85,7 +51,7 @@ pub fn draw_editor(
             ));
         }
         editor = WorkbenchEditor {
-            document: Some(document),
+            state_for: Some(document),
             ..Default::default()
         };
     }
@@ -128,7 +94,7 @@ pub fn navigate_editor(
 ) -> Result<(), EditorError> {
     check_panel_document_draft(world, panel).map_err(error)?;
     let document = world
-        .get::<DocumentView>(panel)
+        .get::<DocumentReference>(panel)
         .ok_or_else(|| EditorError("Editor has no document".into()))?
         .document();
     let handle = cast_document::<TextBuffer>(world, document).map_err(error)?;
@@ -280,7 +246,7 @@ pub fn scroll_to_line(
     focus: bool,
 ) -> Result<(), EditorError> {
     let document = world
-        .get::<DocumentView>(panel)
+        .get::<DocumentReference>(panel)
         .ok_or_else(|| EditorError("Editor has no document".into()))?
         .document();
     let handle = cast_document::<TextBuffer>(world, document).map_err(error)?;

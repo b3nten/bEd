@@ -50,7 +50,7 @@ pub fn accept_loaded(
 }
 
 pub fn open_result(world: &World, panel: Entity) -> Option<Result<(), String>> {
-    if let Some(view) = world.get::<DocumentView>(panel) {
+    if let Some(view) = world.get::<DocumentReference>(panel) {
         match inspect_document(world, view.document()).ok()?.load_state {
             DocumentLoadState::Loading => return None,
             DocumentLoadState::Failed(error) => return Some(Err(error)),
@@ -72,7 +72,7 @@ pub fn draw(
     panel: Entity,
     menu: impl FnOnce(&mut egui::Ui, &mut World),
 ) {
-    if let Some(view) = world.get::<DocumentView>(panel) {
+    if let Some(view) = world.get::<DocumentReference>(panel) {
         if let Ok(info) = inspect_document(world, view.document()) {
             match info.load_state {
                 DocumentLoadState::Loading => {
@@ -111,7 +111,7 @@ pub fn update(world: &mut World) {
         {
             continue;
         }
-        let stamp = world.get::<DocumentView>(panel).and_then(|view| {
+        let stamp = world.get::<DocumentReference>(panel).and_then(|view| {
             inspect_document(world, view.document())
                 .ok()
                 .filter(|info| info.load_state == DocumentLoadState::Ready)
@@ -182,7 +182,7 @@ pub fn update(world: &mut World) {
                 None
             };
             let path = world
-                .get::<DocumentView>(panel)
+                .get::<DocumentReference>(panel)
                 .and_then(|v| document_source_path(world, v.document()))
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "preview.svg".into());

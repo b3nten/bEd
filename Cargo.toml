@@ -1,8 +1,6 @@
 [workspace]
 members = [
     "bed",
-    "bed_old",
-    "bed_old/crates/bed-structure",
     "bedtime/crates/bedtime-automation",
     "bedtime/crates/bedtime-clipboard",
     "bedtime/crates/bedtime-document",
@@ -22,7 +20,8 @@ members = [
     "bedtime/crates/bedtime-workbench",
 ]
 default-members = ["bed"]
-exclude = ["vendor/arboard", "vendor/egui", "vendor/rio-vt"]
+# bed_old is kept as reference source only; it no longer builds against bedtime.
+exclude = ["bed_old", "vendor/arboard", "vendor/egui", "vendor/rio-vt"]
 resolver = "3"
 
 [workspace.package]
@@ -41,7 +40,6 @@ bedtime-hex = { path = "bedtime/crates/bedtime-hex" }
 bedtime-mascots = { path = "bedtime/crates/bedtime-mascots" }
 bedtime-grammars = { path = "bedtime/crates/bedtime-grammars" }
 bedtime-treesitter = { path = "bedtime/crates/bedtime-treesitter" }
-bed-structure = { path = "bed_old/crates/bed-structure" }
 bedtime-automation = { path = "bedtime/crates/bedtime-automation" }
 bedtime-clipboard = { path = "bedtime/crates/bedtime-clipboard", default-features = false }
 bedtime-ui = { path = "bedtime/crates/bedtime-ui" }

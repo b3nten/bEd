@@ -95,7 +95,7 @@ fn target(world: &World, invocation: &ContextCommandInvocation) -> Result<Docume
         return Err("The admitted document viewer is no longer available".into());
     }
     let document = world
-        .get::<DocumentView>(panel)
+        .get::<DocumentReference>(panel)
         .ok_or("The admitted panel is not a document viewer")?
         .document();
     Ok(document)

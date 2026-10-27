@@ -3,10 +3,9 @@
 //! new one goes. Drag-and-drop bypasses this on purpose: dragging a panel out
 //! always creates a new one where the user dropped it.
 use bedtime_workbench::{
-    ActiveLayout, Area, ErrorDialog, InLayout, Layout, Panel, PanelCloseRequested, PanelFactory,
-    Workbench, active_layout, request_error_dialog,
+    ActiveLayout, Area, InLayout, Layout, Panel, PanelFactory, Workbench, active_layout,
 };
-use bevy::{ecs::message::MessageCursor, prelude::*};
+use bevy::prelude::*;
 
 /// What makes two panels of one type show the same thing.
 pub trait PanelPolicy: Panel {
@@ -37,28 +36,6 @@ pub fn open_panel<P: PanelPolicy>(
     Ok(panel)
 }
 
-/// Workbench only *requests* closes (closing a tab or split, merging areas); the
-/// app approves them. Nothing can be lost yet, so every request is approved.
-/// Unsaved-document prompts belong here once documents exist.
-pub fn approve_closes(world: &mut World, mut cursor: Local<MessageCursor<PanelCloseRequested>>) {
-    let requests: Vec<_> = cursor
-        .read(world.resource::<Messages<PanelCloseRequested>>())
-        .cloned()
-        .collect();
-    for request in requests {
-        if let Err(error) = Workbench::new(world).commit_close(&request) {
-            request_error_dialog(
-                world,
-                ErrorDialog {
-                    title: "Close panel".into(),
-                    message: "This couldn't be closed.".into(),
-                    details: Some(error),
-                },
-            );
-        }
-    }
-}
-
 /// A selected layout with one full-size area.
 fn new_layout(world: &mut World) -> Entity {
     let layout = world
@@ -78,7 +55,7 @@ fn new_layout(world: &mut World) -> Entity {
 mod tests {
     use super::*;
     use crate::settings::SettingsPanel;
-    use bedtime_workbench::{InArea, LayoutEdit, WorkbenchCorePlugin};
+    use bedtime_workbench::{InArea, WorkbenchCorePlugin};
 
     fn open_settings(world: &mut World) -> Entity {
         open_panel::<SettingsPanel>(world, (), PanelFactory::of::<SettingsPanel>()).unwrap()
@@ -111,21 +88,5 @@ mod tests {
         world.spawn((Area::default(), InLayout(layout)));
         Workbench::new(world).activate_layout(layout).unwrap();
         assert_ne!(open_settings(world), first);
-    }
-
-    #[test]
-    fn close_requests_are_approved() {
-        let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin)
-            .add_systems(Update, approve_closes);
-        let world = app.world_mut();
-        let panel = open_settings(world);
-        let mut workbench = Workbench::new(world);
-        let stamp = workbench.stamp();
-        workbench
-            .request_panel_close(stamp, LayoutEdit::ClosePanels(vec![panel]))
-            .unwrap();
-        app.update();
-        assert!(app.world().get_entity(panel).is_err());
     }
 }

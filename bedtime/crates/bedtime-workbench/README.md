@@ -41,8 +41,8 @@ window closure. Drop-only automation injection retains its supplied cursor; it i
 not a Finder-drag test.
 
 When using native window integration, configure Bevy WindowPlugin with
-close_when_requested: false. CloseRequested leaves close/exit decisions with
-the application.
+close_when_requested: false. Workbench handles `CloseRequested` itself; see
+[Closing and quitting](#closing-and-quitting).
 
 ## Component composition
 
@@ -87,22 +87,42 @@ panel content is skipped. `Workbench::new(world)` works in that state. Operation
 that need a destination return an error. Deleting the last layout is allowed.
 Keep deferred writers/readers ordered normally; unapplied Commands are not visible.
 
-## Application-owned sessions and close decisions
+## Application-owned sessions
 
-The host owns project/session admission, save/discard decisions, application
-storage and process services. Document sources own document I/O.
+The host owns project/session admission, application storage and process services. Document sources own document I/O.
 Workbench provides composition, checked structural transitions and optional
 [reflected persistence](#optional-reflected-persistence). It has no panel factory
 catalog or built-in project/window manager. See the
 [world/session decision](../../../MIGRATION/workbench-world-session-plan.md).
 
-Destructive UI intentions emit `PanelCloseRequested`. The host may retain a
-request while prompting/saving or approve it with `Workbench::commit_close`.
-`close_targets` is a read-only preflight using the same geometry planner.
-Commit revalidates targets and layout/selection revisions, including switching
-away and back, so delayed approval cannot close a changed layout.
-Raw despawn cleans up linked entities/work without a veto or save prompt; it is
-not a user-facing close protocol. Use document preflight before session shutdown.
+## Closing and quitting
+
+Workbench owns document lifetime, autosave and the unsaved-changes prompt, so
+applications don't implement them.
+
+- **Lifetime.** `DocumentReference` is a Bevy relationship from any entity to a
+  document. On a panel it is the document the panel shows; on other entities (a
+  child of a panel showing several documents, a plugin's holder) it just keeps
+  the document open. Once a document has been referenced, losing its last
+  reference releases it at the end of the frame (replacing a reference within
+  one frame keeps it). Unsaved documents are only released once saved or
+  discarded; otherwise quit asks about them. Documents never referenced are left
+  to whoever opened them.
+- **Closing panels** (closing a tab or area, or merging areas, via
+  `Workbench::request_panel_close` or user edits) happens immediately unless it
+  would release an unsaved document. Closing one of several views never asks.
+- **Autosave.** Set the `DocumentAutosave` resource (default `Never`). With
+  autosave on, a close that would release unsaved documents saves them and
+  closes once the saves succeed.
+- **Prompt.** With autosave off, or when a save fails, workbench asks: Save
+  (Retry after a failure), Discard or Cancel. A failed save never closes
+  anything. `close_prompt` and `resolve_close` drive this headlessly; the `ui`
+  feature draws it.
+- **Quit.** `CloseRequested` asks the same about every unsaved document, waits
+  for saves, shuts down managed work, then sends `AppExit`. Hook `AppExit` to
+  flush application state.
+
+Raw despawn of panels bypasses the prompt; it is not a user-facing close.
 
 ## Documents
 
@@ -122,14 +142,14 @@ deduplication has been removed.
 let source = MemorySource::new("Notes", TextDocument::from("hello"));
 let document = Workbench::new(world).open_document::<TextDocument>(source)?;
 // Returns immediately; inspect_document reports Loading, Ready or Failed.
-bind_document_view(world, panel, document)?;
+world.entity_mut(panel).insert(DocumentReference::new(document.id()));
 ```
 
 A `Document` entity privately owns representation/history and acknowledged source
-knowledge. `DocumentHandle<Model>` and `DocumentView` are non-owning references;
-closing the last viewer retains the document and admitted saves. Explicit
-`close_document`/`discard_document` retire its viewers and association after
-preflight. `MemorySource` supplies explicitly clean or unsaved initial models. Legacy
+knowledge. `DocumentHandle<Model>` is a non-owning handle; `DocumentReference`
+keeps a document alive ([Closing and quitting](#closing-and-quitting)).
+Explicit `close_document`/`discard_document` retire its viewers and association
+after preflight. `MemorySource` supplies explicitly clean or unsaved initial models. Legacy
 content-first constructors and separately installed save callbacks are excluded
 from the production API; controlled regression fixtures use the opt-in
 `test-support` feature.
@@ -185,12 +205,9 @@ drawing consumes available pages. Hex uses this support rather than owning a
 second filesystem lifecycle. Binary documents are read-only; paged text editing
 is deferred, and text initially retains its 256 MiB load limit.
 
-`tick_document_autosave` accepts Never/AfterIdle/OnFocusChange policy and admitted
-focus/settings state. It owns timing, deduplication and completion handling.
-`begin_document_save_all` returns a tracked operation whose `poll` reports pending,
-complete or failed and revalidates captured documents. Hosts supply user decisions
-and flush their application storage before `shutdown_work`, then continue updating
-until `work_finished`. Cancelling a quit intention does not cancel admitted saves.
+Autosave (`DocumentAutosave`: Never/AfterIdle/OnFocusChange) runs as a workbench
+system; focus means the focused panel of the active layout. Cancelling a quit
+does not cancel admitted saves.
 
 Optional reflected persistence captures layout/view descriptors rather than
 unsaved document contents/history. Sources reopen through the ordinary checked
@@ -493,10 +510,9 @@ and respects the system double-click preference for minimize, zoom or no action.
 Areas tile a normalized 0–10,000 integer plane. Area owns its rectangle and selected
 panel; AreaPanels stores tab order. Workbench methods alone commit topology and
 membership changes. Switching layouts retains state; closing retires instances.
-Panel and layout closure reject bound viewers carrying `DocumentDraft`; saving
-or discarding the underlying document remains application policy, and the
-controlled document APIs enforce their own preflight. Direct raw despawn
-bypasses these checks.
+Panel and layout closure reject bound viewers carrying `DocumentDraft`; unsaved
+documents are handled as in [Closing and quitting](#closing-and-quitting).
+Direct raw despawn bypasses these checks.
 
 Panel content is clipped to its content rectangle and the area's rounded outline,
 including viewport images and custom painting. The host enforces this boundary;
@@ -614,13 +630,10 @@ cancellation never acknowledges or discards a completion. Ordinary `spawn_task`
 results retain their disposable contract. Hosts must consume domain messages and
 persist resulting changes before cancelling their storage services.
 
-For orderly exit, drain `ManagedWork::operations_pending()` so admitted effects
-finish their main-world reconciliation. Finish admitted saves/drafts and host
-storage flushes, call
-`preflight_session_close(world, Saved or Discard)`, then `shutdown_work(world)`.
-New document/work admissions are rejected after shutdown. Keep updating until
-`work_finished(world)`, then emit AppExit/drop the World. Dropping alone is a
-fallback, not orderly shutdown. Unix process groups receive TERM then KILL after
+Quitting through `CloseRequested` performs orderly exit. Headless hosts and tests
+can instead call `shutdown_work(world)` and keep updating until
+`work_finished(world)`. New document/work admissions are rejected after shutdown.
+Dropping the World alone is a fallback, not orderly shutdown. Unix process groups receive TERM then KILL after
 250 ms and are reaped. Other platforms terminate the direct child; descendant
 supervision is Unix-specific. Cooperative tasks must return after cancellation.
 

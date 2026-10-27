@@ -116,7 +116,7 @@ impl Drop for ModelPreview {
 
 pub fn accept(world: &mut World, panel: Entity, loaded: &LoadedModel) {
     let source = world
-        .get::<DocumentView>(panel)
+        .get::<DocumentReference>(panel)
         .and_then(|v| document_source_path(world, v.document()));
     let Some(mut preview) = world.get_mut::<ModelPreview>(panel) else {
         return;
@@ -141,7 +141,7 @@ pub fn accept(world: &mut World, panel: Entity, loaded: &LoadedModel) {
 }
 
 pub fn open_result(world: &World, panel: Entity) -> Option<Result<(), String>> {
-    if let Some(view) = world.get::<DocumentView>(panel) {
+    if let Some(view) = world.get::<DocumentReference>(panel) {
         match inspect_document(world, view.document()).ok()?.load_state {
             DocumentLoadState::Loading => return None,
             DocumentLoadState::Failed(error) => return Some(Err(error)),
@@ -167,7 +167,7 @@ pub fn draw(
     panel: Entity,
     menu: impl FnOnce(&mut egui::Ui, &mut World),
 ) {
-    if let Some(view) = world.get::<DocumentView>(panel) {
+    if let Some(view) = world.get::<DocumentReference>(panel) {
         if let Ok(info) = inspect_document(world, view.document()) {
             match info.load_state {
                 DocumentLoadState::Loading => {
@@ -230,7 +230,7 @@ pub fn update(world: &mut World) {
             continue;
         }
         let Some(path) = world
-            .get::<DocumentView>(panel)
+            .get::<DocumentReference>(panel)
             .and_then(|v| document_source_path(world, v.document()))
         else {
             continue;
@@ -238,7 +238,7 @@ pub fn update(world: &mut World) {
         let visible = world
             .get::<PanelPresentation>(panel)
             .is_some_and(|p| p.visible);
-        let revision = world.get::<DocumentView>(panel).and_then(|v| {
+        let revision = world.get::<DocumentReference>(panel).and_then(|v| {
             inspect_document(world, v.document())
                 .ok()
                 .filter(|info| info.load_state == DocumentLoadState::Ready)
@@ -372,7 +372,7 @@ pub fn update(world: &mut World) {
             accept(world, panel, &loaded);
         }
         if reload && revision.is_none() {
-            if let Some(view) = world.get::<DocumentView>(panel) {
+            if let Some(view) = world.get::<DocumentReference>(panel) {
                 let _ = refresh_document(world, view.document());
             }
         }

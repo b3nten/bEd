@@ -1,8 +1,5 @@
 #![cfg(all(unix, feature = "workbench"))]
-use bedtime_editor::{
-    BufferEdit, TextBuffer,
-    workbench::{bind_text_editor, unbind_text_editor},
-};
+use bedtime_editor::{BufferEdit, TextBuffer, workbench::WorkbenchEditor};
 use bedtime_lsp::{FileUri, ServerConfig, ServerStatus, workbench::*};
 use bedtime_workbench::*;
 use bevy::prelude::*;
@@ -62,7 +59,9 @@ impl Fixture {
             let layout = w.active_layout();
             w.create_panel(layout, "Code").unwrap()
         };
-        bind_text_editor(app.world_mut(), panel, doc).unwrap();
+        app.world_mut()
+            .entity_mut(panel)
+            .insert((WorkbenchEditor::default(), DocumentReference::new(doc.id())));
         Self {
             app,
             workspace,
@@ -130,7 +129,10 @@ fn sibling_hidden_views_share_one_stream_and_dirty_viewless_documents_keep_sync(
         let layout = w.active_layout();
         w.create_panel(layout, "Sibling").unwrap()
     };
-    bind_text_editor(f.app.world_mut(), second, f.doc).unwrap();
+    f.app.world_mut().entity_mut(second).insert((
+        WorkbenchEditor::default(),
+        DocumentReference::new(f.doc.id()),
+    ));
     f.ready();
     f.definition();
     assert_eq!(
@@ -148,8 +150,12 @@ fn sibling_hidden_views_share_one_stream_and_dirty_viewless_documents_keep_sync(
         EditOptions::new("Typing"),
     )
     .unwrap();
-    unbind_text_editor(f.app.world_mut(), f.panel).unwrap();
-    unbind_text_editor(f.app.world_mut(), second).unwrap();
+    for panel in [f.panel, second] {
+        f.app
+            .world_mut()
+            .entity_mut(panel)
+            .remove::<(WorkbenchEditor, DocumentReference)>();
+    }
     f.app.update();
     assert!(f.app.world().get::<DocumentLsp>(f.doc.id().0).is_some());
     undo_document(f.app.world_mut(), f.doc.id()).unwrap();
@@ -165,10 +171,8 @@ fn sibling_hidden_views_share_one_stream_and_dirty_viewless_documents_keep_sync(
         assert!(Instant::now() < until);
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(
-        read_document(f.app.world(), f.doc).unwrap().to_string(),
-        "source"
-    );
+    // Clean again and no longer referenced, so workbench released it.
+    assert!(f.app.world().get_entity(f.doc.id().entity()).is_err());
 }
 #[test]
 fn journal_gaps_undo_redo_and_inactive_workspaces_synchronize_canonical_text() {
