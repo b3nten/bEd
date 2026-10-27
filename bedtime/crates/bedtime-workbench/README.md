@@ -823,7 +823,7 @@ real pointer input, including presses just into the gutter:
 
 ```sh
 cargo build --offline --locked -p bed --features automation
-python3 bedtime/tools/smoke_corners.py
+python3 bedtime_old/tools/smoke_corners.py  # drives bed_old; not maintained
 ```
 
 ## Native path fields

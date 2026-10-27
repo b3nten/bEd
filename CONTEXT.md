@@ -27,11 +27,16 @@ need to write this again?* If yes, it probably belongs in Bedtime.
 ## Repository map
 
 - `bed/` — the new app. Currently a minimal window + empty workbench (`bed/main.rs`).
-- `bed_old/` — the previous app, kept as reference only. Do not extend it.
-  `bed_old/crates/bed-structure` is still built because it is a workspace member.
-- `bedtime/crates/` — the library crates. `bedtime/tools/` holds Python smoke
-  tests that drive the old app via `bedtime-automation`.
-- `vendor/` — patched `bevy_render`, `egui`, `rio-vt`, `arboard` (see root `Cargo.toml`).
+- `bed_old/` — the previous app, kept as reference only. Not in the workspace.
+- `bedtime/crates/` — the maintained library: `bedtime-workbench`, `bedtime-ui`,
+  `bedtime-document`, `bedtime-clipboard`.
+- `bedtime_old/` — the other plugins (editor, filesystem, filetree, terminal, hex,
+  image, model, LSP, git, tree-sitter, grammars, mascots, automation) plus the old
+  smoke-test tools and fixtures. Reference only, not in the workspace, and they
+  won't build against the new workbench. Each plugin is brought back into
+  `bedtime/crates/` when bed needs it, cleaned up against the new workbench APIs.
+- `vendor/` — patched `bevy_render`, `egui`, `rio-vt`, `arboard` (see root `Cargo.toml`;
+  the `rio-vt` patch is commented out until the terminal returns).
 - `references/zed/` — local Zed checkout for reference; gitignored.
 
 The old guidance docs (AGENTS.md, ENGINEERING.md, `.skills/`, `MIGRATION/`) were

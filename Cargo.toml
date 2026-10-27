@@ -1,27 +1,14 @@
 [workspace]
 members = [
     "bed",
-    "bedtime/crates/bedtime-automation",
     "bedtime/crates/bedtime-clipboard",
     "bedtime/crates/bedtime-document",
-    "bedtime/crates/bedtime-editor",
-    "bedtime/crates/bedtime-filesystem",
-    "bedtime/crates/bedtime-filetree",
-    "bedtime/crates/bedtime-git",
-    "bedtime/crates/bedtime-grammars",
-    "bedtime/crates/bedtime-hex",
-    "bedtime/crates/bedtime-image",
-    "bedtime/crates/bedtime-lsp",
-    "bedtime/crates/bedtime-mascots",
-    "bedtime/crates/bedtime-model",
-    "bedtime/crates/bedtime-terminal",
-    "bedtime/crates/bedtime-treesitter",
     "bedtime/crates/bedtime-ui",
     "bedtime/crates/bedtime-workbench",
 ]
 default-members = ["bed"]
-# bed_old is kept as reference source only; it no longer builds against bedtime.
-exclude = ["bed_old", "vendor/arboard", "vendor/egui", "vendor/rio-vt"]
+# bed_old and bedtime_old are kept as reference source only; they no longer build.
+exclude = ["bed_old", "bedtime_old", "vendor/arboard", "vendor/egui", "vendor/rio-vt"]
 resolver = "3"
 
 [workspace.package]
@@ -34,22 +21,9 @@ opt-level = 1
 
 [workspace.dependencies]
 bedtime-document = { path = "bedtime/crates/bedtime-document" }
-bedtime-model = { path = "bedtime/crates/bedtime-model" }
-bedtime-image = { path = "bedtime/crates/bedtime-image" }
-bedtime-hex = { path = "bedtime/crates/bedtime-hex" }
-bedtime-mascots = { path = "bedtime/crates/bedtime-mascots" }
-bedtime-grammars = { path = "bedtime/crates/bedtime-grammars" }
-bedtime-treesitter = { path = "bedtime/crates/bedtime-treesitter" }
-bedtime-automation = { path = "bedtime/crates/bedtime-automation" }
 bedtime-clipboard = { path = "bedtime/crates/bedtime-clipboard", default-features = false }
 bedtime-ui = { path = "bedtime/crates/bedtime-ui" }
-bedtime-editor = { path = "bedtime/crates/bedtime-editor" }
-bedtime-lsp = { path = "bedtime/crates/bedtime-lsp" }
 bedtime-workbench = { path = "bedtime/crates/bedtime-workbench" }
-bedtime-terminal = { path = "bedtime/crates/bedtime-terminal" }
-bedtime-filetree = { path = "bedtime/crates/bedtime-filetree" }
-bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
-bedtime-git = { path = "bedtime/crates/bedtime-git" }
 wgpu = "=30.0.1"
 bevy = { version = "=0.20.0", default-features = false }
 egui = "=0.36.2"
@@ -85,5 +59,6 @@ objc2-quartz-core = { version = "=0.3.2", default-features = false, features = [
 [patch.crates-io]
 bevy_render = { path = "vendor/bevy_render" }
 egui = { path = "vendor/egui" }
-rio-vt = { path = "vendor/rio-vt" }
+# Re-enable with the terminal plugin (bedtime_old/crates/bedtime-terminal).
+# rio-vt = { path = "vendor/rio-vt" }
 arboard = { path = "vendor/arboard" }
