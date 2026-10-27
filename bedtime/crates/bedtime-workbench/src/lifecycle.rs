@@ -46,36 +46,19 @@ pub(crate) fn install(app: &mut App) {
 fn reconcile(world: &mut World) {
     reconcile_workbench(world).expect("Invalid workbench component graph");
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SessionCloseMode {
-    Saved,
-    Discard,
-}
-
-pub fn preflight_session_close(world: &World, mode: SessionCloseMode) -> Result<(), String> {
+pub fn shutdown_work(world: &mut World) -> Result<(), String> {
+    reconcile_workbench(world)?;
+    // Saves in flight would be cancelled, and drafts lost. The quit flow waits
+    // for both; this is the direct path for headless hosts and tests.
     for id in document_ids(world) {
         let info = inspect_document(world, id).map_err(|e| e.to_string())?;
-        if info.saving {
-            return Err(format!("Document {:?} is still saving", info.title));
-        }
-        if info.has_drafts {
+        if info.saving || info.has_drafts {
             return Err(format!(
-                "Commit or cancel viewer drafts for {:?} before closing",
-                info.title
-            ));
-        }
-        if mode == SessionCloseMode::Saved && (info.dirty || info.conflict) {
-            return Err(format!(
-                "Save or explicitly discard document {:?} before closing",
+                "{:?} is still saving or being typed in",
                 info.title
             ));
         }
     }
-    Ok(())
-}
-pub fn shutdown_work(world: &mut World) -> Result<(), String> {
-    reconcile_workbench(world)?;
-    preflight_session_close(world, SessionCloseMode::Discard)?;
     world.resource_mut::<ManagedWork>().shutdown();
     Ok(())
 }

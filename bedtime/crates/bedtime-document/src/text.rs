@@ -22,6 +22,7 @@ struct Summary {
     hash: u64,
     power: u64,
 }
+
 impl Summary {
     fn leaf(text: &str) -> Self {
         let mut summary = Self {
@@ -74,6 +75,7 @@ impl Summary {
         }
         summary
     }
+    
     fn merge(a: Self, b: Self) -> Self {
         if a.bytes == 0 {
             return b;
@@ -140,18 +142,21 @@ enum Node {
         height: u8,
     },
 }
+
 impl Node {
     fn summary(&self) -> Summary {
         match self {
             Self::Leaf { summary, .. } | Self::Branch { summary, .. } => *summary,
         }
     }
+    
     fn height(&self) -> u8 {
         match self {
             Self::Leaf { .. } => 1,
             Self::Branch { height, .. } => *height,
         }
     }
+    
     fn leaf(text: String) -> Arc<Self> {
         let mut line_starts = vec![0];
         let mut bytes = text.bytes().enumerate().peekable();
@@ -171,6 +176,7 @@ impl Node {
             line_starts,
         })
     }
+    
     fn branch(left: Arc<Self>, right: Arc<Self>) -> Arc<Self> {
         if left.summary().bytes == 0 {
             return right;
@@ -185,6 +191,7 @@ impl Node {
             right,
         })
     }
+    
     fn join(left: Arc<Self>, right: Arc<Self>) -> Arc<Self> {
         if left.summary().bytes == 0 {
             return right;
@@ -225,6 +232,7 @@ impl Node {
         }
         Self::branch(left, right)
     }
+    
     fn balance(left: Arc<Self>, right: Arc<Self>) -> Arc<Self> {
         if left.height() > right.height() + 1 {
             let Self::Branch {
@@ -278,6 +286,7 @@ impl Node {
         }
         Self::branch(left, right)
     }
+    
     fn build(text: &str) -> Arc<Self> {
         if text.len() <= LEAF_BYTES {
             return Self::leaf(text.into());
@@ -293,6 +302,7 @@ impl Node {
         }
         Self::branch(Self::build(&text[..mid]), Self::build(&text[mid..]))
     }
+    
     fn split(node: &Arc<Self>, at: usize) -> (Arc<Self>, Arc<Self>) {
         if at == 0 {
             return (Self::leaf(String::new()), node.clone());
@@ -316,6 +326,7 @@ impl Node {
             }
         }
     }
+    
     fn line_start(&self, row: usize) -> usize {
         if row == 0 {
             return 0;
@@ -340,6 +351,7 @@ impl Node {
             }
         }
     }
+    
     fn breaks_before(&self, byte: usize) -> usize {
         match self {
             Self::Leaf {
@@ -363,6 +375,7 @@ impl Node {
             }
         }
     }
+    
     fn range_summary(&self, range: Range<usize>) -> Summary {
         if range.start == 0 && range.end == self.summary().bytes {
             return self.summary();
@@ -384,6 +397,7 @@ impl Node {
             }
         }
     }
+    
     fn byte_at_cell(
         &self,
         range: Range<usize>,
@@ -451,16 +465,19 @@ impl Default for TextBuffer {
         Self(Node::leaf(String::new()))
     }
 }
+
 impl From<&str> for TextBuffer {
     fn from(text: &str) -> Self {
         Self(Node::build(text))
     }
 }
+
 impl From<String> for TextBuffer {
     fn from(text: String) -> Self {
         Self::from(text.as_str())
     }
 }
+
 impl fmt::Debug for TextBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("TextBuffer")
@@ -469,6 +486,7 @@ impl fmt::Debug for TextBuffer {
             .finish()
     }
 }
+
 impl fmt::Display for TextBuffer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for chunk in self.chunks() {
@@ -477,6 +495,7 @@ impl fmt::Display for TextBuffer {
         Ok(())
     }
 }
+
 impl PartialEq for TextBuffer {
     fn eq(&self, other: &Self) -> bool {
         self.ptr_eq(other)
@@ -488,12 +507,15 @@ impl PartialEq for TextBuffer {
                     .eq(other.chunks().flat_map(str::bytes)))
     }
 }
+
 impl Eq for TextBuffer {}
+
 impl PartialEq<str> for TextBuffer {
     fn eq(&self, other: &str) -> bool {
         self.len() == other.len() && self.chunks().flat_map(str::bytes).eq(other.bytes())
     }
 }
+
 impl PartialEq<&str> for TextBuffer {
     fn eq(&self, other: &&str) -> bool {
         self == *other
@@ -504,21 +526,27 @@ impl TextBuffer {
     pub fn len(&self) -> usize {
         self.0.summary().bytes
     }
+    
     pub fn is_ascii(&self) -> bool {
         self.0.summary().ascii
     }
+    
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    
     pub fn line_count(&self) -> usize {
         self.0.summary().breaks + 1
     }
+    
     pub fn widest_line_cells(&self) -> usize {
         self.0.summary().widest
     }
+    
     pub fn line_start(&self, row: usize) -> usize {
         self.0.line_start(row)
     }
+    
     pub fn line_range(&self, row: usize) -> Range<usize> {
         let start = self.line_start(row.min(self.line_count() - 1));
         let mut end = self.line_start(row + 1);
@@ -530,6 +558,7 @@ impl TextBuffer {
         }
         start..end
     }
+    
     pub fn line_of(&self, byte: usize) -> usize {
         let byte = byte.min(self.len());
         let mut boundary = byte;
@@ -545,22 +574,27 @@ impl TextBuffer {
         }
         row
     }
+    
     pub fn leading_whitespace_end(&self, row: usize, limit: usize) -> usize {
         let start = self.line_start(row);
         let end = self.clamp_boundary(self.line_range(row).end.min(limit));
         start + self.0.range_summary(start..end).leading
     }
+    
     pub fn trailing_whitespace_start(&self, range: Range<usize>) -> usize {
         range.end - self.0.range_summary(range).trailing
     }
+    
     pub fn concat(&self, other: &Self) -> Self {
         Self(Node::join(self.0.clone(), other.0.clone()))
     }
+    
     pub fn column(&self, byte: usize) -> usize {
         let row = self.line_of(byte);
         let range = self.line_range(row);
         self.0.range_summary(range.start..byte.min(range.end)).last
     }
+    
     pub fn byte_at_column(&self, row: usize, column: usize) -> usize {
         let range = self.line_range(row);
         if column == 0 {
@@ -570,6 +604,7 @@ impl TextBuffer {
             .byte_at_cell(range.clone(), column, &mut 0, 0)
             .unwrap_or(range.end)
     }
+    
     pub fn is_char_boundary(&self, byte: usize) -> bool {
         if byte == self.len() {
             return true;
@@ -580,6 +615,7 @@ impl TextBuffer {
         let (chunk, start) = self.chunk_at(byte);
         chunk.is_char_boundary(byte - start)
     }
+    
     pub fn clamp_boundary(&self, byte: usize) -> usize {
         let mut byte = byte.min(self.len());
         while !self.is_char_boundary(byte) {
@@ -587,6 +623,7 @@ impl TextBuffer {
         }
         byte
     }
+    
     pub fn byte(&self, byte: usize) -> Option<u8> {
         if byte >= self.len() {
             return None;
@@ -594,6 +631,7 @@ impl TextBuffer {
         let (chunk, start) = self.chunk_at(byte);
         Some(chunk.as_bytes()[byte - start])
     }
+    
     pub fn chunk_at(&self, byte: usize) -> (&str, usize) {
         let mut node = self.0.as_ref();
         let mut base = 0;
@@ -611,6 +649,7 @@ impl TextBuffer {
             }
         }
     }
+    
     pub fn slice(&self, range: Range<usize>) -> Self {
         assert!(
             range.start <= range.end
@@ -621,6 +660,7 @@ impl TextBuffer {
         let (body, _) = Node::split(&tail, range.len());
         Self(body)
     }
+    
     /// Copy only a requested range, without constructing intermediate rope
     /// nodes. Rendering uses this for bounded visible line fragments.
     pub fn range_text(&self, range: Range<usize>) -> String {
@@ -651,6 +691,7 @@ impl TextBuffer {
         copy(&self.0, range, &mut out);
         out
     }
+    
     pub fn replace(&mut self, range: Range<usize>, text: &Self) -> Result<Self, String> {
         if range.start > range.end
             || !self.is_char_boundary(range.start)
@@ -663,23 +704,29 @@ impl TextBuffer {
         self.0 = Node::join(Node::join(before, text.0.clone()), after);
         Ok(Self(removed))
     }
+    
     pub fn chunks(&self) -> Chunks<'_> {
         Chunks {
             stack: vec![self.0.as_ref()],
         }
     }
+    
     pub fn fingerprint(&self) -> String {
         format!("{}:{:016x}", self.len(), self.0.summary().hash)
     }
+    
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
+    
     pub fn next_grapheme(&self, byte: usize) -> usize {
         self.grapheme_boundary(byte, true)
     }
+    
     pub fn previous_grapheme(&self, byte: usize) -> usize {
         self.grapheme_boundary(byte, false)
     }
+    
     fn grapheme_boundary(&self, byte: usize, forward: bool) -> usize {
         if (forward && byte == self.len()) || (!forward && byte == 0) {
             return byte;
@@ -714,6 +761,7 @@ impl TextBuffer {
 pub struct Chunks<'a> {
     stack: Vec<&'a Node>,
 }
+
 impl<'a> Iterator for Chunks<'a> {
     type Item = &'a str;
     fn next(&mut self) -> Option<Self::Item> {
@@ -738,6 +786,7 @@ pub struct BufferEdit {
     pub(crate) replacement: TextBuffer,
     restore: Option<(TextBuffer, TextBuffer)>,
 }
+
 impl BufferEdit {
     pub fn new(range: Range<usize>, replacement: impl Into<TextBuffer>) -> Self {
         Self {
@@ -746,12 +795,15 @@ impl BufferEdit {
             restore: None,
         }
     }
+    
     pub fn range(&self) -> Range<usize> {
         self.range.clone()
     }
+    
     pub fn replacement(&self) -> &TextBuffer {
         &self.replacement
     }
+    
     pub fn apply(&self, text: &mut TextBuffer) -> Result<Self, String> {
         if self.range.start > self.range.end
             || !text.is_char_boundary(self.range.start)
@@ -797,6 +849,7 @@ pub struct BufferBuilder {
     leaves: Vec<Arc<Node>>,
     pending: String,
 }
+
 impl BufferBuilder {
     pub fn push(&mut self, mut text: &str) {
         while !text.is_empty() {
@@ -817,6 +870,7 @@ impl BufferBuilder {
             }
         }
     }
+    
     pub fn push_range(
         &mut self,
         text: &TextBuffer,
@@ -835,6 +889,7 @@ impl BufferBuilder {
         }
         true
     }
+    
     pub fn finish(mut self) -> TextBuffer {
         if !self.pending.is_empty() {
             self.leaves.push(Node::leaf(self.pending));

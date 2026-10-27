@@ -7,15 +7,18 @@ pub struct DocumentCommit<C> {
     pub revision: u64,
     pub changes: Option<Vec<C>>,
 }
+
 enum Record<M: DocumentModel> {
     Changes(Vec<M::Change>),
     Replace(M),
 }
+
 struct Entry<M: DocumentModel, G> {
     record: Record<M>,
     label: String,
     group: Option<G>,
 }
+
 pub struct History<M: DocumentModel, G: Copy + Eq> {
     content: M,
     revision: u64,
@@ -24,6 +27,7 @@ pub struct History<M: DocumentModel, G: Copy + Eq> {
     redo: Vec<Entry<M, G>>,
     limit: usize,
 }
+
 impl<M: DocumentModel, G: Copy + Eq> History<M, G> {
     pub fn new(content: M, limit: usize) -> Self {
         Self {
@@ -35,18 +39,23 @@ impl<M: DocumentModel, G: Copy + Eq> History<M, G> {
             limit,
         }
     }
+    
     pub fn content(&self) -> &M {
         &self.content
     }
+    
     pub fn revision(&self) -> u64 {
         self.revision
     }
+    
     pub fn undo_label(&self) -> Option<String> {
         self.undo.back().map(|e| e.label.clone())
     }
+    
     pub fn redo_label(&self) -> Option<String> {
         self.redo.last().map(|e| e.label.clone())
     }
+    
     pub fn changes_since(&self, revision: u64) -> Option<Vec<DocumentCommit<M::Change>>> {
         if revision == self.revision {
             return Some(Vec::new());
@@ -67,6 +76,7 @@ impl<M: DocumentModel, G: Copy + Eq> History<M, G> {
                 .collect(),
         )
     }
+    
     pub fn edit(
         &mut self,
         changes: impl IntoIterator<Item = M::Change>,
@@ -101,6 +111,7 @@ impl<M: DocumentModel, G: Copy + Eq> History<M, G> {
         self.commit(Some(committed));
         Ok(self.revision)
     }
+    
     pub fn replace(&mut self, model: M, label: &str) {
         if model == self.content {
             return;
@@ -114,6 +125,7 @@ impl<M: DocumentModel, G: Copy + Eq> History<M, G> {
         });
         self.commit(None);
     }
+    
     pub fn undo(&mut self, redo: bool) -> Result<Option<u64>, String> {
         let entry = if redo {
             self.redo.last()
@@ -152,6 +164,7 @@ impl<M: DocumentModel, G: Copy + Eq> History<M, G> {
         self.commit(changes);
         Ok(Some(self.revision))
     }
+    
     fn push(&mut self, entry: Entry<M, G>) {
         if self.limit == 0 {
             return;
@@ -161,6 +174,7 @@ impl<M: DocumentModel, G: Copy + Eq> History<M, G> {
             self.undo.pop_front();
         }
     }
+    
     fn commit(&mut self, changes: Option<Vec<M::Change>>) {
         self.revision = self
             .revision

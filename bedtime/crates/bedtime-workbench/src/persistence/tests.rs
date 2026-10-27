@@ -595,12 +595,10 @@ fn layout_replacement_rebuilds_owned_data_and_preserves_other_layouts_resources_
         .activate_layout(layout)
         .unwrap();
     app.insert_resource(Settings(42));
-    let document = open_memory_document(
-        app.world_mut(),
-        "unsaved".to_owned(),
-        DocumentOptions::unsaved("Draft"),
-    )
-    .unwrap();
+    let document = crate::documents::tests::open(
+        &mut app,
+        MemorySource::unsaved("Draft", TextBuffer::from("unsaved")),
+    );
     app.world_mut()
         .entity_mut(panel)
         .insert(DocumentReference::new(document.id()));
@@ -626,7 +624,10 @@ fn layout_replacement_rebuilds_owned_data_and_preserves_other_layouts_resources_
     assert!(app.world().get_entity(part).is_err());
     assert_eq!(app.world().get::<Note>(other_panel).unwrap().text, "saved");
     assert_eq!(app.world().resource::<Settings>(), &Settings(42));
-    assert_eq!(read_document(app.world(), document).unwrap(), "unsaved");
+    assert_eq!(
+        read_document(app.world(), document).unwrap().to_string(),
+        "unsaved"
+    );
     let new_panel = Workbench::new(app.world_mut()).panels(replaced)[0];
     assert_eq!(app.world().get::<Note>(new_panel).unwrap().text, "saved");
     assert!(app.world().get::<Runtime>(new_panel).is_some());
@@ -678,10 +679,9 @@ fn invalid_or_cross_scope_layout_data_and_drafts_preserve_the_live_layout() {
     );
     assert!(Workbench::replace_layout(app.world_mut(), layout, capture).is_err());
     assert!(app.world().get::<Note>(panel).is_some());
-    let document = open_memory_document(
+    let document = open_document(
         app.world_mut(),
-        String::new(),
-        DocumentOptions::loaded("Draft"),
+        MemorySource::new("Draft", TextBuffer::default()),
     )
     .unwrap();
     app.world_mut()

@@ -126,93 +126,43 @@ Raw despawn of panels bypasses the prompt; it is not a user-facing close.
 
 ## Documents
 
-Workbench composes source I/O, representation and history using the headless
-[`bedtime-document`](../bedtime-document/README.md) core. It reexports
-`TextDocument`, `BinaryDocument`, `DocumentModel`, `DocumentSource` and
-`MemorySource`. The editor supplies views, not a separate canonical text owner.
-
-There is **one typed document per canonical source per World**. Opening the same
-source/type returns the existing handle, including during loading or after a
-load failure. Opening another representation for that source returns `WrongModel`
-without changing its contents, history or pending work. Providers own source
-identity; Workbench owns its document association. Old string `source_key`
-deduplication has been removed.
+A document is an entity owning one source's content, undo history and what was
+last saved. There is **one document per source**: opening the same source again
+returns the same document. Models come from
+[`bedtime-document`](../bedtime-document/README.md) (`DocumentModel`, with
+`TextBuffer` for text); sources implement `DocumentSource<Model>`.
 
 ```rust,ignore
-let source = MemorySource::new("Notes", TextDocument::from("hello"));
-let document = Workbench::new(world).open_document::<TextDocument>(source)?;
-// Returns immediately; inspect_document reports Loading, Ready or Failed.
-world.entity_mut(panel).insert(DocumentReference::new(document.id()));
+let document = open_document(world, MemorySource::new("Notes", TextBuffer::from("hello")))?;
+// Loads on a worker; inspect_document(world, document.id())?.status says when it's Ready.
+world.spawn((NotesViewer, DocumentReference::new(document.id()), InArea(area)));
 ```
 
-A `Document` entity privately owns representation/history and acknowledged source
-knowledge. `DocumentHandle<Model>` is a non-owning handle; `DocumentReference`
-keeps a document alive ([Closing and quitting](#closing-and-quitting)).
-Explicit `close_document`/`discard_document` retire its viewers and association
-after preflight. `MemorySource` supplies explicitly clean or unsaved initial models. Legacy
-content-first constructors and separately installed save callbacks are excluded
-from the production API; controlled regression fixtures use the opt-in
-`test-support` feature.
-
-`read_document` returns a reference to the model when ready. Edits carry the
-expected content revision, are evaluated against an isolated clone and commit
-atomically. Models supply inverse changes; the shared history engine owns undo,
-redo and transaction grouping. `document_changes_since` independently exposes the
-last 128 commits, including undo/redo; an expired journal or whole-model replacement
-requires refreshing derived positions. History retention does not control journal
-retention. The persistent text representation shares roots rather than copying
-whole files during ordinary edits and snapshots.
-
-Dirty state means content differs from the acknowledged source baseline. It is
-not revision inequality. Source knowledge stays outside undo history: undoing an
-external update restores older editable contents but does not forget current disk
-knowledge. `DocumentDraft` on a viewer declares uncommitted input; save, history,
-rebinding and retirement preserve the existing composition barriers.
-
-### Loading, saving and observation
-
-Sources supply initial content. Workbench reserves identity/type before scheduling
-load work, and owns Loading/Ready/Failed transitions, refresh tasks and result
-acceptance. Periodic observations use a rotating shared budget of at most 64
-outstanding source checks; memory sources opt out. Native invalidation is supplied
-by Filesystem's optional integration, with bounded polling as fallback.
-
-`save_document` captures the model **and its acknowledged baseline**. The source
-writes that capture on managed work. Success acknowledges only the captured model;
-edits made while saving remain dirty. Destination admission and source-specific
-write leases prevent competing in-process writes. A changed source refuses the
-write. Uncertain results, including a source callback returning `SourceChanged`,
-require a fresh observation before retry. `saved_document_capture` returns the
-contents acknowledged by a `DocumentSaveFinished` receipt for consumers such as LSP.
-Applications do not install filesystem save callbacks or maintain disk checkpoints.
-
-External observations are checked against source generation. Clean refreshes are
-undoable replacements; dirty documents retain edits and record incoming content
-as a conflict. `AcceptIncoming`, `KeepLocal` and `Merged` acknowledge the observed
-source without implicitly saving. Stale resolutions fail. Source location changes
-retain document/history; confirmed deletion preserves dirty content and disables
-its save association. Inspection exposes source presence and pending refresh work.
-
-### Byte views and standard save policies
-
-`document_bytes(world, id)` captures current text bytes, including unsaved edits,
-or a version-bound binary snapshot. Its bounded range/stream methods are worker
-operations. Range reads are limited to 16 MiB; `read_bounded(limit)` and streaming
-readers support consumers with larger explicit budgets. Offsets use `u64`.
-`DocumentBytePageCache` observations expose shared 64 KiB pages, with at most 32
-cached pages per projection. Native reads and cache updates use managed work;
-drawing consumes available pages. Hex uses this support rather than owning a
-second filesystem lifecycle. Binary documents are read-only; paged text editing
-is deferred, and text initially retains its 256 MiB load limit.
-
-Autosave (`DocumentAutosave`: Never/AfterIdle/OnFocusChange) runs as a workbench
-system; focus means the focused panel of the active layout. Cancelling a quit
-does not cancel admitted saves.
-
-Optional reflected persistence captures layout/view descriptors rather than
-unsaved document contents/history. Sources reopen through the ordinary checked
-path. New/Untitled UI, Save As and crash recovery remain deferred. The durable
-ownership record is [source-backed documents](../../../MIGRATION/source-backed-documents.md).
+- **Editing.** `edit_document` / `edit_document_transaction` take the revision
+  the caller saw, and apply all of their changes or none. Undo groups merge
+  consecutive edits from one holder. `document_changes_since` lists recent
+  commits, so views can update positions instead of rebuilding.
+- **Dirty** means the content differs from what was last loaded or saved, not
+  that edits happened: undoing back to the saved content is clean.
+- **One source task at a time.** Each document runs either a read or a save,
+  never both, so saving and outside changes can't race. A save writes a
+  snapshot and edits made meanwhile stay unsaved. A read never starts during a
+  save, and a read still running when a save starts is dropped.
+- **Outside changes** are picked up on `refresh_document`, or periodically for
+  sources that report `check_interval` and a cheap `version`. A clean document
+  takes the change as an undoable edit. A dirty one gets a conflict, which
+  blocks saving until `resolve_document_conflict` (keep local, accept incoming,
+  or a merged model).
+- **Failures.** A failed save keeps everything, records `DocumentInfo::error`
+  and schedules a read, so a save refused because the source changed
+  (`SourceError::Changed`) becomes a conflict. A source that disappears marks the
+  document `missing`; its content is kept and saving is refused. A failed first
+  load gives `DocumentStatus::Failed`; `refresh_document` tries again.
+- **Drafts.** `DocumentDraft` on a holder (e.g. an IME composition in progress)
+  blocks saving, undo, outside changes and closing until removed.
+- `close_document` / `discard_document` close a document and the panels showing
+  it. Usually you don't call them: documents are released with their last
+  reference (see [Closing and quitting](#closing-and-quitting)).
 
 ## Error dialogs (`ui` feature)
 

@@ -1,142 +1,118 @@
+//! Where a document's contents live. Sources do blocking I/O; hosts call them
+//! on worker threads.
 use crate::DocumentModel;
 use std::{
-    fmt, io,
-    ops::Range,
+    fmt,
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
+    time::Duration,
 };
 
-/// Process-local logical identity. Locations and observed versions may change.
+/// Identifies a source for the life of the process. Opening the same source
+/// twice yields the same document; clones of a source share its identity.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SourceId(u64);
+
 impl SourceId {
     pub fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(1);
-        Self(
-            NEXT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-                .expect("Source identities exhausted"),
-        )
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
+
 impl Default for SourceId {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// An opaque token for what the source currently holds (a modification time,
+/// a hash, a revision number). Equal versions mean unchanged contents.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SourceVersion(pub String);
+
 impl From<&str> for SourceVersion {
     fn from(value: &str) -> Self {
         Self(value.into())
-    }
-}
-impl From<String> for SourceVersion {
-    fn from(value: String) -> Self {
-        Self(value)
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SourceError {
     Failed(String),
-    Unsupported(String),
-    Changed(String),
-    Uncertain,
+    /// The source no longer matches the expected version, so a save was refused.
+    Changed,
+    /// The source no longer exists.
     Missing,
-    ReadOnly,
 }
+
 impl fmt::Display for SourceError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Failed(s) | Self::Unsupported(s) | Self::Changed(s) => f.write_str(s),
-            Self::Uncertain => f.write_str("Source write outcome is uncertain"),
-            Self::Missing => f.write_str("Source no longer exists"),
-            Self::ReadOnly => f.write_str("Source is read-only"),
+            Self::Failed(error) => f.write_str(error),
+            Self::Changed => f.write_str("It was changed by something else"),
+            Self::Missing => f.write_str("It no longer exists"),
         }
     }
 }
+
 impl std::error::Error for SourceError {}
 
 pub struct SourceLoad<M> {
     pub model: M,
     pub version: Option<SourceVersion>,
-    pub acknowledged: bool,
-}
-pub struct SourceSave<M> {
-    pub model: M,
-    pub baseline: Option<M>,
-    pub expected_version: Option<SourceVersion>,
+    /// False for contents that were never saved (a new, untitled document),
+    /// which therefore start out unsaved.
+    pub saved: bool,
 }
 
-/// A provider owns I/O and delegates representation conversion to the model.
-/// Implementations must check the captured baseline before publishing a write.
 pub trait DocumentSource<M: DocumentModel>: Send + Sync + 'static {
     fn id(&self) -> SourceId;
+    
     fn title(&self) -> String;
+    
     fn load(&self) -> Result<SourceLoad<M>, SourceError>;
+
+    /// Write `model`, refusing with `Changed` unless the source still holds
+    /// `expected` (the version last loaded or saved). Returns the new version.
+    fn save(
+        &self,
+        model: M,
+        expected: Option<SourceVersion>,
+    ) -> Result<Option<SourceVersion>, SourceError>;
+
     fn writable(&self) -> bool {
         true
     }
-    fn write_blocked(&self) -> bool {
-        false
-    }
-    fn location_generation(&self) -> u64 {
-        0
-    }
-    fn save(&self, snapshot: SourceSave<M>) -> Result<Option<SourceVersion>, SourceError>;
-    fn path(&self) -> Option<std::path::PathBuf> {
-        None
-    }
-    /// Cheap source observation performed on a worker. None opts out of polling.
-    fn observed_version(&self) -> Result<Option<SourceVersion>, SourceError> {
+
+    /// A cheap way to notice outside changes: the current version, without
+    /// loading. `None` means this source can't tell, and isn't checked.
+    fn version(&self) -> Result<Option<SourceVersion>, SourceError> {
         Ok(None)
     }
-    fn observation_interval(&self) -> Option<std::time::Duration> {
+
+    /// How often to check `version` for outside changes.
+    fn check_interval(&self) -> Option<Duration> {
         None
     }
 }
 
-/// Version-bound range access. A read must fail if its source version changed.
-pub trait ByteSnapshot: Send + Sync + 'static {
-    fn len(&self) -> u64;
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-    fn version(&self) -> SourceVersion;
-    fn read_range(&self, range: Range<u64>) -> Result<Vec<u8>, SourceError>;
-}
-
-/// A read-only representation; workers perform bounded reads through its snapshot.
-#[derive(Clone)]
-pub struct BinaryDocument {
-    pub snapshot: Arc<dyn ByteSnapshot>,
-}
-impl PartialEq for BinaryDocument {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.snapshot, &other.snapshot)
-    }
-}
-impl DocumentModel for BinaryDocument {
-    type Change = std::convert::Infallible;
-    fn apply(&mut self, change: &Self::Change) -> Result<Self::Change, String> {
-        match *change {}
-    }
-}
-
-/// A canonical in-memory source. Clones retain identity and acknowledged storage.
+/// An in-memory source. Clones share contents and identity, so a test (or an
+/// application) can change the contents "from outside" with `set`.
 pub struct MemorySource<M: DocumentModel> {
     id: SourceId,
     title: String,
     state: Arc<Mutex<MemoryState<M>>>,
 }
+
 struct MemoryState<M> {
-    model: M,
+    model: Option<M>,
     version: u64,
-    acknowledged: bool,
+    saved: bool,
 }
+
 impl<M: DocumentModel> Clone for MemorySource<M> {
     fn clone(&self) -> Self {
         Self {
@@ -146,63 +122,86 @@ impl<M: DocumentModel> Clone for MemorySource<M> {
         }
     }
 }
+
 impl<M: DocumentModel> MemorySource<M> {
     pub fn new(title: impl Into<String>, model: M) -> Self {
         Self::create(title.into(), model, true)
     }
+
+    /// Contents that start out unsaved, like a new untitled document.
     pub fn unsaved(title: impl Into<String>, model: M) -> Self {
         Self::create(title.into(), model, false)
     }
-    fn create(title: String, model: M, acknowledged: bool) -> Self {
+
+    fn create(title: String, model: M, saved: bool) -> Self {
         Self {
             id: SourceId::new(),
             title,
             state: Arc::new(Mutex::new(MemoryState {
-                model,
+                model: Some(model),
                 version: 0,
-                acknowledged,
+                saved,
             })),
         }
     }
+
+    /// The current contents, or `None` once removed.
+    pub fn get(&self) -> Option<M> {
+        self.state.lock().unwrap().model.clone()
+    }
+
+    /// Replace the contents, as if something else wrote them.
+    pub fn set(&self, model: M) {
+        let mut state = self.state.lock().unwrap();
+        state.model = Some(model);
+        state.version += 1;
+        state.saved = true;
+    }
+
+    /// Remove the contents, as if the source were deleted.
+    pub fn remove(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.model = None;
+        state.version += 1;
+    }
 }
+
 impl<M: DocumentModel> DocumentSource<M> for MemorySource<M> {
     fn id(&self) -> SourceId {
         self.id
     }
+
     fn title(&self) -> String {
         self.title.clone()
     }
+
     fn load(&self) -> Result<SourceLoad<M>, SourceError> {
         let state = self.state.lock().unwrap();
         Ok(SourceLoad {
-            model: state.model.clone(),
+            model: state.model.clone().ok_or(SourceError::Missing)?,
             version: Some(SourceVersion(state.version.to_string())),
-            acknowledged: state.acknowledged,
+            saved: state.saved,
         })
     }
-    fn save(&self, snapshot: SourceSave<M>) -> Result<Option<SourceVersion>, SourceError> {
+
+    fn save(
+        &self,
+        model: M,
+        expected: Option<SourceVersion>,
+    ) -> Result<Option<SourceVersion>, SourceError> {
         let mut state = self.state.lock().unwrap();
-        if snapshot.expected_version != Some(SourceVersion(state.version.to_string()))
-            && (state.acknowledged || snapshot.expected_version.is_some())
-        {
-            return Err(SourceError::Changed("Memory source changed".into()));
+        if state.saved && expected != Some(SourceVersion(state.version.to_string())) {
+            return Err(SourceError::Changed);
         }
-        state.model = snapshot.model;
-        state.acknowledged = true;
+        state.model = Some(model);
         state.version += 1;
+        state.saved = true;
         Ok(Some(SourceVersion(state.version.to_string())))
     }
-}
 
-impl From<io::Error> for SourceError {
-    fn from(error: io::Error) -> Self {
-        if matches!(
-            error.kind(),
-            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
-        ) {
-            Self::Missing
-        } else {
-            Self::Failed(error.to_string())
-        }
+    fn version(&self) -> Result<Option<SourceVersion>, SourceError> {
+        Ok(Some(SourceVersion(
+            self.state.lock().unwrap().version.to_string(),
+        )))
     }
 }

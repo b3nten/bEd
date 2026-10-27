@@ -7,7 +7,6 @@ license.workspace = true
 description = "World sessions, layouts, panels, documents and commands for Bedtime"
 
 [features]
-test-support = []
 default = ["ui", "native", "clipboard"]
 ui = ["dep:bedtime-ui", "dep:bevy_egui"]
 clipboard = ["dep:bedtime-clipboard"]

@@ -4,10 +4,6 @@ mod commands;
 mod composition;
 mod document_commands;
 mod documents;
-#[cfg(any(test, feature = "test-support"))]
-mod test_support;
-#[cfg(any(test, feature = "test-support"))]
-pub use test_support::*;
 mod membership;
 pub use composition::{PanelTabStyle, reconcile_workbench};
 pub use document_commands::*;
@@ -149,7 +145,5 @@ fn valid_key(key: &str) -> bool {
     valid && count >= 2
 }
 
-#[cfg(test)]
-mod document_integration_tests;
 #[cfg(test)]
 mod tests;

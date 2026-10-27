@@ -299,13 +299,11 @@ fn advance(world: &mut World) {
                 let mut errors = std::mem::take(errors);
                 close.documents.retain(|&id| needs_decision(world, id));
                 for &id in &close.documents {
-                    let saved = inspect_document(world, id)
-                        .ok()
-                        .and_then(|info| info.last_save_error);
-                    if let Some(error) = saved
+                    let failed = inspect_document(world, id).ok().and_then(|info| info.error);
+                    if let Some(error) = failed
                         && !errors.iter().any(|(e, _)| *e == id)
                     {
-                        errors.push((id, error.to_string()));
+                        errors.push((id, error));
                     }
                 }
                 errors.retain(|(id, _)| close.documents.contains(id));
@@ -377,59 +375,27 @@ pub(crate) fn report_error(world: &mut World, title: &str, message: &str, detail
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::documents::{SaveBinding, create_memory_snapshot, install_save_binding};
+    use crate::documents::tests::{TestSource, app, open, panel, type_text};
     use std::time::{Duration, Instant};
 
-    fn app() -> App {
-        let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
-        crate::tests::layout(app.world_mut());
-        app
-    }
-
-    fn panel(world: &mut World) -> Entity {
-        let mut workbench = Workbench::new(world);
-        let layout = workbench.active_layout();
-        workbench.create_panel(layout, "Viewer").unwrap()
-    }
-
-    /// A viewed document whose saves succeed or fail as asked.
-    fn unsaved(app: &mut App, saves: bool) -> (DocumentHandle<String>, Entity) {
+    /// A viewed document with unsaved edits, whose saves succeed or fail as asked.
+    fn unsaved(app: &mut App, saves: bool) -> (DocumentHandle<TextBuffer>, Entity) {
+        let source = TestSource::new("base");
+        if !saves {
+            source.fail_saves(Some("disk full"));
+        }
+        let document = open(app, source);
         let world = app.world_mut();
-        let document = create_memory_snapshot(
-            world,
-            "base".to_owned(),
-            DocumentOptions::loaded("notes.txt"),
-        )
-        .unwrap();
-        install_save_binding(
-            world,
-            document,
-            SaveBinding::new(None, move |_| {
-                if saves {
-                    Ok(None)
-                } else {
-                    Err(DocumentSaveError::Failed("disk full".into()))
-                }
-            }),
-        )
-        .unwrap();
         let viewer = panel(world);
         world
             .entity_mut(viewer)
             .insert(DocumentReference::new(document.id()));
-        edit_document(
-            world,
-            document,
-            0,
-            TextChange {
-                range: 0..4,
-                replacement: "edited".into(),
-            },
-            EditOptions::new("Edit"),
-        )
-        .unwrap();
+        type_text(world, document, 4, " edited");
         (document, viewer)
+    }
+
+    fn clean(app: &mut App, name: &str) -> DocumentHandle<TextBuffer> {
+        open(app, MemorySource::new(name, TextBuffer::default()))
     }
 
     fn close(app: &mut App, panel: Entity) {
@@ -537,11 +503,9 @@ mod tests {
     #[test]
     fn clean_documents_are_released_with_their_last_reference_but_unreferenced_ones_are_kept() {
         let mut app = app();
+        let viewed = clean(&mut app, "a");
+        let unviewed = clean(&mut app, "b");
         let world = app.world_mut();
-        let viewed =
-            create_memory_snapshot(world, String::new(), DocumentOptions::loaded("a")).unwrap();
-        let unviewed =
-            create_memory_snapshot(world, String::new(), DocumentOptions::loaded("b")).unwrap();
         let viewer = panel(world);
         world
             .entity_mut(viewer)
@@ -554,9 +518,8 @@ mod tests {
     #[test]
     fn replacing_a_view_in_the_same_frame_keeps_the_document() {
         let mut app = app();
+        let document = clean(&mut app, "a");
         let world = app.world_mut();
-        let document =
-            create_memory_snapshot(world, String::new(), DocumentOptions::loaded("a")).unwrap();
         let old = panel(world);
         world
             .entity_mut(old)
@@ -573,9 +536,8 @@ mod tests {
     #[test]
     fn any_entity_can_hold_a_document_open() {
         let mut app = app();
+        let document = clean(&mut app, "a");
         let world = app.world_mut();
-        let document =
-            create_memory_snapshot(world, String::new(), DocumentOptions::loaded("a")).unwrap();
         let holder = world.spawn(DocumentReference::new(document.id())).id();
         app.update();
         assert!(exists(&app, document.id().entity()));

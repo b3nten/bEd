@@ -124,8 +124,9 @@ Each step should produce a usable app. We can reorder at any point.
 0. ✅ Window, workbench surface, camera, close request → exit (current `bed/main.rs`).
 1. ✅ Global settings: resource, config file, Settings panel (chosen first as the
    foundation for workspaces).
-2. 🔄 Workbench document lifetime, autosave and close/quit flow (see Decisions).
-2b. Project root + file tree panel.
+2. ✅ Workbench document lifetime, autosave and close/quit flow (see Decisions).
+3. 🔄 Document handling cleanup (see step log).
+4. Project root + file tree panel.
 2. Open a file into an editor tab (opening policy; observation 1).
 3. Other viewers: image / hex / model, chosen by file type; "Open with".
 4. Save, dirty state, quit with unsaved documents (observation 4).
@@ -153,7 +154,8 @@ Each step should produce a usable app. We can reorder at any point.
   multi-instance three-way merge, lock file, periodic re-read, async I/O,
   "storage ready" gates.
 
-- **Step 2 (document lifetime / close / quit)**, implemented 2026-10-26 and awaiting review.
+- **Step 2 (document lifetime / close / quit)**, committed 2026-10-26 (`92136e6`).
+  Unused plugins moved to `bedtime_old/` (`2a46ff2`).
   New `bedtime-workbench/src/closing.rs` (release of unviewed documents, close and
   quit flow, `close_prompt`/`resolve_close`), prompt UI in `dialogs.rs`.
   `DocumentView` became the public `DocumentReference` relationship
@@ -171,6 +173,28 @@ Each step should produce a usable app. We can reorder at any point.
   since it can't build against the new API.
   Not done yet: a manual test of the prompt in the running app (bed can't open
   documents yet).
+
+- **Step 3 (document cleanup)**, implemented 2026-10-26 and awaiting review.
+  - `bedtime-document`: `DocumentModel`, `History`, `TextBuffer`, and a smaller
+    `DocumentSource` (`load`, `save(model, expected_version)`, optional
+    `version`/`check_interval`/`writable`). Removed `BinaryDocument`,
+    `ByteDocument`, `ByteSnapshot`, `String` as a model, `TextChange`, the
+    `TextDocument` alias, and the file-specific `path`/`location_generation`/
+    `write_blocked`. `MemorySource` gained `get`/`set`/`remove`.
+  - Workbench `documents.rs` (API) + `documents/store.rs` (typed state machine) +
+    `documents/autosave.rs`. One `Document` component holds a typed store:
+    `Loading | Failed | Ready(session)` and at most one source task (read or
+    save). Saves go straight to the source.
+  - Removed: save bindings, destination keys and their lock table, source /
+    binding / location generation counters, `refresh_required`, the `Unloaded`
+    fake session, `open_shared_document`, `open_prepared_document`,
+    `Workbench::open_document`, `offer_document_external_update`, byte views and
+    the page cache, the `BinaryDocument` history special case,
+    `saved_document_capture`, `preflight_session_close`, the `test-support`
+    feature and `create_memory_snapshot`.
+  - Non-test document code went from about 2,950 to about 1,590 lines. Tests were
+    rewritten around behaviour with a `TestSource` that can hold or fail reads
+    and saves.
 
 ## Decisions
 
