@@ -21,3 +21,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 image = { workspace = true, features = ["png"] }
 
+[dev-dependencies]
+bedtime-workbench2 = { path = "../bedtime-workbench2", default-features = false, features = ["test-support"] }
+bevy = { workspace = true, features = ["bevy_core_pipeline", "async_executor", "multi_threaded", "bevy_log", "x11", "wayland"] }
+

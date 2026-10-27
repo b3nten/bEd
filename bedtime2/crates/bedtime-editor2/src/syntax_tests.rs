@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 const CODE: &str = "fn one() {\n    let cat = 1;\n    println!(\"{}\", cat);\n}\nfn two() {\n    let dog = 2;\n}\n";
-fn observation(doc: &TextDocument) -> Arc<bedtime_treesitter2::Observation> {
+fn observation(doc: &MemoryTextSession) -> Arc<bedtime_treesitter2::Observation> {
     let mut analysis = AnalysisSession::new();
     syntax::update_analysis(&mut analysis, doc, "rust").unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -20,7 +20,7 @@ fn observation(doc: &TextDocument) -> Arc<bedtime_treesitter2::Observation> {
 }
 #[test]
 fn sibling_folds_are_independent_and_hidden_rows_share_hit_and_keyboard_geometry() {
-    let mut doc = TextDocument::new(CODE);
+    let mut doc = MemoryTextSession::new(CODE);
     let snapshot = doc.snapshot().unwrap();
     let syntax = observation(&doc);
     let ctx = egui::Context::default();
@@ -77,7 +77,7 @@ fn sibling_folds_are_independent_and_hidden_rows_share_hit_and_keyboard_geometry
 }
 #[test]
 fn navigation_and_find_unfold_targets_and_reveal_only_keeps_caret() {
-    let mut doc = TextDocument::new(CODE);
+    let mut doc = MemoryTextSession::new(CODE);
     let snapshot = doc.snapshot().unwrap();
     let mut view = EditorView::default();
     view.set_syntax(Some(observation(&doc)));
@@ -110,7 +110,7 @@ fn navigation_and_find_unfold_targets_and_reveal_only_keeps_caret() {
 }
 #[test]
 fn edits_before_a_fold_map_it_and_edits_inside_expand_it_without_history_entries() {
-    let mut doc = TextDocument::new(CODE);
+    let mut doc = MemoryTextSession::new(CODE);
     let mut view = EditorView::default();
     view.set_syntax(Some(observation(&doc)));
     let ctx = egui::Context::default();
@@ -150,7 +150,7 @@ fn edits_before_a_fold_map_it_and_edits_inside_expand_it_without_history_entries
 }
 #[test]
 fn wrapping_folding_theme_and_composition_preserve_geometry_and_canonical_text() {
-    let mut doc = TextDocument::new(CODE.replace(
+    let mut doc = MemoryTextSession::new(CODE.replace(
         "fn one() {",
         &format!("fn one() {{ // {}", "comment ".repeat(40)),
     ));
@@ -213,7 +213,7 @@ fn sparse_mapping_handles_nested_and_adjacent_collapsed_regions() {
 
 #[test]
 fn analysis_limits_keep_long_documents_editable_without_whole_line_layout() {
-    let mut doc = TextDocument::new("x".repeat(bedtime_treesitter2::MAX_SOURCE_BYTES + 1));
+    let mut doc = MemoryTextSession::new("x".repeat(bedtime_treesitter2::MAX_SOURCE_BYTES + 1));
     let mut analysis = AnalysisSession::new();
     let start = Instant::now();
     syntax::update_analysis(&mut analysis, &doc, "rust").unwrap();
@@ -242,9 +242,9 @@ fn analysis_limits_keep_long_documents_editable_without_whole_line_layout() {
 
 #[test]
 fn analysis_journals_cover_grouped_edits_undo_redo_and_expiry() {
-    let mut doc = TextDocument::new(CODE);
+    let mut doc = MemoryTextSession::new(CODE);
     let mut analysis = AnalysisSession::new();
-    fn settle(analysis: &mut AnalysisSession, doc: &TextDocument) {
+    fn settle(analysis: &mut AnalysisSession, doc: &MemoryTextSession) {
         syntax::update_analysis(analysis, doc, "rust").unwrap();
         let deadline = Instant::now() + Duration::from_secs(10);
         while analysis.status() == &AnalysisStatus::Pending {
@@ -292,7 +292,7 @@ fn analysis_journals_cover_grouped_edits_undo_redo_and_expiry() {
 
 #[test]
 fn find_navigation_expands_a_fold_containing_the_match() {
-    let mut doc = TextDocument::new(CODE);
+    let mut doc = MemoryTextSession::new(CODE);
     let mut view = EditorView::default();
     view.set_syntax(Some(observation(&doc)));
     let ctx = egui::Context::default();
@@ -315,7 +315,7 @@ fn find_navigation_expands_a_fold_containing_the_match() {
 
 #[test]
 fn fold_animation_preserves_gutter_width_and_moves_following_rows_continuously() {
-    let mut doc = TextDocument::new(CODE);
+    let mut doc = MemoryTextSession::new(CODE);
     let snapshot = doc.snapshot().unwrap();
     let ctx = egui::Context::default();
     let id = egui::Id::new("animated-fold");
@@ -380,7 +380,7 @@ fn reversing_a_fold_keeps_the_displayed_height_and_nested_folds() {
 fn painted_syntax(
     ctx: &egui::Context,
     view: &mut EditorView,
-    doc: &mut TextDocument,
+    doc: &mut MemoryTextSession,
     id: egui::Id,
     events: Vec<egui::Event>,
 ) -> Vec<(String, egui::Color32)> {
@@ -436,7 +436,7 @@ fn painted_syntax(
 
 #[test]
 fn syntax_colors_survive_edit_frames_pending_analysis_and_shared_history() {
-    let mut doc = TextDocument::new(CODE);
+    let mut doc = MemoryTextSession::new(CODE);
     let mut analysis = AnalysisSession::new();
     syntax::update_analysis(&mut analysis, &doc, "rust").unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -548,7 +548,7 @@ fn syntax_colors_survive_edit_frames_pending_analysis_and_shared_history() {
 
 #[test]
 fn retained_colors_clear_on_journal_gaps_and_explicit_detachment() {
-    let mut doc = TextDocument::new(CODE);
+    let mut doc = MemoryTextSession::new(CODE);
     let mut view = EditorView::default();
     view.set_syntax(Some(observation(&doc)));
     for _ in 0..130 {
@@ -583,7 +583,7 @@ fn retained_colors_clear_on_journal_gaps_and_explicit_detachment() {
 #[test]
 fn provisional_colors_cover_insertions_inside_tokens_and_survive_deleted_lines() {
     let source = "fn one() { let message = \"abc\"; }\nfn other() {}\n";
-    let mut doc = TextDocument::new(source);
+    let mut doc = MemoryTextSession::new(source);
     let mut view = EditorView::default();
     view.set_syntax(Some(observation(&doc)));
     let ctx = egui::Context::default();

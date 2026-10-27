@@ -10,12 +10,15 @@ use std::{
     thread::JoinHandle,
     time::{Duration, Instant},
 };
+
 const VERSION: u32 = 2;
 const MAX_BYTES: usize = crate::storage::MAX_BYTES;
 const DEBOUNCE: Duration = Duration::from_millis(250);
+
 #[derive(Resource, Reflect, Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 #[reflect(Resource, Serialize, Deserialize, ProjectPersist)]
 pub(crate) struct ProjectTitle(pub String);
+
 pub struct SessionPlugin;
 impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
@@ -27,14 +30,17 @@ impl Plugin for SessionPlugin {
             .add_systems(PostUpdate, capture_sessions);
     }
 }
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Session {
     version: u32,
+    #[serde(with = "bedtime_workbench2::native_path::option")]
     root: Option<PathBuf>,
     graph: Snapshot,
     local: Snapshot,
 }
+
 #[derive(Resource)]
 struct InitialSession(Session);
 pub fn remember_initial_state(world: &mut World) -> Result<(), String> {
@@ -44,6 +50,7 @@ pub fn remember_initial_state(world: &mut World) -> Result<(), String> {
     }
     Ok(())
 }
+
 pub fn seed_initial_layout(world: &mut World) {
     if let Ok(current) = capture(world) {
         if let Some(mut initial) = world.get_resource_mut::<InitialSession>() {
@@ -60,6 +67,7 @@ pub fn seed_initial_layout(world: &mut World) {
         }
     }
 }
+
 pub fn initialize_folder_name(world: &mut World, name: String) {
     world.init_resource::<ProjectTitle>();
     let registry = world.resource::<AppTypeRegistry>().clone();
@@ -82,6 +90,7 @@ pub fn initialize_folder_name(world: &mut World, name: String) {
         }
     }
 }
+
 pub(crate) fn validate(session: &Session) -> Result<(), String> {
     if session.version != VERSION {
         return Err("Unsupported project session version; original file preserved".into());
@@ -89,12 +98,13 @@ pub(crate) fn validate(session: &Session) -> Result<(), String> {
     if session
         .root
         .as_ref()
-        .is_some_and(|r| !r.is_absolute() || r.as_os_str().len() > 16384)
+        .is_some_and(|r| crate::persistence::validate_absolute_path(r).is_err())
     {
         return Err("Invalid project root".into());
     }
     Ok(())
 }
+
 pub(crate) fn capture(world: &mut World) -> Result<Session, String> {
     Ok(Session {
         version: VERSION,
@@ -105,6 +115,7 @@ pub(crate) fn capture(world: &mut World) -> Result<Session, String> {
         local: crate::persistence::capture_local(world)?,
     })
 }
+
 fn merge_loaded(
     world: &World,
     baseline: &Session,
@@ -170,6 +181,7 @@ fn merge_loaded(
     ))?;
     disk.serialize(registry)
 }
+
 fn restore(world: &mut World, session: &Session) -> Result<(), String> {
     validate(session)?;
     let registry = world.resource::<AppTypeRegistry>();
@@ -183,10 +195,9 @@ fn restore(world: &mut World, session: &Session) -> Result<(), String> {
     }
     if world.resource::<ManagedWork>().list().iter().any(|job| {
         job.owner.is_some_and(|owner| {
-            world.get::<crate::tasks::TasksPanel>(owner).is_some()
-                || world
-                    .get::<bedtime_terminal2::TerminalPanel>(owner)
-                    .is_some()
+            world
+                .get::<bedtime_terminal2::TerminalPanel>(owner)
+                .is_some()
         })
     }) || crate::git::has_pending_operation(world)
         || bedtime_filetree2::filetree_operation_count(world) > 0
@@ -202,6 +213,7 @@ fn restore(world: &mut World, session: &Session) -> Result<(), String> {
     crate::persistence::activate_local(world);
     crate::persistence::restore_graph(world, graph)
 }
+
 enum Job {
     Read(JoinHandle<Result<Option<Session>, String>>),
     Write {
@@ -233,6 +245,7 @@ fn decode(bytes: &[u8]) -> Result<Session, String> {
     validate(&session)?;
     Ok(session)
 }
+
 fn read_source(
     path: &std::path::Path,
     registry: &AppTypeRegistry,
@@ -535,6 +548,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         root
     }
+    
     fn host(root: &std::path::Path, persistent: bool) -> App {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, SessionPlugin));
@@ -546,6 +560,7 @@ mod tests {
         remember_initial_state(app.world_mut()).unwrap();
         app
     }
+    
     fn settle(app: &mut App) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -557,6 +572,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
+    
     fn settings_panel(world: &mut World) -> Entity {
         let layout = Workbench::new(world)
             .create_layout("Settings layout")
@@ -567,6 +583,7 @@ mod tests {
             .spawn((crate::settings::SettingsPanel, InArea(area)))
             .id()
     }
+    
     #[test]
     fn startup_is_memory_only_without_an_explicit_project_and_pristine_projects_do_not_write() {
         let root = fixture();
@@ -583,6 +600,7 @@ mod tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn reflected_tools_resources_layout_order_and_selection_roundtrip_without_a_startup_write() {
         let root = fixture();
@@ -661,6 +679,7 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), before);
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn rejected_old_or_malformed_project_data_is_preserved_and_new_mutations_block_flush() {
         let root = fixture();
@@ -684,6 +703,7 @@ mod tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn unknown_live_panels_cannot_silently_replace_a_good_snapshot() {
         let root = fixture();
@@ -700,6 +720,7 @@ mod tests {
         assert_eq!(std::fs::read(path).unwrap(), before);
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn restore_rejects_live_documents_and_invalid_graph_before_retiring_anything() {
         let root = fixture();
@@ -708,7 +729,7 @@ mod tests {
         let stored = capture(source.world_mut()).unwrap();
         let mut target = host(&root, false);
         let live = settings_panel(target.world_mut());
-        let document = open_document(
+        let document = open_memory_document(
             target.world_mut(),
             "unsaved".to_owned(),
             DocumentOptions::unsaved("Draft"),
@@ -723,6 +744,7 @@ mod tests {
         assert!(target.world().get::<PanelInstance>(live).is_some());
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn resource_partitions_and_numbered_slots_reject_entities_before_live_retirement() {
         let root = fixture();
@@ -741,6 +763,7 @@ mod tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn late_reads_merge_individual_project_values_and_keep_newer_visibility_roots() {
         let root = fixture();
@@ -813,6 +836,7 @@ mod tests {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn failed_write_preserves_previous_file_and_retries_after_repair() {
         let root = fixture();

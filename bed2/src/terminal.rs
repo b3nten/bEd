@@ -65,12 +65,13 @@ fn resolve_targets(directory: PathBuf, arguments: Vec<OsString>) -> Result<OpenT
             return Err("File path must not be empty".into());
         }
         let path = directory.join(argument);
-        let path = path
+        let path = bedtime_filesystem2::FileSource::local(&path)
             .canonicalize()
             .map_err(|error| format!("{}: {error}", path.display()))?;
         let metadata = path
             .metadata()
-            .map_err(|error| format!("{}: {error}", path.display()))?;
+            .map_err(|error| format!("{}: {error}", path.path().display()))?;
+        let path = path.path().to_owned();
         if metadata.is_dir() {
             return if arguments.len() == 1 {
                 Ok(OpenTargets::Folder(path))

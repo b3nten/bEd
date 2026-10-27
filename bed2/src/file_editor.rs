@@ -1,71 +1,25 @@
-//! Local text documents and application-owned file save policy. The editor
-//! crate knows neither paths nor filesystem operations.
-use bedtime_editor2::TextBuffer;
-use bedtime_editor2::workbench::{bind_text_editor, unbind_text_editor};
+//! Application editor presentation; source I/O and checkpoints belong to Bedtime.
+use bedtime_editor2::{
+    TextBuffer,
+    workbench::{bind_text_editor, unbind_text_editor},
+};
+pub(crate) use bedtime_filesystem2::workbench::FileWrites;
 use bedtime_workbench2::*;
 use bevy::prelude::*;
-use std::{
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
-    path::{Path, PathBuf},
-    sync::{
-        Arc,
-        atomic::{AtomicU64, Ordering},
-    },
-};
-
-const MAX_TEXT_BYTES: u64 = 256 * 1024 * 1024;
-mod write_access;
-pub(crate) use write_access::{FileWrites, WriteLease};
-
-/// File identity is application-owned and can follow a confirmed rename without
-/// replacing the document or losing history. Workbench source_key stays unset.
-#[derive(Component)]
-struct FileSource {
-    path: Option<PathBuf>,
-    pending_binding: bool,
-    identity_generation: Arc<AtomicU64>,
-    checkpoint: Arc<std::sync::Mutex<TextBuffer>>,
-    saved: Arc<std::sync::Mutex<Option<SavedText>>>,
+use std::path::{Path, PathBuf};
+pub(crate) fn source_path(world: &World, id: DocumentId) -> Option<PathBuf> {
+    document_source_path(world, id)
 }
-
-struct SavedText {
-    revision: u64,
-    identity: u64,
-    text: TextBuffer,
-}
-
-pub(crate) fn source_path(world: &World, document: DocumentId) -> Option<&Path> {
-    world.get::<FileSource>(document.0)?.path.as_deref()
-}
-
-/// Pair the worker's actual write capture with Workbench's acknowledged receipt.
-/// SourceChanged and failed writes never become language-server save events.
 pub(crate) fn take_saved_text(
     world: &World,
     completion: &DocumentSaveFinished,
 ) -> Option<TextBuffer> {
-    let source = world.get::<FileSource>(completion.document.0)?;
-    let mut saved = source.saved.lock().unwrap();
-    if saved
-        .as_ref()
-        .is_none_or(|s| s.revision != completion.captured_revision)
-    {
-        return None;
-    }
-    let saved = saved.take().unwrap();
-    (completion.result.is_ok()
-        && saved.identity == source.identity_generation.load(Ordering::Acquire))
-    .then_some(saved.text)
+    saved_document_capture(world, completion)
 }
-
 pub struct FileEditorPlugin;
 impl Plugin for FileEditorPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            reconcile_bindings.after(crate::files::FilesSystems::Update),
-        );
+        app.add_plugins(bedtime_filesystem2::workbench::FilesystemDocumentsPlugin);
         #[cfg(feature = "automation")]
         {
             use bedtime_automation2::AutomationAppExt;
@@ -73,7 +27,80 @@ impl Plugin for FileEditorPlugin {
         }
     }
 }
-
+#[cfg(test)]
+pub fn bind_loaded(
+    world: &mut World,
+    panel: Entity,
+    path: &Path,
+    _text: &TextBuffer,
+    _stamp: Option<(DocumentId, u64)>,
+) -> Result<(), String> {
+    let source = bedtime_filesystem2::Filesystem::local()
+        .document_source(path)
+        .map_err(|e| e.to_string())?;
+    let loaded =
+        <bedtime_filesystem2::FsDocumentSource as DocumentSource<TextBuffer>>::load(&source)
+            .map_err(|e| e.to_string())?;
+    let h = open_prepared_document(world, source, loaded).map_err(|e| e.to_string())?;
+    bind(world, panel, h.id())
+}
+pub(crate) fn bind(world: &mut World, panel: Entity, id: DocumentId) -> Result<(), String> {
+    let handle = cast_document::<TextBuffer>(world, id).map_err(|e| e.to_string())?;
+    if world
+        .get::<crate::files::FilePanel>(panel)
+        .is_some_and(|p| {
+            matches!(
+                p.viewer,
+                crate::opening::ViewerId::Image
+                    | crate::opening::ViewerId::Model
+                    | crate::opening::ViewerId::Hex
+            )
+        })
+    {
+        return bind_document_view(world, panel, handle).map_err(|e| e.to_string());
+    }
+    if world
+        .get::<bedtime_editor2::workbench::CodeLanguage>(id.0)
+        .is_none()
+    {
+        let language = source_path(world, id)
+            .and_then(|p| {
+                bedtime_treesitter2::language_name(&p.to_string_lossy()).map(str::to_owned)
+            })
+            .unwrap_or_else(|| "text".into());
+        world
+            .entity_mut(id.0)
+            .insert(bedtime_editor2::workbench::CodeLanguage(language));
+    }
+    bind_text_editor(world, panel, handle).map_err(|e| e.to_string())?;
+    crate::settings::configure_editor(world, panel);
+    if world
+        .get::<InArea>(panel)
+        .and_then(|a| world.get::<Area>(a.0))
+        .is_some_and(|a| a.selected_panel() == Some(panel))
+    {
+        crate::files::select_structure_source(world, panel);
+    }
+    Ok(())
+}
+pub fn can_replace(world: &World, panel: Entity) -> bool {
+    world.get::<DocumentView>(panel).is_none_or(|v| {
+        inspect_document(world, v.document())
+            .is_ok_and(|i| !i.dirty && !i.saving && !i.has_drafts && !i.conflict)
+    })
+}
+pub fn same_source(world: &World, panel: Entity, path: &Path) -> bool {
+    world
+        .get::<DocumentView>(panel)
+        .and_then(|v| source_path(world, v.document()))
+        .as_deref()
+        == Some(path)
+}
+pub fn detach(world: &mut World, panel: Entity) -> Result<(), String> {
+    unbind_text_editor(world, panel)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
 #[cfg(feature = "automation")]
 fn navigate(
     world: &mut World,
@@ -149,518 +176,4 @@ fn navigate(
     )
     .map_err(|e| e.to_string())?;
     Ok(serde_json::json!({"panel": panel.to_bits().to_string()}))
-}
-
-fn find_source(world: &mut World, path: &Path) -> Option<DocumentHandle<TextBuffer>> {
-    let id = world
-        .query::<(Entity, &FileSource)>()
-        .iter(world)
-        .find_map(|(entity, source)| {
-            (source.path.as_deref() == Some(path)).then_some(DocumentId(entity))
-        })?;
-    cast_document(world, id).ok()
-}
-
-pub fn load_stamp(world: &mut World, _panel: Entity, path: &Path) -> Option<(DocumentId, u64)> {
-    let handle = find_source(world, path)?;
-    Some((
-        handle.id(),
-        inspect_document(world, handle.id()).ok()?.source_generation,
-    ))
-}
-
-/// Equality against large source/canonical snapshots is resolved on the loader
-/// worker. Reusing an equal root makes main-world reconciliation constant-time.
-pub fn load_snapshots(world: &mut World, _panel: Entity, path: &Path) -> Vec<TextBuffer> {
-    let Some(handle) = find_source(world, path) else {
-        return Vec::new();
-    };
-    let mut snapshots = vec![read_document(world, handle).unwrap().clone()];
-    snapshots.push(
-        world
-            .get::<FileSource>(handle.id().entity())
-            .unwrap()
-            .checkpoint
-            .lock()
-            .unwrap()
-            .clone(),
-    );
-    snapshots
-}
-
-pub fn bind_loaded(
-    world: &mut World,
-    panel: Entity,
-    path: &Path,
-    text: &TextBuffer,
-    stamp: Option<(DocumentId, u64)>,
-) -> Result<(), String> {
-    let handle = if let Some(handle) = find_source(world, path) {
-        if let Some((document, generation)) = stamp.filter(|(document, _)| *document == handle.id())
-        {
-            match offer_document_external_update(
-                world,
-                handle,
-                generation,
-                text.clone(),
-                Some(SourceVersion(text.fingerprint())),
-            ) {
-                Ok(_) => {
-                    *world
-                        .get::<FileSource>(handle.id().entity())
-                        .unwrap()
-                        .checkpoint
-                        .lock()
-                        .unwrap() = text.clone();
-                }
-                Err(DocumentError::StaleSourceGeneration { .. }) => {}
-                Err(error) => return Err(error.to_string()),
-            }
-            debug_assert_eq!(document, handle.id());
-        }
-        handle
-    } else {
-        let title = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy();
-        let mut options = DocumentOptions::loaded(title);
-        options.initial_state =
-            DocumentInitialState::Loaded(Some(SourceVersion(text.fingerprint())));
-        let handle = open_document(world, text.clone(), options).map_err(|e| e.to_string())?;
-        world.entity_mut(handle.id().entity()).insert(FileSource {
-            path: Some(path.to_owned()),
-            pending_binding: true,
-            identity_generation: Arc::new(AtomicU64::new(0)),
-            checkpoint: Arc::new(std::sync::Mutex::new(text.clone())),
-            saved: Arc::new(std::sync::Mutex::new(None)),
-        });
-        update_binding(world, handle.id()).map_err(|e| e.to_string())?;
-        handle
-    };
-    if world
-        .get::<crate::files::FilePreviewPanel>(panel)
-        .is_some_and(|p| {
-            matches!(
-                p.viewer,
-                crate::opening::ViewerId::Image | crate::opening::ViewerId::Model
-            )
-        })
-    {
-        bind_document_view(world, panel, handle).map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-    // Detection runs only for a newly attached language. Explicit choices survive
-    // reloads and sibling views; an unknown extension remains a plain text editor.
-    if world
-        .get::<bedtime_editor2::workbench::CodeLanguage>(handle.id().entity())
-        .is_none()
-    {
-        let language =
-            bedtime_treesitter2::language_name(&path.to_string_lossy()).unwrap_or("text");
-        world
-            .entity_mut(handle.id().entity())
-            .insert(bedtime_editor2::workbench::CodeLanguage(language.into()));
-    }
-    bind_text_editor(world, panel, handle).map_err(|e| e.to_string())?;
-    crate::settings::configure_editor(world, panel);
-    if world
-        .get::<InArea>(panel)
-        .and_then(|owner| world.get::<Area>(owner.0))
-        .is_some_and(|area| area.selected_panel() == Some(panel))
-    {
-        crate::files::select_structure_source(world, panel);
-    }
-    Ok(())
-}
-
-/// A disk viewer never serializes the canonical editor's unsaved contents.
-pub(crate) fn disk_view_has_unsaved(world: &mut World, path: &Path) -> bool {
-    find_source(world, path).is_some_and(|handle| {
-        inspect_document(world, handle.id())
-            .is_ok_and(|info| info.dirty || info.has_drafts || info.saving)
-    })
-}
-
-pub fn can_replace(world: &World, panel: Entity) -> bool {
-    world.get::<DocumentView>(panel).is_none_or(|view| {
-        inspect_document(world, view.document())
-            .is_ok_and(|info| !info.dirty && !info.saving && !info.has_drafts && !info.conflict)
-    })
-}
-
-pub fn same_source(world: &World, panel: Entity, path: &Path) -> bool {
-    world
-        .get::<DocumentView>(panel)
-        .and_then(|view| world.get::<FileSource>(view.document().entity()))
-        .is_some_and(|source| source.path.as_deref() == Some(path))
-}
-
-pub fn detach(world: &mut World, panel: Entity) -> Result<(), String> {
-    let document = unbind_text_editor(world, panel).map_err(|e| e.to_string())?;
-    if let Some(document) = document {
-        let viewed = world
-            .query::<&DocumentView>()
-            .iter(world)
-            .any(|view| view.document() == document);
-        if !viewed
-            && inspect_document(world, document)
-                .is_ok_and(|info| !info.dirty && !info.saving && !info.conflict && !info.has_drafts)
-        {
-            close_document(world, document).map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
-}
-
-/// Preserve local work when a backing file disappears; clean viewers retain the
-/// application's existing unload behavior. Missing sources have no save binding.
-pub fn retain_deleted(world: &mut World, panel: Entity) -> bool {
-    let Some(document) = world.get::<DocumentView>(panel).map(DocumentView::document) else {
-        return false;
-    };
-    if !can_replace(world, panel) {
-        if let Some(mut source) = world.get_mut::<FileSource>(document.entity()) {
-            source.path = None;
-            source.pending_binding = true;
-            source.identity_generation.fetch_add(1, Ordering::AcqRel);
-        }
-        let _ = update_binding(world, document);
-        world.get_mut::<PanelInstance>(panel).unwrap().preview = false;
-        true
-    } else {
-        false
-    }
-}
-
-pub fn move_sources(world: &mut World, from: &Path, to: &Path) {
-    let moved: Vec<_> = world
-        .query::<(Entity, &FileSource)>()
-        .iter(world)
-        .filter_map(|(entity, source)| {
-            let suffix = source.path.as_ref()?.strip_prefix(from).ok()?;
-            Some((
-                DocumentId(entity),
-                if suffix.as_os_str().is_empty() {
-                    to.to_owned()
-                } else {
-                    to.join(suffix)
-                },
-            ))
-        })
-        .collect();
-    for (id, path) in moved {
-        let mut source = world.get_mut::<FileSource>(id.entity()).unwrap();
-        source.path = Some(path);
-        source.pending_binding = true;
-        source.identity_generation.fetch_add(1, Ordering::AcqRel);
-        let _ = update_binding(world, id);
-    }
-}
-
-fn update_binding(world: &mut World, id: DocumentId) -> Result<(), DocumentError> {
-    let handle = cast_document::<TextBuffer>(world, id)?;
-    match world.get::<FileSource>(id.entity()).unwrap().path.clone() {
-        Some(path) => {
-            let key = path.to_string_lossy().into_owned();
-            let identity = world
-                .get::<FileSource>(id.entity())
-                .unwrap()
-                .identity_generation
-                .clone();
-            let generation = identity.load(Ordering::Acquire);
-            let checkpoint = world
-                .get::<FileSource>(id.entity())
-                .unwrap()
-                .checkpoint
-                .clone();
-            let saved = world.get::<FileSource>(id.entity()).unwrap().saved.clone();
-            world.init_resource::<FileWrites>();
-            let writes = world.resource::<FileWrites>().clone();
-            bind_document_save(
-                world,
-                handle,
-                DocumentSaveBinding::new(
-                    Some(key),
-                    move |snapshot: DocumentSaveSnapshot<TextBuffer>| {
-                        let target = fs::canonicalize(&path)
-                            .map_err(|e| DocumentSaveError::Failed(e.to_string()))?;
-                        let _lease = writes.file(&target).map_err(DocumentSaveError::Failed)?;
-                        let observation = SavedText {
-                            revision: snapshot.revision,
-                            identity: generation,
-                            text: snapshot.model.clone(),
-                        };
-                        let result = save_text(&path, snapshot, &checkpoint, || {
-                            identity.load(Ordering::Acquire) == generation
-                        });
-                        if result.is_ok() {
-                            *saved.lock().unwrap() = Some(observation);
-                        }
-                        result
-                    },
-                ),
-            )?;
-        }
-        None => unbind_document_save(world, id)?,
-    }
-    world
-        .get_mut::<FileSource>(id.entity())
-        .unwrap()
-        .pending_binding = false;
-    Ok(())
-}
-
-pub(crate) fn reconcile_bindings(world: &mut World) {
-    let pending: Vec<_> = world
-        .query::<(Entity, &FileSource)>()
-        .iter(world)
-        .filter_map(|(entity, source)| source.pending_binding.then_some(DocumentId(entity)))
-        .collect();
-    for id in pending {
-        let _ = update_binding(world, id);
-    }
-}
-
-/// Compare source bytes incrementally against the expected immutable checkpoint.
-/// This never makes a second full-file string or rope during a save.
-fn source_matches(path: &Path, expected: &TextBuffer) -> Result<bool, DocumentSaveError> {
-    let metadata =
-        fs::metadata(path).map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-    if !metadata.is_file() {
-        return Err(DocumentSaveError::Failed(
-            "The source is no longer a regular file.".into(),
-        ));
-    }
-    if metadata.len() != expected.len() as u64 {
-        return Ok(false);
-    }
-    let mut file =
-        File::open(path).map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-    let mut scratch = [0; 4096];
-    for chunk in expected.chunks() {
-        file.read_exact(&mut scratch[..chunk.len()])
-            .map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-        if &scratch[..chunk.len()] != chunk.as_bytes() {
-            return Ok(false);
-        }
-    }
-    let mut extra = [0];
-    Ok(file
-        .read(&mut extra)
-        .map_err(|error| DocumentSaveError::Failed(error.to_string()))?
-        == 0)
-}
-
-/// Ordinary filesystems have no atomic content CAS: another process can write
-/// between the final comparison and rename. Known application identity changes
-/// are generation-gated before replacement and before accepting the receipt.
-fn save_text(
-    path: &Path,
-    snapshot: DocumentSaveSnapshot<TextBuffer>,
-    checkpoint: &std::sync::Mutex<TextBuffer>,
-    identity_matches: impl Fn() -> bool,
-) -> Result<Option<SourceVersion>, DocumentSaveError> {
-    if snapshot.model.len() as u64 > MAX_TEXT_BYTES {
-        return Err(DocumentSaveError::Failed(
-            "Text exceeds the editor's 256 MiB file limit; the file was preserved.".into(),
-        ));
-    }
-    let baseline = checkpoint
-        .lock()
-        .map_err(|_| DocumentSaveError::Failed("Source checkpoint lock failed".into()))?
-        .clone();
-    let expected = snapshot.expected_source_version.as_ref().ok_or_else(|| {
-        DocumentSaveError::Failed(
-            "Reload the file before saving without a source checkpoint.".into(),
-        )
-    })?;
-    if expected.0 != baseline.fingerprint() {
-        return Err(DocumentSaveError::Conflict(
-            "Source checkpoint changed; reload before saving.".into(),
-        ));
-    }
-    let check = || -> Result<(), DocumentSaveError> {
-        if !identity_matches() {
-            return Err(DocumentSaveError::Conflict(
-                "The file moved or was deleted during save. Reload its current source.".into(),
-            ));
-        }
-        if !source_matches(path, &baseline)? {
-            return Err(DocumentSaveError::Conflict(
-                "The file changed on disk. Reload to compare before saving.".into(),
-            ));
-        }
-        Ok(())
-    };
-    check()?;
-    let target =
-        fs::canonicalize(path).map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-    let metadata =
-        fs::metadata(&target).map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-    if !metadata.is_file() || metadata.permissions().readonly() {
-        return Err(DocumentSaveError::Failed(
-            "The file is read-only or is not a regular file.".into(),
-        ));
-    }
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    let temp = target.parent().unwrap().join(format!(
-        ".bed-editor-{}-{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| {
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temp)
-            .map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-        file.set_permissions(metadata.permissions())
-            .map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-        for chunk in snapshot.model.chunks() {
-            file.write_all(chunk.as_bytes())
-                .map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-        }
-        file.sync_all()
-            .map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-        drop(file);
-        check()?;
-        if fs::canonicalize(path).ok().as_ref() != Some(&target) {
-            return Err(DocumentSaveError::Conflict(
-                "The file's destination changed during save.".into(),
-            ));
-        }
-        fs::rename(&temp, &target).map_err(|error| DocumentSaveError::Failed(error.to_string()))?;
-        if !identity_matches() {
-            return Err(DocumentSaveError::Conflict(
-                "The source moved during save; refresh its new destination.".into(),
-            ));
-        }
-        let mut current = checkpoint
-            .lock()
-            .map_err(|_| DocumentSaveError::Failed("Source checkpoint lock failed".into()))?;
-        if *current != baseline {
-            return Err(DocumentSaveError::Conflict(
-                "Source knowledge changed during save; reload before retrying.".into(),
-            ));
-        }
-        *current = snapshot.model.clone();
-        Ok(Some(SourceVersion(snapshot.model.fingerprint())))
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temp);
-    }
-    result
-}
-
-/// Git captures source knowledge before changing disk, including viewless
-/// documents. Worker results are admitted through the usual generation gate.
-pub(crate) struct SourceCapture {
-    id: DocumentId,
-    path: PathBuf,
-    generation: u64,
-    known: Vec<TextBuffer>,
-}
-pub(crate) struct SourceObservation {
-    source: SourceCapture,
-    incoming: Result<Option<TextBuffer>, String>,
-}
-pub(crate) fn capture_sources(world: &mut World, root: &Path) -> Vec<SourceCapture> {
-    world
-        .query::<(Entity, &FileSource)>()
-        .iter(world)
-        .filter_map(|(entity, source)| {
-            let path = source.path.as_ref().filter(|p| p.starts_with(root))?;
-            let id = DocumentId(entity);
-            let info = inspect_document(world, id).ok()?;
-            let handle = cast_document::<TextBuffer>(world, id).ok()?;
-            Some(SourceCapture {
-                id,
-                path: path.clone(),
-                generation: info.source_generation,
-                known: vec![
-                    read_document(world, handle).ok()?.clone(),
-                    source.checkpoint.lock().unwrap().clone(),
-                ],
-            })
-        })
-        .collect()
-}
-pub(crate) fn read_source_observation(source: SourceCapture) -> SourceObservation {
-    let incoming = (|| {
-        let mut options = OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.custom_flags(libc::O_NONBLOCK);
-        }
-        let file = match options.open(&source.path) {
-            Ok(file) => file,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(error.to_string()),
-        };
-        if !file.metadata().map_err(|e| e.to_string())?.is_file() {
-            return Err("Source is no longer a regular text file".into());
-        }
-        let mut bytes = Vec::new();
-        file.take(MAX_TEXT_BYTES + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| e.to_string())?;
-        if bytes.len() as u64 > MAX_TEXT_BYTES || bytes.contains(&0) {
-            return Err("Source is no longer a supported text file".into());
-        }
-        let text = TextBuffer::from(String::from_utf8(bytes).map_err(|e| e.to_string())?);
-        Ok(Some(
-            source
-                .known
-                .iter()
-                .find(|known| **known == text)
-                .cloned()
-                .unwrap_or(text),
-        ))
-    })();
-    SourceObservation { source, incoming }
-}
-pub(crate) fn apply_source_observation(
-    world: &mut World,
-    observation: SourceObservation,
-) -> Result<(), String> {
-    let SourceObservation { source, incoming } = observation;
-    if source_path(world, source.id) != Some(source.path.as_path()) {
-        return Ok(());
-    }
-    if !inspect_document(world, source.id)
-        .is_ok_and(|info| info.source_generation == source.generation)
-    {
-        return Ok(());
-    }
-    match incoming? {
-        Some(text) => {
-            let handle =
-                cast_document::<TextBuffer>(world, source.id).map_err(|e| e.to_string())?;
-            offer_document_external_update(
-                world,
-                handle,
-                source.generation,
-                text.clone(),
-                Some(SourceVersion(text.fingerprint())),
-            )
-            .map_err(|e| e.to_string())?;
-            *world
-                .get::<FileSource>(source.id.entity())
-                .unwrap()
-                .checkpoint
-                .lock()
-                .unwrap() = text;
-        }
-        None => {
-            let mut binding = world.get_mut::<FileSource>(source.id.entity()).unwrap();
-            binding.path = None;
-            binding.identity_generation.fetch_add(1, Ordering::AcqRel);
-            binding.pending_binding = true;
-            update_binding(world, source.id).map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(())
 }

@@ -1,6 +1,6 @@
 //! Application-owned opening policy. Producers supply intent; this module
 //! chooses viewers, tab reuse and destination areas independently of Files UI.
-use crate::files::{FilePreviewPanel, ProjectRoot};
+use crate::files::{FilePanel, ProjectRoot};
 use bedtime_filetree2::FileTreePanel;
 use bedtime_workbench2::*;
 use bevy::prelude::*;
@@ -25,6 +25,7 @@ pub enum ViewerId {
     Model,
     Hex,
 }
+
 impl ViewerId {
     pub fn id(self) -> &'static str {
         match self {
@@ -34,6 +35,7 @@ impl ViewerId {
             Self::Hex => "hex",
         }
     }
+
     pub fn label(self) -> &'static str {
         match self {
             Self::Code => "Code",
@@ -42,6 +44,7 @@ impl ViewerId {
             Self::Hex => "Hex",
         }
     }
+
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
             "code" => Some(Self::Code),
@@ -52,11 +55,13 @@ impl ViewerId {
         }
     }
 }
+
 struct ViewerAssociation {
     viewer: ViewerId,
     extensions: &'static [&'static str],
     priority: i32,
 }
+
 const ASSOCIATIONS: &[ViewerAssociation] = &[
     ViewerAssociation {
         viewer: ViewerId::Model,
@@ -79,6 +84,7 @@ const ASSOCIATIONS: &[ViewerAssociation] = &[
         priority: 0,
     },
 ];
+
 pub fn viewers(path: &std::path::Path) -> Vec<ViewerId> {
     let extension = path.extension().and_then(|e| e.to_str());
     let mut candidates: Vec<_> = ASSOCIATIONS
@@ -95,9 +101,11 @@ pub fn viewers(path: &std::path::Path) -> Vec<ViewerId> {
     candidates.sort_by_key(|rule| (std::cmp::Reverse(rule.priority), rule.viewer));
     candidates.into_iter().map(|rule| rule.viewer).collect()
 }
+
 pub fn default_viewer(path: &std::path::Path) -> ViewerId {
     viewers(path)[0]
 }
+
 pub fn tree_viewers(path: &std::path::Path) -> Vec<bedtime_filetree2::FileTreeOpenChoice> {
     let choices = viewers(path);
     if choices.len() < 2 {
@@ -148,6 +156,35 @@ pub fn open_file_with(
     requested: Option<ViewerId>,
     origin: Option<Entity>,
 ) -> Result<OpenedFile, String> {
+    open_file_impl(world, layout, path, mode, requested, origin, None)
+}
+pub fn open_source_file(
+    world: &mut World,
+    layout: Entity,
+    source: bedtime_filesystem2::FsDocumentSource,
+    mode: FileOpenMode,
+    requested: Option<ViewerId>,
+    origin: Option<Entity>,
+) -> Result<OpenedFile, String> {
+    open_file_impl(
+        world,
+        layout,
+        source.path(),
+        mode,
+        requested,
+        origin,
+        Some(source),
+    )
+}
+fn open_file_impl(
+    world: &mut World,
+    layout: Entity,
+    path: PathBuf,
+    mode: FileOpenMode,
+    requested: Option<ViewerId>,
+    origin: Option<Entity>,
+    source: Option<bedtime_filesystem2::FsDocumentSource>,
+) -> Result<OpenedFile, String> {
     let viewer = requested.unwrap_or_else(|| default_viewer(&path));
     if !viewers(&path).contains(&viewer) {
         return Err("This viewer does not support the file".into());
@@ -167,7 +204,7 @@ pub fn open_file_with(
         crate::files::panel_path(workbench.world(), panel).as_ref() == Some(&path)
             && workbench
                 .world()
-                .get::<FilePreviewPanel>(panel)
+                .get::<FilePanel>(panel)
                 .is_some_and(|p| p.viewer == viewer || (requested.is_none() && !p.explicit))
     });
     let pin = !matches!(mode, FileOpenMode::Preview);
@@ -175,7 +212,7 @@ pub fn open_file_with(
         if requested.is_some() {
             workbench
                 .world_mut()
-                .get_mut::<FilePreviewPanel>(panel)
+                .get_mut::<FilePanel>(panel)
                 .unwrap()
                 .explicit = true;
         }
@@ -191,7 +228,7 @@ pub fn open_file_with(
     } else {
         let replace = panels.iter().copied().find(|&panel| {
             requested.is_none()
-                && workbench.world().get::<FilePreviewPanel>(panel).is_some()
+                && workbench.world().get::<FilePanel>(panel).is_some()
                 && crate::file_editor::can_replace(workbench.world(), panel)
                 && (crate::files::panel_path(workbench.world(), panel).is_none()
                     || workbench
@@ -219,7 +256,7 @@ pub fn open_file_with(
                         .find_map(|&panel| {
                             workbench
                                 .world()
-                                .get::<FilePreviewPanel>(panel)
+                                .get::<FilePanel>(panel)
                                 .and_then(|_| workbench.world().get::<InArea>(panel).map(|a| a.0))
                         })
                         .or_else(|| {
@@ -250,7 +287,7 @@ pub fn open_file_with(
             };
             workbench
                 .world_mut()
-                .spawn((FilePreviewPanel::default(), InArea(area)))
+                .spawn((FilePanel::default(), InArea(area)))
                 .id()
         };
         workbench
@@ -261,10 +298,15 @@ pub fn open_file_with(
         crate::files::set_viewer(workbench.world_mut(), panel, viewer)?;
         workbench
             .world_mut()
-            .get_mut::<FilePreviewPanel>(panel)
+            .get_mut::<FilePanel>(panel)
             .unwrap()
             .explicit = requested.is_some();
-        crate::files::load_preview(workbench.world_mut(), panel, path, false)?;
+        match source {
+            Some(source) => {
+                crate::files::open_resolved_file_panel(workbench.world_mut(), panel, source, false)?
+            }
+            None => crate::files::open_file_panel(workbench.world_mut(), panel, path, false)?,
+        };
         if let Some(origin) = origin {
             let area = workbench.world().get::<InArea>(origin).unwrap().0;
             let index = panels_in_area(workbench.world(), area)
@@ -291,9 +333,7 @@ pub fn open_file_with(
 /// Loading uses the same canonical documents and async backend as ordinary opens.
 pub fn file_panel_factory(path: PathBuf) -> PanelFactory {
     PanelFactory::new("File", move |world, area| {
-        let panel = world
-            .spawn((FilePreviewPanel::default(), InArea(area)))
-            .id();
+        let panel = world.spawn((FilePanel::default(), InArea(area))).id();
         // A fresh viewer has no drafts or pending edits. The loading backend
         // records task-admission and read failures on the viewer for reporting.
         let _ = crate::files::set_viewer(world, panel, default_viewer(&path))
@@ -305,10 +345,10 @@ pub fn file_panel_factory(path: PathBuf) -> PanelFactory {
 /// Session restore retains its recorded placement/viewer identity, while source
 /// loading uses the same viewer backend as newly routed file opens.
 pub fn restore_file_panel(world: &mut World, panel: Entity, path: PathBuf) -> Result<(), String> {
-    if !world.get::<FilePreviewPanel>(panel).unwrap().explicit {
+    if !world.get::<FilePanel>(panel).unwrap().explicit {
         crate::files::set_viewer(world, panel, default_viewer(&path))?;
     }
-    crate::files::load_preview(world, panel, path, false)
+    crate::files::open_file_panel(world, panel, path, false)
 }
 
 pub fn viewer_menu(ui: &mut bedtime_ui2::egui::Ui, world: &mut World, panel: Entity) {
@@ -369,6 +409,7 @@ pub enum FolderOpened {
         u32,
     ),
 }
+
 pub type FolderOpenResult = Mutex<mpsc::Receiver<Result<FolderOpened, String>>>;
 
 struct FolderOpen {
@@ -379,8 +420,9 @@ struct FolderOpen {
 #[derive(Resource, Default)]
 pub(crate) struct FolderOpens(Vec<FolderOpen>);
 
-/// Open or reuse a folder workspace. Validation/canonicalization happens off
-/// thread; the result acknowledges activation, followed by normal session restore.
+/// Reuse the current project, or attempt a new instance and request normal quit.
+/// Validation/canonicalization happens off thread. A launch result does not imply
+/// child readiness; even a launch failure does not veto the quit request.
 pub fn open_folder(world: &mut World, path: PathBuf) -> Result<FolderOpenResult, String> {
     if !crate::close::accepts_user_actions(world) {
         return Err("Cancel quit before opening another folder".into());
@@ -429,32 +471,36 @@ pub(crate) fn poll_folder_opens(world: &mut World) {
             {
                 return Ok(FolderOpened::Reused);
             }
-            // Reject an already-open project before launching; the child must
-            // independently acquire admission too, to resolve simultaneous opens.
-            let claim = crate::project::ProjectLock::acquire(&root)?;
-            drop(claim);
-            let executable = std::env::current_exe().map_err(|e| e.to_string())?;
-            let mut child = std::process::Command::new(executable)
-                .arg(root)
-                .arg("--no-automation")
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .spawn()
-                .map_err(|e| e.to_string())?;
-            let pid = child.id();
-            std::thread::spawn(move || {
-                let _ = child.wait();
-            });
-            Ok(FolderOpened::Launched(pid))
+            let launch = (|| {
+                // The child independently claims admission too, resolving races.
+                let claim = crate::project::ProjectLock::acquire(&root)?;
+                drop(claim);
+                let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+                let mut child = std::process::Command::new(executable)
+                    .arg(root)
+                    .arg("--no-automation")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .spawn()
+                    .map_err(|e| e.to_string())?;
+                let pid = child.id();
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                Ok(FolderOpened::Launched(pid))
+            })();
+            // Replacement is deliberately best-effort. Finish this frame's
+            // folder/shell replies before CloseSystems handles normal quit;
+            // do not wait for the child or let a launch error veto closing.
+            world.write_message(CloseRequested { window: None });
+            launch
         });
         if let Err(error) = &result {
             request_error_dialog(
                 world,
                 ErrorDialog {
                     title: "Open Folder".into(),
-                    message:
-                        "This folder couldn't be opened. The current workspace was left unchanged."
-                            .into(),
+                    message: "This folder couldn't be opened.".into(),
                     details: Some(error.clone()),
                 },
             );

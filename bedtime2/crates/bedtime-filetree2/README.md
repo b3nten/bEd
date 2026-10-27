@@ -113,8 +113,11 @@ create error dialogs, and partial completed changes are never called a rollback.
 
 ## Work, observations and responsiveness
 
-One world-managed filesystem worker owns directory reads, sorting, flattened
-row projection, native watch management and serialized mutations. Initial opening
+One world-managed filesystem worker owns I/O scheduling, sorting, flattened
+row projection, watch demand and serialized mutation admission.
+[`bedtime-filesystem2`](../bedtime-filesystem2/README.md) supplies the native
+sources/directory reads, mutation implementation and bounded watcher. Filetree
+reexports its existing operation names; its panel/root/request API is unchanged. Initial opening
 reads the root only; expanded directories are loaded lazily. Symlinks are rows,
 never recursively traversed. Sorting is directories first, case-insensitive display
 order, then native-name order for deterministic ties.
@@ -178,9 +181,15 @@ but new directory reads/watch reconciliation wait until it finishes or is cancel
 
 `FileTreeOperationFinished` carries actual completed changes, per-path errors and
 cancellation—even after the origin closes or changes root. Cancellation is not
-rollback. Outcomes have reserved queue slots and an application-World archive
-independent of the originating panel lifetime. A failed worker without a final result
-reports that effects are unknown rather than claiming nothing happened.
+rollback. Outcomes reserve managed-work completions before queue admission,
+independent of the originating panel/backend lifetime. The single filesystem
+worker remains the mutation execution point; each producer token reports its
+actual result even after cancellation. Main-world completion callbacks reconcile
+origins, clipboard intent and visibility, then emit the domain message. Operation
+IDs, origins and outstanding counts remain Filetree bookkeeping; there is no
+separate result mailbox or operation archive. A failed worker abandons active and
+queued tokens, reporting unknown effects for each missing outcome. Managed work
+cannot finish orderly draining before these callbacks consume their outcomes.
 
 Hosts needing to persist move-related state before session shutdown can use
 `filetree_operation_count(world)`, including admitted work whose panel has closed.
@@ -199,7 +208,8 @@ Clear Explicitly Hidden Entries provide recovery. Temporary reveal is not saved.
 `FileTreePreferencesChanged` tells the application to persist this resource; storage destinations remain application-owned.
 `encode`/`decode`
 provide a strict versioned JSON format, losslessly encoding Unix bytes or Windows
-wide path units. Unsupported versions/platforms, duplicates, malformed paths and
+wide path units through Workbench's shared `native_path` record. Its version-1
+wire representation remains unchanged. Unsupported versions/platforms, duplicates, malformed paths and
 escaping rules reject the whole document. `FileTreePreferences` also implements
 Serde serialization/deserialization through those same validated native-path
 records, so a host can embed the data directly in another format such as RON
@@ -254,3 +264,14 @@ and the native macOS smoke with eleven validated captures. Its 10,000-entry wide
 root painted 23 viewport rows; selection, rename, watcher updates, system clipboard
 cut/paste, injected drops and restoration remained covered. Artifacts are in
 `target/shared-tree-files-smoke`; the run used isolated preferences.
+
+## Source opening callback
+
+Install `FileTreeOnOpen` to receive `FileTreeSourceOpen { panel, source,
+activation, choice }`. Filetree resolves the canonical `FsDocumentSource` on managed
+work and rechecks the captured root/generation before invoking the callback outside
+drawing. The host selects a document representation and viewer/placement. With no
+callback, the buffered path-opening messages remain available for independent hosts.
+Filetree and every other opening producer use the same filesystem source provider;
+there is no tree-private document identity. Confirmed operations update source
+locations in Filesystem2 before their outcomes are delivered.

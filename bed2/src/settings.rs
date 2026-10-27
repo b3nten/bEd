@@ -174,6 +174,7 @@ impl SettingsOverrides {
 #[serde(default, deny_unknown_fields)]
 pub struct StartupPreferences {
     pub open_last_workspace: bool,
+    #[serde(with = "bedtime_workbench2::native_path::option")]
     pub last_workspace: Option<PathBuf>,
 }
 

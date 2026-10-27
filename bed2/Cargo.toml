@@ -7,12 +7,13 @@ license.workspace = true
 description = "Application scaffold for the second Bedtime foundation"
 
 [features]
-automation = ["dep:bedtime-automation2"]
+automation = ["dep:bedtime-automation2", "bedtime-hex2/automation"]
 
 [dependencies]
-bedtime-model2.workspace = true
-bedtime-image2.workspace = true
-bedtime-hex2.workspace = true
+bedtime-filesystem2 = { workspace = true, features = ["workbench"] }
+bedtime-model2 = { workspace = true, features = ["workbench"] }
+bedtime-image2 = { workspace = true, features = ["workbench"] }
+bedtime-hex2 = { workspace = true, features = ["workbench"] }
 bedtime-mascots2 = { workspace = true, features = ["workbench"] }
 bedtime-git.workspace = true
 pulldown-cmark.workspace = true
@@ -36,6 +37,7 @@ ron = "0.12.2"
 blake3 = "1"
 
 [dev-dependencies]
+bedtime-workbench2 = { path = "../bedtime2/crates/bedtime-workbench2", default-features = false, features = ["test-support"] }
 bevy_world_serialization = "=0.20.0"
 base64.workspace = true
 wgpu.workspace = true

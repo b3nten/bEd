@@ -14,6 +14,7 @@ impl<T> CreateTypeData<T> for ReflectGlobalPersist {
         Self
     }
 }
+
 #[derive(Clone)]
 pub(crate) struct ReflectProjectPersist;
 impl<T> CreateTypeData<T> for ReflectProjectPersist {
@@ -21,14 +22,13 @@ impl<T> CreateTypeData<T> for ReflectProjectPersist {
         Self
     }
 }
+
 pub(crate) fn register(app: &mut App) {
     core::register(app);
     crate::files::register_persistence(app);
     crate::git::register_persistence(app);
     crate::settings::register_persistence(app);
     crate::terminal::register_persistence(app);
-    crate::tasks::register_persistence(app);
-    crate::cube::register_persistence(app);
     crate::code::register_persistence(app);
     crate::lsp_panel::register_persistence(app);
     crate::mascots::register_persistence(app);
@@ -37,33 +37,33 @@ pub(crate) fn register(app: &mut App) {
         .register_type::<crate::layouts::LayoutSlot>()
         .register_type::<crate::keybindings::ProjectBindings>();
 }
+
 pub(crate) fn capture_graph(world: &mut World) -> Result<Snapshot, String> {
     capture_features(world)?.serialize(world.resource::<AppTypeRegistry>())
 }
+
 pub(crate) fn capture_features(world: &mut World) -> Result<CapturedWorld, String> {
     let mut captured = Workbench::capture_world::<ReflectWorkbenchPersist>(world)?;
     crate::files::project_persistence(world, &mut captured);
     crate::git::project_persistence(world, &mut captured);
     crate::settings::project_persistence(world, &mut captured);
     crate::terminal::project_persistence(world, &mut captured);
-    crate::tasks::project_persistence(world, &mut captured);
-    crate::cube::project_persistence(world, &mut captured);
     crate::code::project_persistence(world, &mut captured);
     crate::lsp_panel::project_persistence(world, &mut captured);
     crate::mascots::project_persistence(world, &mut captured);
     Ok(captured)
 }
+
 pub(crate) fn clear(world: &mut World) {
     crate::files::clear_persistence(world);
     crate::git::clear_persistence(world);
     crate::settings::clear_persistence(world);
     crate::terminal::clear_persistence(world);
-    crate::tasks::clear_persistence(world);
-    crate::cube::clear_persistence(world);
     crate::code::clear_persistence(world);
     crate::lsp_panel::clear_persistence(world);
     crate::mascots::clear_persistence(world);
 }
+
 pub(crate) fn prepare_graph(
     snapshot: &Snapshot,
     registry: &AppTypeRegistry,
@@ -80,6 +80,7 @@ pub(crate) fn prepare_graph(
     }
     Ok(prepared)
 }
+
 pub(crate) fn restore_graph(world: &mut World, prepared: CapturedWorld) -> Result<(), String> {
     Workbench::restore_world(world, prepared)?;
     crate::terminal::activate_persistence(world);
@@ -89,6 +90,7 @@ pub(crate) fn restore_graph(world: &mut World, prepared: CapturedWorld) -> Resul
     clear(world);
     Ok(())
 }
+
 pub(crate) fn capture_local(world: &mut World) -> Result<Snapshot, String> {
     let visibility = world
         .get_resource::<bedtime_filetree2::FileTreePreferences>()
@@ -108,6 +110,7 @@ pub(crate) fn capture_local(world: &mut World) -> Result<Snapshot, String> {
         }));
     captured.serialize(world.resource::<AppTypeRegistry>())
 }
+
 pub(crate) fn prepare_local(
     snapshot: &Snapshot,
     registry: &AppTypeRegistry,
@@ -150,6 +153,7 @@ pub(crate) fn prepare_local(
         .ok_or("Missing Files visibility")?;
     Ok(prepared)
 }
+
 pub(crate) fn activate_local(world: &mut World) {
     if let Some(p) = world.remove_resource::<crate::files::PersistedVisibility>() {
         world.insert_resource(p.0);
@@ -158,4 +162,14 @@ pub(crate) fn activate_local(world: &mut World) {
         crate::git::restore_draft(world, p.draft);
         crate::git::restore_options(world, p.options);
     }
+}
+
+// Application source identities are absolute and bounded. The shared wire codec
+// only owns lossless native units and NUL rejection; visibility has other rules.
+pub(crate) fn validate_absolute_path(path: &std::path::Path) -> Result<(), String> {
+    bedtime_workbench2::native_path::validate(path)?;
+    if !path.is_absolute() || path.as_os_str().len() > 16384 {
+        return Err("Expected an absolute native path of at most 16384 units".into());
+    }
+    Ok(())
 }

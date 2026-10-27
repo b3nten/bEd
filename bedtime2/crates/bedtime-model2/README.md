@@ -1,8 +1,9 @@
 # bedtime-model2
 
 Embeddable glTF/GLB and STL viewing in the host's Bevy world, drawn with UI2.
-No windows, filesystem reads, worker threads, application file associations or
-session storage are installed by this crate.
+The canvas installs no windows, file loading, application file associations or
+session storage. Its optional Workbench document adapter supplies managed loading
+and bounded native sidecar access.
 
 Register `register_asset_source(&mut app)` **before** the host's `AssetPlugin`;
 install `ModelPlugin` after the host renderer and UI2. The host supplies Bevy's
@@ -65,9 +66,10 @@ a resolver. Relative local sidecars, including parent-directory references,
 are supported; absolute paths, URL schemes and malformed URI escapes are rejected.
 Only selected texture sources are resolved, preserving unused WebP fallbacks.
 
-Enable `workbench` for `workbench::ModelPanel`; it supplies required scene/panel
-components and drawing, with no loading or persistence policy. bEd2 composes the
-viewer in its existing shared file panel instead.
+Enable `workbench` for the minimal `workbench::ModelPanel`, or compose
+`document::ModelPreview` in an existing document panel. The latter owns managed
+root/sidecar preparation and revision/dependency checks. bEd2 uses it and supplies
+viewer associations, placement, context menus and persistence.
 
 ## Verification
 
@@ -89,3 +91,8 @@ Implementation and assets are ported from `bedtime-plugin-model-viewer`. HDRI
 sources/licenses remain in [resources/environments/README.md](resources/environments/README.md)
 and the repository NOTICE. STL triangle expansion retains the existing
 [bevy_stl MIT notice](../../../licenses/bevy_stl/LICENSE). Rust code is GPL-3.0-only.
+
+With `workbench`, `document::ModelPreview` supplies managed preparation from
+canonical text/binary documents, bounded native sidecars, dependency observation
+and revision-checked acceptance. Textual glTF follows unsaved edits; binary roots
+use version-bound document byte access. The host supplies menus and placement.

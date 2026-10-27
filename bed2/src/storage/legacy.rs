@@ -161,13 +161,12 @@ fn capture_template(
                 Tool::Terminal => world
                     .spawn((bedtime_terminal2::TerminalPanel::default(), InArea(area)))
                     .id(),
-                Tool::Viewport => world.spawn((crate::cube::CubeViewport, InArea(area))).id(),
+                Tool::Viewport | Tool::Tasks => {
+                    return Err("Legacy layout contains a removed demo panel".into());
+                }
                 Tool::Bed => world.spawn((bedtime_mascots2::BedPanel, InArea(area))).id(),
                 Tool::Ducky => world
                     .spawn((bedtime_mascots2::DuckPanel, InArea(area)))
-                    .id(),
-                Tool::Tasks => world
-                    .spawn((crate::tasks::TasksPanel::default(), InArea(area)))
                     .id(),
                 Tool::Settings => world
                     .spawn((crate::settings::SettingsPanel, InArea(area)))
@@ -203,6 +202,18 @@ mod tests {
             focused_area: Some(0),
         })
     }
+    #[test]
+    fn legacy_layouts_with_removed_demo_panels_are_rejected() {
+        for tool in [Tool::Viewport, Tool::Tasks] {
+            let mut templates = defaults();
+            templates[0].areas[0].tools[0] = tool;
+            assert_eq!(
+                capture_template(&templates[0]).unwrap_err(),
+                "Legacy layout contains a removed demo panel"
+            );
+        }
+    }
+
     #[test]
     fn legacy_global_files_are_read_without_rewriting_and_upgrade_on_a_real_edit() {
         let original = OldDocument {

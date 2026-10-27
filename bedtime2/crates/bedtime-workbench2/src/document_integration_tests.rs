@@ -30,7 +30,7 @@ fn empty_session_and_no_selected_layout_are_valid() {
 #[test]
 fn viewless_dirty_documents_still_require_an_explicit_discard_decision() {
     let mut app = app();
-    let document = open_document(
+    let document = open_memory_document(
         app.world_mut(),
         "unsaved".to_owned(),
         DocumentOptions::unsaved("File"),
@@ -46,7 +46,7 @@ fn a_draft_in_another_layout_blocks_shutdown_before_any_work_is_cancelled() {
     let mut app = app();
     let world = app.world_mut();
     let document =
-        open_document(world, "base".to_owned(), DocumentOptions::loaded("File")).unwrap();
+        open_memory_document(world, "base".to_owned(), DocumentOptions::loaded("File")).unwrap();
     let first = crate::tests::layout(world);
     let second = crate::tests::layout(world);
     let a = Workbench::new(world).create_panel(first, "First").unwrap();
@@ -79,7 +79,7 @@ fn a_draft_in_another_layout_blocks_shutdown_before_any_work_is_cancelled() {
 #[test]
 fn admitted_save_finishes_before_shutdown_and_acknowledges_only_its_snapshot() {
     let mut app = app();
-    let document = open_document(
+    let document = open_memory_document(
         app.world_mut(),
         "base".to_owned(),
         DocumentOptions::unsaved("File"),

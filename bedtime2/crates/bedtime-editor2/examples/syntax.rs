@@ -1,5 +1,5 @@
 //! Shared syntax contributions in two standalone editor views, without Workbench.
-use bedtime_editor2::{EditorView, Navigation, Reveal, TextDocument, TextSelection, TextSession};
+use bedtime_editor2::{EditorView, Navigation, Reveal, MemoryTextSession, TextSelection, TextSession};
 use bedtime_ui2::*;
 use bevy::{prelude::*, window::PrimaryWindow};
 
@@ -22,7 +22,7 @@ fn main() -> AppExit {
 
 #[derive(Component)]
 struct Example {
-    document: TextDocument,
+    document: MemoryTextSession,
     analysis: bedtime_treesitter2::AnalysisSession,
     views: [EditorView; 2],
 }
@@ -39,7 +39,7 @@ fn setup(world: &mut World) {
     world.spawn((Camera2d, UiCamera(window)));
     let view = register_view(world, window, draw);
     world.entity_mut(view).insert(Example {
-        document: TextDocument::new("struct Cat {\n    name: String,\n}\nimpl Cat {\n    fn greet(&self) {\n        println!(\"Hello, {}!\", self.name);\n    }\n}\n"),
+        document: MemoryTextSession::new("struct Cat {\n    name: String,\n}\nimpl Cat {\n    fn greet(&self) {\n        println!(\"Hello, {}!\", self.name);\n    }\n}\n"),
         analysis: bedtime_treesitter2::AnalysisSession::new(),
         views: Default::default(),
     });

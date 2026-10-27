@@ -10,6 +10,7 @@ members = [
     "bedtime2/crates/bedtime-ui2",
     "bedtime2/crates/bedtime-mascots2",
     "bedtime2/crates/bedtime-editor2",
+    "bedtime2/crates/bedtime-document2",
     "bedtime2/crates/bedtime-image2",
     "bedtime2/crates/bedtime-model2",
     "bedtime2/crates/bedtime-hex2",
@@ -17,6 +18,7 @@ members = [
     "bedtime2/crates/bedtime-workbench2",
     "bedtime2/crates/bedtime-terminal2",
     "bedtime2/crates/bedtime-filetree2",
+    "bedtime2/crates/bedtime-filesystem2",
     "bedtime/crates/bedtime-sqlite",
     "bedtime/crates/bedtime-keybindings",
     "bedtime/crates/bedtime-plugin-automation",
@@ -84,6 +86,7 @@ license = "GPL-3.0-only"
 opt-level = 1
 
 [workspace.dependencies]
+bedtime-document2 = { path = "bedtime2/crates/bedtime-document2" }
 bedtime-model2 = { path = "bedtime2/crates/bedtime-model2" }
 bedtime-image2 = { path = "bedtime2/crates/bedtime-image2" }
 bedtime-hex2 = { path = "bedtime2/crates/bedtime-hex2" }
@@ -99,6 +102,7 @@ bedtime-lsp2 = { path = "bedtime2/crates/bedtime-lsp2" }
 bedtime-workbench2 = { path = "bedtime2/crates/bedtime-workbench2" }
 bedtime-terminal2 = { path = "bedtime2/crates/bedtime-terminal2" }
 bedtime-filetree2 = { path = "bedtime2/crates/bedtime-filetree2" }
+bedtime-filesystem2 = { path = "bedtime2/crates/bedtime-filesystem2" }
 bedtime-sqlite = { path = "bedtime/crates/bedtime-sqlite", version = "0.1.0" }
 bedtime-keybindings = { path = "bedtime/crates/bedtime-keybindings" }
 bedtime-plugin-idle = { path = "bedtime/crates/bedtime-plugin-idle" }
@@ -192,6 +196,7 @@ bedtime-plugin-sqlite-browser = { path = "bedtime/crates/bedtime-plugin-sqlite-b
 bedtime-plugin-http-client = { path = "bedtime/crates/bedtime-plugin-http-client" }
 
 [patch.crates-io]
+bevy_render = { path = "vendor/bevy_render" }
 egui = { path = "vendor/egui" }
 rio-vt = { path = "vendor/rio-vt" }
 arboard = { path = "vendor/arboard" }

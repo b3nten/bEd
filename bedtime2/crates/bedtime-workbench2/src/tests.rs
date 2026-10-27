@@ -980,7 +980,7 @@ fn moving_between_layouts_preserves_shared_document_and_local_state() {
     let mut w = Workbench::new(app.world_mut());
     let first = w.active_layout();
     let panel = w.create_panel(first, "Viewer").unwrap();
-    let document = open_document(
+    let document = open_memory_document(
         w.world_mut(),
         "text".to_owned(),
         DocumentOptions::loaded("File"),

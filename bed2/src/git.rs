@@ -36,6 +36,7 @@ pub(crate) fn panel_options(world: &World) -> GitPanelOptions {
         .or_else(|| world.get_resource::<RestoredOptions>().map(|o| o.0))
         .unwrap_or_default()
 }
+
 pub(crate) fn restore_options(world: &mut World, options: GitPanelOptions) {
     if let Some(mut session) = world.get_resource_mut::<GitSession>() {
         if session.options != options {
@@ -54,6 +55,7 @@ pub(crate) fn commit_draft(world: &World) -> String {
         .or_else(|| world.get_resource::<RestoredDraft>().map(|d| d.0.clone()))
         .unwrap_or_default()
 }
+
 pub(crate) fn restore_draft(world: &mut World, draft: String) {
     if let Some(mut session) = world.get_resource_mut::<GitSession>() {
         if session.draft.is_empty() {
@@ -63,6 +65,7 @@ pub(crate) fn restore_draft(world: &mut World, draft: String) {
         world.insert_resource(RestoredDraft(draft));
     }
 }
+
 pub(crate) fn has_pending_operation(world: &World) -> bool {
     world
         .get_resource::<GitSession>()
@@ -77,7 +80,7 @@ impl Plugin for GitPlugin {
             .add_systems(
                 Update,
                 update
-                    .after(crate::file_editor::reconcile_bindings)
+                    .after(crate::files::FilesSystems::Update)
                     .before(crate::close::CloseSystems::Update),
             );
         #[cfg(feature = "automation")]
@@ -94,6 +97,7 @@ enum Staging {
     Partial,
     Staged,
 }
+
 fn staging(entry: &StatusEntry) -> Staging {
     if entry.conflicted || matches!(entry.index_status, ' ' | '.' | '?') {
         Staging::Unstaged
@@ -103,6 +107,7 @@ fn staging(entry: &StatusEntry) -> Staging {
         Staging::Staged
     }
 }
+
 #[derive(Resource)]
 struct GitSession {
     root: PathBuf,
@@ -126,6 +131,7 @@ struct GitSession {
     had_panels: bool,
     comparisons: diff::Comparisons,
 }
+
 impl GitSession {
     fn new(root: PathBuf) -> Self {
         Self {
@@ -151,6 +157,7 @@ impl GitSession {
             comparisons: Default::default(),
         }
     }
+
     fn writable(&self) -> bool {
         self.view.as_ref().is_some_and(|v| v.status.writable)
             && self.view_epoch == self.epoch
@@ -158,10 +165,12 @@ impl GitSession {
             && !self.refresh
             && self.confirmation.is_none()
     }
+
     fn invalidate(&mut self) {
         self.epoch += 1;
         self.refresh = true;
     }
+
     fn progress(&self) -> Option<&'static str> {
         match self.pending.as_ref()? {
             Pending::Saving { .. } => Some("Saving documents…"),
@@ -184,6 +193,7 @@ struct SavedSource {
     revision: u64,
     path: PathBuf,
 }
+
 enum Pending {
     Saving {
         operation: Operation,
@@ -195,15 +205,9 @@ enum Pending {
     },
     Running {
         operation: Operation,
-        task: ManagedTask<MutationResult>,
+        task: bedtime_filesystem2::workbench::SourceChangeTask<Result<String, String>>,
         cancel: Arc<AtomicBool>,
     },
-}
-struct MutationResult {
-    result: Result<String, String>,
-    sources: Vec<crate::file_editor::SourceObservation>,
-    // Retained until observations have reached the canonical documents.
-    _lease: Option<crate::file_editor::WriteLease>,
 }
 
 fn git_job(
@@ -240,6 +244,7 @@ fn source_infos(world: &mut World, root: &Path) -> Vec<(DocumentInfo, PathBuf)> 
         .filter_map(|(id, path)| inspect_document(world, id).ok().map(|info| (info, path)))
         .collect()
 }
+
 fn changes_files(operation: &Operation) -> bool {
     matches!(
         operation,
@@ -254,6 +259,7 @@ fn changes_files(operation: &Operation) -> bool {
             | Operation::DiscardHunk { .. }
     )
 }
+
 fn needs_write_lease(operation: &Operation) -> bool {
     changes_files(operation)
         || matches!(
@@ -418,7 +424,8 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
             for source in &sources {
                 let info = inspect_document(world, source.id).map_err(|e| e.to_string())?;
                 if info.revision != source.revision
-                    || crate::file_editor::source_path(world, source.id) != Some(&source.path)
+                    || crate::file_editor::source_path(world, source.id).as_ref()
+                        != Some(&source.path)
                 {
                     return Err(
                         "A document changed while preparing Git. Review the changes and retry."
@@ -473,34 +480,24 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
                     }
                 }
             }
-            let lease = if needs_write_lease(&operation) {
-                Some(
-                    world
-                        .resource::<crate::file_editor::FileWrites>()
-                        .repository(&root)?,
-                )
-            } else {
-                None
+            let affected = match &operation {
+                Operation::Discard { path, .. }
+                | Operation::DiscardRange { path, .. }
+                | Operation::DiscardHunk { path, .. }
+                | Operation::Resolve { path, .. } => root.join(path),
+                _ => root.clone(),
             };
-            let observations = if changes_files(&operation) {
-                let affected = match &operation {
-                    Operation::Discard { path, .. }
-                    | Operation::DiscardRange { path, .. }
-                    | Operation::DiscardHunk { path, .. }
-                    | Operation::Resolve { path, .. } => root.join(path),
-                    _ => root.clone(),
-                };
-                crate::file_editor::capture_sources(world, &affected)
-            } else {
-                Vec::new()
-            };
+            let change = bedtime_filesystem2::workbench::prepare_source_change(
+                world,
+                needs_write_lease(&operation).then_some(root.as_path()),
+                changes_files(&operation).then_some(affected.as_path()),
+            )?;
             let expected_commit = matches!(operation, Operation::Commit { .. })
                 .then(|| session.view.as_ref().unwrap().status.snapshot.clone());
             let requested = Arc::new(AtomicBool::new(false));
             let stop = requested.clone();
             let mut op = operation.clone();
-            let task = Workbench::new(world).work().spawn_task(None, "Git operation", move |cancel| {
-                let result = (|| {
+            let task = change.spawn(world, "Git operation", move |cancel| {
                     if let Some(expected) = expected_commit {
                         let Output::Status(status) = git_job(root.clone(), Operation::Status, &cancel, &stop)? else { unreachable!() };
                         if status.snapshot != expected { return Err("Repository state changed before commit. Review the refreshed status and retry.".into()); }
@@ -513,9 +510,6 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
                         }
                     }
                     match git_job(root, op, &cancel, &stop)? { Output::Done { output } => Ok(output), _ => Err("Unexpected Git operation response".into()) }
-                })();
-                let sources = observations.into_iter().take_while(|_| !cancel.is_cancelled()).map(crate::file_editor::read_source_observation).collect();
-                MutationResult { result, sources, _lease: lease }
             })?;
             session.pending = Some(Pending::Running {
                 operation,
@@ -529,15 +523,8 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
             cancel,
         } => match task.try_recv() {
             Ok(result) => {
-                let mut reload_errors = Vec::new();
-                for observation in result.sources {
-                    if let Err(error) =
-                        crate::file_editor::apply_source_observation(world, observation)
-                    {
-                        reload_errors.push(error);
-                    }
-                }
-                match result.result {
+                let (result, reload_errors) = result?;
+                match result {
                     Ok(output) => {
                         if let Operation::Commit { message, .. } = &operation {
                             if session.draft == *message {
@@ -753,10 +740,12 @@ fn inspect(world: &mut World, _: serde_json::Value) -> bedtime_automation2::Auto
 }
 
 use bedtime_workbench2::persistence::{CapturedWorld, ReflectWorkbenchPersist};
+
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, WorkbenchPersist)]
 #[require(GitPanel)]
 pub(crate) struct PersistedGitPanel;
+
 #[derive(Resource, Reflect, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 #[reflect(opaque)]
 #[reflect(Resource, Serialize, Deserialize, ProjectPersist)]
@@ -765,16 +754,19 @@ pub(crate) struct PersistedGit {
     pub draft: String,
     pub options: GitPanelOptions,
 }
+
 #[derive(Component, Reflect, Clone, serde::Serialize, serde::Deserialize)]
 #[reflect(opaque)]
 #[reflect(Component, Serialize, Deserialize, WorkbenchPersist)]
 #[require(PanelInstance=PanelInstance::of::<diff::DiffPanel>())]
 pub(crate) struct PersistedDiff(diff::Descriptor);
+
 pub(crate) fn register_persistence(app: &mut App) {
     app.register_type::<PersistedGitPanel>()
         .register_type::<PersistedGit>()
         .register_type::<PersistedDiff>();
 }
+
 pub(crate) fn project_persistence(
     world: &mut World,
     captured: &mut bedtime_workbench2::persistence::CapturedWorld,
@@ -795,6 +787,7 @@ pub(crate) fn project_persistence(
         captured.insert_component(e, PersistedDiff(p));
     }
 }
+
 pub(crate) fn clear_persistence(world: &mut World) {
     let panels: Vec<_> = world
         .query_filtered::<Entity, Or<(With<PersistedGitPanel>, With<PersistedDiff>)>>()
@@ -806,12 +799,14 @@ pub(crate) fn clear_persistence(world: &mut World) {
             .remove::<(PersistedGitPanel, PersistedDiff)>();
     }
 }
+
 pub(crate) fn validate_persistence(prepared: &CapturedWorld) -> Result<(), String> {
     for (_, p) in prepared.components::<PersistedDiff>() {
         p.0.validate()?;
     }
     Ok(())
 }
+
 pub(crate) fn activate_persistence(world: &mut World) {
     let panels: Vec<_> = world
         .query_filtered::<Entity, With<PersistedDiff>>()
@@ -847,6 +842,7 @@ pub(crate) fn filter_layout_default(
     }
     Ok(())
 }
+
 pub(crate) fn validate_layout_default(
     capture: &bedtime_workbench2::persistence::CapturedLayout,
 ) -> Result<(), String> {

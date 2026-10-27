@@ -320,14 +320,15 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
         assert len(local) == 2 and len({value["path"] for value in local}) == 2, local
         captures.append(take_capture(app, "02-file-previews.png", different_from=captures[-1]))
 
-        # Non-text and oversized sources never become editable/fake documents.
+        # Binary and oversized sources use bounded read-only Hex viewers.
         click_row(app, first, root / "binary.bin")
-        binary_preview = preview(app, root / "binary.bin", layout=layout, pinned=False, kind="metadata")
-        assert "Binary" in binary_preview["content"], binary_preview
+        binary_preview = preview(app, root / "binary.bin", layout=layout, pinned=False, kind="hex")
+        assert binary_preview["document"] is not None and binary_preview["hex"]["len"] == 9, binary_preview
         click_row(app, first, root / "large.bin")
-        large_preview = preview(app, root / "large.bin", layout=layout, pinned=False, kind="metadata")
+        large_preview = preview(app, root / "large.bin", layout=layout, pinned=False, kind="hex")
         assert binary_preview["entity"] == large_preview["entity"], (binary_preview, large_preview)
-        assert "256 MiB" in large_preview["content"], large_preview
+        assert large_preview["document"] is not None and large_preview["hex"]["len"] == 256 * 1024 * 1024 + 1, large_preview
+        assert large_preview["hex"]["cached_bytes"] < 1024 * 1024, large_preview
 
         # External observations must arrive from the watcher/poll fallback, not
         # from an automation mutation or an explicit Refresh action.
@@ -434,10 +435,9 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
 
         cut_evidence = "not run: native clipboard ownership is unsupported outside macOS"
         if sys.platform == "darwin":
-            # Reveal the copied child without issuing an open/transfer command.
-            if str(copied) not in paths(state(app, first)):
-                click_row(app, first, target)
-                wait_tree(app, first, lambda tree: str(copied) in paths(tree))
+            # Paste reveals its destination. Wait for the worker's row projection;
+            # clicking the folder while it catches up can collapse it again.
+            wait_tree(app, first, lambda tree: str(copied) in paths(tree))
             menu(app, first, copied, "Cut")
             click_row(app, first, root / "Alpha")
             cut_destination = root / "Alpha" / duplicate.name
@@ -453,9 +453,7 @@ def run(binary, output, fixture, *, functional_only=False, wide_entries=0):
             # Replace an admitted cut with a DIFFERENT file via its Copy menu.
             # Pasting must now copy that new file and leave the formerly cut file
             # intact; no old cut authority may survive clipboard replacement.
-            if str(cut_destination) not in paths(state(app, first)):
-                click_row(app, first, root / "Alpha")
-                wait_tree(app, first, lambda tree: str(cut_destination) in paths(tree))
+            wait_tree(app, first, lambda tree: str(cut_destination) in paths(tree))
             menu(app, first, cut_destination, "Cut")
             menu(app, first, root / "binary.bin", "Copy")
             menu(app, first, target, "Paste")
@@ -629,9 +627,17 @@ def main():
     pinned = output / ("bed2-filetree-smoke.exe" if os.name == "nt" else "bed2-filetree-smoke")
     if source != pinned:
         shutil.copy2(source, pinned)
-    with tempfile.TemporaryDirectory(prefix="bed2-filetree-smoke-") as temporary:
-        summary = run(pinned, output, Path(temporary).resolve(), functional_only=args.functional_only,
-                      wide_entries=args.wide_entries)
+    previous_config = os.environ.get("XDG_CONFIG_HOME")
+    try:
+        with tempfile.TemporaryDirectory(prefix="bed2-filetree-smoke-") as temporary:
+            os.environ["XDG_CONFIG_HOME"] = str(Path(temporary) / "config")
+            summary = run(pinned, output, Path(temporary).resolve(), functional_only=args.functional_only,
+                          wide_entries=args.wide_entries)
+    finally:
+        if previous_config is None:
+            os.environ.pop("XDG_CONFIG_HOME", None)
+        else:
+            os.environ["XDG_CONFIG_HOME"] = previous_config
     summary["binary"] = str(pinned)
     summary["fixture_removed"] = not Path(temporary).exists()
     assert summary["fixture_removed"]

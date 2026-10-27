@@ -256,7 +256,10 @@ def main():
                 app.click_text("Discard file changes…")
                 settled(app, lambda s: s["confirmation"] is not None)
                 captures.append(capture_checked(app, "04-discard-confirmation.png"))
-                app.click_text("Discard changes")
+                # A visible comparison also draws the floating confirmation.
+                # Click its topmost button rather than the obscured inline copy.
+                confirmations = [t for t in app.inspect()["ui"]["texts"] if t["text"] == "Discard changes"]
+                app.click_text("Discard changes", index=len(confirmations)-1)
                 settled(app, lambda s: entry(s, "b.txt") is None)
                 assert (project / "b.txt").read_text() == "working changes\n"
                 app.click_text("main")

@@ -87,7 +87,7 @@ def main():
                 file.write(chunk)
         large_size = large.stat().st_size
         with Application([str(Path(args.binary).resolve()), str(root)], output=output, timeout=90) as app:
-            prepare_demo_layout(app, viewport=True)
+            prepare_demo_layout(app, viewport=False)
             app.request("configure", fixed_dt=1 / 60, clipboard="")
             open_panel(app, "Files")
             wait(app, lambda state: any(any(row["path"] == str(small) for row in tree["rows"]) for tree in state["panels"]))
@@ -181,10 +181,10 @@ def main():
             wait(app, lambda state: not viewer(state, second)["document_info"]["dirty"])
             assert small.read_text() == expected
 
-            app.request("app.set_settings", values={"wrap": True})
+            app.request("app.set_settings", values={"smart_wrapping": True})
             wait(app, lambda state: viewer(state, first)["editor"]["wrapping_ready"])
             captures.append(app.capture("01-editor-edits.png"))
-            app.request("app.set_settings", values={"wrap": False})
+            app.request("app.set_settings", values={"smart_wrapping": False})
 
             app.click_text("large.txt")
             state = wait(app, lambda state: any(p["path"] == str(large) and p["document"] for p in state["previews"]))

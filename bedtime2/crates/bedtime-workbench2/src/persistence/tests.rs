@@ -600,7 +600,7 @@ fn layout_replacement_rebuilds_owned_data_and_preserves_other_layouts_resources_
         .activate_layout(layout)
         .unwrap();
     app.insert_resource(Settings(42));
-    let document = open_document(
+    let document = open_memory_document(
         app.world_mut(),
         "unsaved".to_owned(),
         DocumentOptions::unsaved("Draft"),
@@ -681,7 +681,7 @@ fn invalid_or_cross_scope_layout_data_and_drafts_preserve_the_live_layout() {
     );
     assert!(Workbench::replace_layout(app.world_mut(), layout, capture).is_err());
     assert!(app.world().get::<Note>(panel).is_some());
-    let document = open_document(
+    let document = open_memory_document(
         app.world_mut(),
         String::new(),
         DocumentOptions::loaded("Draft"),

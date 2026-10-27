@@ -1,34 +1,24 @@
 //! One world-owned filesystem worker. The world only exchanges bounded
 //! intentions and Arc snapshots; filesystem access, sorting and projection live here.
-#[cfg(target_os = "macos")]
-use crate::mac_watch::DirectoryWatcher as NativeWatcher;
-use bedtime_workbench2::{Cancellation, ManagedTask, ManagedWork, WorkStatus};
+use bedtime_filesystem2::{FileSource as ByteSource, watch::DirectoryWatcher as NativeWatcher};
+use bedtime_workbench2::{
+    Cancellation, ManagedTask, ManagedWork, OperationCompletion, OperationOutcome, WorkStatus,
+};
 use bevy::prelude::Entity;
-#[cfg(not(target_os = "macos"))]
-use notify::{Event, EventKind, RecommendedWatcher as NativeWatcher, RecursiveMode, Watcher};
-#[cfg(not(target_os = "macos"))]
-use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
     ffi::OsString,
-    fs, io,
+    io,
     path::{Component, Path, PathBuf},
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 const MAX_VIEWS: usize = 64;
 const MAX_DIRECTORIES: usize = 512;
 // Includes queued/running operations AND undrained outcomes. Committed results
-// therefore always have a reserved slot, even during workspace cancellation.
+// therefore always have a reserved slot, even during session cancellation.
 const MAX_OPERATIONS: usize = 16;
-#[cfg(not(target_os = "macos"))]
-const MAX_EVENTS: usize = 128;
-#[cfg(not(target_os = "macos"))]
-const MAX_EVENT_PATHS: usize = 256;
 // Mailbox + panel ownership can retire the same version independently. Four
 // slots per live view leave bounded headroom while a baseline/operation blocks.
 const MAX_RETIRED_SNAPSHOTS: usize = MAX_VIEWS * 4;
@@ -36,14 +26,7 @@ const WORKER_TICK: Duration = Duration::from_millis(20);
 const FALLBACK_INTERVAL: Duration = Duration::from_secs(2);
 const POLL_BATCH: usize = 16;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum FileTreeEntryKind {
-    File,
-    Directory,
-    Symlink,
-    Other,
-}
-
+pub use bedtime_filesystem2::EntryKind as FileTreeEntryKind;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FileTreeDirectoryState {
     Unloaded,
@@ -118,7 +101,7 @@ struct MailView {
 
 struct PendingOperation {
     request: crate::FileTreeOperationRequest,
-    cancelled: Arc<AtomicBool>,
+    completion: OperationCompletion<crate::FileTreeOperationResult>,
 }
 
 #[derive(Default)]
@@ -129,8 +112,7 @@ struct Mailbox {
     views: BTreeMap<Entity, MailView>,
     next_serial: u64,
     operations: VecDeque<PendingOperation>,
-    operation_cancellations: BTreeMap<u64, Arc<AtomicBool>>,
-    results: VecDeque<crate::FileTreeOperationResult>,
+    operation_cancellations: BTreeMap<u64, Cancellation>,
     progress: Option<(u64, crate::FileTreeOperationProgress)>,
 }
 
@@ -191,31 +173,18 @@ fn drain_retired_snapshots(mailbox: &Mutex<Mailbox>) {
     drop(retired); // worker only; no row/path destruction while locked
 }
 
-/// A host-owned archive may retain this handle beyond workspace component
-/// destruction. Task completion can race the world's final despawn; committed
-/// effects must still be observable in a later frame. Draining also releases the
-/// outstanding operation slots. No worker/world lifetime is extended by this.
-#[derive(Clone)]
-pub(crate) struct OperationResultsHandle {
-    mailbox: Arc<Mutex<Mailbox>>,
-}
-
-impl OperationResultsHandle {
-    pub(crate) fn take_operation_results(&self) -> Vec<crate::FileTreeOperationResult> {
-        drain_operation_results(&self.mailbox)
+// A worker panic must abandon queued completion tokens as well as its active
+// operation. Drop outside the mailbox lock; managed work reports unknown effects.
+struct CloseOperations(Arc<Mutex<Mailbox>>);
+impl Drop for CloseOperations {
+    fn drop(&mut self) {
+        let pending = {
+            let mut mail = self.0.lock().unwrap();
+            mail.closed = true;
+            std::mem::take(&mut mail.operations)
+        };
+        drop(pending);
     }
-}
-
-fn drain_operation_results(mailbox: &Mutex<Mailbox>) -> Vec<crate::FileTreeOperationResult> {
-    let results = {
-        let mut mail = mailbox.lock().unwrap();
-        let results = std::mem::take(&mut mail.results);
-        for result in &results {
-            mail.operation_cancellations.remove(&result.id);
-        }
-        results
-    };
-    results.into_iter().collect()
 }
 
 pub(crate) struct Backend {
@@ -228,6 +197,7 @@ impl Backend {
         let mailbox = Arc::new(Mutex::new(Mailbox::default()));
         let worker_mailbox = mailbox.clone();
         let task = scope.spawn_task(None, "File tree filesystem", move |cancel| {
+            let _close = CloseOperations(worker_mailbox.clone());
             Worker::new(worker_mailbox).run(cancel);
         })?;
         Ok(Self { mailbox, task })
@@ -314,7 +284,13 @@ impl Backend {
 
     pub(crate) fn submit_operation(
         &mut self,
+        scope: &mut ManagedWork,
         request: crate::FileTreeOperationRequest,
+        complete: impl FnOnce(
+            &mut bevy::prelude::World,
+            OperationOutcome<crate::FileTreeOperationResult>,
+        ) + Send
+        + 'static,
     ) -> Result<(), String> {
         if self.status() != WorkStatus::Running {
             return Err("File tree worker is not running".into());
@@ -331,11 +307,20 @@ impl Backend {
                 "File operation queue is full ({MAX_OPERATIONS} outstanding); drain results first"
             ));
         }
-        let cancelled = Arc::new(AtomicBool::new(false));
+        let id = request.id;
+        let mailbox = self.mailbox.clone();
+        let completion =
+            scope.admit_operation(None, "File tree mutation", move |world, outcome| {
+                // Undrained outcomes retain their admission slots until this callback.
+                mailbox.lock().unwrap().operation_cancellations.remove(&id);
+                complete(world, outcome);
+            })?;
         mail.operation_cancellations
-            .insert(request.id, cancelled.clone());
-        mail.operations
-            .push_back(PendingOperation { request, cancelled });
+            .insert(id, completion.cancellation());
+        mail.operations.push_back(PendingOperation {
+            request,
+            completion,
+        });
         Ok(())
     }
 
@@ -347,7 +332,7 @@ impl Backend {
             .operation_cancellations
             .get(&id)
         {
-            cancel.store(true, Ordering::Release);
+            cancel.cancel();
         }
     }
 
@@ -365,17 +350,6 @@ impl Backend {
         self.mailbox.lock().unwrap().retire_snapshot(snapshot)
     }
 
-    pub(crate) fn operation_results_handle(&self) -> OperationResultsHandle {
-        OperationResultsHandle {
-            mailbox: self.mailbox.clone(),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn take_operation_results(&mut self) -> Vec<crate::FileTreeOperationResult> {
-        drain_operation_results(&self.mailbox)
-    }
-
     pub(crate) fn progress(&self) -> Option<(u64, crate::FileTreeOperationProgress)> {
         self.mailbox.lock().unwrap().progress.clone()
     }
@@ -389,7 +363,7 @@ impl Backend {
             let mut mail = self.mailbox.lock().unwrap();
             mail.closed = true;
             for cancelled in mail.operation_cancellations.values() {
-                cancelled.store(true, Ordering::Release);
+                cancelled.cancel();
             }
             let mut views = std::mem::take(&mut mail.views);
             for view in views.values_mut() {
@@ -461,10 +435,6 @@ struct WorkerView {
 
 struct WatchState {
     watcher: Option<NativeWatcher>,
-    #[cfg(not(target_os = "macos"))]
-    receiver: Receiver<notify::Result<Event>>,
-    #[cfg(not(target_os = "macos"))]
-    overflow: Arc<AtomicBool>,
     watched: BTreeSet<PathBuf>,
     failures: BTreeMap<PathBuf, String>,
     backend_error: Option<String>,
@@ -473,7 +443,6 @@ struct WatchState {
 }
 
 impl WatchState {
-    #[cfg(target_os = "macos")]
     fn new() -> Self {
         let (watcher, backend_error) = match NativeWatcher::new() {
             Ok(watcher) => (Some(watcher), None),
@@ -494,47 +463,6 @@ impl WatchState {
         }
     }
 
-    #[cfg(not(target_os = "macos"))]
-    fn new() -> Self {
-        let (sender, receiver) = mpsc::sync_channel(MAX_EVENTS);
-        let overflow = Arc::new(AtomicBool::new(false));
-        let overflow_callback = overflow.clone();
-        let callback = move |event: notify::Result<Event>| {
-            // No blocking send, filesystem calls, or shared mailbox lock here.
-            // Oversized/overflowed notifications mean reconcile, not lost truth.
-            if event
-                .as_ref()
-                .is_ok_and(|event| event.paths.len() > MAX_EVENT_PATHS)
-            {
-                overflow_callback.store(true, Ordering::Release);
-                return;
-            }
-            if sender.try_send(event).is_err() {
-                overflow_callback.store(true, Ordering::Release);
-            }
-        };
-        let watcher = notify::recommended_watcher(callback);
-        let (watcher, backend_error) = match watcher {
-            Ok(watcher) => (Some(watcher), None),
-            Err(error) => (
-                None,
-                Some(format!(
-                    "Native file watching unavailable: {error}; polling loaded directories"
-                )),
-            ),
-        };
-        Self {
-            watcher,
-            receiver,
-            overflow,
-            watched: BTreeSet::new(),
-            failures: BTreeMap::new(),
-            backend_error,
-            last_fallback: Instant::now(),
-            poll_cursor: 0,
-        }
-    }
-
     fn ensure(&mut self, path: &Path) {
         if self.watched.contains(path) || self.failures.contains_key(path) {
             return;
@@ -545,10 +473,7 @@ impl WatchState {
         // Nonrecursive is deliberate. macOS uses our directory-only kqueue
         // registration, not notify's self-expanding kqueue/FSEvents adapters.
         // Only cache demand ever causes directory enumeration.
-        #[cfg(target_os = "macos")]
         let result = watcher.watch(path);
-        #[cfg(not(target_os = "macos"))]
-        let result = watcher.watch(path, RecursiveMode::NonRecursive);
         match result {
             Ok(()) => {
                 self.watched.insert(path.to_owned());
@@ -585,18 +510,8 @@ impl WatchState {
             .watcher
             .as_mut()
             .and_then(|watcher| watcher.unwatch(path).err());
-        #[cfg(target_os = "macos")]
         let error = error
             .filter(|error| error.kind() != io::ErrorKind::NotFound)
-            .map(|error| error.to_string());
-        #[cfg(not(target_os = "macos"))]
-        let error = error
-            .filter(|error| {
-                !matches!(
-                    &error.kind,
-                    notify::ErrorKind::WatchNotFound | notify::ErrorKind::PathNotFound
-                )
-            })
             .map(|error| error.to_string());
         if let Some(error) = error {
             self.backend_error = Some(format!(
@@ -663,13 +578,14 @@ impl Worker {
             // There is one mutation execution point. Even when cancellation has
             // been requested, queued requests receive an actual cancelled result.
             // The operation executor finishes/report committed critical steps;
-            // results go into reserved mailbox slots BEFORE this task returns.
+            // managed completion tokens retain outcomes BEFORE this task returns.
             let operation = self.mailbox.lock().unwrap().operations.pop_front();
             if let Some(operation) = operation {
                 let id = operation.request.id;
+                let operation_cancel = operation.completion.cancellation();
                 let result = crate::operations::execute(
                     operation.request,
-                    || cancel.is_cancelled() || operation.cancelled.load(Ordering::Acquire),
+                    || cancel.is_cancelled() || operation_cancel.is_cancelled(),
                     |progress| {
                         let retired = self
                             .mailbox
@@ -683,11 +599,10 @@ impl Worker {
                 let affected = affected_cache_paths(&self.cache, &result.completed);
                 let retired = {
                     let mut mail = self.mailbox.lock().unwrap();
-                    debug_assert!(mail.results.len() < MAX_OPERATIONS);
-                    mail.results.push_back(result);
                     mail.progress.take()
                 };
                 drop(retired);
+                operation.completion.complete(result);
                 for path in &affected {
                     self.cache.get_mut(path).unwrap().invalidate(true);
                 }
@@ -837,13 +752,19 @@ impl Worker {
         let mut ambiguous = false;
         let mut paths = BTreeSet::new();
         let mut replaced = BTreeSet::new();
-        #[cfg(target_os = "macos")]
         if let Some(watcher) = self.watches.watcher.as_mut() {
-            // The directory-only kqueue owner polls at most 128 registrations,
-            // nonblocking, on this same managed worker. No callback thread/queue.
+            // Native intake is bounded and nonblocking. macOS polls directory
+            // registrations here; other targets drain the provider's bounded queue.
             match watcher.poll() {
-                Ok(events) => {
-                    for event in events {
+                Ok(batch) => {
+                    ambiguous |= batch.rescan;
+                    if let Some(error) = batch.error {
+                        self.watches.backend_error = Some(format!(
+                            "Native file watch error: {error}; polling loaded directories"
+                        ));
+                        changed = true;
+                    }
+                    for event in batch.events {
                         let path = lexical_absolute(&event.path).unwrap_or(event.path);
                         if event.lost {
                             replaced.insert(path.clone());
@@ -861,44 +782,6 @@ impl Worker {
                     self.watches.watched.clear();
                     ambiguous = true;
                     changed = true;
-                }
-            }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            ambiguous |= self.watches.overflow.swap(false, Ordering::AcqRel);
-            // Drain only the bounded queue captured this turn. A busy filesystem
-            // cannot starve view requests, operations or cancellation indefinitely.
-            for _ in 0..MAX_EVENTS {
-                match self.watches.receiver.try_recv() {
-                    Ok(Ok(event)) => {
-                        if matches!(event.kind, EventKind::Access(_)) {
-                            continue; // our reads must not trigger an infinite retry loop
-                        }
-                        if event.need_rescan() || event.paths.is_empty() {
-                            ambiguous = true;
-                        }
-                        let structural = matches!(
-                            event.kind,
-                            EventKind::Remove(_)
-                                | EventKind::Modify(notify::event::ModifyKind::Name(_))
-                        );
-                        for path in event.paths {
-                            let path = lexical_absolute(&path).unwrap_or(path);
-                            if structural {
-                                replaced.insert(path.clone());
-                            }
-                            paths.insert(path);
-                        }
-                    }
-                    Ok(Err(error)) => {
-                        self.watches.backend_error = Some(format!(
-                            "Native file watch error: {error}; polling loaded directories"
-                        ));
-                        ambiguous = true;
-                        changed = true;
-                    }
-                    Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
                 }
             }
         }
@@ -1111,12 +994,15 @@ fn resolve_root(view: &mut WorkerView, watches: &mut WatchState) {
         if let Some(parent) = absolute.parent() {
             watches.ensure(parent); // detect root disappearance before any baseline
         }
-        let canonical = fs::canonicalize(&absolute)?;
+        let canonical = ByteSource::local(&absolute)
+            .canonicalize()?
+            .path()
+            .to_owned();
         view.root = canonical.clone();
         if let Some(parent) = canonical.parent() {
             watches.ensure(parent);
         }
-        if !fs::metadata(&canonical)?.is_dir() {
+        if !ByteSource::local(&canonical).metadata()?.is_dir() {
             return Err(io::Error::new(
                 io::ErrorKind::NotADirectory,
                 "Root is not a directory",
@@ -1190,49 +1076,21 @@ fn affected_cache_paths(
 }
 
 fn read_directory(path: &Path, cancelled: impl Fn() -> bool) -> io::Result<Vec<CachedEntry>> {
-    // Never follow an entry symlink. A directory which was replaced by a link
-    // since its parent baseline must not escape the selected canonical root.
-    // Canonical equality also rejects replaced symlink ancestors. Like ordinary
-    // path-based filesystem APIs, this is not a sandbox against a concurrent
-    // process swapping ancestors between validation and read_dir.
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_dir() || metadata.file_type().is_symlink() || fs::canonicalize(path)? != path {
-        return Err(io::Error::new(
-            io::ErrorKind::NotADirectory,
-            "Directory was replaced by a non-directory or symbolic link",
-        ));
-    }
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(path)? {
-        if cancelled() {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "File tree read cancelled",
-            ));
-        }
-        let entry = entry?;
-        let file_type = entry.file_type()?;
-        let kind = if file_type.is_symlink() {
-            FileTreeEntryKind::Symlink
-        } else if file_type.is_dir() {
-            FileTreeEntryKind::Directory
-        } else if file_type.is_file() {
-            FileTreeEntryKind::File
-        } else {
-            FileTreeEntryKind::Other
-        };
-        let name = entry.file_name();
-        let hidden = platform_hidden(&entry, &name)?;
-        let label: Arc<str> = Arc::from(name.to_string_lossy().as_ref());
-        entries.push(CachedEntry {
-            path: entry.path(),
-            sort_label: label.to_lowercase(),
-            name,
-            label,
-            kind,
-            hidden,
-        });
-    }
+    let mut entries: Vec<_> = ByteSource::local(path)
+        .read_directory(&cancelled)?
+        .into_iter()
+        .map(|entry| {
+            let label: Arc<str> = Arc::from(entry.name.to_string_lossy().as_ref());
+            CachedEntry {
+                path: entry.path,
+                sort_label: label.to_lowercase(),
+                name: entry.name,
+                label,
+                kind: entry.kind,
+                hidden: entry.hidden,
+            }
+        })
+        .collect();
     sort_entries(&mut entries);
     Ok(entries)
 }
@@ -1244,21 +1102,6 @@ fn sort_entries(entries: &mut [CachedEntry]) {
             .then_with(|| left.sort_label.cmp(&right.sort_label))
             .then_with(|| left.name.cmp(&right.name))
     });
-}
-
-fn platform_hidden(entry: &fs::DirEntry, name: &std::ffi::OsStr) -> io::Result<bool> {
-    let dot = name.as_encoded_bytes().first() == Some(&b'.');
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        // FILE_ATTRIBUTE_HIDDEN; metadata is read only on this worker.
-        Ok(dot || entry.metadata()?.file_attributes() & 0x2 != 0)
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = entry;
-        Ok(dot)
-    }
 }
 
 fn entry_hidden(view: &WorkerView, entry: &CachedEntry, parent_hidden: bool) -> bool {
@@ -1463,7 +1306,9 @@ fn index_rows(rows: &[FileTreeRow]) -> HashMap<PathBuf, (usize, usize)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::sync::atomic::AtomicU64;
+    use std::sync::atomic::Ordering;
 
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -2030,11 +1875,33 @@ mod tests {
         });
     }
 
+    #[derive(bevy::prelude::Resource, Default)]
+    struct Results(Vec<OperationOutcome<crate::FileTreeOperationResult>>);
+    fn operation_app() -> bevy::prelude::App {
+        let mut app = bevy::prelude::App::new();
+        app.add_plugins(bedtime_workbench2::WorkbenchCorePlugin)
+            .init_resource::<Results>();
+        app
+    }
+    fn submit(
+        backend: &mut Backend,
+        app: &mut bevy::prelude::App,
+        request: crate::FileTreeOperationRequest,
+    ) -> Result<(), String> {
+        backend.submit_operation(
+            &mut app.world_mut().resource_mut::<ManagedWork>(),
+            request,
+            |world, outcome| {
+                world.resource_mut::<Results>().0.push(outcome);
+            },
+        )
+    }
     #[test]
     fn operations_reserve_outcome_slots_and_survive_managed_task_cancellation() {
         let tree = TempTree::new();
-        let mut scope = ManagedWork::default();
-        let mut backend = Backend::spawn(&mut scope).unwrap();
+        let mut app = operation_app();
+        let mut backend =
+            Backend::spawn(&mut app.world_mut().resource_mut::<ManagedWork>()).unwrap();
         let operation = |id| crate::FileTreeOperationRequest {
             id,
             root: tree.0.clone(),
@@ -2044,89 +1911,148 @@ mod tests {
             },
         };
         for id in 1..=MAX_OPERATIONS as u64 {
-            backend.submit_operation(operation(id)).unwrap();
+            submit(&mut backend, &mut app, operation(id)).unwrap();
         }
         let deadline = Instant::now() + Duration::from_secs(8);
-        while backend.mailbox.lock().unwrap().results.len() != MAX_OPERATIONS {
-            assert!(
-                Instant::now() < deadline,
-                "Operations did not finish: {:?}",
-                backend.status()
-            );
-            std::thread::sleep(Duration::from_millis(10));
+        while !(1..=MAX_OPERATIONS).all(|id| tree.0.join(format!("created-{id}")).exists()) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
         }
-        // Finishing an operation does not release its slot: its committed result
-        // must be consumed first, even if nobody is polling a visible panel.
-        assert!(backend.submit_operation(operation(100)).is_err());
-        let results = backend.take_operation_results();
-        assert_eq!(results.len(), MAX_OPERATIONS);
-        for result in results {
+        assert!(submit(&mut backend, &mut app, operation(100)).is_err());
+        while app.world().resource::<Results>().0.len() != MAX_OPERATIONS {
+            app.update();
+        }
+        let results = std::mem::take(&mut app.world_mut().resource_mut::<Results>().0);
+        for outcome in results {
+            let result = outcome.result.unwrap();
             assert_eq!(result.completed.len(), 1);
             assert!(result.errors.is_empty());
-            assert!(tree.0.join(format!("created-{}", result.id)).is_file());
         }
-        backend.submit_operation(operation(100)).unwrap();
-        scope.shutdown(); // cancellation comes from workspace, not backend polling
-        let deadline = Instant::now() + Duration::from_secs(8);
-        while matches!(
-            backend.status(),
-            WorkStatus::Running | WorkStatus::Cancelling
-        ) {
-            assert!(Instant::now() < deadline, "Worker did not cancel");
-            std::thread::sleep(Duration::from_millis(10));
+        submit(&mut backend, &mut app, operation(100)).unwrap();
+        app.world_mut().resource_mut::<ManagedWork>().shutdown();
+        while !bedtime_workbench2::work_finished(app.world()) {
+            app.update();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
         }
-        assert_eq!(backend.status(), WorkStatus::Cancelled);
-        let results = backend.take_operation_results();
+        let results = &app.world().resource::<Results>().0;
+        assert_eq!(results.len(), 1);
+        assert!(results[0].cancellation_requested);
+        let result = results[0].result.as_ref().unwrap();
+        assert_eq!(result.id, 100);
         assert_eq!(
-            results.len(),
-            1,
-            "ManagedTask discards its return value on cancellation; mailbox must not"
-        );
-        assert_eq!(results[0].id, 100);
-        assert_eq!(
-            results[0].completed.len(),
+            result.completed.len(),
             usize::from(tree.0.join("created-100").is_file())
         );
-        assert!(results[0].cancelled || !results[0].completed.is_empty());
+        assert!(result.cancelled || !result.completed.is_empty());
     }
 
     #[test]
-    fn operation_archive_outlives_backend_and_workspace_runtime() {
+    fn managed_completion_outlives_backend_until_orderly_world_drain() {
         let tree = TempTree::new();
-        let mut scope = ManagedWork::default();
-        let mut backend = Backend::spawn(&mut scope).unwrap();
-        let archive = backend.operation_results_handle();
-        backend
-            .submit_operation(crate::FileTreeOperationRequest {
+        let mut app = operation_app();
+        let mut backend =
+            Backend::spawn(&mut app.world_mut().resource_mut::<ManagedWork>()).unwrap();
+        submit(
+            &mut backend,
+            &mut app,
+            crate::FileTreeOperationRequest {
                 id: 1,
                 root: tree.0.clone(),
                 operation: crate::FileTreeOperation::CreateFile {
                     directory: tree.0.clone(),
                     name: OsString::from("committed-or-cancelled"),
                 },
-            })
-            .unwrap();
+            },
+        )
+        .unwrap();
         drop(backend);
-        drop(scope);
+        app.world_mut().resource_mut::<ManagedWork>().shutdown();
         let deadline = Instant::now() + Duration::from_secs(8);
-        let result = loop {
-            let mut results = archive.take_operation_results();
-            if !results.is_empty() {
-                break results.remove(0);
-            }
-            assert!(
-                Instant::now() < deadline,
-                "Outcome did not survive runtime drop"
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        };
+        while !bedtime_workbench2::work_finished(app.world()) {
+            app.update();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let results = &app.world().resource::<Results>().0;
+        assert_eq!(results.len(), 1);
+        let result = results[0].result.as_ref().unwrap();
         assert_eq!(result.id, 1);
         assert_eq!(
             result.completed.len(),
             usize::from(tree.0.join("committed-or-cancelled").exists())
         );
         assert!(result.cancelled || result.completed.len() == 1);
-        assert!(archive.take_operation_results().is_empty());
+        app.update();
+        assert_eq!(app.world().resource::<Results>().0.len(), 1);
+    }
+
+    #[test]
+    fn worker_panic_delivers_committed_outcome_and_unknown_effects_for_abandoned_queue() {
+        let mut app = operation_app();
+        let mailbox = Arc::new(Mutex::new(Mailbox::default()));
+        for id in 1..=3 {
+            let completion = app
+                .world_mut()
+                .resource_mut::<ManagedWork>()
+                .admit_operation(None, "Queued mutation", |world, outcome| {
+                    world.resource_mut::<Results>().0.push(outcome);
+                })
+                .unwrap();
+            mailbox
+                .lock()
+                .unwrap()
+                .operations
+                .push_back(PendingOperation {
+                    request: crate::FileTreeOperationRequest {
+                        id,
+                        root: PathBuf::from("/unavailable"),
+                        operation: crate::FileTreeOperation::CreateFile {
+                            directory: PathBuf::from("/unavailable"),
+                            name: "unused".into(),
+                        },
+                    },
+                    completion,
+                });
+        }
+        app.world_mut()
+            .resource_mut::<ManagedWork>()
+            .spawn_task(None, "Failing executor", move |_| {
+                let _close = CloseOperations(mailbox.clone());
+                let first = mailbox.lock().unwrap().operations.pop_front().unwrap();
+                first.completion.complete(crate::FileTreeOperationResult {
+                    id: first.request.id,
+                    completed: Vec::new(),
+                    cancelled: false,
+                    errors: Vec::new(),
+                });
+                let _active = mailbox.lock().unwrap().operations.pop_front().unwrap();
+                panic!("Injected executor failure after one reported outcome");
+            })
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !bedtime_workbench2::work_finished(app.world()) {
+            app.update();
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let outcomes = &app.world().resource::<Results>().0;
+        assert_eq!(outcomes.len(), 3);
+        assert_eq!(outcomes.iter().filter(|o| o.result.is_ok()).count(), 1);
+        assert_eq!(
+            outcomes
+                .iter()
+                .find_map(|o| o.result.as_ref().ok())
+                .unwrap()
+                .id,
+            1
+        );
+        assert!(
+            outcomes
+                .iter()
+                .filter_map(|o| o.result.as_ref().err())
+                .all(|e| e.contains("effects may have occurred"))
+        );
     }
 
     #[test]

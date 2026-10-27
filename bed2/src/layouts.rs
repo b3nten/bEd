@@ -170,12 +170,14 @@ fn create_default(world: &mut World, slot: LayoutSlot) -> Result<Entity, String>
     activate_default(world, root, slot);
     Ok(root)
 }
+
 fn apply_default(world: &mut World, layout: Entity, slot: LayoutSlot) -> Result<Entity, String> {
     let captured = default_capture(world, slot)?;
     let root = Workbench::replace_layout(world, layout, captured)?;
     activate_default(world, root, slot);
     Ok(root)
 }
+
 fn default_capture(
     world: &World,
     slot: LayoutSlot,
@@ -206,6 +208,7 @@ fn default_capture(
     initial.flush();
     Workbench::capture_layout::<ReflectWorkbenchPersist>(initial, layout)
 }
+
 fn activate_default(world: &mut World, root: Entity, slot: LayoutSlot) {
     world.entity_mut(root).insert(slot);
     world.get_mut::<Layout>(root).unwrap().name = slot.label().into();
@@ -315,14 +318,15 @@ mod tests {
             .unwrap();
         (app, layout, area)
     }
+    
     #[test]
     fn switching_slots_keeps_live_panels_and_documents_after_world_restore_is_closed() {
         let (mut app, first, area) = host();
         let panel = app
             .world_mut()
-            .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
+            .spawn((crate::files::FilePanel::default(), InArea(area)))
             .id();
-        let document = open_document(
+        let document = open_memory_document(
             app.world_mut(),
             "retained".to_owned(),
             DocumentOptions::loaded("Document"),
@@ -337,6 +341,7 @@ mod tests {
         assert_eq!(read_document(app.world(), document).unwrap(), "retained");
         assert_eq!(app.world().get::<InArea>(panel).unwrap().0, area);
     }
+    
     #[test]
     fn reset_recreates_panels_and_retires_old_layout_while_retaining_canonical_documents() {
         let (mut app, layout, area) = host();
@@ -346,9 +351,9 @@ mod tests {
             .id();
         let editor = app
             .world_mut()
-            .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
+            .spawn((crate::files::FilePanel::default(), InArea(area)))
             .id();
-        let document = open_document(
+        let document = open_memory_document(
             app.world_mut(),
             "dirty".to_owned(),
             DocumentOptions::unsaved("Draft"),
@@ -370,6 +375,7 @@ mod tests {
         assert_eq!(read_document(app.world(), document).unwrap(), "dirty");
         assert_eq!(app.world().get::<LayoutSlot>(root), Some(&LayoutSlot::One));
     }
+    
     #[test]
     fn reflected_defaults_preserve_panel_kinds_and_data_but_exclude_project_sources() {
         let (mut app, _layout, area) = host();
@@ -383,7 +389,7 @@ mod tests {
             InArea(area),
         ));
         app.world_mut()
-            .spawn((crate::files::FilePreviewPanel::default(), InArea(area)));
+            .spawn((crate::files::FilePanel::default(), InArea(area)));
         app.world_mut().spawn((
             crate::git::diff::DiffPanel::new(crate::git::diff::Descriptor {
                 root: "/another-private-project".into(),
@@ -425,14 +431,15 @@ mod tests {
                 .any(|&p| app.world().get::<bedtime_mascots2::DuckPanel>(p).is_some())
         );
     }
+    
     #[test]
     fn invalid_reset_and_uncommitted_drafts_preserve_the_original_layout() {
         let (mut app, layout, area) = host();
         let editor = app
             .world_mut()
-            .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
+            .spawn((crate::files::FilePanel::default(), InArea(area)))
             .id();
-        let document = open_document(
+        let document = open_memory_document(
             app.world_mut(),
             String::new(),
             DocumentOptions::unsaved("Draft"),
@@ -452,6 +459,7 @@ mod tests {
         assert_eq!(active_layout(app.world()), Some(layout));
         assert_eq!(app.world().get::<InArea>(editor).unwrap().0, area);
     }
+    
     #[test]
     fn titlebar_creation_and_drag_use_the_feature_factory() {
         let (mut app, layout, _) = host();

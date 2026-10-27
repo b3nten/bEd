@@ -182,7 +182,7 @@ fn panel(world: &mut World, title: &str) -> Entity {
     workbench.create_panel(layout, title).unwrap()
 }
 fn text(world: &mut World, initial: &str) -> DocumentHandle<String> {
-    open_document(world, initial.to_owned(), DocumentOptions::loaded("Text")).unwrap()
+    create_memory_snapshot(world, initial.to_owned(), DocumentOptions::loaded("Text")).unwrap()
 }
 fn info<M: DocumentModel>(world: &World, handle: DocumentHandle<M>) -> DocumentInfo {
     inspect_document(world, handle.id()).unwrap()
@@ -240,14 +240,14 @@ fn controlled_save<M: DocumentModel>(
     destination: Option<&str>,
     result: SaveResult,
 ) -> (
-    DocumentSaveBinding<M>,
+    SaveBinding<M>,
     mpsc::Sender<()>,
     mpsc::Receiver<DocumentSaveSnapshot<M>>,
 ) {
     let (release, receive_release) = mpsc::channel();
     let receive_release = Mutex::new(receive_release);
     let (send_snapshot, snapshots) = mpsc::channel();
-    let binding = DocumentSaveBinding::new(destination.map(str::to_owned), move |snapshot| {
+    let binding = SaveBinding::new(destination.map(str::to_owned), move |snapshot| {
         send_snapshot.send(snapshot).unwrap();
         receive_release
             .lock()
@@ -277,7 +277,7 @@ fn typed_and_text_models_share_revision_history_and_dirty_checkpoints() {
     fn assert_copy<T: Copy>() {}
     assert_copy::<DocumentHandle<Settings>>();
     let mut app = app();
-    let typed = open_document(
+    let typed = create_memory_snapshot(
         app.world_mut(),
         settings(),
         DocumentOptions::loaded("Settings"),
@@ -317,7 +317,8 @@ fn typed_and_text_models_share_revision_history_and_dirty_checkpoints() {
     assert!(info(app.world(), typed).dirty);
 
     let unsaved =
-        open_document(app.world_mut(), settings(), DocumentOptions::unsaved("New")).unwrap();
+        create_memory_snapshot(app.world_mut(), settings(), DocumentOptions::unsaved("New"))
+            .unwrap();
     assert!(
         info(app.world(), unsaved).dirty,
         "An untouched unsaved model has no checkpoint"
@@ -333,7 +334,7 @@ fn typed_models_use_the_same_save_external_and_conflict_lifecycle_as_text() {
     let mut app = app();
     let mut options = DocumentOptions::loaded("Settings");
     options.initial_state = DocumentInitialState::Loaded(Some("initial".into()));
-    let document = open_document(app.world_mut(), settings(), options).unwrap();
+    let document = create_memory_snapshot(app.world_mut(), settings(), options).unwrap();
     edit_document(
         app.world_mut(),
         document,
@@ -342,10 +343,10 @@ fn typed_models_use_the_same_save_external_and_conflict_lifecycle_as_text() {
         EditOptions::new("Rename"),
     )
     .unwrap();
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(None, |snapshot| {
+        SaveBinding::new(None, |snapshot| {
             assert_eq!(
                 snapshot.model,
                 Settings {
@@ -423,7 +424,7 @@ fn typed_models_use_the_same_save_external_and_conflict_lifecycle_as_text() {
 #[test]
 fn rejected_transactions_stale_edits_and_invalid_utf8_leave_everything_unchanged() {
     let mut app = app();
-    let model = open_document(
+    let model = create_memory_snapshot(
         app.world_mut(),
         settings(),
         DocumentOptions::loaded("Typed"),
@@ -634,7 +635,8 @@ fn bounded_history_retains_only_recent_transactions_and_can_be_disabled() {
     let mut app = app();
     let mut options = DocumentOptions::loaded("Bounded");
     options.history_limit = 2;
-    let document = open_document(app.world_mut(), "0".to_owned(), options.clone()).unwrap();
+    let document =
+        create_memory_snapshot(app.world_mut(), "0".to_owned(), options.clone()).unwrap();
     for value in ["1", "2", "3"] {
         replace(app.world_mut(), document, value);
     }
@@ -647,7 +649,7 @@ fn bounded_history_retains_only_recent_transactions_and_can_be_disabled() {
     );
     assert!(info(app.world(), document).dirty);
     options.history_limit = 0;
-    let no_history = open_document(app.world_mut(), "0".to_owned(), options).unwrap();
+    let no_history = create_memory_snapshot(app.world_mut(), "0".to_owned(), options).unwrap();
     replace(app.world_mut(), no_history, "1");
     assert_eq!(info(app.world(), no_history).revision, 1);
     assert!(!info(app.world(), no_history).can_undo);
@@ -661,10 +663,10 @@ fn drafts_explicitly_block_save_history_and_retirement_in_every_viewer() {
     let second = panel(app.world_mut(), "Second");
     bind_document_view(app.world_mut(), first, document).unwrap();
     bind_document_view(app.world_mut(), second, document).unwrap();
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(None, |_| Ok(None)),
+        SaveBinding::new(None, |_| Ok(None)),
     )
     .unwrap();
     replace(app.world_mut(), document, "committed");
@@ -713,7 +715,7 @@ fn drafts_explicitly_block_save_history_and_retirement_in_every_viewer() {
 #[test]
 fn saves_acknowledge_only_the_captured_model_and_survive_last_viewer_close() {
     let mut app = app();
-    let document = open_document(
+    let document = create_memory_snapshot(
         app.world_mut(),
         "captured".to_owned(),
         DocumentOptions::unsaved("New"),
@@ -723,7 +725,7 @@ fn saves_acknowledge_only_the_captured_model_and_survive_last_viewer_close() {
     bind_document_view(app.world_mut(), viewer, document).unwrap();
     let (binding, release, snapshots) =
         controlled_save(Some("global://destination"), Ok(Some("v1".into())));
-    bind_document_save(app.world_mut(), document, binding.clone()).unwrap();
+    install_save_binding(app.world_mut(), document, binding.clone()).unwrap();
     let work = save_document(app.world_mut(), document.id()).unwrap();
     let capture = snapshots.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(capture.model, "captured");
@@ -736,11 +738,11 @@ fn saves_acknowledge_only_the_captured_model_and_survive_last_viewer_close() {
         Err(DocumentError::Saving)
     );
     assert_eq!(
-        bind_document_save(app.world_mut(), document, binding),
+        install_save_binding(app.world_mut(), document, binding),
         Err(DocumentError::Saving)
     );
     assert_eq!(
-        unbind_document_save(app.world_mut(), document.id()),
+        remove_save_binding(app.world_mut(), document.id()),
         Err(DocumentError::Saving)
     );
     assert_eq!(
@@ -789,7 +791,7 @@ fn undo_during_save_does_not_change_the_immutable_capture() {
     let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "save this");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("written".into())));
-    bind_document_save(app.world_mut(), document, binding).unwrap();
+    install_save_binding(app.world_mut(), document, binding).unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
     assert_eq!(
         snapshots
@@ -815,10 +817,10 @@ fn save_errors_and_panics_preserve_content_and_history_and_release_bindings() {
     replace(app.world_mut(), document, "local");
     let failure = DocumentSaveError::Failed("disk full".into());
     let expected = failure.clone();
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(Some("disk".into()), move |_| Err(failure.clone())),
+        SaveBinding::new(Some("disk".into()), move |_| Err(failure.clone())),
     )
     .unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
@@ -831,10 +833,10 @@ fn save_errors_and_panics_preserve_content_and_history_and_release_bindings() {
     assert_eq!(info(app.world(), document).revision, 1);
     assert!(info(app.world(), document).can_undo);
     assert!(info(app.world(), document).dirty);
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(Some("disk".into()), |_| panic!("save panicked")),
+        SaveBinding::new(Some("disk".into()), |_| panic!("save panicked")),
     )
     .unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
@@ -848,15 +850,15 @@ fn save_errors_and_panics_preserve_content_and_history_and_release_bindings() {
     assert!(!info(app.world(), document).dirty);
     assert!(info(app.world(), document).requires_source_refresh);
     offer(app.world_mut(), document, "base", "fresh after panic");
-    unbind_document_save(app.world_mut(), document.id()).unwrap();
+    remove_save_binding(app.world_mut(), document.id()).unwrap();
     assert_eq!(
         save_document(app.world_mut(), document.id()),
         Err(DocumentError::NoSaveBinding)
     );
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(Some("disk".into()), |_| Ok(Some("recovered".into()))),
+        SaveBinding::new(Some("disk".into()), |_| Ok(Some("recovered".into()))),
     )
     .unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
@@ -872,8 +874,8 @@ fn destination_keys_serialize_saves_across_documents() {
         controlled_save(Some("same destination"), Ok(Some("one".into())));
     let (second_binding, release_second, snapshots_second) =
         controlled_save(Some("same destination"), Ok(Some("two".into())));
-    bind_document_save(app.world_mut(), first, first_binding).unwrap();
-    bind_document_save(app.world_mut(), second, second_binding).unwrap();
+    install_save_binding(app.world_mut(), first, first_binding).unwrap();
+    install_save_binding(app.world_mut(), second, second_binding).unwrap();
     save_document(app.world_mut(), first.id()).unwrap();
     snapshots_first
         .recv_timeout(Duration::from_secs(5))
@@ -902,10 +904,10 @@ fn save_cas_failure_requires_refresh_before_retry_even_if_source_contents_match(
     let mut app = app();
     let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "local");
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(None, |_| {
+        SaveBinding::new(None, |_| {
             Err(DocumentSaveError::Conflict("newer source".into()))
         }),
     )
@@ -942,10 +944,10 @@ fn save_cas_failure_requires_refresh_before_retry_even_if_source_contents_match(
     );
     assert!(!info(app.world(), document).conflict);
     assert_eq!(info(app.world(), document).source_generation, 2);
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(None, |snapshot| {
+        SaveBinding::new(None, |snapshot| {
             assert_eq!(snapshot.expected_source_version, Some("fresh".into()));
             Ok(Some("written".into()))
         }),
@@ -986,7 +988,7 @@ fn saves_and_external_observations_close_explicit_groups() {
     );
     let group = begin_document_undo_group(app.world_mut(), document.id(), viewer).unwrap();
     let (binding, release, snapshots) = controlled_save(None, Ok(None));
-    bind_document_save(app.world_mut(), document, binding).unwrap();
+    install_save_binding(app.world_mut(), document, binding).unwrap();
     assert_eq!(
         end_document_undo_group(app.world_mut(), document.id(), group),
         Err(DocumentError::StaleUndoGroup)
@@ -1012,7 +1014,7 @@ fn clean_external_refresh_is_undoable_without_undoing_acknowledged_source_knowle
     let mut app = app();
     let mut options = DocumentOptions::loaded("Source");
     options.initial_state = DocumentInitialState::Loaded(Some("v1".into()));
-    let document = open_document(app.world_mut(), "one".to_owned(), options).unwrap();
+    let document = create_memory_snapshot(app.world_mut(), "one".to_owned(), options).unwrap();
     assert_eq!(
         offer(app.world_mut(), document, "two", "v2"),
         DocumentExternalUpdate::Applied
@@ -1078,10 +1080,10 @@ fn dirty_external_duplicates_convergence_and_self_write_echoes_add_no_history() 
         Err(DocumentError::NothingToUndo)
     );
     redo_document(app.world_mut(), document.id()).unwrap();
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(None, |_| Ok(Some("self write".into()))),
+        SaveBinding::new(None, |_| Ok(Some("self write".into()))),
     )
     .unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
@@ -1106,10 +1108,10 @@ fn conflicts_retain_base_editable_local_and_newest_incoming_and_reject_stale_res
     let mut app = app();
     let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "local");
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(None, |_| Ok(None)),
+        SaveBinding::new(None, |_| Ok(None)),
     )
     .unwrap();
     assert_eq!(
@@ -1268,10 +1270,10 @@ fn late_save_completion_preserves_newer_conflict_and_requires_reconciliation() {
     let mut app = app();
     let mut options = DocumentOptions::loaded("Source");
     options.initial_state = DocumentInitialState::Loaded(Some("v1".into()));
-    let document = open_document(app.world_mut(), "base".to_owned(), options).unwrap();
+    let document = create_memory_snapshot(app.world_mut(), "base".to_owned(), options).unwrap();
     replace(app.world_mut(), document, "local");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("save v3".into())));
-    bind_document_save(app.world_mut(), document, binding).unwrap();
+    install_save_binding(app.world_mut(), document, binding).unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
     let snapshot = snapshots.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(snapshot.expected_source_version, Some("v1".into()));
@@ -1349,7 +1351,7 @@ fn late_save_cannot_make_a_clean_external_refresh_falsely_clean_against_its_snap
     let mut app = app();
     let document = text(app.world_mut(), "base");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("save v3".into())));
-    bind_document_save(app.world_mut(), document, binding).unwrap();
+    install_save_binding(app.world_mut(), document, binding).unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
     snapshots.recv_timeout(Duration::from_secs(5)).unwrap();
     assert_eq!(
@@ -1474,10 +1476,10 @@ fn cancelling_work_after_a_write_starts_cannot_leave_a_false_clean_checkpoint() 
     let (started, receive_started) = mpsc::channel();
     let (release, receive_release) = mpsc::channel();
     let receive_release = Mutex::new(receive_release);
-    bind_document_save(
+    install_save_binding(
         app.world_mut(),
         document,
-        DocumentSaveBinding::new(None, move |snapshot| {
+        SaveBinding::new(None, move |snapshot| {
             started.send(()).unwrap();
             receive_release
                 .lock()
@@ -1524,7 +1526,7 @@ fn a_watcher_echo_before_the_save_receipt_never_reapplies_undone_content() {
     let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "saved capture");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("saved version".into())));
-    bind_document_save(app.world_mut(), document, binding).unwrap();
+    install_save_binding(app.world_mut(), document, binding).unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
     snapshots.recv_timeout(Duration::from_secs(5)).unwrap();
     undo_document(app.world_mut(), document.id()).unwrap();
@@ -1553,7 +1555,7 @@ fn a_watcher_echo_waits_for_success_and_a_newer_observation_is_not_mistaken_for_
     let document = text(app.world_mut(), "base");
     replace(app.world_mut(), document, "capture");
     let (binding, release, snapshots) = controlled_save(None, Ok(Some("our version".into())));
-    bind_document_save(app.world_mut(), document, binding).unwrap();
+    install_save_binding(app.world_mut(), document, binding).unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
     snapshots.recv_timeout(Duration::from_secs(5)).unwrap();
     offer(app.world_mut(), document, "capture", "our version");
@@ -1580,7 +1582,7 @@ fn a_failed_write_with_a_watcher_echo_does_not_acknowledge_durable_success() {
     replace(app.world_mut(), document, "capture");
     let (binding, release, snapshots) =
         controlled_save(None, Err(DocumentSaveError::Failed("flush failed".into())));
-    bind_document_save(app.world_mut(), document, binding).unwrap();
+    install_save_binding(app.world_mut(), document, binding).unwrap();
     save_document(app.world_mut(), document.id()).unwrap();
     snapshots.recv_timeout(Duration::from_secs(5)).unwrap();
     offer(app.world_mut(), document, "capture", "visible bytes");
@@ -1621,26 +1623,9 @@ fn retirement_during_drawing_is_rejected_without_closing_viewers() {
 }
 
 #[test]
-fn source_keys_deduplicate_in_world_and_check_model_types() {
-    let mut app = app();
-    let mut options = DocumentOptions::loaded("File");
-    options.source_key = Some("file:///shared".into());
-    let first = open_document(app.world_mut(), "first".to_owned(), options.clone()).unwrap();
-    let duplicate =
-        open_document(app.world_mut(), "replacement".to_owned(), options.clone()).unwrap();
-    assert_eq!(first, duplicate);
-    assert_eq!(read_document(app.world(), first).unwrap(), "first");
-    assert!(matches!(
-        open_document(app.world_mut(), settings(), options),
-        Err(DocumentError::WrongModel { .. })
-    ));
-    assert_eq!(document_ids(app.world()), [first.id()]);
-}
-
-#[test]
 fn viewers_share_documents_across_layouts_and_do_not_own_them() {
     let mut app = app();
-    let document = open_document(
+    let document = create_memory_snapshot(
         app.world_mut(),
         "base".to_owned(),
         DocumentOptions::loaded("File"),

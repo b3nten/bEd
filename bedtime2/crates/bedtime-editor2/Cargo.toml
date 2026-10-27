@@ -9,10 +9,11 @@ description = "Embeddable plain text editor with optional Workbench document int
 [features]
 default = []
 diff = []
-treesitter = ["dep:bedtime-treesitter2"]
+treesitter = ["dep:bedtime-treesitter2", "bedtime-treesitter2/documents"]
 workbench = ["dep:bedtime-workbench2"]
 
 [dependencies]
+bedtime-document2.workspace = true
 bedtime-treesitter2 = { workspace = true, optional = true }
 bedtime-ui2.workspace = true
 bedtime-workbench2 = { path = "../bedtime-workbench2", default-features = false, optional = true }
@@ -21,6 +22,7 @@ unicode-segmentation = "=1.13.3"
 unicode-width.workspace = true
 
 [dev-dependencies]
+bedtime-workbench2 = { path = "../bedtime-workbench2", default-features = false, features = ["test-support"] }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_log", "x11", "wayland"] }
 
 [[example]]

@@ -23,7 +23,7 @@ fn host() -> Host {
     let mut app = App::new();
     app.add_plugins((WorkbenchCorePlugin, EditorAnalysisPlugin, StructurePlugin));
     let workspace = crate::test_layout(app.world_mut());
-    let document = open_document(
+    let document = open_memory_document(
         app.world_mut(),
         TextBuffer::from("fn cat() {\n let age=42;\n}\nfn dog() {}\n"),
         DocumentOptions::loaded("cats.rs"),
@@ -136,7 +136,7 @@ fn automatic_ineligible_focus_clears_closed_source_and_rebinding_is_not_a_fallba
     let (a, structure) = (h.a, h.structure);
     focus(&mut h, a);
     focus(&mut h, structure);
-    let other = open_document(
+    let other = open_memory_document(
         h.app.world_mut(),
         TextBuffer::from("not code"),
         DocumentOptions::loaded("text"),
@@ -215,7 +215,7 @@ fn closed_rebound_and_unsupported_sources_reject_obsolete_activation() {
         observation: observation.key,
         item: observation.outline[0].id,
     };
-    let other = open_document(
+    let other = open_memory_document(
         h.app.world_mut(),
         TextBuffer::from("fn other() {}"),
         DocumentOptions::loaded("other.rs"),

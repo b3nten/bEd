@@ -51,7 +51,7 @@ impl Plugin for LanguageToolsPlugin {
                 (
                     project
                         .before(LspSystems::Update)
-                        .after(crate::file_editor::reconcile_bindings),
+                        .after(crate::files::FilesSystems::Update),
                     navigate.after(LspSystems::Update),
                     interaction::receive.after(LspSystems::Update),
                 ),
@@ -140,7 +140,7 @@ fn project(world: &mut World) {
                 ("javascript", Some("jsx")) => "javascriptreact",
                 _ => &language,
             };
-            bedtime_lsp2::FileUri::from_path(path)
+            bedtime_lsp2::FileUri::from_path(&path)
                 .ok()
                 .map(|uri| LspDocument {
                     uri,

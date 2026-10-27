@@ -6,7 +6,11 @@ publish = false
 license.workspace = true
 description = "Shared incremental code analysis using selected Arborium grammars"
 
+[features]
+documents = ["dep:bedtime-document2"]
+
 [dependencies]
+bedtime-document2 = { workspace = true, optional = true }
 bedtime-grammars2.workspace = true
 # Use the same Tree-sitter runtime as v1: Cargo permits only one links=tree-sitter.
 tree-sitter = { package = "arborium-tree-sitter", version = "=2.18.2" }

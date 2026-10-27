@@ -3,8 +3,9 @@
 One editing session per application instance/Bevy World. Startup without a folder
 uses a memory-only home session. An explicit folder argument admits that project;
 **File → Open Folder…** reuses the current canonical root or launches a separate
-application instance for a different folder. Independent windows editing the same
-canonical project are explicitly unsupported and rejected before restore/editing.
+application instance for a different folder and requests normal quit of the current
+instance, without waiting for the replacement to be ready. Independent windows
+editing the same canonical project are explicitly unsupported and rejected before restore/editing.
 Application metadata lives in the user config directory, never in the project.
 
 The titlebar controls are **Terminal, Git, Files, Structure, Settings**. Click to open
@@ -43,12 +44,12 @@ RON preferences I/O; `session.rs` owns one combined file per folder workspace.
 live instances while switching slots. Required components supply panel metadata
 and drawing immediately; there is no panel registry or delayed panel initialization.
 `menus.rs` owns creation choices, and `main.rs` renders the titlebar.
-`cube.rs` owns the shared cube/ground/light scene and viewport implementation;
-`tasks.rs` adds the Tasks & Processes panel. `bedtime-terminal2::TerminalPlugin` adds local shell
+`bedtime-terminal2::TerminalPlugin` adds local shell
 panels; `terminal.rs` owns `+open`/`+o` integration and optional automation inspection.
 `opening.rs` owns file/folder opening, viewer selection, tab reuse and area
 placement. `files.rs` installs the file tree and the current file viewer; `file_editor.rs`
-owns their canonical document bindings and save backend. `code.rs` supplies
+configures editor presentation; source-backed documents and checked saves belong to
+[`bedtime-filesystem2`](../bedtime2/crates/bedtime-filesystem2/README.md). `code.rs` supplies
 canvas context-menu actions, analysis execution and the application-owned
 [Structure viewer](crates/bed-structure2/README.md).
 `close.rs` owns application quit decisions and session worker shutdown.
@@ -59,6 +60,12 @@ areas no longer discover registered types. A concrete panel spawn selects its ta
 without changing area focus. `select_panel` and `focus_area` are independent;
 `focus_panel` explicitly does both. Workbench hooks maintain ownership and fallback
 selection/focus immediately as composition applies.
+
+The Cube/3D Viewport and Tasks & Processes demos have been removed, including
+creation commands and automation endpoints. Saved reflected sessions/layouts that
+contain their types are rejected and preserved by the existing unknown-type policy;
+legacy tool defaults containing either demo are also rejected rather than silently
+substituted.
 
 The memory-only Documents and Hello World demos remain removed. Files and terminal
 helpers share the application opening route; opening a file needs no Files panel.
@@ -340,8 +347,8 @@ including retained edits/history after its last viewer closes. Different layouts
 have separate preview slots. Additional shared views can be created by dragging a file from Files; the
 canvas menu does not expose view creation.
 
-UTF-8 files up to 256 MiB load on managed background workers. Binary, oversized and
-nonregular files show metadata. No synchronous full-file reads occur while drawing.
+UTF-8 files up to 256 MiB load on managed background workers. Automatic binary/oversized
+opens use Hex; explicit Code and nonregular files retain metadata presentation. No synchronous full-file reads occur while drawing.
 **Save** or Cmd/Ctrl+S uses the canonical save service, source checkpoints and atomic
 replacement. A changed disk source refuses overwrite; **Reload to compare** in the inline conflict controls compares incoming
 bytes while preserving local edits, then **Keep my edits** / **Use disk contents**
@@ -362,6 +369,30 @@ Files supports dragging a single file into an area, tab strip or edge split usin
 Workbench's titlebar creation targets. Each drop creates a pinned viewer at that
 placement and shares canonical content/history with other viewers of the file.
 Dropping onto an eligible folder in Files retains the existing move/copy behavior.
+
+## Filesystem and Hex ownership
+
+[`bedtime-filesystem2`](../bedtime2/crates/bedtime-filesystem2/README.md) supplies
+headless file sources, metadata, bounded/range reads and checked streaming writes.
+Text loading/source observation, image reads, model roots/sidecars, shell path
+resolution and Hex use this boundary. Filetree uses its directory enumeration,
+mutation and native-watch implementations. Global/project settings storage remains
+explicitly local; Git and language-server process services retain their own contracts.
+Only a local filesystem backend is implemented.
+
+Workbench and the headless document core own canonical representation/history,
+source checkpoints and accepted save captures. Filesystem2 supplies canonical
+sources, checked streaming persistence, source observation and move/delete identity.
+bEd2 supplies opening associations, placement and presentation, with no separate
+disk checkpoint, save closure, source watcher or reload-rebinding loop.
+See [source-backed documents](../MIGRATION/source-backed-documents.md).
+
+[`bedtime-hex2`](../bedtime2/crates/bedtime-hex2/README.md) owns the complete read-only
+Hex panel, including controls, search, numeric inspection, formatting and managed
+user jobs. Workbench supplies shared document byte pages and their managed reads. bEd2 composes it inside its file tab and supplies only
+file loading/placement policy, Open With and the shared
+reload route. There is no application `hex.rs` implementation. Hex sources retain
+navigation across confirmed moves and reject reads from obsolete file versions.
 
 ## Image viewers and Open With
 
@@ -389,7 +420,7 @@ saved association preference or settings UI. Existing sessions retain their
 recorded Code viewers, including SVG files; new Image tabs restore as Image.
 Zoom/pan is runtime-only and starts at fit after restoration.
 
-SVG Image panels bind the same canonical text document as Code, without a hidden
+SVG Image panels bind the same canonical TextDocument as Code, without a hidden
 editor. Committed unsaved edits update the image after a 150 ms settling period.
 Invalid intermediate source retains the last valid image and shows an error.
 Save/conflict/autosave/close policy remains canonical, and dirty shared SVGs
@@ -414,8 +445,9 @@ window/renderer. Helpers are private symlinks to the running executable, added t
 child PATH; no separate helper binary is packaged or installed globally.
 
 - `+open` opens the calling shell's current directory through the folder policy:
-  reuse this canonical project or launch another instance. The calling session and
-  its unsaved work remain intact. A project already owned elsewhere is rejected.
+  reuse this canonical project or attempt to launch another instance and request
+  normal quit. Unsaved documents use the ordinary Save All / Discard / Cancel
+  decision; cancelling quit can leave both instances open.
 - `+open .` or one explicit directory uses that same folder-opening path.
 - `+open FILE ...` resolves paths relative to the calling shell's actual cwd,
   including after `cd`, and opens pinned tabs in the originating layout.
@@ -433,14 +465,19 @@ canonical document and unsaved edits.
 File helpers acknowledge after loads and document binding finish; missing files,
 closed origins and load failures return a nonzero exit status with a diagnostic.
 Folder helpers acknowledge canonical-root reuse or successful process launch; the
-child independently claims admission and restores its own session. Switching focus
-cannot redirect an accepted file open. Commands respect quit/readiness gates.
+child independently claims admission and restores its own session. For a different
+validated directory, project-admission or launch failure still requests normal quit.
+The parent does not wait for startup/restore success or a shell acknowledgement
+before shutting down, so a failed replacement can leave no open window. Invalid
+paths fail validation without quitting. File → Open Folder and Git's Open repository
+root use this same policy. Switching focus cannot redirect an accepted file open.
+Commands respect quit/readiness gates.
 The shared transport times out after 60 seconds without automatically retrying or
 rolling back an accepted operation.
 
 The opening helper smoke is `python3 -B bedtime2/tools/smoke_open.py`.
-The broader native session smoke also verifies separate instances and duplicate
-rejection. Historical workspace-activation smoke results do not verify this policy.
+The broader native session smoke also verifies replacement quit decisions and
+duplicate rejection. Historical workspace-activation smoke results do not verify this policy.
 
 ## Code and Structure
 
@@ -640,39 +677,6 @@ local. V2 currently supplies its own small configuration map, without importing
 that catalog. The [Zed review](../MIGRATION/lsp2-investigation.md#status-and-robustness-review)
 records the progress/observability changes and remaining reliability work.
 
-## Viewports
-
-Each viewport panel is also its `Camera3d`, with an independent `UiViewport` image
-and `OrbitCamera` state. Left-drag orbits, Shift-left-drag or middle-drag pans,
-scroll zooms, and **Reset view** restores the initial camera. egui owns the drag
-until release, including outside the image; controls respect window focus and
-popups. Panning scales with distance, field of view and viewport height. Pitch
-and distance are clamped. Camera transforms update in `Update`; visibility is
-synchronized in `UiSystems::SyncViewports` before UI2 resizes images and Bevy
-updates projections. Hidden views stop rendering. Closing a panel retires its
-camera and image ownership; the application-owned scene remains available.
-No core layout/session serializer persists viewports. Any camera-state restore
-recipe belongs to the application; the current session format does not store orbit state.
-
-The Tasks & Processes panel demonstrates the existing `ManagedWork` API:
-
-- **Start task** sums 1 through 100 on a worker thread, with a configurable
-  duration, progress, a typed result (5050), and cooperative cancellation.
-- **Start process** launches a fixed interactive echo script (`/bin/sh` on Unix,
-  PowerShell on Windows). Send text with the button or Enter; `stderr` writes to
-  stderr, `fail` exits with code 7, and `exit` exits successfully. **Close stdin**
-  delivers EOF after queued writes; **Stop process** requests cancellation.
-- Each panel retains its latest task result and the newest 64 KiB of each output
-  stream. Process supervision status and the child's exit status are displayed
-  separately: `Finished` can accompany a nonzero exit code.
-
-Both workers are owned by the World, with the panel as a
-shorter-lived owner. Workbench handles cancellation and process cleanup when
-either closes. An ordinary Update system collects results and drains output for
-hidden panels and layouts too. Worker timing uses real time, not
-Bevy's virtual time. No session serializer stores live workers, logs or results;
-applications reconstruct fresh idle panels if implementing restore.
-
 ## Terminal
 
 Choose **Terminal** from the application's **View** menu. Each panel owns one local
@@ -734,6 +738,8 @@ never unlinked while claims may exist; process exit/crash releases the OS lock.
 Opening another root validates it before spawning the current executable. The
 child claims independently, so racing launches cannot both edit. This policy
 excludes identical canonical roots, not overlapping ancestor/descendant projects.
+After attempting to open a different validated root, the parent requests normal
+quit even on admission/launch failure, without monitoring replacement readiness.
 Native in-process Bevy teardown/restart is not part of this implementation.
 
 Both current envelopes are application schema **2**. The graph and resource values
@@ -767,6 +773,23 @@ merged per value against each writer's baseline; the local edit wins a same-valu
 conflict. Instances refresh untouched global values from disk about once a second.
 Project metadata has one admitted writer. Remembered-last-folder updates happen
 on actual admission, not every poll, avoiding a cross-instance write loop.
+
+Global policy readiness is a successful initial load (including a missing file),
+independent of persistence health. Later write/refresh failures and storage retries
+retain admitted policy, editing, file opening and LSP configuration. Failed initial
+loading keeps the startup barrier. Storage errors still surface, preserve original
+bytes, and control retry/quit flushing.
+
+Project roots, file/tree descriptors, Git comparison roots and remembered startup
+paths use `bedtime_workbench2::native_path`: platform-tagged Unix bytes or Windows
+wide units, shared with Filetree visibility. The field codec reads former UTF-8
+path strings without rewriting startup files; the next real edit writes native
+records. Envelope/snapshot versions remain 2. Older builds that cannot read these
+records reject them; downgrading requires explicit migration. Foreign-platform
+records and NUL units are rejected; application source identities must be absolute
+and at most 16384 encoded units. Visibility retains its stricter normalized,
+root-relative/absolute rules. No display-string conversion participates in storage.
+
 
 Settings has no header or storage-location prose. Its sidebar contains:
 
@@ -948,7 +971,7 @@ missing-source documents require explicit discard or recovery.
 
 Current migration results are recorded in the
 [world/session verification record](../MIGRATION/workbench-world-session-plan.md#implementation-and-verification--2026-10-24).
-Native session, storage/autosave, terminal helper, task and persistence-example
+Native session, storage/autosave, terminal helper and persistence-example
 smokes exercise the new model; older dated results below are historical.
 
 ## Verification
@@ -958,8 +981,6 @@ cargo test --offline --locked -p bed2 --features automation
 cargo check --offline --locked -p bed2
 cargo build --offline --locked -p bed2 --features automation
 python3 bedtime2/tools/smoke_bed2.py
-python3 bedtime2/tools/smoke_cube.py
-python3 bedtime2/tools/smoke_tasks.py
 python3 bedtime2/tools/smoke_terminal.py
 python3 bedtime2/tools/smoke_open.py
 python3 bedtime2/tools/smoke_code.py
@@ -977,9 +998,8 @@ shortcuts, titlebar click/drag and rendered captures. The workspace-policy scena
 uses isolated config/home fixtures to verify real Timer/Change Focus autosaves,
 Never/manual Save, temporary startup, centralized RON files and restart restoration. Generic snapshot/restore endpoints have been removed;
 scenarios must use application-owned creation rather than `panel.open`. The other scenarios
-inspect and exercise independent orbit viewports (`app.inspect_cube`), task and
-process ownership/I/O (`app.inspect_tasks`), and real PTY sessions, input,
-rendering, appearance and cleanup (`app.inspect_terminal`). Settings panels also
+exercise real PTY sessions, input, rendering, appearance and cleanup
+(`app.inspect_terminal`). Settings panels also
 serve as cover tabs when checking hidden panels. Files/editor scenarios use temporary
 projects to verify opening, previews, edits/saves, watchers, operations and cleanup.
 The former Documents browser and its automation commands remain retired.
@@ -993,8 +1013,7 @@ application policy and actual titlebar geometry for automation. These are applic
 reintroduced library panel registry.
 
 Terminal support is initially macOS/Linux; native verification in this repository
-has used macOS/Metal. The Windows task echo script and non-macOS native input
-have not been verified here. Quit choices and worker-draining behavior have
+has used macOS/Metal. Non-macOS native input has not been verified here. Quit choices and worker-draining behavior have
 application unit coverage; automation transport exit is separate from window quit.
 
 Historical workspace/menu policy verification is recorded in
@@ -1041,3 +1060,18 @@ and 27 UI tests passed; the real Rust/Go intelligence regression passed, includi
 standard-library hover/definitions. The native interaction smoke passed seven
 nonempty captures and the existing LSP smoke passed five. The normal release
 executable was rebuilt. Native Linux interaction verification remains pending.
+
+## Source-backed document integration
+
+Filetree resolves canonical filesystem sources and invokes the application's
+opening handler. Standard opening chooses TextDocument or read-only BinaryDocument
+independently of the viewer, and reuses a source's existing document. All successful
+file viewers, including raster images and Hex, bind a canonical document. Hex reads
+unsaved text bytes when attached to TextDocument. Image and model preparation lives
+in the corresponding Bedtime viewer crates. bEd2 retains context menus, associations,
+preview/pinning, placement and application settings/session policy.
+
+Workbench owns autosave execution and tracked Save All; bEd2 supplies effective
+settings, focus and quit decisions, then flushes its storage and drains work.
+The persisted session schema is unchanged. Explicit Code on an assigned binary
+source reports an incompatible representation rather than creating a second model.

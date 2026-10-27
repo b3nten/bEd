@@ -8,10 +8,17 @@ import tempfile
 
 from automation import Application
 from smoke_bed2 import open_panel, panels, ready, session
-from smoke_cube import point
 from smoke_open import run_helper
 from smoke_terminal import bootstrap
 from smoke_workspace_policy import clean_quit
+
+
+def point(snapshot, entity, x=0.5, y=0.5):
+    viewport = next(v for v in snapshot["viewports"] if v["entity"] == entity)
+    rect = viewport["rect"]
+    zoom = snapshot["ui"]["surfaces"][0]["zoom"]
+    return [(a + (b - a) * t) * zoom
+            for a, b, t in zip(rect["min"], rect["max"], [x, y])]
 
 
 def scenes(app):

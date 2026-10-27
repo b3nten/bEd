@@ -93,7 +93,7 @@ def main():
             binary = str(Path(args.binary).resolve())
             with Application([binary, str(root)], output=output/'first', timeout=90) as app:
                 state = ready(app)
-                layout = next(l['entity'] for l in workspace(state)['layouts'] if l['active'])
+                layout = next(l['entity'] for l in session(state)['layouts'] if l['active'])
                 scene = open_model(app, layout, path)
                 assert model(app, scene)['info']['triangles'] == 12
                 captures.append(capture(app, '01-sidecars.png', scene))
@@ -157,18 +157,16 @@ def main():
                 app.request('panel.close',panel=code)
                 app.request('panel.focus',panel=scene)
                 choose(app,'Frame All')
-                # Independent scenes coexist with the application's cube and mascot.
+                # Independent model scenes coexist with the application's mascot.
                 other = open_model(app,layout,glb)
                 other_area = app.request('area.split',area=current(app,scene)['area'],axis='horizontal')['area']
                 app.request('panel.move',panel=other,area=other_area)
                 app.request('panel.focus',panel=scene)
                 before = model(app,scene)['view']
-                cube = open_panel(app,'3D Viewport',area=area)
                 bed = open_panel(app,'Bed',area=area)
                 captures.append(capture(app,'07-isolation.png',scene))
                 assert model(app,scene)['view'] == before
                 app.request('panel.close',panel=bed)
-                app.request('panel.close',panel=cube)
                 triangle = open_model(app,layout,stl)
                 captures.append(capture(app,'08-stl.png',triangle))
                 assert model(app,triangle)['info']['triangles'] == 1

@@ -243,7 +243,7 @@ impl EditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{TextDocument,TextSession,TextEdit,HistoryAction,layout::{Geometry,Metrics},folding::FoldMap};
+    use crate::{MemoryTextSession,TextSession,TextEdit,HistoryAction,layout::{Geometry,Metrics},folding::FoldMap};
     fn projection(old:&str,new:&str,width:Option<usize>)->Projection {
         let snapshot=TextSnapshot {text:TextBuffer::from(new),revision:7};
         let cancel=AtomicBool::new(false);
@@ -306,7 +306,7 @@ mod tests {
         }
         assert_eq!(g.segment(1).bytes.start,0);
     }
-    fn ready(ctx:&egui::Context,view:&mut EditorView,doc:&mut TextDocument,id:egui::Id)->crate::EditorOutput {
+    fn ready(ctx:&egui::Context,view:&mut EditorView,doc:&mut MemoryTextSession,id:egui::Id)->crate::EditorOutput {
         for _ in 0..200 {
             let output=crate::tests::frame(ctx,view,doc,id,vec![]);
             if !output.diff_controls.is_empty(){return output;}
@@ -317,7 +317,7 @@ mod tests {
     #[test]
     fn inline_button_returns_observed_identity_and_editing_keeps_shared_undo_clean() {
         let ctx=egui::Context::default();let id=egui::Id::new("diff-input");
-        let mut doc=TextDocument::new("new\nkeep\n");let mut view=EditorView::default();
+        let mut doc=MemoryTextSession::new("new\nkeep\n");let mut view=EditorView::default();
         view.set_comparison(Some(Comparison::new(42,TextBuffer::from("old\nkeep\n"))),vec![DiffAction {id:3,label:"Stage".into(),enabled:true}]);
         let output=ready(&ctx,&mut view,&mut doc,id);
         let pos=output.diff_controls[0].2.center();
@@ -337,7 +337,7 @@ mod tests {
     #[test]
     fn changing_comparison_rejects_old_worker_results() {
         let ctx=egui::Context::default();let id=egui::Id::new("diff-stale");
-        let mut doc=TextDocument::new("working\n");let mut view=EditorView::default();
+        let mut doc=MemoryTextSession::new("working\n");let mut view=EditorView::default();
         let actions=vec![DiffAction {id:1,label:"Stage".into(),enabled:true}];
         view.set_comparison(Some(Comparison::new(1,TextBuffer::from("old\n"))),actions.clone());
         crate::tests::frame(&ctx,&mut view,&mut doc,id,vec![]);

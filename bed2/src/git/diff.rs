@@ -2,7 +2,7 @@
 //! the working text remains a normal canonical file document.
 use super::*;
 use bedtime_editor2::{
-    EditorView, TextBuffer, TextDocument, TextSession, TextSnapshot,
+    EditorView, MemoryTextSession, TextBuffer, TextSession, TextSnapshot,
     diff::{ChangeRange, Comparison, DiffAction, DiffRequest},
 };
 use bedtime_ui2::{UiContext, egui};
@@ -15,14 +15,14 @@ type Key = (String, DiffSide);
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Descriptor {
+    #[serde(with = "bedtime_workbench2::native_path::path")]
     pub root: PathBuf,
     pub path: String,
     pub side: DiffSide,
 }
 impl Descriptor {
     pub(crate) fn validate(&self) -> Result<(), String> {
-        if !self.root.is_absolute()
-            || self.root.as_os_str().len() > 16384
+        if crate::persistence::validate_absolute_path(&self.root).is_err()
             || self.path.is_empty()
             || self.path.len() > 16384
             || self.path.contains('\0')
@@ -45,7 +45,9 @@ struct Loaded {
 struct Entry {
     task: Option<(
         u64,
-        ManagedTask<Result<(Arc<Loaded>, Vec<crate::file_editor::SourceObservation>), String>>,
+        ManagedTask<
+            bedtime_filesystem2::workbench::SourceChangeResult<Result<Arc<Loaded>, String>>,
+        >,
     )>,
     loaded: Option<Arc<Loaded>>,
     generation: u64,
@@ -59,7 +61,7 @@ pub(super) struct Comparisons(HashMap<Key, Entry>);
 pub(crate) struct DiffPanel {
     pub descriptor: Descriptor,
     attached: u64,
-    snapshot: Option<TextDocument>,
+    snapshot: Option<MemoryTextSession>,
     view: EditorView,
     confirm: Option<DiffRequest>,
     error: Option<String>,
@@ -109,6 +111,7 @@ pub(super) fn open(
                 && crate::file_editor::can_replace(w.world(), p)
         });
         if let Some(panel) = replace {
+            bedtime_filesystem2::workbench::cancel_file_open(w.world_mut(), panel);
             bedtime_editor2::workbench::unbind_text_editor(w.world_mut(), panel)
                 .map_err(|e| e.to_string())?;
             w.world_mut()
@@ -119,7 +122,7 @@ pub(super) fn open(
             let area = panels
                 .iter()
                 .find_map(|&p| {
-                    (w.world().get::<crate::files::FilePreviewPanel>(p).is_some()
+                    (w.world().get::<crate::files::FilePanel>(p).is_some()
                         || w.world().get::<DiffPanel>(p).is_some())
                     .then(|| w.world().get::<InArea>(p).map(|a| a.0))
                     .flatten()
@@ -197,8 +200,9 @@ fn load(
     else {
         return Err("Unexpected Git diff response".into());
     };
-    let exists =
-        std::fs::symlink_metadata(root.join(&key.0)).is_ok_and(|m| m.file_type().is_file());
+    let exists = bedtime_filesystem2::FileSource::local(root.join(&key.0))
+        .entry_metadata()
+        .is_ok_and(|m| m.is_file());
     let (comparison, current) = if !git.binary {
         match (
             std::str::from_utf8(&git.old_bytes),
@@ -259,16 +263,10 @@ pub(super) fn update(world: &mut World, session: &mut GitSession) {
         if let Some((epoch, task)) = entry.task.take() {
             match task.try_recv() {
                 Ok(result) if epoch == session.epoch => {
+                    let (result, errors) = result.reconcile(world);
                     match result {
-                        Ok((loaded, observations)) => {
-                            entry.error = None;
-                            for observation in observations {
-                                if let Err(e) =
-                                    crate::file_editor::apply_source_observation(world, observation)
-                                {
-                                    entry.error = Some(e);
-                                }
-                            }
+                        Ok(loaded) => {
+                            entry.error = errors.into_iter().last();
                             if entry.loaded.as_ref().is_none_or(|old| {
                                 old.git != loaded.git || old.exists != loaded.exists
                             }) {
@@ -304,23 +302,22 @@ pub(super) fn update(world: &mut World, session: &mut GitSession) {
                 );
                 continue;
             }
-            let sources = if descriptor.side == DiffSide::Unstaged {
-                crate::file_editor::capture_sources(world, &root.join(&descriptor.path))
-            } else {
-                Vec::new()
+            let affected = root.join(&descriptor.path);
+            let change = match bedtime_filesystem2::workbench::prepare_source_change(
+                world,
+                None,
+                (descriptor.side == DiffSide::Unstaged).then_some(affected.as_path()),
+            ) {
+                Ok(change) => change,
+                Err(e) => {
+                    entry.error = Some(e);
+                    continue;
+                }
             };
             match Workbench::new(world).work().spawn_task(
                 None,
                 "Read Git comparison",
-                move |cancel| {
-                    let loaded = load(root, key, identity, &cancel)?;
-                    let observations = sources
-                        .into_iter()
-                        .take_while(|_| !cancel.is_cancelled())
-                        .map(crate::file_editor::read_source_observation)
-                        .collect();
-                    Ok((loaded, observations))
-                },
+                move |cancel| change.execute(|| load(root, key, identity, &cancel)),
             ) {
                 Ok(task) => entry.task = Some((session.epoch, task)),
                 Err(e) => entry.error = Some(e),
@@ -348,15 +345,21 @@ pub(super) fn update(world: &mut World, session: &mut GitSession) {
             if crate::file_editor::same_source(world, panel, &path) {
                 Ok(())
             } else {
-                crate::file_editor::bind_loaded(
+                bedtime_filesystem2::workbench::open_file_document(
                     world,
                     panel,
-                    &path,
-                    loaded.current.as_ref().unwrap(),
-                    None,
+                    path,
+                    |world, panel, result| {
+                        let result =
+                            result.and_then(|id| crate::file_editor::bind(world, panel, id));
+                        if let Err(error) = result {
+                            world.get_mut::<DiffPanel>(panel).unwrap().error = Some(error);
+                        }
+                    },
                 )
             }
         } else {
+            bedtime_filesystem2::workbench::cancel_file_open(world, panel);
             bedtime_editor2::workbench::unbind_text_editor(world, panel)
                 .map(|_| ())
                 .map_err(|e| e.to_string())
@@ -368,7 +371,7 @@ pub(super) fn update(world: &mut World, session: &mut GitSession) {
         }
         state.attached = entry.generation;
         if !live {
-            state.snapshot = loaded.current.clone().map(TextDocument::new);
+            state.snapshot = loaded.current.clone().map(MemoryTextSession::new);
             state.view.settings.read_only = true;
         } else {
             state.snapshot = None;
@@ -793,7 +796,7 @@ impl Panel for DiffPanel {
 
 #[cfg(feature = "automation")]
 pub(super) fn inspect(world: &mut World) -> Vec<serde_json::Value> {
-    world.query::<(Entity,&DiffPanel)>().iter(world).map(|(p,d)|serde_json::json!({"entity":p.to_bits().to_string(),"descriptor":d.descriptor,"attached":d.attached,"loading":world.get_resource::<GitSession>().and_then(|s|s.comparisons.0.get(&(d.descriptor.path.clone(),d.descriptor.side))).is_none_or(|e|e.task.is_some()),"document":world.get::<DocumentView>(p).map(|v|v.document().entity().to_bits().to_string()),"revision":world.get::<DocumentView>(p).and_then(|v|inspect_document(world,v.document()).ok()).map(|i|i.revision),"error":d.error,"rendered_lines":d.rendered_lines,"laid_out_bytes":d.laid_out_bytes,"text_rect":d.text_rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})),"controls":d.controls.iter().map(|(a,c,r)|serde_json::json!({"action":a,"chunk":c,"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})).collect::<Vec<_>>() })).collect()
+    world.query::<(Entity,&DiffPanel)>().iter(world).map(|(p,d)|serde_json::json!({"entity":p.to_bits().to_string(),"descriptor":d.descriptor,"attached":d.attached,"loading":bedtime_filesystem2::workbench::file_open_pending(world,p)||world.get_resource::<GitSession>().and_then(|s|s.comparisons.0.get(&(d.descriptor.path.clone(),d.descriptor.side))).is_none_or(|e|e.task.is_some()),"document":world.get::<DocumentView>(p).map(|v|v.document().entity().to_bits().to_string()),"revision":world.get::<DocumentView>(p).and_then(|v|inspect_document(world,v.document()).ok()).map(|i|i.revision),"error":d.error,"rendered_lines":d.rendered_lines,"laid_out_bytes":d.laid_out_bytes,"text_rect":d.text_rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})),"controls":d.controls.iter().map(|(a,c,r)|serde_json::json!({"action":a,"chunk":c,"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})).collect::<Vec<_>>() })).collect()
 }
 
 #[cfg(test)]
@@ -803,6 +806,7 @@ mod tests {
     fn ready(app: &mut App, panel: Entity) {
         wait(app, |w| {
             w.get::<DiffPanel>(panel).is_some_and(|p| p.attached > 0)
+                && !bedtime_filesystem2::workbench::file_open_pending(w, panel)
         });
     }
     fn request_for(
@@ -964,7 +968,7 @@ mod tests {
         let area = app.world().get::<InArea>(panel).unwrap().0;
         let code = app
             .world_mut()
-            .spawn((crate::files::FilePreviewPanel::default(), InArea(area)))
+            .spawn((crate::files::FilePanel::default(), InArea(area)))
             .id();
         crate::file_editor::bind_loaded(
             app.world_mut(),

@@ -20,7 +20,9 @@ pub use diagnostics::*;
 #[cfg(feature = "diff")]
 pub mod diff;
 mod layout;
-mod text;
+mod text {
+    pub use bedtime_document2::text::*;
+}
 pub use document::*;
 pub use text::{BufferEdit, TextBuffer};
 #[cfg(feature = "workbench")]

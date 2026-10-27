@@ -85,10 +85,14 @@ fn poll_work(world: &mut World) {
     let exiting = world
         .get_resource::<Messages<AppExit>>()
         .is_some_and(|m| !m.is_empty());
-    world.resource_scope(|world, mut work: Mut<ManagedWork>| {
+    let deliveries = world.resource_scope(|world, mut work: Mut<ManagedWork>| {
         if exiting {
             work.shutdown();
         }
-        work.poll(|owner| world.get_entity(owner).is_ok());
+        work.poll(|owner| world.get_entity(owner).is_ok())
     });
+    for (id, deliver) in deliveries {
+        deliver(world);
+        world.resource_mut::<ManagedWork>().finish_delivery(id);
+    }
 }

@@ -2,13 +2,13 @@ use super::*;
 use crate::tests::{focus, frame, key};
 use std::sync::atomic::AtomicBool;
 
-fn at(view: &mut EditorView, doc: &TextDocument, anchor: usize, head: usize) {
+fn at(view: &mut EditorView, doc: &MemoryTextSession, anchor: usize, head: usize) {
     view.selection = TextSelection::new(doc.text(), anchor, head).unwrap();
 }
 fn settle(
     ctx: &egui::Context,
     view: &mut EditorView,
-    doc: &mut TextDocument,
+    doc: &mut MemoryTextSession,
     id: egui::Id,
     ready: impl Fn(&EditorView) -> bool,
 ) -> EditorOutput {
@@ -29,7 +29,7 @@ fn settle(
 fn whitespace_edits_preserve_crlf_indent_selection_and_shared_undo() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("whitespace");
-    let mut doc = TextDocument::new("    {}\r\nnext");
+    let mut doc = MemoryTextSession::new("    {}\r\nnext");
     let mut view = EditorView::default();
     focus(&ctx, &mut view, &mut doc, id);
     at(&mut view, &doc, 5, 5);
@@ -55,7 +55,7 @@ fn whitespace_edits_preserve_crlf_indent_selection_and_shared_undo() {
     doc.history(HistoryAction::Undo).unwrap();
     assert_eq!(doc.text(), "    {}\r\nnext");
 
-    let mut doc = TextDocument::new("a\r\n\tb\r\nc");
+    let mut doc = MemoryTextSession::new("a\r\n\tb\r\nc");
     let mut view = EditorView::default();
     focus(&ctx, &mut view, &mut doc, id);
     at(&mut view, &doc, 7, 0); // exclusive start of third line
@@ -85,7 +85,7 @@ fn whitespace_edits_preserve_crlf_indent_selection_and_shared_undo() {
 fn tab_stops_home_and_plain_indentation_settings_work_without_language_tools() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("stops");
-    let mut doc = TextDocument::new(" \t  word");
+    let mut doc = MemoryTextSession::new(" \t  word");
     let mut view = EditorView::default();
     focus(&ctx, &mut view, &mut doc, id);
     at(&mut view, &doc, 4, 4);
@@ -216,7 +216,7 @@ fn search_navigation_wraps_beyond_the_match_cache_and_replace_all_is_one_undo() 
     assert_eq!(result.count, 10_100);
     assert_eq!(result.at(20_100, true), Some(20_100..20_101));
     assert_eq!(result.at(20_100, false), Some(20_098..20_099));
-    let mut doc = TextDocument::new(snapshot.text.clone());
+    let mut doc = MemoryTextSession::new(snapshot.text.clone());
     let (replacement, _) =
         search::replace_all(&snapshot, &result.query, "🙂", &AtomicBool::new(false))
             .unwrap()
@@ -234,7 +234,7 @@ fn search_navigation_wraps_beyond_the_match_cache_and_replace_all_is_one_undo() 
 fn wrapped_rows_share_caret_hit_testing_and_visual_arrow_navigation() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("wrapped");
-    let mut doc = TextDocument::new(format!("    {}\nlast", "abcdef ".repeat(50)));
+    let mut doc = MemoryTextSession::new(format!("    {}\nlast", "abcdef ".repeat(50)));
     let mut view = EditorView::default();
     view.settings.wrap = true;
     focus(&ctx, &mut view, &mut doc, id);
@@ -325,7 +325,7 @@ fn wrapping_updates_multiple_journal_edits_without_losing_lines_or_graphemes() {
 fn find_shortcut_owns_its_input_and_escape_returns_to_editor() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("find-input");
-    let mut doc = TextDocument::new("hello world hello");
+    let mut doc = MemoryTextSession::new("hello world hello");
     let mut view = EditorView::default();
     focus(&ctx, &mut view, &mut doc, id);
     frame(
@@ -379,7 +379,7 @@ fn find_shortcut_owns_its_input_and_escape_returns_to_editor() {
 fn stale_background_replacement_is_rejected_and_noop_replacement_reuses_text() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("stale-replace");
-    let mut doc = TextDocument::new("one one");
+    let mut doc = MemoryTextSession::new("one one");
     let original = doc.snapshot().unwrap();
     let query = SearchQuery {
         text: "one".into(),
@@ -428,7 +428,7 @@ fn stale_background_replacement_is_rejected_and_noop_replacement_reuses_text() {
 fn wrapped_end_has_upstream_affinity_and_unicode_highlights_keep_global_alignment() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("wrap-end");
-    let mut doc = TextDocument::new("    a🙂é ".repeat(50));
+    let mut doc = MemoryTextSession::new("    a🙂é ".repeat(50));
     let mut view = EditorView::default();
     view.settings.wrap = true;
     focus(&ctx, &mut view, &mut doc, id);
@@ -482,7 +482,7 @@ fn wrapped_end_has_upstream_affinity_and_unicode_highlights_keep_global_alignmen
 fn large_selected_indentation_runs_as_one_transaction_and_preserves_crlf_metrics() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("large-indent");
-    let mut doc = TextDocument::new(" \tcafé🙂\r\n".repeat(25_000));
+    let mut doc = MemoryTextSession::new(" \tcafé🙂\r\n".repeat(25_000));
     let original = doc.snapshot().unwrap();
     let mut view = EditorView::default();
     focus(&ctx, &mut view, &mut doc, id);
@@ -510,7 +510,7 @@ fn large_selected_indentation_runs_as_one_transaction_and_preserves_crlf_metrics
 fn million_line_wrapping_and_search_keep_editing_bounded() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("million-wrapped");
-    let mut doc = TextDocument::new(format!("    {}\n", "x".repeat(107)).repeat(1_000_000));
+    let mut doc = MemoryTextSession::new(format!("    {}\n", "x".repeat(107)).repeat(1_000_000));
     assert_eq!(doc.text().len(), 112_000_000);
     let mut view = EditorView::default();
     view.settings.wrap = true;
@@ -568,7 +568,7 @@ fn smart_whitespace_handles_non_ascii_prefixes_and_huge_indentation_without_flat
     let id = egui::Id::new("unicode-indent");
     let mut view = EditorView::default();
     view.settings.indentation = Indentation::TwoSpaces;
-    let mut doc = TextDocument::new(" 🙂é\n🙂");
+    let mut doc = MemoryTextSession::new(" 🙂é\n🙂");
     focus(&ctx, &mut view, &mut doc, id);
     at(&mut view, &doc, 0, doc.text().len());
     frame(
@@ -589,7 +589,7 @@ fn smart_whitespace_handles_non_ascii_prefixes_and_huge_indentation_without_flat
     );
     assert_eq!(doc.text(), "🙂é\n}🙂"); // a closing delimiter at column zero keeps the newline
 
-    let mut doc = TextDocument::new(" ".repeat(2_000_000));
+    let mut doc = MemoryTextSession::new(" ".repeat(2_000_000));
     let mut view = EditorView::default();
     focus(&ctx, &mut view, &mut doc, id);
     at(&mut view, &doc, 2_000_000, 2_000_000);

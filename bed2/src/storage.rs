@@ -16,8 +16,10 @@ use std::{
 };
 
 pub const MAX_BYTES: usize = 4 * 1024 * 1024;
+
 #[derive(Resource, Clone)]
 pub struct ConfigDirectory(pub PathBuf);
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
@@ -29,6 +31,7 @@ struct Document {
     #[serde(default)]
     bindings: crate::keybindings::GlobalBindings,
 }
+
 impl Document {
     fn capture(world: &World) -> Self {
         Self {
@@ -42,6 +45,7 @@ impl Document {
                 .unwrap_or_default(),
         }
     }
+    
     /// Independent values changed locally win; untouched values follow disk.
     fn merge(baseline: &Self, live: &Self, disk: &Self) -> Self {
         let mut result = live.clone();
@@ -62,11 +66,15 @@ impl Document {
         }
         result
     }
+    
     fn validate(&self) -> Result<(), String> {
         if self.version != 1 {
             return Err("Unsupported preferences version".into());
         }
         self.settings.validate()?;
+        if let Some(path) = &self.startup.last_workspace {
+            crate::persistence::validate_absolute_path(path)?;
+        }
         crate::keybindings::validate(&self.bindings.0)?;
         let registry = preference_registry();
         for snapshot in self.layouts.iter().flatten() {
@@ -78,6 +86,7 @@ impl Document {
         Ok(())
     }
 }
+
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
     let text = ron::ser::to_string_pretty(value, ron::ser::PrettyConfig::default())
         .map_err(|e| e.to_string())?;
@@ -86,6 +95,7 @@ pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
     }
     Ok(text.into_bytes())
 }
+
 pub fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
@@ -104,12 +114,14 @@ pub fn read_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
     }
     Ok(Some(bytes))
 }
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredPreferences {
     version: u32,
     values: bedtime_workbench2::persistence::Snapshot,
 }
+
 fn register_types(app: &mut App) {
     crate::persistence::register(app);
     app.register_type::<GlobalPreferences>()
@@ -117,11 +129,13 @@ fn register_types(app: &mut App) {
         .register_type::<LayoutDefaults>()
         .register_type::<crate::keybindings::GlobalBindings>();
 }
+
 fn preference_registry() -> AppTypeRegistry {
     let mut app = App::new();
     register_types(&mut app);
     app.world().resource::<AppTypeRegistry>().clone()
 }
+
 fn encode_preferences(document: &Document) -> Result<Vec<u8>, String> {
     let mut world = World::new();
     world.insert_resource(preference_registry());
@@ -135,6 +149,7 @@ fn encode_preferences(document: &Document) -> Result<Vec<u8>, String> {
     .serialize(world.resource::<AppTypeRegistry>())?;
     encode(&StoredPreferences { version: 2, values })
 }
+
 fn read(path: &Path) -> Result<Option<Document>, String> {
     read_bytes(path)?
         .map(|bytes| {
@@ -191,7 +206,8 @@ struct PreferenceFile {
     baseline: Document,
     desired: Document,
     saved: Option<Document>,
-    loaded: bool,
+    // Once admitted, policy survives later persistence/refresh failures.
+    policy_ready: bool,
     job: Option<JoinHandle<Result<Option<Document>, String>>>,
     writing: Option<Document>,
     changed_at: Instant,
@@ -199,6 +215,7 @@ struct PreferenceFile {
     reported: bool,
     checked_at: Instant,
 }
+
 impl PreferenceFile {
     fn new(path: PathBuf, initial: Document) -> Self {
         let source = path.clone();
@@ -207,7 +224,7 @@ impl PreferenceFile {
             baseline: initial.clone(),
             desired: initial,
             saved: None,
-            loaded: false,
+            policy_ready: false,
             job: Some(std::thread::spawn(move || read(&source))),
             writing: None,
             changed_at: Instant::now(),
@@ -216,6 +233,7 @@ impl PreferenceFile {
             checked_at: Instant::now(),
         }
     }
+    
     fn tick(&mut self, desired: Document, flush: bool) -> Result<Option<Document>, String> {
         if desired != self.desired {
             self.desired = desired;
@@ -240,15 +258,18 @@ impl PreferenceFile {
                     Err(e) => self.error = Some(e),
                 }
             } else {
-                self.loaded = true;
                 match result {
                     Ok(Some(disk)) => {
                         let merged = Document::merge(&self.baseline, &self.desired, &disk);
                         self.saved = Some(disk);
+                        self.policy_ready = true;
                         self.desired = merged.clone();
                         loaded = Some(merged);
                     }
-                    Ok(None) => self.saved = Some(self.baseline.clone()),
+                    Ok(None) => {
+                        self.saved = Some(self.baseline.clone());
+                        self.policy_ready = true;
+                    }
                     Err(e) => self.error = Some(e),
                 }
             }
@@ -256,7 +277,7 @@ impl PreferenceFile {
         if let Some(error) = &self.error {
             return Err(format!("{}: {error}", self.path.display()));
         }
-        if self.loaded
+        if self.policy_ready
             && self.job.is_none()
             && self.saved.as_ref() != Some(&self.desired)
             && (flush || self.changed_at.elapsed() >= Duration::from_millis(250))
@@ -286,7 +307,7 @@ impl PreferenceFile {
                 Ok(Some(merged))
             }));
             self.checked_at = Instant::now();
-        } else if self.loaded
+        } else if self.policy_ready
             && self.job.is_none()
             && !flush
             && self.checked_at.elapsed() >= Duration::from_secs(1)
@@ -298,22 +319,26 @@ impl PreferenceFile {
         }
         Ok(loaded)
     }
+    
     fn retry(&mut self) {
         if self.job.is_some() {
             return;
         }
-        let baseline = self.saved.clone().unwrap_or_else(|| self.baseline.clone());
-        let mut replacement = Self::new(self.path.clone(), baseline);
-        replacement.desired = self.desired.clone();
-        *self = replacement;
+        self.baseline = self.saved.clone().unwrap_or_else(|| self.baseline.clone());
+        let source = self.path.clone();
+        self.job = Some(std::thread::spawn(move || read(&source)));
+        self.error = None;
+        self.reported = false;
     }
+    
     fn finished(&self) -> bool {
-        self.loaded
+        self.policy_ready
             && self.error.is_none()
             && self.job.is_none()
             && self.saved.as_ref() == Some(&self.desired)
     }
 }
+
 #[derive(Resource, Default)]
 struct PreferencesFile(Option<PreferenceFile>);
 pub fn install(app: &mut App) {
@@ -323,6 +348,7 @@ pub fn install(app: &mut App) {
         .init_resource::<LayoutDefaults>()
         .init_resource::<StartupPreferences>();
 }
+
 pub fn configure(app: &mut App) {
     let directory = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -342,6 +368,7 @@ pub fn configure(app: &mut App) {
         );
     }
 }
+
 pub fn configure_directory(app: &mut App, directory: PathBuf) {
     let initial = Document::capture(app.world());
     app.insert_resource(PreferencesFile(Some(PreferenceFile::new(
@@ -350,23 +377,28 @@ pub fn configure_directory(app: &mut App, directory: PathBuf) {
     ))))
     .insert_resource(ConfigDirectory(directory));
 }
+
 pub fn global_ready(world: &World) -> bool {
     world
         .get_resource::<PreferencesFile>()
         .and_then(|f| f.0.as_ref())
-        .is_none_or(|file| file.loaded && file.saved.is_some() && file.error.is_none())
+        .is_none_or(|file| file.policy_ready)
 }
+
 pub fn ready(world: &World) -> bool {
     crate::files::root_ready(world)
         && global_ready(world)
         && crate::session::preferences_ready(world)
 }
+
 pub fn update(world: &mut World) {
     let _ = drive(world, false);
 }
+
 pub fn flush(world: &mut World) -> Result<bool, String> {
     drive(world, true)
 }
+
 fn drive(world: &mut World, flush: bool) -> Result<bool, String> {
     if !world.contains_resource::<PreferencesFile>() {
         return Ok(true);
@@ -390,6 +422,7 @@ fn drive(world: &mut World, flush: bool) -> Result<bool, String> {
         result.map(|_| file.finished())
     })
 }
+
 pub fn retry_failed(world: &mut World) {
     if let Some(mut state) = world.get_resource_mut::<PreferencesFile>()
         && let Some(file) = &mut state.0
@@ -398,6 +431,7 @@ pub fn retry_failed(world: &mut World) {
         file.retry();
     }
 }
+
 pub fn draw_errors(ui: &mut egui::Ui, world: &mut World) {
     let error = world
         .get_resource::<PreferencesFile>()
@@ -407,12 +441,14 @@ pub fn draw_errors(ui: &mut egui::Ui, world: &mut World) {
         retry_failed(world);
     }
 }
+
 pub fn workspace_path(world: &World, root: &Path) -> Option<PathBuf> {
     let digest = blake3::hash(root.as_os_str().as_encoded_bytes());
     world
         .get_resource::<ConfigDirectory>()
         .map(|config| config.0.join("workspaces").join(format!("{digest}.bed")))
 }
+
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     use std::{
         fs::{self, OpenOptions},
@@ -453,6 +489,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+    
     pub(super) fn host() -> (App, PathBuf) {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
@@ -467,6 +504,7 @@ mod tests {
         install(&mut app);
         (app, root)
     }
+    
     pub(super) fn settle(app: &mut App) -> Result<(), String> {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -477,6 +515,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
     }
+    
     #[test]
     fn separate_instances_merge_independent_values_and_refresh_without_rewriting() {
         let (mut first, root) = host();
@@ -524,6 +563,7 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_dir_all(unused).unwrap();
     }
+    
     #[test]
     fn global_ron_roundtrip_merges_late_values_and_does_not_write_on_startup() {
         let (mut app, root) = host();
@@ -573,6 +613,7 @@ mod tests {
         assert!(!root.join("settings2.json").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn older_preferences_default_to_not_reopening_workspaces() {
         let (app, root) = host();
@@ -595,6 +636,47 @@ mod tests {
         assert_eq!(document.startup.last_workspace, None);
         std::fs::remove_dir_all(root).unwrap();
     }
+    
+    #[test]
+    fn legacy_startup_path_strings_load_without_startup_rewriting() {
+        #[derive(Serialize)]
+        struct OldStartup {
+            open_last_workspace: bool,
+            last_workspace: Option<PathBuf>,
+        }
+        #[derive(Serialize)]
+        struct OldDocument {
+            version: u32,
+            settings: Settings,
+            startup: OldStartup,
+            layouts: [Option<bedtime_workbench2::persistence::Snapshot>; 5],
+            bindings: crate::keybindings::GlobalBindings,
+        }
+        let (mut app, root) = host();
+        let document = Document::capture(app.world());
+        let path = root.join("preferences.bed");
+        let bytes = encode(&OldDocument {
+            version: 1,
+            settings: document.settings,
+            startup: OldStartup {
+                open_last_workspace: true,
+                last_workspace: Some(root.join("project")),
+            },
+            layouts: document.layouts,
+            bindings: document.bindings,
+        })
+        .unwrap();
+        atomic_write(&path, &bytes).unwrap();
+        configure_directory(&mut app, root.clone());
+        settle(&mut app).unwrap();
+        assert_eq!(
+            app.world().resource::<StartupPreferences>().last_workspace,
+            Some(root.join("project"))
+        );
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn failed_read_preserves_bytes_and_retry_merges_repaired_values() {
         let (mut app, root) = host();
@@ -625,6 +707,7 @@ mod tests {
         assert!(!app.world().resource::<GlobalPreferences>().0.line_numbers);
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn temporary_workspace_settings_never_persist_but_global_changes_do() {
         let (mut app, root) = host();
@@ -649,6 +732,7 @@ mod tests {
         assert!(!root.join("home/.bed").exists());
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn oversized_write_and_unsupported_version_preserve_existing_data() {
         let (app, root) = host();

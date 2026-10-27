@@ -25,6 +25,7 @@ macro_rules! edit_command {
         }
     };
 }
+
 edit_command!(UndoEdit, "bed.edit.undo", "Undo");
 edit_command!(RedoEdit, "bed.edit.redo", "Redo");
 edit_command!(Cut, "bed.edit.cut", "Cut");
@@ -34,6 +35,7 @@ edit_command!(Paste, "bed.edit.paste", "Paste");
 /// Contributions are installed by features; persistence never consults this list.
 #[derive(Resource, Default)]
 struct PanelMenus(Vec<PanelMenu>);
+
 #[derive(Clone)]
 pub(crate) struct PanelMenu {
     pub key: &'static str,
@@ -42,6 +44,7 @@ pub(crate) struct PanelMenu {
     order: Option<u32>,
     pub(crate) available: fn(&World) -> bool,
 }
+
 struct OpenPanel<P>(std::marker::PhantomData<P>);
 impl<P: Panel + Send + Sync + 'static> ContextCommand for OpenPanel<P> {
     const KEY: &'static str = P::KEY;
@@ -75,6 +78,7 @@ pub(crate) fn register_panel<P: Panel + Send + Sync + 'static>(
         available,
     });
 }
+
 pub(crate) fn panel_menu(world: &World, key: &str) -> Option<PanelMenu> {
     world
         .get_resource::<PanelMenus>()?
@@ -83,6 +87,7 @@ pub(crate) fn panel_menu(world: &World, key: &str) -> Option<PanelMenu> {
         .find(|entry| entry.key == key)
         .cloned()
 }
+
 fn view_panels(world: &World) -> Vec<PanelMenu> {
     let mut entries = world
         .get_resource::<PanelMenus>()
@@ -752,9 +757,7 @@ mod tests {
         crate::files::register_menu(&mut app);
         crate::code::register_menu(&mut app);
         crate::terminal::register_menu(&mut app);
-        crate::cube::register_menu(&mut app);
         crate::mascots::register_menu(&mut app);
-        crate::tasks::register_menu(&mut app);
         crate::lsp_panel::register_menu(&mut app);
         crate::settings::register_menu(&mut app);
         install(&mut app);
@@ -822,9 +825,7 @@ mod tests {
                         "Files",
                         "Structure",
                         "Terminal",
-                        "3D Viewport",
                         "Bed",
-                        "Tasks & Processes",
                         "Language Servers",
                         "Settings",
                         "Layout"
@@ -1056,7 +1057,7 @@ mod tests {
             .unwrap()
             .create_panel(layout, "Editor")
             .unwrap();
-        let document = open_document(
+        let document = open_memory_document(
             app.world_mut(),
             bedtime_editor2::TextBuffer::from("original"),
             DocumentOptions::loaded("Text"),
@@ -1119,13 +1120,13 @@ mod tests {
         assert!(
             view_panels(app.world())
                 .iter()
-                .all(|entry| entry.key != crate::files::FilePreviewPanel::KEY
+                .all(|entry| entry.key != crate::files::FilePanel::KEY
                     && entry.factory.label != "Code")
         );
-        assert!(open_panel(app.world_mut(), layout, crate::files::FilePreviewPanel::KEY).is_err());
+        assert!(open_panel(app.world_mut(), layout, crate::files::FilePanel::KEY).is_err());
         assert_eq!(
             app.world_mut()
-                .query::<&crate::files::FilePreviewPanel>()
+                .query::<&crate::files::FilePanel>()
                 .iter(app.world())
                 .count(),
             0
@@ -1144,9 +1145,7 @@ mod tests {
         crate::files::register_menu(&mut app);
         crate::code::register_menu(&mut app);
         crate::terminal::register_menu(&mut app);
-        crate::cube::register_menu(&mut app);
         crate::mascots::register_menu(&mut app);
-        crate::tasks::register_menu(&mut app);
         crate::lsp_panel::register_menu(&mut app);
         crate::settings::register_menu(&mut app);
         for entry in view_panels(app.world()) {
@@ -1169,13 +1168,8 @@ mod tests {
                 .count(),
             count
         );
-        assert_eq!(
-            app.world_mut()
-                .query::<&crate::cube::CubeViewport>()
-                .iter(app.world())
-                .count(),
-            1
-        );
+        assert!(open_panel(app.world_mut(), layout, "bed.cube").is_err());
+        assert!(open_panel(app.world_mut(), layout, "bed.tasks").is_err());
         assert_eq!(
             app.world_mut()
                 .query::<&bedtime_terminal2::TerminalPanel>()

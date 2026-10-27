@@ -9,18 +9,22 @@ impl Plugin for MascotsPlugin {
         register_menu(app);
     }
 }
+
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, WorkbenchPersist)]
 #[require(bedtime_mascots2::BedPanel)]
 struct PersistedBed;
+
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, WorkbenchPersist)]
 #[require(bedtime_mascots2::DuckPanel)]
 struct PersistedDuck;
+
 pub(crate) fn register_persistence(app: &mut App) {
     app.register_type::<PersistedBed>()
         .register_type::<PersistedDuck>();
 }
+
 pub(crate) fn project_persistence(
     world: &mut World,
     captured: &mut bedtime_workbench2::persistence::CapturedWorld,
@@ -40,6 +44,7 @@ pub(crate) fn project_persistence(
         captured.insert_component(e, PersistedDuck);
     }
 }
+
 pub(crate) fn clear_persistence(world: &mut World) {
     let panels: Vec<_> = world
         .query_filtered::<Entity, Or<(With<PersistedBed>, With<PersistedDuck>)>>()

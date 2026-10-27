@@ -103,6 +103,36 @@ impl<T> ManagedTask<T> {
     }
 }
 
+/// Cancellation and the final outcome are independent: cancellation is never rollback.
+pub struct OperationOutcome<T> {
+    pub cancellation_requested: bool,
+    /// An abandoned/panicked producer reports unknown effects as an error.
+    pub result: Result<T, String>,
+}
+
+/// A single admitted operation's producer. May be queued in an existing worker.
+/// Dropping it without completion reports failure; it never silently loses an outcome.
+pub struct OperationCompletion<T> {
+    sender: mpsc::SyncSender<T>,
+    cancellation: Cancellation,
+}
+impl<T> OperationCompletion<T> {
+    pub fn cancellation(&self) -> Cancellation {
+        self.cancellation.clone()
+    }
+    pub fn complete(self, value: T) {
+        let _ = self.sender.send(value);
+    }
+}
+
+type CompletionDelivery = Box<dyn FnOnce(&mut World) + Send>;
+struct CompletionWork {
+    owner: Option<Entity>,
+    label: String,
+    cancellation: Cancellation,
+    poll: Mutex<Box<dyn FnMut() -> Option<CompletionDelivery> + Send>>,
+}
+
 #[derive(Clone, Debug)]
 pub struct ProcessSpec {
     pub program: OsString,
@@ -212,6 +242,7 @@ pub struct ManagedWork {
     next_id: u64,
     closing: bool,
     running: BTreeMap<WorkId, RunningWork>,
+    completions: BTreeMap<WorkId, CompletionWork>,
 }
 
 impl ManagedWork {
@@ -227,6 +258,56 @@ impl ManagedWork {
         self.next_id = self.next_id.checked_add(1).expect("Work IDs exhausted");
         Ok(WorkId(self.next_id))
     }
+    /// Reserve final delivery before queuing mutating work. The main-world callback
+    /// runs exactly once in SessionSystems::Close, even after owner removal or shutdown.
+    /// work_finished remains false until delivery. Cancellation is cooperative; the
+    /// producer must complete or drop its token. World drop is only fallback cleanup.
+    pub fn admit_operation<T: Send + 'static>(
+        &mut self,
+        owner: Option<Entity>,
+        label: impl Into<String>,
+        complete: impl FnOnce(&mut World, OperationOutcome<T>) + Send + 'static,
+    ) -> Result<OperationCompletion<T>, String> {
+        let id = self.admit()?;
+        let cancellation = Cancellation::new();
+        let cancel = cancellation.clone();
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let mut complete = Some(complete);
+        self.completions.insert(
+            id,
+            CompletionWork {
+                owner,
+                label: label.into(),
+                cancellation: cancellation.clone(),
+                poll: Mutex::new(Box::new(move || {
+                    if complete.is_none() {
+                        return None;
+                    }
+                    let result = match receiver.try_recv() {
+                        Ok(value) => Ok(value),
+                        Err(mpsc::TryRecvError::Empty) => return None,
+                        Err(mpsc::TryRecvError::Disconnected) => Err(
+                            "Operation producer stopped without a final outcome; effects may have occurred".into(),
+                        ),
+                    };
+                    cancel.finish(result.as_ref().map(|_| ()).map_err(Clone::clone));
+                    let outcome = OperationOutcome {
+                        cancellation_requested: cancel.is_cancelled(),
+                        result,
+                    };
+                    let complete = complete.take().expect("Completion delivered once");
+                    Some(Box::new(move |world| complete(world, outcome)))
+                })),
+            },
+        );
+        Ok(OperationCompletion {
+            sender,
+            cancellation,
+        })
+    }
+
+    /// Disposable calculation: cancellation may suppress its result. Use
+    /// admit_operation for filesystem effects whose outcome must be reconciled.
     pub fn spawn_task<T: Send + 'static>(
         &mut self,
         owner: Option<Entity>,
@@ -416,15 +497,23 @@ impl ManagedWork {
                 label: job.label.clone(),
                 status: job.cancellation.status(),
             })
+            .chain(self.completions.iter().map(|(&id, job)| WorkInfo {
+                id,
+                owner: job.owner,
+                label: job.label.clone(),
+                status: job.cancellation.status(),
+            }))
             .collect()
     }
 
     pub fn cancel(&mut self, id: WorkId) -> Result<(), String> {
-        self.running
+        let cancellation = self
+            .running
             .get(&id)
-            .ok_or("Work is unavailable")?
-            .cancellation
-            .cancel();
+            .map(|job| &job.cancellation)
+            .or_else(|| self.completions.get(&id).map(|job| &job.cancellation))
+            .ok_or("Work is unavailable")?;
+        cancellation.cancel();
         Ok(())
     }
 
@@ -433,13 +522,38 @@ impl ManagedWork {
         for job in self.running.values() {
             job.cancellation.cancel();
         }
+        for job in self.completions.values() {
+            job.cancellation.cancel();
+        }
     }
 
     pub fn is_finished(&self) -> bool {
-        self.running.values().all(|job| job.worker.is_finished())
+        self.completions.is_empty() && self.running.values().all(|job| job.worker.is_finished())
     }
 
-    pub(crate) fn poll(&mut self, owner_exists: impl Fn(Entity) -> bool) {
+    /// Admitted effects whose final main-world reconciliation has not finished.
+    /// Drain these before flushing final application state and cancelling work.
+    pub fn operations_pending(&self) -> bool {
+        !self.completions.is_empty()
+    }
+
+    pub(crate) fn finish_delivery(&mut self, id: WorkId) {
+        self.completions.remove(&id).expect("Admitted completion");
+    }
+
+    pub(crate) fn poll(
+        &mut self,
+        owner_exists: impl Fn(Entity) -> bool,
+    ) -> Vec<(WorkId, CompletionDelivery)> {
+        let mut deliveries = Vec::new();
+        for (&id, job) in &mut self.completions {
+            if job.owner.is_some_and(|owner| !owner_exists(owner)) {
+                job.cancellation.cancel();
+            }
+            if let Some(delivery) = (job.poll.get_mut().unwrap())() {
+                deliveries.push((id, delivery));
+            }
+        }
         for job in self.running.values() {
             if job.owner.is_some_and(|owner| !owner_exists(owner)) {
                 job.cancellation.cancel();
@@ -457,6 +571,7 @@ impl ManagedWork {
                     .finish(Err("Managed worker panicked".into()));
             }
         }
+        deliveries
     }
 }
 
@@ -529,5 +644,107 @@ impl Drop for OwnedChild {
     fn drop(&mut self) {
         self.signal(true);
         let _ = self.child.wait();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{WorkbenchCorePlugin, work_finished};
+
+    #[derive(Resource, Default)]
+    struct Outcomes(Vec<OperationOutcome<usize>>);
+
+    #[test]
+    fn cancellation_discards_calculations_but_retains_mutation_outcome_until_world_delivery() {
+        let mut app = App::new();
+        app.add_plugins(WorkbenchCorePlugin)
+            .init_resource::<Outcomes>();
+        let owner = app.world_mut().spawn_empty().id();
+        let completion = app
+            .world_mut()
+            .resource_mut::<ManagedWork>()
+            .admit_operation(Some(owner), "Mutation", |world, outcome| {
+                assert!(world.contains_resource::<ManagedWork>());
+                assert!(!work_finished(world));
+                world.resource_mut::<Outcomes>().0.push(outcome);
+            })
+            .unwrap();
+        let cancel = completion.cancellation();
+        let (committed, effect) = mpsc::channel();
+        let (release, wait) = mpsc::channel();
+        let task = app
+            .world_mut()
+            .resource_mut::<ManagedWork>()
+            .spawn_task(Some(owner), "Mutation executor", move |stop| {
+                // Stand in for a completed critical step, then cancellation races
+                // final reporting. The completion token must retain that fact.
+                committed.send(42).unwrap();
+                while !stop.wait(Duration::from_millis(10)) {}
+                wait.recv().unwrap();
+                completion.complete(42);
+                42
+            })
+            .unwrap();
+        assert_eq!(effect.recv_timeout(Duration::from_secs(2)).unwrap(), 42);
+        app.world_mut().despawn(owner);
+        app.update();
+        assert!(cancel.is_cancelled());
+        app.world_mut().resource_mut::<ManagedWork>().shutdown();
+        assert!(!work_finished(app.world()));
+        release.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while matches!(task.status(), WorkStatus::Running | WorkStatus::Cancelling) {
+            assert!(Instant::now() < deadline);
+            thread::yield_now();
+        }
+        assert!(!work_finished(app.world()));
+        assert!(matches!(
+            task.try_recv(),
+            Err(mpsc::TryRecvError::Disconnected)
+        ));
+        while !work_finished(app.world()) {
+            app.update();
+        }
+        let outcomes = &app.world().resource::<Outcomes>().0;
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].cancellation_requested);
+        assert_eq!(outcomes[0].result.as_ref().unwrap(), &42);
+        app.update();
+        assert_eq!(app.world().resource::<Outcomes>().0.len(), 1);
+        assert!(
+            app.world_mut()
+                .resource_mut::<ManagedWork>()
+                .admit_operation::<()>(None, "Late", |_, _| {})
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn abandoned_producer_reports_unknown_effects_instead_of_silently_finishing() {
+        let mut app = App::new();
+        app.add_plugins(WorkbenchCorePlugin)
+            .init_resource::<Outcomes>();
+        let completion = app
+            .world_mut()
+            .resource_mut::<ManagedWork>()
+            .admit_operation(None, "Abandoned", |world, outcome| {
+                world.resource_mut::<Outcomes>().0.push(outcome);
+            })
+            .unwrap();
+        drop(completion);
+        assert!(!work_finished(app.world()));
+        app.update();
+        assert!(work_finished(app.world()));
+        let outcomes = &app.world().resource::<Outcomes>().0;
+        assert_eq!(outcomes.len(), 1);
+        assert!(!outcomes[0].cancellation_requested);
+        assert!(
+            outcomes[0]
+                .result
+                .as_ref()
+                .unwrap_err()
+                .contains("effects may have occurred")
+        );
     }
 }

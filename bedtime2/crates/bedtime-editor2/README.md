@@ -20,12 +20,12 @@ policy belongs to the embedding application.
 | State | Owner |
 | --- | --- |
 | Text, revision, undo/redo and change journal | `TextSession` implementation |
-| Persistent indexed UTF-8 content | `TextBuffer` |
+| Persistent indexed UTF-8 content | `bedtime-document2::TextDocument` / `TextBuffer` |
 | Selection, composition, navigation, collapsed regions and preferred column | `EditorView` |
 | Optional language and shared analysis | Host session / Workbench document |
 | Scroll presentation and input focus | Stable per-view egui IDs |
 | Caret visual history | `EditorView` |
-| Files, source identity, saves and conflict policy | Application |
+| Sources, saves and conflict execution | Bedtime source/Workbench integration |
 
 `EditorView::show` is an ordinary sequential drawing call. It reads a cheap
 snapshot, maps positions through accepted changes, processes focused input in
@@ -33,7 +33,7 @@ event order, commits explicit edits and paints visible rows. There is no widget
 undo history, second canonical edit buffer, background editing system or hidden
 text mutation in a getter. Every accepted edit goes through `TextSession::edit`.
 
-`TextDocument` is the standalone in-memory implementation. Multiple views borrow
+`MemoryTextSession` is the standalone in-memory implementation. Multiple views borrow
 the same owner. With `workbench`, `TextBuffer` implements `DocumentModel` using
 `BufferEdit`, and `bind_text_editor` attaches a `WorkbenchEditor` to an existing
 document panel. `draw_editor` connects drawing to that document's canonical
@@ -86,8 +86,7 @@ The optional syntax worker accepts sources up to 8 MiB; larger documents retain
 plain editing without semantic observations. This is an analysis limit, not an
 editor or file-size limit. bEd2 loads file-backed Code documents on managed
 workers (UTF-8 up to 256 MiB), supplies checked saves and source reconciliation,
-and creates no sample document in an empty editor. Those policies remain outside
-the editor crate.
+and creates no sample document in an empty editor. Those policies live in Bedtime source/Workbench integration.
 
 ## Composition and external control
 
@@ -294,3 +293,8 @@ the Tree-sitter crate README.
 Completion menus use bed1-style compact rows: a host-supplied category, label and
 muted inline detail, with accent-tinted selection/hover backgrounds and up to eight
 visible rows. Item tooltips are omitted; the host owns resolved documentation.
+
+The persistent buffer, changes and history now come from `bedtime-document2`.
+Workbench reexports the standard representation as `TextDocument`; standalone
+editor sessions use `MemoryTextSession`. These share history mechanics while
+viewer selection, scrolling and composition remain editor state.

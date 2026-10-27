@@ -11,6 +11,7 @@ source revision:
 
 | Fork | Version | Why Bed needs it |
 | --- | --- | --- |
+| `bevy_render` | 0.20.0 | Window screenshot readback when no swapchain drawable is available |
 | `dear-imgui-sys` | 0.18.0 | Bundled FreeType/SVG fonts, font-loader access, dock selection/background operations and smaller checkbox painting |
 | `freetype-sys` | 0.23.0 | Static bundled zlib linkage and target-correct headers for the FreeType/libpng build |
 | `dear-imgui-wgpu` | 0.18.0 | GPU-only snapshot rendering with UI-thread texture completion and device recovery |
@@ -22,7 +23,7 @@ FreeType, libpng, PlutoSVG and PlutoVG sources below these forks support the sam
 bundled font backend; their original notices remain alongside them. These are
 build inputs, not a requirement to install those libraries on a remote SSH host.
 
-The five forks in this table are active build dependencies. Keep their source, tests and patch
+The forks in this table are active build dependencies. Keep their source, tests and patch
 records together so upgrades can be compared with the published versions.
 Nested build caches, package-cache markers, runtime `imgui.ini` files, redundant
 dependency lockfiles and dependency CI workflows are omitted. Bed's root

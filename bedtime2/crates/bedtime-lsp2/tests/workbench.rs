@@ -47,7 +47,7 @@ impl Fixture {
             )]
             .into(),
         });
-        let doc = open_document(
+        let doc = open_memory_document(
             app.world_mut(),
             TextBuffer::from("source"),
             DocumentOptions::loaded("source.rs"),

@@ -301,3 +301,6 @@ mod tests {
         assert_eq!(source.render([200, 100]).unwrap().size, [200, 100]);
     }
 }
+
+#[cfg(feature = "workbench")]
+pub mod document;

@@ -9,6 +9,13 @@ cargo run -p bed2
 
 The foundation and its optional panels live in these crates:
 
+- [`bedtime-document2`](crates/bedtime-document2): headless representations, canonical
+  source contracts, persistent text and shared transaction history. Workbench supplies
+  the source-backed lifecycle and reexports TextDocument/BinaryDocument.
+- [`bedtime-filesystem2`](crates/bedtime-filesystem2): headless local file sources,
+  bounded/version-checked reads, staged streaming writes, native operations and watching.
+- [`bedtime-hex2`](crates/bedtime-hex2): independent byte canvas and an optional complete
+  Workbench panel with shared bounded paging, search, inspection and copy controls.
 - [`bedtime-clipboard2`](crates/bedtime-clipboard2): independently usable text/file
   clipboard, optional OS integration, in-process fallback.
 - [`bedtime-model2`](crates/bedtime-model2): glTF/GLB and STL preparation, isolated
@@ -32,7 +39,8 @@ The foundation and its optional panels live in these crates:
   documents with history/save/reconciliation, and scoped tasks/processes, plus
   optional native services and egui workbench presentation. Concrete panel
   composition needs no type registry or initialization pass. Creation discovery,
-  storage envelopes/routing, source I/O, project data and settings are application-owned.
+  storage envelopes/routing, source admission, project data and settings are application-owned.
+  Filesystem2 supplies native I/O mechanics independently of document models.
   Optional reflected persistence handles durable graph capture/restoration.
 - [`bedtime-filetree2`](crates/bedtime-filetree2): lazy local filesystem panels,
   native watching, safe file operations and root-scoped hidden preferences.
@@ -62,9 +70,8 @@ leaves a headless core. UI2 and workbench share the independent clipboard servic
 which release games can also use without either of them.
 
 `bed2` opens one session with a Terminal layout in the application World.
-Its `cube.rs` module owns the shared scene and per-panel orbit cameras. Live
-Theme controls, a Tasks & Processes panel in `tasks.rs`, and the optional Terminal
-plugin remain available. Files opens real documents in code views, and `code.rs`
+Settings provides live theme controls, and the Terminal plugin supplies local shells.
+The Cube/3D Viewport and Tasks & Processes demo panels have been removed. Files opens real documents in code views, and `code.rs`
 installs syntax contributions and the application
 [Structure panel](../bed2/crates/bed-structure2/README.md). `close.rs` owns application quit decisions and waits for
 managed workers to finish cleanup. Memory-only Documents, Hello World and Theme

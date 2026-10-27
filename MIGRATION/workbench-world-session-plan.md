@@ -26,9 +26,9 @@ renaming APIs. Multiple layouts and multiple viewers of the same document remain
 supported within the single session. Multiple surfaces, if supported, show that
 session; independent sessions in the same world are not a requirement.
 
-For initial bEd2 behavior, opening another folder launches a separate application
-instance/window. Retain the current instance and its live work. A project folder is
-application data, not a reusable Workbench execution/ownership scope. Applications
+Opening another folder attempts a separate application instance/window and requests
+normal quit of the current instance, without waiting for child readiness. A project
+folder is application data, not a reusable Workbench execution/ownership scope. Applications
 may still call project-local settings/state "workspace" data.
 
 **Multiple independent windows editing the same project are explicitly unsupported.**
@@ -43,16 +43,60 @@ ends or its process exits. This is application policy, not a Workbench scope.
 Instances for different projects still share global preferences and need a separate
 global write/refresh policy.
 
-**Implementation evidence versus premise:** inspection on 2026-10-24 found that
-`bed2/src/menus.rs::poll_folder_dialog` calls `opening::open_folder`, and
-`opening.rs::poll_folder_opens` reuses/creates and activates a workspace in the
-current world. The new-window policy is therefore planned work, not a claim about
-that inspected route. Audit other opening routes before changing them.
+**Current implementation evidence (2026-10-24):** `opening.rs::poll_folder_opens`
+reuses the current canonical project or launches the current executable with the
+new root and `--no-automation`, then requests normal quit even on admission/launch
+failure. Terminal directory helpers, File → Open Folder, Git's Open repository root
+and automation share this route.
 
 Tearing down/restarting a native Bevy App in-process is **not** a prerequisite or
 an established capability. Native event-loop recreation/platform restrictions and
 renderer lifetime need separate investigation if in-place replacement becomes a
 requirement. Do not build a host/session-world framework speculatively.
+
+#### Launch and quit
+
+Implemented on 2026-10-24, superseding the initial parent-retention policy in the
+historical Task 1 checklist below. For a different validated project, attempt the
+existing process launch, complete the folder result and request normal
+quit of the current instance. Do not wait for child readiness or restoration, add
+a startup acknowledgement, or reset the live World. Launch failure must not veto
+the quit request. This deliberately permits the parent to close without a usable
+replacement. Canonical-root reuse and exclusive project admission remain. Invalid
+paths fail validation without requesting quit. Admission failures for a validated
+different project follow the same quit path as process-launch failures.
+
+Use the existing close request so unsaved-document decisions, admitted writes,
+storage flushing and worker cleanup retain their current behavior. Cancelling quit
+can leave both instances open. Complete shell folder results before the close gate
+starts rejecting actions; there is no requirement that the invoking shell survive
+shutdown. File arguments continue opening tabs in the current instance.
+
+Orchestration stays in bEd2's shared opening route. Shell replies are completed by
+the existing application terminal poll before CloseSystems handles the queued quit.
+The invoking shell can be terminated during shutdown; successful shell completion
+is not a readiness barrier. Error wording makes no parent-preservation promise.
+
+Verified on 2026-10-24:
+
+- `cargo test --offline --locked -p bed2 --features automation`: 157 passed,
+  two explicit opt-in tests ignored. New regressions cover canonical-root reuse,
+  invalid-path rejection, failed replacement admission still requesting quit, and
+  Save All / Discard / Cancel after a replacement request.
+- `cargo check --offline --locked -p bed2` and the automation build passed.
+- Native macOS/Metal `smoke_session.py` passed five nonblank captures: replacement
+  quit prompt, cancellation retaining unsaved shared documents and the child,
+  exclusive project admission, failed replacement followed by Save All and orderly
+  quit, and restoration. Artifacts: `target/launch-quit-session-smoke`.
+- Native `smoke_open.py` passed two nonblank captures and a real `cd` + no-argument
+  `+open` from a clean home instance: the parent exited successfully and its
+  non-automation replacement remained alive. Existing same-root/alias/file/error
+  and restore checks passed. Artifacts: `target/launch-quit-open-smoke`.
+
+The session smoke restores native focus and observes fresh render progress plus
+the existing capture settling interval before screenshots. Native Linux behavior
+and actual OS process-spawn failure were not exercised; the deterministic
+replacement failure test holds the destination's project lock.
 
 ### 2. Add opt-in reflected world persistence afterward
 

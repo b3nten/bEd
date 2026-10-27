@@ -121,6 +121,31 @@ fn drain<M: Message>(app: &mut App) -> Vec<M> {
         .drain()
         .collect()
 }
+
+#[test]
+fn source_open_callback_preserves_identity_and_rejects_a_changed_root() {
+    use bedtime_workbench2::{DocumentId,TextDocument,document_source_id,DocumentLoadState,inspect_document};
+    #[derive(Resource,Default)]
+    struct Opened(Vec<(bedtime_filesystem2::FsDocumentSource,DocumentId)>);
+    fn open(world:&mut World,request:FileTreeSourceOpen)->Result<(),String> {
+        let handle=Workbench::new(world).open_document::<TextDocument>(request.source.clone()).map_err(|e|e.to_string())?;
+        world.resource_mut::<Opened>().0.push((request.source,handle.id()));Ok(())
+    }
+    let fixture=Fixture::new();let path=fixture.file("file.txt","shared");let other=fixture.directory("other");
+    let (mut app,layout)=host();app.init_resource::<Opened>().insert_resource(FileTreeOnOpen(open));let p=panel(&mut app,layout,Some(&fixture.0));ready(&mut app,p,&fixture.0);
+    for count in 1..=2 {
+        queue(&mut app,p,Action::Open {path:path.clone(),activation:FileTreeActivation::Keyboard});
+        eventually(&mut app,|app|app.world().resource::<Opened>().0.len()==count);
+    }
+    let opened=&app.world().resource::<Opened>().0;let source=opened[0].0.id();let id=opened[0].1;
+    assert_eq!(opened[1].0.id(),source);assert_eq!(opened[1].1,id);assert_eq!(document_source_id(app.world(),id),Some(source));
+    eventually(&mut app,|app|inspect_document(app.world(),id).unwrap().load_state==DocumentLoadState::Ready);
+    let state=app.world_mut().entity_mut(p).take::<FileTreePanel>().unwrap();
+    assert!(opening::queue(app.world_mut(),p,&state,path,FileTreeActivation::Keyboard,None).unwrap());
+    app.world_mut().entity_mut(p).insert((state,FileTreeRoot(other.clone())));ready(&mut app,p,&other);
+    assert_eq!(app.world().resource::<Opened>().0.len(),2);
+    shutdown_work(app.world_mut()).unwrap();eventually(&mut app,|app|work_finished(app.world()));
+}
 fn completion(app: &mut App, panel: Entity) -> FileTreeOperationFinished {
     let mut found = None;
     eventually(app, |app| {

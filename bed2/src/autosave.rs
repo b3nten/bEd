@@ -2,11 +2,8 @@
 use crate::settings::{self, Autosave};
 use bedtime_editor2::workbench::WorkbenchEditor;
 use bedtime_workbench2::*;
-use bevy::{ecs::message::MessageCursor, prelude::*};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    time::{Duration, Instant},
-};
+use bevy::prelude::*;
+use std::time::{Duration, Instant};
 
 pub struct AutosavePlugin;
 impl Plugin for AutosavePlugin {
@@ -15,24 +12,9 @@ impl Plugin for AutosavePlugin {
             Update,
             update
                 .after(crate::close::CloseSystems::Update)
-                .after(crate::file_editor::reconcile_bindings),
+                .after(crate::files::FilesSystems::Update),
         );
     }
-}
-
-#[derive(Resource, Default)]
-struct Autosaves {
-    documents: BTreeMap<DocumentId, Pending>,
-    focused: Option<(Entity, DocumentId)>,
-    saves: MessageCursor<DocumentSaveFinished>,
-}
-
-struct Pending {
-    revision: u64,
-    edited_at: Instant,
-    focus_left: bool,
-    attempted: Option<(u64, u64)>,
-    work: Option<WorkId>,
 }
 
 fn focused_editor(world: &mut World) -> Option<(Entity, DocumentId)> {
@@ -77,58 +59,27 @@ fn tick(world: &mut World, now: Instant, focused: Option<(Entity, DocumentId)>) 
     if !crate::close::accepts_user_actions(world) {
         return;
     }
-    let infos: Vec<_> = document_ids(world)
-        .into_iter()
-        .filter_map(|id| inspect_document(world, id).ok())
-        .collect();
-    world.resource_scope(|world, mut state: Mut<Autosaves>| {
-        let outcomes: Vec<_> = state.saves.read(world.resource::<Messages<DocumentSaveFinished>>()).cloned().collect();
-        for outcome in outcomes {
-            if let Some(pending) = state.documents.get_mut(&outcome.document) && pending.work == Some(outcome.work) {
-                pending.work = None;
-                if let Err(error) = outcome.result {
-                    request_error_dialog(world, ErrorDialog { title: "Autosave".into(), message: "The document couldn't be saved. Your edits remain open; use Save to retry.".into(), details: Some(error.to_string()) });
-                }
-            }
+    let preferences = settings::effective_settings(world);
+    let policy = match preferences.autosave {
+        Autosave::Never => DocumentAutosavePolicy::Never,
+        Autosave::ChangeFocus => DocumentAutosavePolicy::OnFocusChange,
+        Autosave::Timer => {
+            DocumentAutosavePolicy::AfterIdle(Duration::from_secs_f64(preferences.autosave_timeout))
         }
-        let live: BTreeSet<_> = infos.iter().map(|i| i.id).collect();
-        state.documents.retain(|id, _| live.contains(id));
-        let departed = if state.focused != focused { state.focused.map(|(_, id)| id) } else { None };
-        state.focused = focused;
-        for info in infos {
-            let pending = state.documents.entry(info.id).or_insert(Pending { revision: info.revision,
-                edited_at: now, focus_left: false, attempted: None, work: None });
-            if pending.revision != info.revision {
-                pending.revision = info.revision; pending.edited_at = now;
-            }
-            if departed == Some(info.id) { pending.focus_left = true; }
-            if !info.dirty { pending.focus_left = false; continue; }
-            let preferences = settings::effective_settings(world);
-            let due = match preferences.autosave {
-                Autosave::Never => { pending.focus_left = false; false },
-                Autosave::ChangeFocus => pending.focus_left,
-                Autosave::Timer => now.saturating_duration_since(pending.edited_at) >= Duration::from_secs_f64(preferences.autosave_timeout),
-            };
-            let attempt = (info.revision, info.source_generation);
-            if crate::file_editor::source_path(world, info.id).is_some_and(|path|
-                world.get_resource::<crate::file_editor::FileWrites>().is_some_and(|writes| writes.blocks(path))) { continue; }
-            if !due || info.saving || info.has_drafts || info.conflict || info.requires_source_refresh || !info.has_save_binding
-                || !crate::storage::ready(world) || pending.attempted == Some(attempt) { continue; }
-            match save_document(world, info.id) {
-                Ok(work) => {
-                    pending.attempted = Some(attempt);
-                    pending.focus_left = false;
-                    pending.work = Some(work);
-                }
-                Err(DocumentError::DestinationBusy(_)) => continue,
-                Err(error) => {
-                    pending.attempted = Some(attempt);
-                    pending.focus_left = false;
-                request_error_dialog(world, ErrorDialog { title: "Autosave".into(), message: "The document couldn't be saved. Your edits remain open; use Save to retry.".into(), details: Some(error.to_string()) });
-                }
-            }
-        }
-    });
+    };
+    let enabled = crate::storage::ready(world);
+    for error in tick_document_autosave(world, now, focused, policy, enabled) {
+        request_error_dialog(
+            world,
+            ErrorDialog {
+                title: "Autosave".into(),
+                message:
+                    "The document couldn't be saved. Your edits remain open; use Save to retry."
+                        .into(),
+                details: Some(error),
+            },
+        );
+    }
 }
 
 #[cfg(test)]
@@ -148,7 +99,7 @@ mod tests {
             ..default()
         }));
         let workspace = crate::test_layout(app.world_mut());
-        let document = open_document(
+        let document = open_memory_document(
             app.world_mut(),
             String::new(),
             DocumentOptions::loaded("Test"),
@@ -291,7 +242,7 @@ mod tests {
         tick(app.world_mut(), now + Duration::from_secs(3), None);
         finish(&mut app, document.id());
         assert_eq!(saves.load(Ordering::SeqCst), 1);
-        let unbound = open_document(
+        let unbound = open_memory_document(
             app.world_mut(),
             "unsaved".to_owned(),
             DocumentOptions::unsaved("Unbound"),
@@ -350,7 +301,7 @@ mod tests {
             Ok(None)
         });
         bind_document_save(app.world_mut(), first, binding.clone()).unwrap();
-        let second = open_document(
+        let second = open_memory_document(
             app.world_mut(),
             String::new(),
             DocumentOptions::loaded("Second"),

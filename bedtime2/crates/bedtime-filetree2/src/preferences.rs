@@ -3,6 +3,7 @@
 //! No filesystem access is performed here: roots may be temporarily unavailable.
 //! Native path units are persisted, not display strings, and records from another
 //! platform are rejected rather than converted lossily.
+use bedtime_workbench2::native_path::NativePath;
 use bevy::prelude::Resource;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -188,63 +189,6 @@ struct RootRecord {
     root: NativePath,
     hide_hidden: bool,
     hidden_paths: Vec<NativePath>,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(
-    tag = "platform",
-    content = "units",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-enum NativePath {
-    #[cfg(unix)]
-    UnixBytes(Vec<u8>),
-    #[cfg(windows)]
-    WindowsWide(Vec<u16>),
-    #[cfg(not(any(unix, windows)))]
-    Utf8(String),
-}
-
-impl NativePath {
-    fn encode(path: &Path) -> Result<Self, String> {
-        #[cfg(unix)]
-        {
-            use std::os::unix::ffi::OsStrExt;
-            Ok(Self::UnixBytes(path.as_os_str().as_bytes().to_vec()))
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            Ok(Self::WindowsWide(path.as_os_str().encode_wide().collect()))
-        }
-        #[cfg(not(any(unix, windows)))]
-        {
-            path.to_str()
-                .map(|value| Self::Utf8(value.to_owned()))
-                .ok_or_else(|| "This platform cannot persist non-UTF-8 paths".into())
-        }
-    }
-
-    fn decode(self) -> Result<PathBuf, String> {
-        // These are platform-specific, safe native constructors. In particular, do
-        // not use OsString::from_encoded_bytes_unchecked on untrusted JSON bytes.
-        // NUL and lexical validity are checked before the result enters preferences.
-        match self {
-            #[cfg(unix)]
-            Self::UnixBytes(bytes) => {
-                use std::{ffi::OsString, os::unix::ffi::OsStringExt};
-                Ok(PathBuf::from(OsString::from_vec(bytes)))
-            }
-            #[cfg(windows)]
-            Self::WindowsWide(units) => {
-                use std::{ffi::OsString, os::windows::ffi::OsStringExt};
-                Ok(PathBuf::from(OsString::from_wide(&units)))
-            }
-            #[cfg(not(any(unix, windows)))]
-            Self::Utf8(value) => Ok(PathBuf::from(value)),
-        }
-    }
 }
 
 #[cfg(test)]

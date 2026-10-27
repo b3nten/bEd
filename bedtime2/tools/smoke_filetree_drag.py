@@ -34,7 +34,7 @@ def main():
             os.environ["XDG_CONFIG_HOME"] = str(Path(fixture) / "config")
             with Application([str(Path(args.binary).resolve()), str(root)], output=output, timeout=60) as app:
                 prepare_demo_layout(app, viewport=False)
-                _, layout, tree = open_native(app)
+                layout, tree = open_native(app)
                 wait_tree(app, tree, lambda value: str(source) in {row["path"] for row in value["rows"]})
                 source_area = next(area for area in areas(app) if any(p["entity"] == tree for p in area["panels"]))["entity"]
                 target = app.request("area.split", area=source_area, axis="horizontal")["area"]

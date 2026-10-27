@@ -73,10 +73,33 @@ impl Plugin for StatusBarPlugin {
         {
             use bedtime_automation2::AutomationAppExt;
             app.register_automation_command("app.inspect_status_bar",|world,_| {
-                let bars:Vec<_>=world.query::<(Entity,&StatusBar)>().iter(world).map(|(entity,bar)| {
+                let bars: Vec<_> = world.query::<(Entity,&StatusBar)>().iter(world).map(|(entity,bar)| {
                     let s=&bar.snapshot;
-                    serde_json::json!({"entity":entity.to_bits().to_string(),"panel":s.panel.map(|p|p.to_bits().to_string()),"document":s.document.map(|d|d.0.to_bits().to_string()),"title":s.title,"lsp":s.lsp,"server_errors":s.server_errors,"errors":s.errors,"warnings":s.warnings,"stale_diagnostics":s.stale_diagnostics,"no_report":s.no_report,"work":s.work,"unversioned":s.unversioned,"document_error":s.document_error,"details":s.details,"menu_rect":bar.menu_rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]})),"rect":bar.rect.map(|r|serde_json::json!({"min":[r.min.x,r.min.y],"max":[r.max.x,r.max.y]}))})
-                }).collect();Ok(serde_json::json!({"bars":bars}))
+                    serde_json::json!({
+                        "entity": entity.to_bits().to_string(),
+                        "panel": s.panel.map(|p| p.to_bits().to_string()),
+                        "document": s.document.map(|d| d.0.to_bits().to_string()),
+                        "title": s.title,
+                        "lsp": s.lsp,
+                        "server_errors": s.server_errors,
+                        "errors": s.errors,
+                        "warnings": s.warnings,
+                        "stale_diagnostics": s.stale_diagnostics,
+                        "no_report": s.no_report,
+                        "work": s.work,
+                        "unversioned": s.unversioned,
+                        "document_error": s.document_error,
+                        "details": s.details,
+                        "menu_rect": bar.menu_rect.map(|r|
+                            serde_json::json!({
+                                "min": [r.min.x, r.min.y],
+                                "max": [r.max.x,r.max.y]
+                            })
+                        ),
+                        "rect": bar.rect.map(|r| serde_json::json!({"min": [r.min.x, r.min.y], "max":[r.max.x,r.max.y]}))
+                    })
+                }).collect();
+                Ok(serde_json::json!({"bars":bars}))
             });
         }
     }
@@ -520,7 +543,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
         let w = crate::test_layout(app.world_mut());
-        let document = open_document(
+        let document = open_memory_document(
             app.world_mut(),
             TextBuffer::from("text"),
             DocumentOptions::loaded("notes.txt"),

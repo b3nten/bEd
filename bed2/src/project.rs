@@ -10,6 +10,7 @@ use std::{
 pub struct ProjectLock {
     _file: File,
 }
+
 impl ProjectLock {
     pub fn acquire(root: &Path) -> Result<Self, String> {
         // Project exclusivity is independent of XDG_CONFIG_HOME: choosing a
@@ -39,6 +40,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU64, Ordering};
+    
     fn fixture() -> PathBuf {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
@@ -49,6 +51,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         root
     }
+    
     #[test]
     fn child_admission_probe() {
         let Some(root) = std::env::var_os("BED_PROJECT_LOCK_TEST_ROOT") else {
@@ -93,6 +96,7 @@ mod tests {
             }
         }
     }
+    
     fn child(root: &Path, mode: &str) {
         let result = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
@@ -111,6 +115,7 @@ mod tests {
             String::from_utf8_lossy(&result.stderr)
         );
     }
+    
     #[test]
     fn exclusive_project_admission_covers_processes_and_releases_after_exit_or_crash() {
         let root = fixture();
@@ -124,6 +129,7 @@ mod tests {
         drop(claim);
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[test]
     fn simultaneous_project_launches_admit_exactly_one_writer() {
         let root = fixture();
@@ -160,6 +166,7 @@ mod tests {
         assert!(ProjectLock::acquire(&root).is_ok());
         std::fs::remove_dir_all(root).unwrap();
     }
+    
     #[cfg(unix)]
     #[test]
     fn canonical_aliases_share_project_admission() {

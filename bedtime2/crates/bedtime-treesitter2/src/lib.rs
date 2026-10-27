@@ -98,3 +98,14 @@ pub const MAX_ANALYSIS_TIME: std::time::Duration = std::time::Duration::from_sec
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature="documents")]
+impl Source for bedtime_document2::TextBuffer {
+    fn len(&self) -> usize {
+        bedtime_document2::TextBuffer::len(self)
+    }
+    fn chunk(&self, byte: usize) -> &[u8] {
+        let (chunk, start) = self.chunk_at(byte);
+        &chunk.as_bytes()[byte - start..]
+    }
+}

@@ -4,10 +4,10 @@
 //! that Workbench executes after drawing.
 mod backend;
 mod errors;
-#[cfg(target_os = "macos")]
-mod mac_watch;
 mod menu;
 mod operations;
+mod opening;
+pub use opening::{FileTreeOnOpen,FileTreeSourceOpen};
 mod preferences;
 mod view;
 
@@ -130,17 +130,17 @@ pub enum FileTreeSystems {
 /// Calling cancellation is not evidence that a mutation had no effects.
 pub fn filetree_operation_count(world: &World) -> usize {
     world
-        .get_resource::<OperationArchive>()
-        .and_then(|archive| archive.0.as_ref())
-        .map_or(0, |pending| pending.origins.len())
+        .get_resource::<PendingOperations>()
+        .map_or(0, |pending| pending.0.len())
 }
 
 pub struct FileTreePlugin;
 impl Plugin for FileTreePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Clipboard>()
+            .init_resource::<opening::SourceOpens>()
             .init_resource::<FileTreeClipboard>()
-            .init_resource::<OperationArchive>()
+            .init_resource::<PendingOperations>()
             .init_resource::<FileTreePreferences>()
             .add_message::<FileTreeOpenRequested>()
             .add_message::<FileTreeOpenWithRequested>()
@@ -464,14 +464,9 @@ struct FilesystemRuntime {
     preferences_revision: u64,
 }
 
-/// Results outlive panel destruction and remain available while work drains. Entries exist
-/// only while admitted operations are outstanding, never for idle directory views.
+/// Domain bookkeeping only; managed work owns completion lifetime and delivery.
 #[derive(Resource, Default)]
-struct OperationArchive(Option<PendingOperations>);
-struct PendingOperations {
-    results: backend::OperationResultsHandle,
-    origins: HashMap<u64, OperationOrigin>,
-}
+struct PendingOperations(BTreeSet<u64>);
 struct OperationOrigin {
     panel: Entity,
     error_title: &'static str,
@@ -663,38 +658,9 @@ fn update_filetrees(world: &mut World) {
             }
             world.entity_mut(panel).insert(state);
         }
-        // ManagedWork prevents new admission while closing, but the separate
-        // result mailbox still lets this system observe already committed writes.
         world.insert_resource(runtime);
     }
-    world.resource_scope(|world, mut archive: Mut<OperationArchive>| {
-        if let Some(pending) = &mut archive.0 {
-            let mut results = pending.results.take_operation_results();
-            let failed = world.get_resource::<FilesystemRuntime>()
-                .is_some_and(|runtime| matches!(runtime.backend.status(), WorkStatus::Failed(_)));
-            if failed {
-                // A panic cannot be interpreted as rollback. Preserve real results
-                // first, then explicitly report that remaining effects are unknown.
-                let received: BTreeSet<_> = results.iter().map(|r| r.id).collect();
-                results.extend(pending.origins.iter().filter(|(id, _)| !received.contains(id)).map(|(&id, origin)| FileTreeOperationResult {
-                    id, completed: Vec::new(), cancelled: false,
-                    errors: vec![FileTreeOperationError {
-                        path: origin.root.clone(), kind: std::io::ErrorKind::BrokenPipe, message: "Filesystem worker stopped without a final result; some effects may have occurred. Refresh and inspect the affected paths before retrying.".into(),
-                    }],
-                }));
-            }
-            for result in results {
-                if let Some(origin) = pending.origins.remove(&result.id) {
-                    reconcile_operation(world, &origin, &result);
-                    world.write_message(FileTreeOperationFinished {
-                        panel: origin.panel, root: origin.root,
-                        generation: origin.generation, result: Arc::new(result),
-                    });
-                }
-            }
-        }
-        if archive.0.as_ref().is_some_and(|pending| pending.origins.is_empty()) { archive.0 = None; }
-    });
+    opening::poll(world);
     errors::report(world);
 }
 
@@ -760,11 +726,9 @@ fn apply_action(
                         (provider.0)(&path).iter().any(|item| item.id == choice)
                     })
             {
-                world.write_message(FileTreeOpenWithRequested {
-                    panel,
-                    path,
-                    choice,
-                });
+                if !opening::queue(world,panel,state,path.clone(),FileTreeActivation::ContextMenu,Some(choice.clone()))? {
+                    world.write_message(FileTreeOpenWithRequested {panel,path,choice});
+                }
             }
             return Ok(());
         }
@@ -776,11 +740,9 @@ fn apply_action(
             if state.snapshot.rows[index].kind == FileTreeEntryKind::Directory {
                 state.toggle(&path);
             } else {
-                world.write_message(FileTreeOpenRequested {
-                    panel,
-                    path,
-                    activation,
-                });
+                if !opening::queue(world,panel,state,path.clone(),activation,None)? {
+                    world.write_message(FileTreeOpenRequested {panel,path,activation});
+                }
             }
             return Ok(());
         }
@@ -1010,30 +972,46 @@ fn apply_action(
         .expect("File operation IDs exhausted");
     let id = runtime.next_operation;
     let error_title = errors::operation_title(&operation);
-    runtime.backend.submit_operation(FileTreeOperationRequest {
-        id,
+    let origin = OperationOrigin {
+        panel,
+        error_title,
         root: root.clone(),
-        operation,
-    })?;
-    let results = runtime.backend.operation_results_handle();
-    world
-        .resource_mut::<OperationArchive>()
-        .0
-        .get_or_insert_with(|| PendingOperations {
-            results,
-            origins: HashMap::new(),
-        })
-        .origins
-        .insert(
+        generation: state.generation,
+        cut_snapshot,
+    };
+    runtime.backend.submit_operation(
+        &mut world.resource_mut::<ManagedWork>(),
+        FileTreeOperationRequest {
             id,
-            OperationOrigin {
-                panel,
-                error_title,
-                root,
-                generation: state.generation,
-                cut_snapshot,
-            },
-        );
+            root: root.clone(),
+            operation,
+        },
+        move |world, outcome| {
+            let result = outcome
+                .result
+                .unwrap_or_else(|error| FileTreeOperationResult {
+                    id,
+                    completed: Vec::new(),
+                    cancelled: outcome.cancellation_requested,
+                    errors: vec![FileTreeOperationError {
+                        path: origin.root.clone(),
+                        kind: std::io::ErrorKind::BrokenPipe,
+                        message: format!(
+                            "{error}. Refresh and inspect the affected paths before retrying."
+                        ),
+                    }],
+                });
+            reconcile_operation(world, &origin, &result);
+            world.write_message(FileTreeOperationFinished {
+                panel: origin.panel,
+                root: origin.root,
+                generation: origin.generation,
+                result: Arc::new(result),
+            });
+            world.resource_mut::<PendingOperations>().0.remove(&id);
+        },
+    )?;
+    world.resource_mut::<PendingOperations>().0.insert(id);
     state.pending.insert(id);
     state.error = None;
     if let Some(edit) = &mut state.editing {
@@ -1099,6 +1077,7 @@ fn reconcile_operation(
             destination,
         } = change
         {
+            bedtime_filesystem2::Filesystem::local().move_document_sources(source,destination);
             for &panel in &panels {
                 let mut state = world.get_mut::<FileTreePanel>(panel).unwrap();
                 if state.snapshot.root != origin.root {

@@ -51,11 +51,11 @@ def main():
             raster.write_bytes(Path("bedtime/tests/fixtures/images/sample.png").read_bytes())
             with Application([binary, str(root)], output=output / "first", timeout=90) as app:
                 prepare_demo_layout(app, viewport=False)
-                _, _, tree = open_native(app)
+                _, tree = open_native(app)
                 wait_tree(app, tree, lambda state: str(svg) in {r["path"] for r in state["rows"]})
                 click_row(app, tree, raster)
                 raster_view = preview(app, raster)
-                assert raster_view["image"]["dimensions"] and raster_view["document"] is None
+                assert raster_view["image"]["dimensions"] and raster_view["document"] is not None
                 captures.append(capture(app, "01-raster.png"))
                 click_row(app, tree, svg)
                 image = preview(app, svg)
@@ -126,7 +126,7 @@ def main():
                 assert restored_image["image"]["zoom"] == 1
                 captures.append(capture(app, "06-restored.png"))
                 # A confirmed tree rename rebinds both viewers; deletion retires pixels.
-                _, _, tree = open_native(app)
+                _, tree = open_native(app)
                 click_row(app, tree, svg, button="Right")
                 choose(app, "Rename…")
                 from smoke_filetree import edit_name

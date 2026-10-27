@@ -704,7 +704,7 @@ mod tests {
     fn completion_import_and_snippet_are_one_undoable_edit() {
         let ctx = egui::Context::default();
         let id = egui::Id::new("completion");
-        let mut doc = TextDocument::new("package main\n\nfunc main() { Pr }\n");
+        let mut doc = MemoryTextSession::new("package main\n\nfunc main() { Pr }\n");
         let mut view = EditorView::default();
         focus(&ctx, &mut view, &mut doc, id);
         let start = doc.text().to_string().find("Pr").unwrap();
@@ -742,7 +742,7 @@ mod tests {
     fn stale_completion_and_overlapping_edits_leave_text_unchanged() {
         let ctx = egui::Context::default();
         let id = egui::Id::new("stale");
-        let mut doc = TextDocument::new("abc");
+        let mut doc = MemoryTextSession::new("abc");
         let mut view = EditorView::default();
         focus(&ctx, &mut view, &mut doc, id);
         let edit = CompletionEdit {
@@ -776,7 +776,7 @@ mod tests {
     fn snippet_mirrors_and_tab_navigation_follow_edits() {
         let ctx = egui::Context::default();
         let id = egui::Id::new("snippet");
-        let mut doc = TextDocument::new("");
+        let mut doc = MemoryTextSession::new("");
         let mut view = EditorView::default();
         focus(&ctx, &mut view, &mut doc, id);
         view.queue_completion(
@@ -835,7 +835,7 @@ mod tests {
     fn completion_keys_select_without_inserting_newlines_or_tabs() {
         let ctx = egui::Context::default();
         let id = egui::Id::new("menu");
-        let mut doc = TextDocument::new("f");
+        let mut doc = MemoryTextSession::new("f");
         let mut view = EditorView::default();
         focus(&ctx, &mut view, &mut doc, id);
         view.set_completions(
@@ -899,7 +899,7 @@ mod pointer_tests {
         let id = egui::Id::new("link");
         let mut view = EditorView::default();
         view.language_tools = true;
-        let mut doc = TextDocument::new("x\t世界 name\n");
+        let mut doc = MemoryTextSession::new("x\t世界 name\n");
         let first = crate::tests::frame(&ctx, &mut view, &mut doc, id, vec![]);
         let font = egui::TextStyle::Monospace.resolve(&ctx.global_style());
         let cell = ctx.fonts_mut(|f| f.glyph_width(&font, ' '));

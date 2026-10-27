@@ -293,7 +293,7 @@ mod workbench {
             .destination_area(second_layout)
             .unwrap();
         let panel = app.world_mut().spawn((TestPanel, InArea(first_area))).id();
-        let document = open_document(
+        let document = open_memory_document(
             app.world_mut(),
             "Shared".to_owned(),
             DocumentOptions::loaded("Notes"),

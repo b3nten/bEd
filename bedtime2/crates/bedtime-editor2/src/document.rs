@@ -1,10 +1,6 @@
 use crate::{BufferEdit, TextBuffer};
 use bedtime_ui2::egui;
-use std::{
-    collections::{HashSet, VecDeque},
-    fmt,
-    ops::Range,
-};
+use std::{collections::HashSet, fmt, ops::Range};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EditorError(pub String);
@@ -64,8 +60,8 @@ impl TextDelta {
 impl From<&BufferEdit> for TextDelta {
     fn from(edit: &BufferEdit) -> Self {
         Self {
-            range: edit.range.clone(),
-            inserted_bytes: edit.replacement.len(),
+            range: edit.range(),
+            inserted_bytes: edit.replacement().len(),
         }
     }
 }
@@ -109,140 +105,73 @@ pub trait TextSession {
 
 /// In-memory document for hosts without Workbench. Several views borrow this
 /// same owner; snapshots and undo roots share immutable rope nodes.
-pub struct TextDocument {
-    snapshot: TextSnapshot,
-    undo: Vec<Vec<BufferEdit>>,
-    redo: Vec<Vec<BufferEdit>>,
-    commits: VecDeque<TextCommit>,
-    grouped: bool,
+pub struct MemoryTextSession {
+    history: bedtime_document2::History<TextBuffer, u64>,
+    group: u64,
     composing: HashSet<egui::Id>,
     edit_owner: Option<egui::Id>,
 }
 
-impl TextDocument {
+impl MemoryTextSession {
     pub fn new(text: impl Into<TextBuffer>) -> Self {
         Self {
-            snapshot: TextSnapshot {
-                text: text.into(),
-                revision: 0,
-            },
-            undo: Vec::new(),
-            redo: Vec::new(),
-            commits: VecDeque::new(),
-            grouped: false,
+            history: bedtime_document2::History::new(text.into(), 100),
+            group: 0,
             composing: HashSet::new(),
             edit_owner: None,
         }
     }
-
     pub fn text(&self) -> &TextBuffer {
-        &self.snapshot.text
-    }
-
-    fn record(&mut self, changes: Vec<TextDelta>) {
-        self.snapshot.revision = self
-            .snapshot
-            .revision
-            .checked_add(1)
-            .expect("Text revision exhausted");
-        self.commits.push_back(TextCommit {
-            revision: self.snapshot.revision,
-            changes: Some(changes),
-        });
-        while self.commits.len() > 128 {
-            self.commits.pop_front();
-        }
+        self.history.content()
     }
 }
-
-impl TextSession for TextDocument {
+impl TextSession for MemoryTextSession {
     fn snapshot(&self) -> Result<TextSnapshot, EditorError> {
-        Ok(self.snapshot.clone())
+        Ok(TextSnapshot {
+            revision: self.history.revision(),
+            text: self.history.content().clone(),
+        })
     }
-
     fn changes_since(&self, revision: u64) -> Result<Option<Vec<TextCommit>>, EditorError> {
-        if revision > self.snapshot.revision {
+        if revision > self.history.revision() {
             return Err(EditorError("Future document revision".into()));
         }
-        if revision == self.snapshot.revision {
-            return Ok(Some(Vec::new()));
-        }
-        if self
-            .commits
-            .front()
-            .is_none_or(|c| c.revision > revision + 1)
-        {
-            return Ok(None);
-        }
-        Ok(Some(
-            self.commits
-                .iter()
-                .filter(|c| c.revision > revision)
-                .cloned()
-                .collect(),
-        ))
+        Ok(self.history.changes_since(revision).map(|commits| {
+            commits
+                .into_iter()
+                .map(|c| TextCommit {
+                    revision: c.revision,
+                    changes: c
+                        .changes
+                        .map(|changes| changes.iter().map(TextDelta::from).collect()),
+                })
+                .collect()
+        }))
     }
-
     fn edit_buffer(&mut self, revision: u64, change: BufferEdit) -> Result<u64, EditorError> {
-        if revision != self.snapshot.revision {
+        if revision != self.history.revision() {
             return Err(EditorError("Stale document revision".into()));
         }
         if !self.composing.is_empty() {
             return Err(EditorError("Finish composition before editing".into()));
         }
-        let mut candidate = self.snapshot.text.clone();
-        let inverse = change.apply(&mut candidate).map_err(EditorError)?;
-        if candidate == self.snapshot.text {
-            return Ok(revision);
-        }
-        if self.grouped {
-            self.undo.last_mut().unwrap().insert(0, inverse);
-        } else {
-            self.undo.push(vec![inverse]);
-            if self.undo.len() > 100 {
-                self.undo.remove(0);
-            }
-        }
-        self.grouped = true;
-        self.redo.clear();
-        self.snapshot.text = candidate;
-        self.record(vec![TextDelta::from(&change)]);
-        Ok(self.snapshot.revision)
+        self.history
+            .edit([change], "Typing".into(), Some(self.group))
+            .map_err(EditorError)
     }
-
     fn history(&mut self, action: HistoryAction) -> Result<u64, EditorError> {
         if !self.composing.is_empty() {
             return Err(EditorError("Finish composition before undo/redo".into()));
         }
-        let entries = if action == HistoryAction::Undo {
-            &self.undo
-        } else {
-            &self.redo
-        };
-        let Some(changes) = entries.last().cloned() else {
-            return Ok(self.snapshot.revision);
-        };
-        let mut candidate = self.snapshot.text.clone();
-        let mut inverses = Vec::new();
-        for change in &changes {
-            inverses.push(change.apply(&mut candidate).map_err(EditorError)?);
-        }
-        inverses.reverse();
-        if action == HistoryAction::Undo {
-            self.undo.pop();
-            self.redo.push(inverses);
-        } else {
-            self.redo.pop();
-            self.undo.push(inverses);
-        }
-        self.grouped = false;
-        self.snapshot.text = candidate;
-        self.record(changes.iter().map(TextDelta::from).collect());
-        Ok(self.snapshot.revision)
+        self.group += 1;
+        Ok(self
+            .history
+            .undo(action == HistoryAction::Redo)
+            .map_err(EditorError)?
+            .unwrap_or(self.history.revision()))
     }
-
     fn end_undo_group(&mut self) {
-        self.grouped = false;
+        self.group += 1;
     }
 
     fn set_composing(&mut self, view: egui::Id, composing: bool) {
@@ -255,7 +184,7 @@ impl TextSession for TextDocument {
 
     fn set_edit_owner(&mut self, view: egui::Id) {
         if self.edit_owner != Some(view) {
-            self.grouped = false;
+            self.group += 1;
             self.edit_owner = Some(view);
         }
     }

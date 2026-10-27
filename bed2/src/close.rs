@@ -63,15 +63,25 @@ fn close_requested_panels(world: &mut World) {
 struct CloseSnapshot {
     revisions: Vec<(DocumentId, u64)>,
 }
-
+fn close_snapshot(world: &mut World) -> Result<CloseSnapshot, String> {
+    Ok(CloseSnapshot {
+        revisions: document_ids(world)
+            .into_iter()
+            .map(|id| {
+                inspect_document(world, id)
+                    .map(|i| (id, i.revision))
+                    .map_err(|e| e.to_string())
+            })
+            .collect::<Result<_, _>>()?,
+    })
+}
 #[derive(Clone, Default)]
 enum ClosePhase {
     #[default]
     Idle,
     Prompt,
     Saving {
-        snapshot: CloseSnapshot,
-        awaited: Vec<DocumentId>,
+        operation: DocumentSaveAll,
     },
     Flushing {
         mode: SessionCloseMode,
@@ -171,20 +181,6 @@ fn request_close(world: &mut World) {
     }
 }
 
-fn close_snapshot(world: &mut World) -> Result<CloseSnapshot, String> {
-    let mut revisions = Vec::new();
-    for id in document_ids(world) {
-        revisions.push((
-            id,
-            inspect_document(world, id)
-                .map_err(|e| e.to_string())?
-                .revision,
-        ));
-    }
-    revisions.sort_by_key(|entry| entry.0);
-    Ok(CloseSnapshot { revisions })
-}
-
 fn close_failed(world: &mut World, error: String) {
     let mut close = world.resource_mut::<AppClose>();
     close.phase = ClosePhase::Prompt;
@@ -192,45 +188,9 @@ fn close_failed(world: &mut World, error: String) {
 }
 
 fn begin_save_all(world: &mut World) -> Result<(), String> {
-    let snapshot = close_snapshot(world)?;
-    let mut infos = Vec::new();
-    // Validate the complete application decision before admitting any writes.
-    // A failed write admission later may leave earlier saves running, never a
-    // partly closed application or cancelled backend writes.
-    for (id, _) in &snapshot.revisions {
-        let info = inspect_document(world, *id).map_err(|e| e.to_string())?;
-        if info.has_drafts {
-            return Err(format!(
-                "Commit or cancel drafts for {:?} first",
-                info.title
-            ));
-        }
-        if info.conflict || info.requires_source_refresh {
-            return Err(format!(
-                "Cancel quit and observe/resolve the source conflict for {:?} first",
-                info.title
-            ));
-        }
-        if info.dirty && !info.has_save_binding {
-            return Err(format!(
-                "Document {:?} has no save binding; cancel quit or explicitly discard",
-                info.title
-            ));
-        }
-        infos.push(info);
-    }
-    let mut awaited = Vec::new();
-    for info in infos {
-        if info.saving {
-            awaited.push(info.id);
-        } else if info.dirty {
-            save_document(world, info.id)
-                .map_err(|e| format!("Cannot save {:?}: {e}", info.title))?;
-            awaited.push(info.id);
-        }
-    }
+    let operation = begin_document_save_all(world)?;
     let mut close = world.resource_mut::<AppClose>();
-    close.phase = ClosePhase::Saving { snapshot, awaited };
+    close.phase = ClosePhase::Saving { operation };
     close.error = None;
     Ok(())
 }
@@ -270,37 +230,15 @@ fn apply_close_choice(world: &mut World, choice: CloseChoice) {
 fn advance_close(world: &mut World) {
     let phase = world.resource::<AppClose>().phase.clone();
     match phase {
-        ClosePhase::Saving { snapshot, awaited } => {
-            let result = (|| {
-                if close_snapshot(world)? != snapshot {
-                    return Err("Documents or layouts changed while Save All was pending. Nothing was closed. Cancel quit to review, or choose Save All again.".into());
+        ClosePhase::Saving { operation } => match operation.poll(world) {
+            Ok(true) => {
+                if let Err(error) = begin_shutdown(world, SessionCloseMode::Saved) {
+                    close_failed(world, error);
                 }
-                let infos: Vec<_> = snapshot
-                    .revisions
-                    .iter()
-                    .map(|(id, _)| inspect_document(world, *id).map_err(|e| e.to_string()))
-                    .collect::<Result<_, _>>()?;
-                if infos.iter().any(|info| info.saving) {
-                    return Ok(());
-                }
-                for info in &infos {
-                    if awaited.contains(&info.id)
-                        && let Some(error) = &info.last_save_error
-                    {
-                        return Err(format!(
-                            "Save failed for {:?}: {error}. Nothing was closed; cancel quit to fix it or explicitly discard.",
-                            info.title
-                        ));
-                    }
-                }
-                // The completed snapshots, not merely save admission, must pass
-                // the same core gate that protects normal session shutdown.
-                begin_shutdown(world, SessionCloseMode::Saved)
-            })();
-            if let Err(error) = result {
-                close_failed(world, error);
             }
-        }
+            Ok(false) => {}
+            Err(error) => close_failed(world, error),
+        },
         ClosePhase::Flushing { mode } => {
             let result = (|| {
                 // Poll every store even while another is pending. Session flush
@@ -308,7 +246,11 @@ fn advance_close(world: &mut World) {
                 let files = crate::files::flush_preferences(world);
                 let settings = crate::settings::flush(world);
                 let session = crate::session::flush(world);
-                if !files? || !settings? || !session? {
+                if !files?
+                    || !settings?
+                    || !session?
+                    || world.resource::<ManagedWork>().operations_pending()
+                {
                     return Ok(());
                 }
                 // Revalidate after draining writes/outcomes, before any cancellation.
@@ -436,7 +378,8 @@ mod tests {
     }
 
     fn text_document(world: &mut World) -> DocumentId {
-        let handle = open_document(world, String::new(), DocumentOptions::loaded("Test")).unwrap();
+        let handle =
+            open_memory_document(world, String::new(), DocumentOptions::loaded("Test")).unwrap();
         bind_document_save(world, handle, DocumentSaveBinding::new(None, |_| Ok(None))).unwrap();
         handle.id()
     }
@@ -542,6 +485,100 @@ mod tests {
     }
 
     #[test]
+    fn failed_replacement_still_quits_but_same_project_and_invalid_paths_do_not() {
+        let root = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let mut app = host();
+        app.add_plugins(crate::files::FilesPlugin);
+        app.insert_resource(crate::files::ProjectRoot(root.clone()));
+        app.insert_resource(crate::files::ProjectFolder);
+        let reused = crate::opening::open_folder(app.world_mut(), root.clone()).unwrap();
+        eventually(&mut app, |_| {
+            let Ok(result) = reused.lock().unwrap().try_recv() else {
+                return false;
+            };
+            assert!(matches!(result, Ok(crate::opening::FolderOpened::Reused)));
+            true
+        });
+        assert!(accepts_user_actions(app.world()));
+
+        let missing = root.join(format!("bed2-missing-folder-{}", std::process::id()));
+        let invalid = crate::opening::open_folder(app.world_mut(), missing).unwrap();
+        eventually(&mut app, |_| {
+            let Ok(result) = invalid.lock().unwrap().try_recv() else {
+                return false;
+            };
+            assert!(result.is_err());
+            true
+        });
+        assert!(accepts_user_actions(app.world()));
+        assert!(app.world().resource::<Messages<AppExit>>().is_empty());
+
+        // Holding the target's claim deterministically fails the replacement
+        // before spawning. That failure must not turn into a quit veto.
+        let target = root.join(format!("bed2-replacement-{}", std::process::id()));
+        std::fs::create_dir_all(&target).unwrap();
+        let _claim = crate::project::ProjectLock::acquire(&target).unwrap();
+        let opened = crate::opening::open_folder(app.world_mut(), target.clone()).unwrap();
+        eventually(&mut app, |world| {
+            matches!(world.resource::<AppClose>().phase, ClosePhase::ExitSent)
+        });
+        assert!(
+            opened
+                .lock()
+                .unwrap()
+                .try_recv()
+                .unwrap()
+                .unwrap_err()
+                .contains("already open")
+        );
+        assert!(!app.world().resource::<Messages<AppExit>>().is_empty());
+        std::fs::remove_dir(target).unwrap();
+    }
+
+    #[test]
+    fn replacement_quit_retains_save_discard_and_cancel_decisions() {
+        let root = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        let target = root.join(format!("bed2-replacement-decisions-{}", std::process::id()));
+        std::fs::create_dir_all(&target).unwrap();
+        let _claim = crate::project::ProjectLock::acquire(&target).unwrap();
+        for choice in [
+            CloseChoice::SaveAll,
+            CloseChoice::Discard,
+            CloseChoice::Cancel,
+        ] {
+            let mut app = host();
+            app.add_plugins(crate::files::FilesPlugin);
+            app.insert_resource(crate::files::ProjectRoot(root.clone()));
+            let id = text_document(app.world_mut());
+            change_text(app.world_mut(), id, "Keep my edits until I decide");
+            let opened = crate::opening::open_folder(app.world_mut(), target.clone()).unwrap();
+            eventually(&mut app, |world| {
+                matches!(world.resource::<AppClose>().phase, ClosePhase::Prompt)
+            });
+            assert!(opened.lock().unwrap().try_recv().unwrap().is_err());
+            assert!(inspect_document(app.world(), id).unwrap().dirty);
+            apply_close_choice(app.world_mut(), choice);
+            if matches!(choice, CloseChoice::Cancel) {
+                app.update();
+                assert!(accepts_user_actions(app.world()));
+                assert!(inspect_document(app.world(), id).unwrap().dirty);
+                assert!(app.world().resource::<Messages<AppExit>>().is_empty());
+                shutdown_work(app.world_mut()).unwrap();
+                eventually(&mut app, |world| work_finished(world));
+            } else {
+                eventually(&mut app, |world| {
+                    matches!(world.resource::<AppClose>().phase, ClosePhase::ExitSent)
+                });
+                assert_eq!(
+                    inspect_document(app.world(), id).unwrap().dirty,
+                    matches!(choice, CloseChoice::Discard)
+                );
+            }
+        }
+        std::fs::remove_dir(target).unwrap();
+    }
+
+    #[test]
     fn clean_startup_quits_without_a_document_prompt() {
         for clean_document in [false, true] {
             let mut app = host();
@@ -561,6 +598,46 @@ mod tests {
             });
             assert!(!app.world().resource::<Messages<AppExit>>().is_empty());
         }
+    }
+
+    #[test]
+    fn quit_drains_admitted_effects_and_rechecks_documents_before_cancellation() {
+        let mut app = host();
+        workspace(&mut app, "Project");
+        let id = text_document(app.world_mut());
+        let completion = app
+            .world_mut()
+            .resource_mut::<ManagedWork>()
+            .admit_operation(
+                None,
+                "External mutation",
+                move |world, outcome: OperationOutcome<()>| {
+                    outcome.result.unwrap();
+                    change_text(world, id, "Reconciled during quit");
+                },
+            )
+            .unwrap();
+        let cancel = completion.cancellation();
+        app.world_mut()
+            .write_message(CloseRequested { window: None });
+        app.update();
+        app.update();
+        assert!(matches!(
+            app.world().resource::<AppClose>().phase,
+            ClosePhase::Flushing { .. }
+        ));
+        assert!(!cancel.is_cancelled());
+        assert!(!app.world().resource::<ManagedWork>().is_closing());
+        completion.complete(());
+        eventually(&mut app, |world| {
+            matches!(
+                world.resource::<AppClose>().phase,
+                ClosePhase::FlushError { .. }
+            )
+        });
+        assert!(inspect_document(app.world(), id).unwrap().dirty);
+        assert!(!app.world().resource::<ManagedWork>().is_closing());
+        assert!(app.world().resource::<Messages<AppExit>>().is_empty());
     }
 
     #[test]

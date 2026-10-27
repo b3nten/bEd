@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native single-session opening, exclusion, unsaved work, quit and restoration."""
+"""Native launch-and-quit, exclusion, unsaved decisions and restoration."""
 import argparse
 import json
 import os
@@ -26,6 +26,23 @@ def folder_result(app, root):
     app.request("app.open_folder", path=str(root))
     return wait(app, lambda: (value if not value.get("pending") else None)
                 if (value := app.request("app.inspect_folder_open")) else None)
+
+
+def capture(app, filename):
+    # Replacement windows can take native focus from the retained parent.
+    # Refocus and observe fresh rendered UI before requesting the capture.
+    app.input({"type": "move", "position": [4, 4]})
+    frame = app.inspect()["render"]["frames"]
+    app.wait_until(lambda state: state["windows"][0]["focused"]
+                   and state["render"]["frames"] >= frame + 2
+                   and state["render"]["pending_pipelines"] == 0
+                   and bool(state["ui"]["surfaces"])
+                   and all(surface["diagnostics"]["indices"] > 0
+                           for surface in state["ui"]["surfaces"]))
+    app.request("wait_frames", frames=12)
+    result = app.capture(filename)
+    assert result["nontransparent_pixels"] > 0, filename
+    return result
 
 
 def quit_app(app, save=False):
@@ -80,7 +97,7 @@ def main():
                           {"type":"text", "text":"UNSAVED"})
                 before = preview()
                 assert before["content"] == "UNSAVED" and before["document_info"]["dirty"]
-                captures.append(app.capture("01-unsaved.png"))
+                captures.append(capture(app, "01-unsaved.png"))
                 app.request("app.select_layout", slot=2)
                 second_layout = next(row["layout"] for row in app.request("app.inspect_layouts")["layouts"] if row["active"])
                 second = app.request("app.open_file", layout=second_layout, path=str(source))["panel"]
@@ -90,23 +107,30 @@ def main():
                 assert folder_result(app, project) == {"reused": True}
                 launched = folder_result(app, other)
                 child = launched["pid"]
+                app.wait_until(lambda state: any(text["text"] == "Save All and quit" for text in state["ui"]["texts"]))
+                captures.append(capture(app, "02-replacement-quit-prompt.png"))
+                app.click_text("Cancel")
+                app.wait_until(lambda state: not any(text["text"] == "Quit bEd 2?" for text in state["ui"]["texts"]))
                 # The launched automation-build child is a normal GUI instance.
                 time.sleep(2)
                 os.kill(child, 0)
-                rejected = folder_result(app, other)
-                assert "already open" in rejected["error"], rejected
-                app.input({"type":"key", "code":"Escape", "pressed":True}, {"type":"key", "code":"Escape", "pressed":False})
                 after = preview()
                 assert after["document"] == before["document"] and after["content"] == "UNSAVED"
                 assert app.request("app.inspect_filetree")["project"]["root"] == str(project)
                 assert source.read_text() == "original\n"
-                captures.append(app.capture("02-parent-preserved.png"))
+                captures.append(capture(app, "03-cancel-preserves-parent.png"))
                 with Application([binary, str(project)], output=output/"duplicate", timeout=60) as duplicate:
                     state = wait(duplicate, lambda: (v if v["startup_error"] else None) if (v := duplicate.request("app.inspect_filetree")) else None)
                     assert state["project"] is None and "already open" in state["startup_error"]
-                    captures.append(duplicate.capture("03-duplicate-rejected.png"))
+                    captures.append(capture(duplicate, "04-duplicate-rejected.png"))
                     quit_app(duplicate)
-                quit_app(app, save=True)
+                # A failed replacement still requests the same normal quit.
+                rejected = folder_result(app, other)
+                assert "already open" in rejected["error"], rejected
+                app.click_text("OK")
+                app.wait_until(lambda state: any(text["text"] == "Save All and quit" for text in state["ui"]["texts"]))
+                app.click_text("Save All and quit")
+                assert app.process.wait(timeout=20) == 0
                 assert source.read_text() == "UNSAVED"
             with Application([binary, str(project)], output=output/"restored", timeout=60) as app:
                 ready(app)
@@ -115,7 +139,7 @@ def main():
                 viewers = wait(app, lambda: (rows if len(rows) == 2 and all(not p["loading"] for p in rows) else None)
                     if (rows := [p for p in app.request("app.inspect_filetree")["previews"] if p["path"] == str(source)]) else None)
                 assert len({p["document"] for p in viewers}) == 1, viewers
-                captures.append(app.capture("04-restored.png"))
+                captures.append(capture(app, "05-restored.png"))
                 quit_app(app)
             os.kill(child, signal.SIGTERM)
             child = None

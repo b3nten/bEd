@@ -42,6 +42,7 @@ enum SystemFonts {
     Ready(Catalog),
     Failed(String),
 }
+
 impl Default for SystemFonts {
     fn default() -> Self {
         match std::thread::Builder::new()
@@ -53,9 +54,11 @@ impl Default for SystemFonts {
         }
     }
 }
+
 pub fn install(app: &mut App) {
     app.init_resource::<SystemFonts>();
 }
+
 fn poll_catalog(world: &mut World) {
     if world
         .get_resource::<SystemFonts>()
@@ -77,12 +80,14 @@ pub fn loading(world: &World) -> bool {
         Some(SystemFonts::Loading(_))
     )
 }
+
 pub fn error(world: &World) -> Option<&str> {
     match world.get_resource::<SystemFonts>() {
         Some(SystemFonts::Failed(error)) => Some(error),
         _ => None,
     }
 }
+
 pub fn available(world: &World) -> &[String] {
     static BUNDLED: LazyLock<[String; 1]> = LazyLock::new(|| [DEFAULT_FAMILY.into()]);
     match world.get_resource::<SystemFonts>() {

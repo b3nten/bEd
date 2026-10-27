@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
 import subprocess
 import tempfile
 import time
@@ -54,6 +55,7 @@ def main():
     binary = str(Path(args.binary).resolve())
     previous = {key: os.environ.get(key) for key in ["HOME", "XDG_CONFIG_HOME", "SHELL"]}
     captures = []
+    replacement = None
     try:
         with tempfile.TemporaryDirectory(prefix="fixture-", dir=output) as fixture:
             root = Path(fixture).resolve()
@@ -110,7 +112,35 @@ def main():
                 assert {p["path"] for p in app.request("app.inspect_filetree")["previews"]} == {str(source), str(image)}
                 captures.append(app.capture("restored-files.png"))
                 clean_quit(app)
+            # A real no-argument helper uses the shell's cwd, then closes its
+            # clean home instance without waiting for the new GUI to be ready.
+            with Application([binary], output=output / "replacement", timeout=60) as app:
+                ready(app)
+                panel = terminal_for(app)
+                bootstrap(app, panel, "REPLACEMENT_HELPER_READY")
+                command(app, panel, "cd " + shlex.quote(str(project)) + " && +open")
+                assert app.process.wait(timeout=20) == 0
+                # Discover the ordinary (non-automation) child by its unique
+                # fixture path so it can be checked and retired after the smoke.
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    processes = subprocess.run(["ps", "-axo", "pid=,command="],
+                                               capture_output=True, text=True, check=True)
+                    matches = [int(row.split(None, 1)[0]) for row in processes.stdout.splitlines()
+                               if row.strip().endswith(binary + " " + str(project) + " --no-automation")]
+                    if matches:
+                        assert len(matches) == 1, matches
+                        replacement = matches[0]
+                        break
+                    time.sleep(0.05)
+                assert replacement is not None, "No replacement instance survived parent quit"
+                os.kill(replacement, 0)
     finally:
+        if replacement is not None:
+            try:
+                os.kill(replacement, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         for key, value in previous.items():
             if value is None:
                 os.environ.pop(key, None)
@@ -121,6 +151,7 @@ def main():
         "passed": True, "captures": captures, "cwd_project": True,
         "reuse_project": True, "relative_files": True, "alias": True,
         "missing_file_exit_status": True, "session_restore": True,
+        "directory_launch_and_quit": True,
     }, indent=2) + "\n")
 
 

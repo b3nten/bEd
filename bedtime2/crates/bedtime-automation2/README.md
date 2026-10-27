@@ -107,6 +107,17 @@ application rendering; native titlebar buttons and the OS cursor are outside the
 image. Hidden panels are not specially rendered. Request `inspect` first when
 choosing a panel or viewport target.
 
+Window capture readback does not require a swapchain drawable: a window can render
+into its capture texture on a frame when macOS cannot acquire a drawable for
+presentation. The [Bevy renderer patch](../../../vendor/bevy_render/BED_PATCHES.md)
+keeps these separate. Fully transparent images remain valid capture results.
+The native regression deliberately removes the drawable after rendering and
+checks colored and fully transparent output:
+
+```sh
+cargo run --offline --locked -p bedtime-automation2 --example screenshot_without_drawable
+```
+
 ### Input sequences
 
 Each primitive step is applied on a separate frame before Bevy's input systems

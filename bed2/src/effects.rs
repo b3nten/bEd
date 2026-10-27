@@ -72,6 +72,7 @@ struct EffectUniform {
     // Real elapsed seconds, frame-rate-independent persistence decay.
     clock: Vec4,
 }
+
 impl EffectUniform {
     fn new(settings: &Settings, time: &Time<Real>) -> Self {
         Self {
@@ -208,7 +209,9 @@ struct EffectPipeline {
     bloom_horizontal: CachedRenderPipelineId,
     bloom_vertical: CachedRenderPipelineId,
 }
+
 const BLOOM_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
+
 fn prepare_pipeline(
     mut commands: Commands,
     device: Res<RenderDevice>,
@@ -274,6 +277,7 @@ struct History {
     values: (Vec4, Vec4),
     scene: (Option<Entity>, Option<Entity>),
 }
+
 #[derive(Component)]
 struct BloomTextures {
     textures: [Texture; 2],

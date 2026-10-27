@@ -8,13 +8,11 @@ use bevy::{prelude::*, window::PrimaryWindow};
 mod autosave;
 mod close;
 mod code;
-mod cube;
 mod effects;
 mod file_editor;
 mod files;
 mod fonts;
 mod git;
-mod hex;
 mod images;
 mod keybindings;
 mod layouts;
@@ -30,7 +28,6 @@ mod session;
 mod settings;
 mod status_bar;
 mod storage;
-mod tasks;
 mod terminal;
 
 fn main() -> AppExit {
@@ -63,11 +60,9 @@ fn main() -> AppExit {
         UiPlugin,
         WorkbenchPlugin,
         effects::EffectsPlugin,
-        cube::CubePlugin,
         (mascots::MascotsPlugin, bedtime_model2::ModelPlugin),
         code::CodePlugin,
         files::FilesPlugin,
-        tasks::TasksPlugin,
         git::GitPlugin,
         settings::SettingsPlugin,
         layouts::LayoutsPlugin,
@@ -76,6 +71,7 @@ fn main() -> AppExit {
         (close::ClosePlugin, terminal::TerminalPlugin),
     ))
     .add_systems(Startup, setup);
+    
     bedtime_workbench2::register_document_handlers(app.world_mut())
         .expect("Application document handlers");
 

@@ -4,7 +4,7 @@ fn host() -> (App, DocumentHandle<TextBuffer>, Entity, Entity) {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin);
     let _workspace = crate::test_layout(app.world_mut());
-    let document = open_document(
+    let document = open_memory_document(
         app.world_mut(),
         TextBuffer::from("original"),
         DocumentOptions::loaded("Text"),

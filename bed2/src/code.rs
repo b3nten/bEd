@@ -26,7 +26,7 @@ impl Plugin for CodePlugin {
 fn inspect(world: &mut World, _: serde_json::Value) -> Result<serde_json::Value, String> {
     use bedtime_editor2::workbench::analysis_for_panel;
     let panels: Vec<_> = world
-        .query_filtered::<Entity, With<crate::files::FilePreviewPanel>>()
+        .query_filtered::<Entity, With<crate::files::FilePanel>>()
         .iter(world)
         .collect();
     let panels:Vec<_>=panels.into_iter().map(|panel| {
@@ -52,6 +52,7 @@ pub(crate) struct PersistedStructure;
 pub(crate) fn register_persistence(app: &mut App) {
     app.register_type::<PersistedStructure>();
 }
+
 pub(crate) fn project_persistence(
     world: &mut World,
     captured: &mut bedtime_workbench2::persistence::CapturedWorld,

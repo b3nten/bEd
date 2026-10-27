@@ -551,3 +551,6 @@ impl bedtime_ui2::Component for ModelView {
         Self::show(ui, world, entity);
     }
 }
+
+#[cfg(feature = "workbench")]
+pub mod document;

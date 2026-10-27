@@ -19,7 +19,16 @@ def clean_quit(app):
     except AutomationError:
         if app.process.poll() not in (None, 0):
             raise
-    assert app.process.wait(timeout=12) == 0
+    try:
+        assert app.process.wait(timeout=12) == 0
+    except subprocess.TimeoutExpired:
+        # Preserve the actual close gate instead of reporting only a process timeout.
+        (app.output / "quit-timeout.json").write_text(json.dumps({
+            "snapshot": app.inspect(),
+            "files": app.request("app.inspect_filetree"),
+        }, indent=2))
+        app.capture("quit-timeout.png")
+        raise
 
 
 def wait_for(app, predicate, label):

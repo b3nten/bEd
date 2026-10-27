@@ -1,18 +1,9 @@
 //! Optional Tree-sitter contributions. Hosts own sessions and explicitly attach
 //! matching observations; editor views never create their own parser workers.
 use crate::*;
-use bedtime_treesitter2::{AnalysisSession, Observation, Source};
+use bedtime_treesitter2::{AnalysisSession, Observation};
 use std::sync::Arc;
 
-impl Source for TextBuffer {
-    fn len(&self) -> usize {
-        TextBuffer::len(self)
-    }
-    fn chunk(&self, byte: usize) -> &[u8] {
-        let (chunk, start) = self.chunk_at(byte);
-        &chunk.as_bytes()[byte - start..]
-    }
-}
 /// Submit a cheap immutable root. Positional journal gaps force a fresh parse.
 pub fn update_analysis(
     session: &mut AnalysisSession,

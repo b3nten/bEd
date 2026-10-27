@@ -48,6 +48,7 @@ pub fn install(app: &mut App) {
 }
 
 use serde::{Deserialize, Serialize};
+
 /// Missing chord inherits; a present chord with no command explicitly unbinds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -57,23 +58,29 @@ pub struct Declaration {
     #[serde(default)]
     pub repeat: bool,
 }
+
 #[derive(Resource, Reflect, Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 #[reflect(opaque)]
 #[reflect(Resource, Serialize, Deserialize, GlobalPersist)]
 pub struct GlobalBindings(pub Vec<Declaration>);
+
 #[derive(Resource, Reflect, Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 #[reflect(opaque)]
 #[reflect(Resource, Serialize, Deserialize, ProjectPersist)]
 pub struct ProjectBindings(pub Vec<Declaration>);
+
 #[derive(Resource, Default)]
 struct Defaults(Vec<Declaration>);
+
 #[derive(Resource, Default)]
 struct Applied(Option<(GlobalBindings, ProjectBindings)>);
+
 #[derive(Component)]
 struct ResolvedBinding;
 fn chord_identity(chord: KeyChord) -> (Modifiers, KeyCode) {
     (chord.modifiers.resolved(), chord.key)
 }
+
 pub fn validate(values: &[Declaration]) -> Result<(), String> {
     if values.len() > 256 {
         return Err("Too many binding declarations".into());
@@ -103,6 +110,7 @@ pub fn validate(values: &[Declaration]) -> Result<(), String> {
     }
     Ok(())
 }
+
 pub fn merge(
     baseline: &[Declaration],
     live: &[Declaration],
@@ -128,6 +136,7 @@ pub fn merge(
     }
     result
 }
+
 fn resolve(
     defaults: &[Declaration],
     global: &[Declaration],
@@ -142,6 +151,7 @@ fn resolve(
     }
     result
 }
+
 fn apply(world: &mut World) {
     let global = world.resource::<GlobalBindings>().clone();
     let project = world.resource::<ProjectBindings>().clone();
@@ -170,9 +180,11 @@ fn apply(world: &mut World) {
     }
     world.resource_mut::<Applied>().0 = Some((global, project));
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    
     #[test]
     fn equivalent_primary_chords_merge_as_one_override() {
         let chord = KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS);
@@ -191,6 +203,7 @@ mod tests {
         validate(&merged).unwrap();
         assert!(validate(&[baseline[0].clone(), live[0].clone()]).is_err());
     }
+    
     #[test]
     fn declarations_preserve_inherit_override_and_explicit_unbind() {
         let chord = KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS);

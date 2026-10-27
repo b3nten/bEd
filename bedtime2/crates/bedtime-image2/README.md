@@ -1,8 +1,8 @@
 # bedtime-image2
 
-Embeddable static raster/SVG viewing through UI2. The host owns file identity,
-source loading, workers, menus and persistence. No filesystem reads, worker
-threads, windows or application viewer associations are installed by the crate.
+Embeddable static raster/SVG viewing through UI2. The standalone host owns file identity,
+source loading, menus and persistence. The canvas installs no filesystem reads, workers, windows or application viewer
+associations. The optional Workbench document adapter supplies managed preparation.
 
 Call `ImageContent::prepare(bytes, path)` and `content.render(physical_size)` on a
 host-owned worker. Share immutable content through `Arc`; feed the resulting
@@ -29,10 +29,10 @@ the rasterization limit. SVG text uses a lazily loaded system font database on t
 worker. Embedded images obey dimension limits; external image references are
 ignored. The host must bound encoded source reads (bEd2 uses 256 MiB).
 
-Enable `workbench` for the minimal `workbench::ImagePanel`, with required
-`ImageView` and panel drawing. This adapter owns no files or tasks. bEd2 instead
-composes the canvas in its shared file panel to retain application document,
-preview, context-menu and lifecycle policy.
+Enable `workbench` for the minimal `workbench::ImagePanel`, or compose
+`document::ImagePreview` in an existing document panel. The latter owns managed
+preparation from canonical text/binary bytes and revision checks. bEd2 uses it
+and supplies viewer associations, tab placement, context menus and persistence.
 
 ```sh
 cargo test --offline --locked -p bedtime-image2
@@ -45,3 +45,8 @@ python3 -B bedtime2/tools/smoke_images.py
 
 Decoder behavior and fixtures are ported from the repository's v1 image plugin;
 there is no dependency on its plugin API or frontend.
+
+With `workbench`, `document::ImagePreview` supplies managed preparation from a
+canonical TextDocument or BinaryDocument. SVGs observe current text, raster images
+read a bounded binary snapshot, and obsolete jobs cannot replace newer revisions.
+The host supplies its context menu and placement.

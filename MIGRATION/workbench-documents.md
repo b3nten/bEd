@@ -1,5 +1,9 @@
 # Workbench documents: implemented contract and deferred work
 
+Source ownership update (2026-10-26): [source-backed documents](source-backed-documents.md)
+supersedes application-owned loading, identity, save binding and observation below.
+Use the current Workbench README for the source-backed API and standard models.
+
 Ownership update (2026-10-24): the implemented [world/session migration](workbench-world-session-plan.md)
 supersedes workspace entities/membership, workspace command scope and the blanket
 exclusion of reusable persistence in this record. The World owns one session;

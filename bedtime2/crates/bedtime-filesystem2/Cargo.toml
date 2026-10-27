@@ -1,0 +1,23 @@
+[package]
+name = "bedtime-filesystem2"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Headless native file sources, checked streaming writes and filesystem operations"
+
+[features]
+default = []
+workbench = ["dep:bevy", "dep:bedtime-workbench2"]
+
+[dependencies]
+bevy = { workspace = true, features = ["std"], optional = true }
+bedtime-workbench2 = { path = "../bedtime-workbench2", default-features = false, optional = true }
+bedtime-document2.workspace = true
+trash.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify = { version = "=8.2.0", default-features = false }

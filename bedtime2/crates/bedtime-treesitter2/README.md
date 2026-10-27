@@ -5,8 +5,8 @@ outlines. This crate owns parsing/query execution; it has no editor, UI, ECS,
 Workbench or filesystem dependency. Native grammars and queries come from the
 single [bundled grammar crate](../bedtime-grammars2/README.md).
 
-`Source` reads immutable UTF-8 chunks and a byte length. The editor implements it
-for its persistent `TextBuffer`; submitting an `Arc` around that cheap root does
+`Source` reads immutable UTF-8 chunks and a byte length. The optional `documents` feature implements it
+for the shared persistent `bedtime-document2::TextBuffer`; submitting an `Arc` around that cheap root does
 not materialize source text on the caller's thread. Hosts explicitly own an
 `AnalysisSession`, submit source/revision/language, poll completion, and share its
 `Arc<Observation>` with consumers. `with_worker` exposes the execution half for a

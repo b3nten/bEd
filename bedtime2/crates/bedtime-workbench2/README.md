@@ -89,7 +89,8 @@ Keep deferred writers/readers ordered normally; unapplied Commands are not visib
 
 ## Application-owned sessions and close decisions
 
-The host owns admission, save/discard decisions, storage and external I/O.
+The host owns project/session admission, save/discard decisions, application
+storage and process services. Document sources own document I/O.
 Workbench provides composition, checked structural transitions and optional
 [reflected persistence](#optional-reflected-persistence). It has no panel factory
 catalog or built-in project/window manager. See the
@@ -105,228 +106,96 @@ not a user-facing close protocol. Use document preflight before session shutdown
 
 ## Documents
 
-[`bedtime-editor2`](../bedtime-editor2/README.md) optionally adapts its persistent
-`TextBuffer` model to these same sessions/history and supplies embeddable text
-views. Applications retain file/source policy. `document_changes_since` exposes
-a bounded, independently readable journal of all accepted content transitions,
-including undo/redo and whole-model invalidations; readers refresh on a gap.
+Workbench composes source I/O, representation and history using the headless
+[`bedtime-document2`](../bedtime-document2/README.md) core. It reexports
+`TextDocument`, `BinaryDocument`, `DocumentModel`, `DocumentSource` and
+`MemorySource`. The editor supplies views, not a separate canonical text owner.
 
-Workbench owns document sessions in the World independently of their panel viewers.
-The application creates and loads models, supplies source observations and save
-I/O, and owns source identity, storage, merge and recovery policy. Documents use
-the core crate only: no renderer, window backend, native library, filesystem
-watcher or storage provider is involved. The full contract, invariants and
-deferred requirements are in [the workbench documents
-record](../../../MIGRATION/workbench-documents.md).
-
-`open_document` creates a document in the World. `String` is a built-in model
-with UTF-8 byte-range edits. `DocumentOptions::loaded` marks the supplied model
-as the acknowledged source checkpoint; `DocumentOptions::unsaved` supplies no
-checkpoint, so even untouched content is dirty. `DocumentOptions::default()` is
-`unsaved("Untitled")`.
+There is **one typed document per canonical source per World**. Opening the same
+source/type returns the existing handle, including during loading or after a
+load failure. Opening another representation for that source returns `WrongModel`
+without changing its contents, history or pending work. Providers own source
+identity; Workbench owns its document association. Old string `source_key`
+deduplication has been removed.
 
 ```rust,ignore
-let text = open_document(world, "Initial".to_owned(),
-    DocumentOptions::loaded("notes.txt"))?;
-let scratch = open_document(world, String::new(),
-    DocumentOptions::unsaved("Untitled"))?;
-
-#[derive(Clone, Default, PartialEq)]
-struct Settings { name: String }
-#[derive(Clone)]
-enum SettingsChange { Name(String) }
-impl bedtime_workbench2::DocumentModel for Settings {
-    type Change = SettingsChange;
-    fn apply(&mut self, change: &SettingsChange) -> Result<SettingsChange, String> {
-        // Run on an isolated clone; return the inverse; do no I/O.
-        let SettingsChange::Name(name) = change;
-        Ok(SettingsChange::Name(std::mem::replace(&mut self.name, name.clone())))
-    }
-}
-let settings = open_document(world, Settings::default(),
-    DocumentOptions::loaded("Settings"))?;
+let source = MemorySource::new("Notes", TextDocument::from("hello"));
+let document = Workbench::new(world).open_document::<TextDocument>(source)?;
+// Returns immediately; inspect_document reports Loading, Ready or Failed.
+bind_document_view(world, panel, document)?;
 ```
 
-`DocumentModel` requires `Clone + PartialEq + Send + Sync + 'static`, and its
-`Change` type is `Clone + Send + Sync + 'static`. A clone is the editable
-candidate, so `Clone` must isolate mutable state (not share it with the
-canonical model) and `apply` must not perform I/O or mutate anything outside its
-own model. `PartialEq` defines clean content: the document is clean exactly
-when the model equals its acknowledged source baseline. `source_key` deduplicates
-reopening throughout the World; it returns the existing session rather than
-replacing contents, and a model-type mismatch fails.
+A `Document` entity privately owns representation/history and acknowledged source
+knowledge. `DocumentHandle<Model>` and `DocumentView` are non-owning references;
+closing the last viewer retains the document and admitted saves. Explicit
+`close_document`/`discard_document` retire its viewers and association after
+preflight. `MemorySource` supplies explicitly clean or unsaved initial models. Legacy
+content-first constructors and separately installed save callbacks are excluded
+from the production API; controlled regression fixtures use the opt-in
+`test-support` feature.
 
-Bind a panel with the typed handle. The panel must be a live `PanelInstance`; viewers in any layout can bind the
-same document:
+`read_document` returns a reference to the model when ready. Edits carry the
+expected content revision, are evaluated against an isolated clone and commit
+atomically. Models supply inverse changes; the shared history engine owns undo,
+redo and transaction grouping. `document_changes_since` independently exposes the
+last 128 commits, including undo/redo; an expired journal or whole-model replacement
+requires refreshing derived positions. History retention does not control journal
+retention. The persistent text representation shares roots rather than copying
+whole files during ordinary edits and snapshots.
 
-```rust,ignore
-bind_document_view(world, panel, text)?; // Inserts DocumentView, updates PanelInstance.dirty.
-```
+Dirty state means content differs from the acknowledged source baseline. It is
+not revision inequality. Source knowledge stays outside undo history: undoing an
+external update restores older editable contents but does not forget current disk
+knowledge. `DocumentDraft` on a viewer declares uncommitted input; save, history,
+rebinding and retirement preserve the existing composition barriers.
 
-The session, not the viewer, owns content, revision and history. Closing a viewer
-never closes the document; `document_ids(world)` lists sessions and
-`cast_document::<M>` recovers a typed handle.
+### Loading, saving and observation
 
-Edits take the expected revision and return the new one. Revisions start at 0,
-advance once per accepted content change and reject stale expectations. Revision
-is monotonic but is not a saved-state id: compare `DocumentInfo.dirty` against
-the acknowledged baseline instead. `TextChange` ranges are UTF-8 bytes, and both
-ends must be character boundaries.
+Sources supply initial content. Workbench reserves identity/type before scheduling
+load work, and owns Loading/Ready/Failed transitions, refresh tasks and result
+acceptance. Periodic observations use a rotating shared budget of at most 64
+outstanding source checks; memory sources opt out. Native invalidation is supplied
+by Filesystem2's optional integration, with bounded polling as fallback.
 
-```rust,ignore
-let info = inspect_document(world, text.id())?;
-let revision = edit_document(world, text, info.revision,
-    TextChange { range: 3..3, replacement: "!".into() },
-    EditOptions::new("Typing"))?;
-edit_document_transaction(world, text, revision,
-    [first_change, second_change], EditOptions::new("Paste"))?;
-```
+`save_document` captures the model **and its acknowledged baseline**. The source
+writes that capture on managed work. Success acknowledges only the captured model;
+edits made while saving remain dirty. Destination admission and source-specific
+write leases prevent competing in-process writes. A changed source refuses the
+write. Uncertain results, including a source callback returning `SourceChanged`,
+require a fresh observation before retry. `saved_document_capture` returns the
+contents acknowledged by a `DocumentSaveFinished` receipt for consumers such as LSP.
+Applications do not install filesystem save callbacks or maintain disk checkpoints.
 
-A transaction applies all changes to successive states of one isolated clone and
-commits one revision and undo entry; a failing change changes nothing. No-op
-transactions add no revision or history. `history_limit` defaults to 100 and 0
-disables history, not editing. `undo_document`/`redo_document` return the new
-revision and reject drafts.
+External observations are checked against source generation. Clean refreshes are
+undoable replacements; dirty documents retain edits and record incoming content
+as a conflict. `AcceptIncoming`, `KeepLocal` and `Merged` acknowledge the observed
+source without implicitly saving. Stale resolutions fail. Source location changes
+retain document/history; confirmed deletion preserves dirty content and disables
+its save association. Inspection exposes source presence and pending refresh work.
 
-Group consecutive edits into one undo entry with an explicit group. Save start,
-external observation, undo/redo, rebinding or an ungrouped edit closes the group,
-and a closed group cannot be reopened:
+### Byte views and standard save policies
 
-```rust,ignore
-let group = begin_document_undo_group(world, text.id(), panel)?;
-edit_document(world, text, revision, change,
-    EditOptions::grouped("Typing", group))?;
-end_document_undo_group(world, text.id(), group)?;
-undo_document(world, text.id())?;
-redo_document(world, text.id())?;
-```
+`document_bytes(world, id)` captures current text bytes, including unsaved edits,
+or a version-bound binary snapshot. Its bounded range/stream methods are worker
+operations. Range reads are limited to 16 MiB; `read_bounded(limit)` and streaming
+readers support consumers with larger explicit budgets. Offsets use `u64`.
+`DocumentBytePageCache` observations expose shared 64 KiB pages, with at most 32
+cached pages per projection. Native reads and cache updates use managed work;
+drawing consumes available pages. Hex uses this support rather than owning a
+second filesystem lifecycle. Binary documents are read-only; paged text editing
+is deferred, and text initially retains its 256 MiB load limit.
 
-`DocumentDraft` on a viewer declares uncommitted input. Insert it while the input
-is uncommitted and remove it only after committing or abandoning that input:
+`tick_document_autosave` accepts Never/AfterIdle/OnFocusChange policy and admitted
+focus/settings state. It owns timing, deduplication and completion handling.
+`begin_document_save_all` returns a tracked operation whose `poll` reports pending,
+complete or failed and revalidates captured documents. Hosts supply user decisions
+and flush their application storage before `shutdown_work`, then continue updating
+until `work_finished`. Cancelling a quit intention does not cancel admitted saves.
 
-```rust,ignore
-world.entity_mut(panel).insert(DocumentDraft);
-world.entity_mut(panel).remove::<DocumentDraft>();
-```
-
-While any viewer has a draft, save, undo, redo, document close/discard and
-session or panel/layout closure reject with `Drafts`. `DocumentInfo` exposes
-`has_drafts` and disables `can_undo`/`can_redo`; reconciliation derives
-`PanelInstance.dirty` from document dirtiness or the viewer's draft.
-
-Saves are asynchronous and typed. Bind one callback per document, then start a
-save. The callback receives an immutable snapshot of the content captured at
-save start, its revision and source generation, and the acknowledged source
-version at that time. It runs in managed work, so it may block on
-application I/O.
-
-```rust,ignore
-bind_document_save(world, text, DocumentSaveBinding::new(
-    Some("project/notes.txt".into()), // Serializes equal destinations across the World.
-    |snapshot| {
-        // Application code: conditionally write snapshot.model, checked against
-        // snapshot.expected_source_version. Return the new token (or None), and
-        // return DocumentSaveError::Conflict when the backend refuses the write.
-        Ok(None)
-    },
-))?;
-let work = save_document(world, text.id())?;
-```
-
-Destination keys serialize saves across every document in the
-World; an absent key serializes only within that document. Conditional writes
-remain the backend's responsibility: an absent or unchecked token provides no
-overwrite protection. One save runs per document, and a save, rebind, close or
-discard while it is in flight is rejected.
-
-The installed polling system runs before `SessionSystems::Prepare` and emits
-`DocumentSaveFinished` messages; `poll_document_saves` returns completions
-directly without blocking. Success acknowledges only the captured model (later
-edits stay dirty) and stores the returned token. Failures preserve content and
-history. `Conflict`, `Panicked` and `Cancelled` require a fresh source observation
-before retry; `SourceChanged` means the write may have succeeded but newer source
-knowledge cannot be acknowledged. These uncertain receipts advance the source
-generation so an older read cannot masquerade as the required refresh. Retained
-conflicts cannot be resolved until that refresh is supplied.
-
-External source changes are offered with the expected source generation.
-`SourceVersion` is an opaque application token, not a timestamp. The component
-that opens and observes a source supplies events in source order; Workbench gates
-them by generation but does not reorder, coalesce or debounce them.
-
-```rust,ignore
-let generation = inspect_document(world, text.id())?.source_generation;
-let update = offer_document_external_update(world, text, generation,
-    loaded, Some(version))?; // Applied, Acknowledged, Duplicate or Conflict.
-```
-
-A stale generation rejects atomically with `StaleSourceGeneration`, so an async
-read started before a save or refresh cannot overwrite newer knowledge. A clean
-document is replaced with an undoable external update. A dirty document retains
-local content and records a conflict; later observations do not replace local
-content automatically, though they may acknowledge it when it already matches
-the incoming content. Otherwise, inspect and resolve the conflict explicitly
-with the current revision and source generation:
-
-```rust,ignore
-if let Some(conflict) = document_conflict(world, text)? {
-    resolve_document_conflict(world, text,
-        conflict.revision, conflict.source_generation,
-        DocumentConflictResolution::Merged(merged))?;
-}
-```
-
-`AcceptIncoming`, `KeepLocal` and `Merged` all acknowledge the incoming token;
-`Merged` is an application-supplied result, not a built-in merge algorithm.
-Resolution does not write to the source, and a stale revision or generation is
-rejected. If `requires_source_refresh` is true, fetch and offer a new observation
-first; accepting a cached conflict is not a substitute for that refresh.
-
-A watcher may echo a write before its save receipt arrives. Matching captured
-contents are retained without replacing local edits or undo state, then
-acknowledged only when the successful receipt's source token also matches.
-
-Controlled lifecycle calls close every bound viewer after validation:
-
-```rust,ignore
-check_document_close(world, text.id(), false)?; // Inspect only.
-close_document(world, text.id())?;              // Clean, conflict-free, not saving/drafted.
-// Alternatively, after an explicit discard decision:
-// discard_document(world, text.id())?;
-preflight_session_close(world, SessionCloseMode::Saved)?;
-shutdown_work(world)?;
-// Continue updating until work_finished(world), then exit/drop the World.
-```
-
-`SessionCloseMode::Saved` requires clean, conflict-free documents; `Discard`
-allows dirty content/conflicts. Both reject in-flight saves and drafts.
-`preflight_session_close` is read-only. Call it before presenting save/discard/cancel
-UI and again after asynchronous saves. `shutdown_work` also refuses pending writes
-and drafts before cancellation. Raw despawn bypasses these checks.
-
-Document handlers and shortcuts are explicit application choices, not installed
-by the core plugin (which supplies their command definitions). The supplied world handlers act on the focused panel's
-`DocumentView` and fail without rerouting when no document viewer is admitted:
-
-```rust,ignore
-register_document_handlers(world)?; // SaveDocument, UndoDocument, RedoDocument.
-register_document_shortcuts(world); // Primary+S, Primary+Z, Primary+Shift+Z, Primary+Y.
-```
-
-Text viewers must route undo/redo before their `egui::TextEdit` handles those
-chords and call `undo_document`/`redo_document`. The general shortcut collector
-deliberately leaves text-editing chords to widgets, so a widget-private history
-would diverge from the document; use the same document undo instead.
-
-The optional persistence module captures opted-in durable descriptors and layout
-structure. The host reopens documents through its checked source-loading path;
-`source_key` deduplicates across the World. Capturing file descriptors does not
-preserve unsaved content or history. Those require an explicit recovery design.
-
-Replacing a save binding is not a complete Save As workflow: source identity,
-any chooser and source-key changes remain application-owned. Workbench provides
-no filesystem watcher, storage chooser/provider, merge algorithm, history
-persistence or automatic crash recovery.
+Optional reflected persistence captures layout/view descriptors rather than
+unsaved document contents/history. Sources reopen through the ordinary checked
+path. New/Untitled UI, Save As and crash recovery remain deferred. The durable
+ownership record is [source-backed documents](../../../MIGRATION/source-backed-documents.md).
 
 ## Error dialogs (`ui` feature)
 
@@ -720,13 +589,34 @@ let task = Workbench::new(world).work().spawn_task(Some(panel), "Search", |cance
 
 `ManagedWork` owns workers independently of result/I/O handles. An optional owner
 entity gives work a shorter lifetime: its removal cancels work on the next update.
-Hidden layouts do not suspend workers or polling. `ManagedTask` reports Finished,
-Cancelled and Failed; in-process cancellation is cooperative. `ManagedProcess`
+Hidden layouts do not suspend workers or polling. `spawn_task` is for disposable
+calculations: cancellation can suppress its returned value. `ManagedTask` reports
+Finished, Cancelled and Failed; in-process cancellation is cooperative. `ManagedProcess`
 provides bounded stdin, drained stdout/stderr and exit status. Output retains the
 newest 256 KiB; writes are limited to 8 KiB with 16 queued writes. `close_stdin`
 delivers EOF after queued input. PTY setup belongs to a terminal backend.
 
-For orderly exit, finish admitted saves/drafts and host storage flushes, call
+For mutating work, `ManagedWork::admit_operation(owner, label, complete)` reserves
+one retained completion before execution or queue admission. It returns a single
+`OperationCompletion<T>` producer token, suitable for an existing serialized worker;
+it does not start another thread. Check `token.cancellation()` cooperatively and
+call `token.complete(actual_outcome)` even when cancellation was requested. The
+callback receives independent `OperationOutcome { cancellation_requested, result }`
+facts. A dropped/panicked producer yields an explicit error that effects may have
+occurred. Successful domain outcomes may include partial changes and domain errors.
+
+Managed work owns delivery independently of panel, executor and producer lifetimes.
+Callbacks run once on the main World in `Last` / `SessionSystems::Close`, after the
+managed resource is restored so reconciliation can use normal services. Handlers
+are trusted application code and must finish without panicking. `work_finished`
+stays false through callback consumption, including during orderly shutdown;
+cancellation never acknowledges or discards a completion. Ordinary `spawn_task`
+results retain their disposable contract. Hosts must consume domain messages and
+persist resulting changes before cancelling their storage services.
+
+For orderly exit, drain `ManagedWork::operations_pending()` so admitted effects
+finish their main-world reconciliation. Finish admitted saves/drafts and host
+storage flushes, call
 `preflight_session_close(world, Saved or Discard)`, then `shutdown_work(world)`.
 New document/work admissions are rejected after shutdown. Keep updating until
 `work_finished(world)`, then emit AppExit/drop the World. Dropping alone is a
@@ -922,6 +812,18 @@ real pointer input, including presses just into the gutter:
 cargo build --offline --locked -p bed2 --features automation
 python3 bedtime2/tools/smoke_corners.py
 ```
+
+## Native path fields
+
+`native_path::NativePath` encodes lossless platform-tagged native units without
+filesystem I/O. Unix bytes and Windows wide units use safe native constructors;
+foreign platforms are rejected. `#[serde(with = "bedtime_workbench2::native_path::path")]`
+and the `option` companion work on `PathBuf` / `Option<PathBuf>` fields, accept
+legacy UTF-8 strings on read and reject NUL units. Field owners validate scope,
+normalization and size. These codecs also work without the `persistence` feature;
+Filetree uses the same record for its version-1 visibility format, unchanged.
+Opaque reflected descriptors can use these Serde field codecs directly; generic
+world serialization cannot make ordinary Serde `PathBuf` lossless.
 
 ## Optional reflected persistence
 

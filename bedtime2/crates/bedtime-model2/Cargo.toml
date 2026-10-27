@@ -8,9 +8,10 @@ description = "Embeddable glTF/GLB and STL scenes for UI2"
 
 [features]
 default = []
-workbench = ["dep:bedtime-workbench2"]
+workbench = ["dep:bedtime-workbench2", "dep:bedtime-filesystem2"]
 
 [dependencies]
+bedtime-filesystem2 = { workspace = true, optional = true }
 bedtime-ui2.workspace = true
 bedtime-workbench2 = { path = "../bedtime-workbench2", optional = true, default-features = false, features = ["ui"] }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "reflect_auto_register", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_anti_alias", "bevy_log", "bevy_mikktspace", "bevy_gltf", "png", "jpeg", "webp"] }

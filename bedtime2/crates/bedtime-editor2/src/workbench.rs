@@ -161,13 +161,6 @@ pub fn navigate_editor(
     Ok(())
 }
 
-impl DocumentModel for TextBuffer {
-    type Change = BufferEdit;
-    fn apply(&mut self, change: &BufferEdit) -> Result<BufferEdit, String> {
-        change.apply(self)
-    }
-}
-
 fn error(error: DocumentError) -> EditorError {
     EditorError(error.to_string())
 }
@@ -201,8 +194,8 @@ impl TextSession for WorkbenchTextSession<'_> {
                             changes
                                 .into_iter()
                                 .map(|change| TextDelta {
-                                    range: change.range,
-                                    inserted_bytes: change.replacement.len(),
+                                    range: change.range(),
+                                    inserted_bytes: change.replacement().len(),
                                 })
                                 .collect()
                         }),

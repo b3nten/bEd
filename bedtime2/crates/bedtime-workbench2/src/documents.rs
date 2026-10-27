@@ -1,13 +1,10 @@
 //! World-owned canonical documents, independent of their panel viewers.
 //!
-//! The application creates/loads models and supplies source observations and save
-//! I/O. Only this module mutates canonical content, history and acknowledged source
-//! checkpoints. Text and other models use exactly the same session machinery.
-//! A source version is an opaque application token, not a filesystem timestamp.
-//! Save callbacks must enforce their backend's compare-and-swap contract if lost
-//! updates must be prevented: an absent token (or an unconditional writer) cannot
-//! provide overwrite protection. Observations must be supplied in source order;
-//! generation checks reject reads started against older document source knowledge.
+//! Providers supply canonical sources and own loading/persistence. Workbench
+//! admits source I/O and accepts results against source generations. Only this
+//! module mutates canonical content, history and acknowledged source checkpoints.
+//! Text and custom models use the same session machinery. Source versions are
+//! opaque provider tokens; sources enforce their actual overwrite expectations.
 //!
 //! ```
 //! use bevy::prelude::*;
@@ -16,14 +13,14 @@
 //! let mut app = App::new();
 //! app.add_plugins(WorkbenchCorePlugin);
 //! let document = open_document(
-//!     app.world_mut(), String::from("hello"),
-//!     DocumentOptions::loaded("Notes"),
+//!     app.world_mut(), MemorySource::new("Notes", String::from("hello")),
 //! )?;
 //! let panel = {
 //!     let mut workbench = Workbench::new(app.world_mut());
 //!     let layout = workbench.create_layout("Code")?;
 //!     workbench.create_panel(layout, "Notes")?
 //! };
+//! while inspect_document(app.world(), document.id())?.load_state == DocumentLoadState::Loading { app.update(); std::thread::yield_now(); }
 //! bind_document_view(app.world_mut(), panel, document)?;
 //! edit_document(app.world_mut(), document, 0, TextChange {
 //!     range: 5..5, replacement: " world".into(),
@@ -38,38 +35,17 @@ use crate::{ManagedWork, PanelInstance, WorkId, Workbench};
 use bevy::prelude::*;
 use std::{
     any::{Any, TypeId, type_name},
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     fmt,
     marker::PhantomData,
-    ops::Range,
     sync::{Arc, mpsc::TryRecvError},
 };
 
-/// A model's change must return an inverse that restores the previous model.
-/// Changes are evaluated on an isolated clone; returning an error never changes
-/// the canonical model, revision or history. Implementations must not perform I/O.
-pub trait DocumentModel: Clone + PartialEq + Send + Sync + 'static {
-    type Change: Clone + Send + Sync + 'static;
-    fn apply(&mut self, change: &Self::Change) -> Result<Self::Change, String>;
-}
-
-/// Replace a UTF-8 byte range. Both ends must be character boundaries.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TextChange {
-    pub range: Range<usize>,
-    pub replacement: String,
-}
-
-/// One accepted content transition. Changes use successive pre-change states;
-/// `None` means a whole-model replacement and requires refreshing derived data.
-/// This journal is independent of undo history and includes undo/redo.
-#[derive(Clone, Debug)]
-pub struct DocumentCommit<C> {
-    pub revision: u64,
-    pub changes: Option<Vec<C>>,
-}
-
-const CHANGE_JOURNAL_LIMIT: usize = 128;
+pub use bedtime_document2::DocumentCommit;
+use bedtime_document2::History;
+pub use bedtime_document2::{
+    BinaryDocument, DocumentModel, SourceVersion, TextChange, TextDocument,
+};
 
 /// Read transitions after `revision` without consuming another reader's updates.
 /// `None` means the bounded journal no longer covers that revision. Refresh from
@@ -80,50 +56,16 @@ pub fn document_changes_since<M: DocumentModel>(
     revision: u64,
 ) -> Result<Option<Vec<DocumentCommit<M::Change>>>, DocumentError> {
     let session = typed_session::<M>(world, handle.id)?;
-    if revision > session.revision {
+    if revision > session.history.revision() {
         return Err(DocumentError::StaleRevision {
             expected: revision,
-            actual: session.revision,
+            actual: session.history.revision(),
         });
     }
-    if revision == session.revision {
+    if revision == session.history.revision() {
         return Ok(Some(Vec::new()));
     }
-    if session
-        .commits
-        .front()
-        .is_none_or(|first| first.revision > revision + 1)
-    {
-        return Ok(None);
-    }
-    Ok(Some(
-        session
-            .commits
-            .iter()
-            .filter(|commit| commit.revision > revision)
-            .cloned()
-            .collect(),
-    ))
-}
-
-impl DocumentModel for String {
-    type Change = TextChange;
-    fn apply(&mut self, change: &TextChange) -> Result<TextChange, String> {
-        let range = change.range.clone();
-        if range.start > range.end
-            || range.end > self.len()
-            || !self.is_char_boundary(range.start)
-            || !self.is_char_boundary(range.end)
-        {
-            return Err("Text change is not a valid UTF-8 byte range".into());
-        }
-        let inverse = TextChange {
-            range: range.start..range.start + change.replacement.len(),
-            replacement: self[range.clone()].to_owned(),
-        };
-        self.replace_range(range, &change.replacement);
-        Ok(inverse)
-    }
+    Ok(session.history.changes_since(revision))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -168,21 +110,6 @@ impl<M: DocumentModel> DocumentHandle<M> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct SourceVersion(pub String);
-
-impl From<&str> for SourceVersion {
-    fn from(value: &str) -> Self {
-        Self(value.to_owned())
-    }
-}
-
-impl From<String> for SourceVersion {
-    fn from(value: String) -> Self {
-        Self(value)
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentInitialState {
     /// The supplied model is the acknowledged source checkpoint, even if no
@@ -195,9 +122,6 @@ pub enum DocumentInitialState {
 #[derive(Clone, Debug)]
 pub struct DocumentOptions {
     pub title: String,
-    /// Application identity, deduplicated throughout this World. Reopening
-    /// an existing key returns its session and does not replace its contents.
-    pub source_key: Option<String>,
     pub initial_state: DocumentInitialState,
     /// Maximum retained undo transactions. Zero disables history, not editing.
     pub history_limit: usize,
@@ -207,7 +131,6 @@ impl DocumentOptions {
     pub fn loaded(title: impl Into<String>) -> Self {
         Self {
             title: title.into(),
-            source_key: None,
             initial_state: DocumentInitialState::Loaded(None),
             history_limit: 100,
         }
@@ -230,18 +153,18 @@ impl Default for DocumentOptions {
 #[derive(Component)]
 pub struct Document {
     title: String,
-    source_key: Option<String>,
     model_type: TypeId,
     model_name: &'static str,
     state: Box<dyn ErasedSession>,
+    pub(crate) source: bedtime_document2::SourceId,
+    pub(crate) source_missing: bool,
+    pub(crate) source_pending: bool,
+    pub(crate) load_state: crate::DocumentLoadState,
 }
 
 impl Document {
     pub fn title(&self) -> &str {
         &self.title
-    }
-    pub fn source_key(&self) -> Option<&str> {
-        self.source_key.as_deref()
     }
     pub fn model_type_name(&self) -> &'static str {
         self.model_name
@@ -291,8 +214,10 @@ pub struct DocumentDraft;
 #[derive(Clone, Debug)]
 pub struct DocumentInfo {
     pub id: DocumentId,
+    pub load_state: crate::DocumentLoadState,
+    pub source_missing: bool,
+    pub source_pending: bool,
     pub title: String,
-    pub source_key: Option<String>,
     pub model_type_name: &'static str,
     pub revision: u64,
     /// Advances with accepted source knowledge, independently of content revision.
@@ -318,6 +243,8 @@ pub struct DocumentInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentError {
     Unavailable(DocumentId),
+    Loading,
+    LoadFailed(String),
     SessionUnavailable,
     SessionClosing,
     WrongModel {
@@ -352,6 +279,8 @@ pub enum DocumentError {
 impl fmt::Display for DocumentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Loading => f.write_str("Document is loading"),
+            Self::LoadFailed(error) => write!(f, "Document load failed: {error}"),
             Self::Unavailable(id) => write!(f, "Document {id:?} is unavailable"),
             Self::SessionUnavailable => f.write_str("Document services are unavailable"),
             Self::SessionClosing => f.write_str("Session is closing"),
@@ -460,6 +389,7 @@ impl std::error::Error for DocumentSaveError {}
 pub struct DocumentSaveSnapshot<M: DocumentModel> {
     pub document: DocumentId,
     pub model: M,
+    pub baseline: Option<M>,
     pub revision: u64,
     pub source_generation: u64,
     pub expected_source_version: Option<SourceVersion>,
@@ -469,12 +399,12 @@ type SaveResult = Result<Option<SourceVersion>, DocumentSaveError>;
 
 type SaveCallback<M> = dyn Fn(DocumentSaveSnapshot<M>) -> SaveResult + Send + Sync;
 
-pub struct DocumentSaveBinding<M: DocumentModel> {
+pub(crate) struct SaveBinding<M: DocumentModel> {
     destination_key: Option<String>,
     callback: Arc<SaveCallback<M>>,
 }
 
-impl<M: DocumentModel> DocumentSaveBinding<M> {
+impl<M: DocumentModel> SaveBinding<M> {
     /// Equal destination keys serialize saves across documents in
     /// this World. Applications must use globally meaningful keys (e.g. canonical
     /// paths); absent keys only serialize saves within the individual document.
@@ -489,7 +419,7 @@ impl<M: DocumentModel> DocumentSaveBinding<M> {
     }
 }
 
-impl<M: DocumentModel> Clone for DocumentSaveBinding<M> {
+impl<M: DocumentModel> Clone for SaveBinding<M> {
     fn clone(&self) -> Self {
         Self {
             destination_key: self.destination_key.clone(),
@@ -532,29 +462,29 @@ pub enum DocumentExternalUpdate {
     Conflict,
 }
 
-pub fn open_document<M: DocumentModel>(
+#[cfg(any(test, feature = "test-support"))]
+pub(crate) fn create_memory_snapshot<M: DocumentModel>(
     world: &mut World,
     model: M,
     options: DocumentOptions,
 ) -> Result<DocumentHandle<M>, DocumentError> {
     validate_session(world)?;
-    if let Some(key) = &options.source_key {
-        for id in document_ids(world) {
-            if world.get::<Document>(id.0).unwrap().source_key.as_ref() == Some(key) {
-                return cast_document(world, id);
-            }
-        }
-    }
+    let memory = MemorySource::new(options.title.clone(), model.clone());
+    let source_id = <MemorySource<M> as DocumentSource<M>>::id(&memory);
     let state = Session::new(model, &options);
     let entity = world
         .spawn((Document {
             title: options.title,
-            source_key: options.source_key,
             model_type: TypeId::of::<M>(),
             model_name: type_name::<M>(),
             state: Box::new(state),
+            source: source_id,
+            source_missing: false,
+            source_pending: false,
+            load_state: crate::DocumentLoadState::Ready,
         },))
         .id();
+    sources::attach_memory(world, entity, memory);
     Ok(DocumentHandle {
         id: DocumentId(entity),
         marker: PhantomData,
@@ -565,7 +495,13 @@ pub fn cast_document<M: DocumentModel>(
     world: &World,
     id: DocumentId,
 ) -> Result<DocumentHandle<M>, DocumentError> {
-    typed_session::<M>(world, id)?;
+    let document = get_document(world, id)?;
+    if document.model_type != TypeId::of::<M>() {
+        return Err(DocumentError::WrongModel {
+            expected: type_name::<M>(),
+            actual: document.model_name,
+        });
+    }
     Ok(DocumentHandle {
         id,
         marker: PhantomData,
@@ -576,7 +512,15 @@ pub fn read_document<M: DocumentModel>(
     world: &World,
     handle: DocumentHandle<M>,
 ) -> Result<&M, DocumentError> {
-    Ok(&typed_session::<M>(world, handle.id)?.content)
+    Ok(typed_session::<M>(world, handle.id)?.history.content())
+}
+
+/// A cheap immutable capture of acknowledged contents for source adapters.
+pub fn document_checkpoint<M: DocumentModel>(
+    world: &World,
+    handle: DocumentHandle<M>,
+) -> Result<Option<M>, DocumentError> {
+    Ok(typed_session::<M>(world, handle.id)?.baseline.clone())
 }
 
 pub fn document_ids(world: &World) -> Vec<DocumentId> {
@@ -597,8 +541,10 @@ pub fn inspect_document(world: &World, id: DocumentId) -> Result<DocumentInfo, D
     let has_drafts = document_has_drafts(world, id);
     Ok(DocumentInfo {
         id,
+        load_state: document.load_state.clone(),
+        source_missing: document.source_missing,
+        source_pending: document.source_pending,
         title: document.title.clone(),
-        source_key: document.source_key.clone(),
         model_type_name: document.model_name,
         revision: state.revision,
         source_generation: state.source_generation,
@@ -646,51 +592,13 @@ pub fn edit_document_transaction<M: DocumentModel>(
     let session = session_mut::<M>(&mut document)?;
     session.check_revision(expected_revision)?;
     session.check_group(handle.id, &options)?;
-    let mut candidate = session.content.clone();
-    let mut inverses = Vec::new();
-    let mut committed = Vec::new();
-    for change in changes {
-        inverses.push(
-            candidate
-                .apply(&change)
-                .map_err(DocumentError::InvalidChange)?,
-        );
-        committed.push(change);
-    }
-    inverses.reverse();
     if options.group.is_none() {
         session.group = None;
     }
-    if candidate == session.content {
-        return Ok(session.revision);
-    }
-    let revision = next_counter(session.revision);
-    session.redo.clear();
-    if options.group.is_some()
-        && session
-            .undo
-            .back()
-            .is_some_and(|entry| entry.group == options.group)
-    {
-        let last = session.undo.back_mut().unwrap();
-        match &mut last.record {
-            Record::Changes(previous) => {
-                inverses.append(previous);
-                *previous = inverses;
-            }
-            Record::Replace(_) => unreachable!("Only ordinary edits belong to explicit groups"),
-        }
-    } else {
-        session.push_undo(HistoryEntry {
-            record: Record::Changes(inverses),
-            label: options.label,
-            group: options.group,
-        });
-    }
-    session.content = candidate;
-    session.revision = revision;
-    session.record_commit(Some(committed));
-    Ok(revision)
+    session
+        .history
+        .edit(changes, options.label, options.group)
+        .map_err(DocumentError::InvalidChange)
 }
 
 pub fn begin_document_undo_group(
@@ -739,7 +647,12 @@ pub fn bind_document_view<M: DocumentModel>(
 ) -> Result<(), DocumentError> {
     validate_mutation(world, handle.id)?;
     let document = get_document(world, handle.id)?;
-    typed_session::<M>(world, handle.id)?;
+    if document.model_type != TypeId::of::<M>() {
+        return Err(DocumentError::WrongModel {
+            expected: type_name::<M>(),
+            actual: document.model_name,
+        });
+    }
     if world.get::<PanelInstance>(panel).is_none() {
         return Err(DocumentError::InvalidPanel(panel));
     }
@@ -784,10 +697,10 @@ pub fn document_has_drafts(world: &World, id: DocumentId) -> bool {
     query.iter(world).any(|view| view.document == id)
 }
 
-pub fn bind_document_save<M: DocumentModel>(
+pub(crate) fn install_save_binding<M: DocumentModel>(
     world: &mut World,
     handle: DocumentHandle<M>,
-    binding: DocumentSaveBinding<M>,
+    binding: SaveBinding<M>,
 ) -> Result<(), DocumentError> {
     validate_mutation(world, handle.id)?;
     let mut document = world.get_mut::<Document>(handle.id.0).unwrap();
@@ -801,7 +714,7 @@ pub fn bind_document_save<M: DocumentModel>(
     Ok(())
 }
 
-pub fn unbind_document_save(world: &mut World, id: DocumentId) -> Result<(), DocumentError> {
+pub(crate) fn remove_save_binding(world: &mut World, id: DocumentId) -> Result<(), DocumentError> {
     validate_mutation(world, id)?;
     world.get_mut::<Document>(id.0).unwrap().state.unbind_save()
 }
@@ -879,7 +792,9 @@ pub fn offer_document_external_update<M: DocumentModel>(
     incoming: M,
     version: Option<SourceVersion>,
 ) -> Result<DocumentExternalUpdate, DocumentError> {
-    validate_mutation(world, handle.id)?;
+    // Already-admitted source effects must be reconciled during orderly drain.
+    // Closing prevents new user work; it cannot discard a completed source write.
+    get_document(world, handle.id)?;
     let mut document = world.get_mut::<Document>(handle.id.0).unwrap();
     let session = session_mut::<M>(&mut document)?;
     session.check_source_generation(expected_source_generation)?;
@@ -889,7 +804,7 @@ pub fn offer_document_external_update<M: DocumentModel>(
         .is_some_and(|pending| pending.incoming == incoming && pending.version == version);
     let same_base = session.baseline.as_ref() == Some(&incoming);
     let duplicate = !session.refresh_required
-        && ((same_pending && (session.content != incoming || session.saving.is_some()))
+        && ((same_pending && (*session.history.content() != incoming || session.saving.is_some()))
             || (session.conflict.is_none() && same_base && session.source_version == version));
     session.group = None;
     if duplicate {
@@ -914,7 +829,7 @@ pub fn offer_document_external_update<M: DocumentModel>(
         });
         return Ok(DocumentExternalUpdate::Conflict);
     }
-    if session.content == incoming {
+    if *session.history.content() == incoming {
         session.baseline = Some(incoming);
         session.source_version = version;
         session.conflict = None;
@@ -947,10 +862,10 @@ pub fn document_conflict<M: DocumentModel>(
     let session = typed_session::<M>(world, handle.id)?;
     Ok(session.conflict.as_ref().map(|conflict| DocumentConflict {
         base: conflict.base.clone(),
-        local: session.content.clone(),
+        local: session.history.content().clone(),
         incoming: conflict.incoming.clone(),
         incoming_version: conflict.version.clone(),
-        revision: session.revision,
+        revision: session.history.revision(),
         source_generation: session.source_generation,
     }))
 }
@@ -995,7 +910,7 @@ pub fn resolve_document_conflict<M: DocumentModel>(
     session.refresh_required = false;
     session.last_save_error = None;
     session.group = None;
-    Ok(session.revision)
+    Ok(session.history.revision())
 }
 
 pub fn check_document_close(
@@ -1084,10 +999,8 @@ pub fn reconcile_documents(world: &mut World) -> Result<(), String> {
 pub fn reconcile_document_views(world: &mut World) -> Result<(), String> {
     let mut sources = HashMap::new();
     for (entity, document) in world.query::<(Entity, &Document)>().iter(world) {
-        if let Some(key) = &document.source_key {
-            if sources.insert(key.clone(), entity).is_some() {
-                return Err("Duplicate document source key in the World".into());
-            }
+        if sources.insert(document.source, entity).is_some() {
+            return Err("Duplicate canonical source document".into());
         }
     }
     for entity in world
@@ -1125,7 +1038,9 @@ pub(crate) fn install(app: &mut App) {
         .add_message::<DocumentSaveFinished>()
         .add_systems(
             PreUpdate,
-            poll_saves_system.before(crate::SessionSystems::Prepare),
+            (sources::poll_sources, poll_saves_system)
+                .chain()
+                .before(crate::SessionSystems::Prepare),
         );
 }
 
@@ -1144,6 +1059,11 @@ fn typed_session<M: DocumentModel>(
     id: DocumentId,
 ) -> Result<&Session<M>, DocumentError> {
     let document = get_document(world, id)?;
+    match &document.load_state {
+        crate::DocumentLoadState::Loading => return Err(DocumentError::Loading),
+        crate::DocumentLoadState::Failed(e) => return Err(DocumentError::LoadFailed(e.clone())),
+        _ => {}
+    }
     document
         .state
         .as_any()
@@ -1157,6 +1077,11 @@ fn typed_session<M: DocumentModel>(
 fn session_mut<M: DocumentModel>(
     document: &mut Document,
 ) -> Result<&mut Session<M>, DocumentError> {
+    match &document.load_state {
+        crate::DocumentLoadState::Loading => return Err(DocumentError::Loading),
+        crate::DocumentLoadState::Failed(e) => return Err(DocumentError::LoadFailed(e.clone())),
+        _ => {}
+    }
     document
         .state
         .as_any_mut()
@@ -1235,21 +1160,16 @@ trait ErasedSession: Send + Sync + 'static {
 }
 
 struct Session<M: DocumentModel> {
-    content: M,
-    /// Acknowledged source knowledge is deliberately outside undo history.
+    history: History<M, DocumentUndoGroup>,
     baseline: Option<M>,
-    revision: u64,
-    commits: VecDeque<DocumentCommit<M::Change>>,
     source_generation: u64,
     source_version: Option<SourceVersion>,
-    undo: VecDeque<HistoryEntry<M>>,
-    redo: Vec<HistoryEntry<M>>,
-    history_limit: usize,
     next_group: u64,
     group: Option<DocumentUndoGroup>,
-    binding: Option<DocumentSaveBinding<M>>,
+    binding: Option<SaveBinding<M>>,
     binding_generation: u64,
     saving: Option<ActiveSave<M>>,
+    last_saved: Option<(WorkId, M)>,
     conflict: Option<Incoming<M>>,
     refresh_required: bool,
     last_save_error: Option<DocumentSaveError>,
@@ -1259,17 +1179,6 @@ struct Incoming<M> {
     base: Option<M>,
     incoming: M,
     version: Option<SourceVersion>,
-}
-
-enum Record<M: DocumentModel> {
-    Changes(Vec<M::Change>),
-    Replace(M),
-}
-
-struct HistoryEntry<M: DocumentModel> {
-    record: Record<M>,
-    label: String,
-    group: Option<DocumentUndoGroup>,
 }
 
 struct ActiveSave<M: DocumentModel> {
@@ -1288,42 +1197,29 @@ impl<M: DocumentModel> Session<M> {
             DocumentInitialState::Unsaved => (None, None),
         };
         Self {
-            content,
+            history: History::new(content, options.history_limit),
             baseline,
-            revision: 0,
-            commits: VecDeque::new(),
             source_generation: 0,
             source_version,
-            undo: VecDeque::new(),
-            redo: Vec::new(),
-            history_limit: options.history_limit,
             next_group: 0,
             group: None,
             binding: None,
             binding_generation: 0,
             saving: None,
+            last_saved: None,
             conflict: None,
             refresh_required: false,
             last_save_error: None,
         }
     }
     fn dirty(&self) -> bool {
-        self.baseline.as_ref() != Some(&self.content)
-    }
-    fn record_commit(&mut self, changes: Option<Vec<M::Change>>) {
-        self.commits.push_back(DocumentCommit {
-            revision: self.revision,
-            changes,
-        });
-        while self.commits.len() > CHANGE_JOURNAL_LIMIT {
-            self.commits.pop_front();
-        }
+        self.baseline.as_ref() != Some(self.history.content())
     }
     fn check_revision(&self, expected: u64) -> Result<(), DocumentError> {
-        if expected != self.revision {
+        if expected != self.history.revision() {
             return Err(DocumentError::StaleRevision {
                 expected,
-                actual: self.revision,
+                actual: self.history.revision(),
             });
         }
         Ok(())
@@ -1348,50 +1244,9 @@ impl<M: DocumentModel> Session<M> {
         }
         Ok(())
     }
-    fn push_undo(&mut self, entry: HistoryEntry<M>) {
-        if self.history_limit == 0 {
-            return;
-        }
-        self.undo.push_back(entry);
-        while self.undo.len() > self.history_limit {
-            self.undo.pop_front();
-        }
-    }
     fn replace_content(&mut self, model: M, label: &str) {
         self.group = None;
-        if model == self.content {
-            return;
-        }
-        let previous = self.content.clone();
-        self.revision = next_counter(self.revision);
-        self.content = model;
-        self.record_commit(None);
-        self.redo.clear();
-        self.push_undo(HistoryEntry {
-            record: Record::Replace(previous),
-            label: label.into(),
-            group: None,
-        });
-    }
-    fn apply_record(&self, record: &Record<M>) -> Result<(M, Record<M>), DocumentError> {
-        match record {
-            Record::Replace(previous) => {
-                Ok((previous.clone(), Record::Replace(self.content.clone())))
-            }
-            Record::Changes(changes) => {
-                let mut candidate = self.content.clone();
-                let mut inverse = Vec::new();
-                for change in changes {
-                    inverse.push(
-                        candidate
-                            .apply(change)
-                            .map_err(DocumentError::InvalidChange)?,
-                    );
-                }
-                inverse.reverse();
-                Ok((candidate, Record::Changes(inverse)))
-            }
-        }
+        self.history.replace(model, label);
     }
 }
 
@@ -1404,7 +1259,7 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
     }
     fn info(&self) -> SessionInfo {
         SessionInfo {
-            revision: self.revision,
+            revision: self.history.revision(),
             source_generation: self.source_generation,
             source_version: self.source_version.clone(),
             dirty: self.dirty(),
@@ -1412,8 +1267,8 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
             conflict: self.conflict.is_some() || self.refresh_required,
             requires_source_refresh: self.refresh_required,
             has_save_binding: self.binding.is_some(),
-            undo_label: self.undo.back().map(|entry| entry.label.clone()),
-            redo_label: self.redo.last().map(|entry| entry.label.clone()),
+            undo_label: self.history.undo_label(),
+            redo_label: self.history.redo_label(),
             last_save_error: self.last_save_error.clone(),
         }
     }
@@ -1440,44 +1295,17 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
         }
     }
     fn undo(&mut self, redo: bool) -> Result<u64, DocumentError> {
-        let entry = if redo {
-            self.redo.last()
-        } else {
-            self.undo.back()
-        }
-        .ok_or(if redo {
-            DocumentError::NothingToRedo
-        } else {
-            DocumentError::NothingToUndo
-        })?;
-        let (content, record) = self.apply_record(&entry.record)?;
-        let changes = match &entry.record {
-            Record::Changes(changes) => Some(changes.clone()),
-            Record::Replace(_) => None,
-        };
-        let label = entry.label.clone();
-        let revision = next_counter(self.revision);
-        if redo {
-            self.redo.pop();
-            self.push_undo(HistoryEntry {
-                record,
-                label,
-                group: None,
-            });
-        } else {
-            self.undo.pop_back();
-            self.redo.push(HistoryEntry {
-                record,
-                label,
-                group: None,
-            });
-        }
         self.group = None;
-        self.content = content;
-        self.revision = revision;
-        self.record_commit(changes);
-        Ok(revision)
+        self.history
+            .undo(redo)
+            .map_err(DocumentError::InvalidChange)?
+            .ok_or(if redo {
+                DocumentError::NothingToRedo
+            } else {
+                DocumentError::NothingToUndo
+            })
     }
+
     fn unbind_save(&mut self) -> Result<(), DocumentError> {
         if self.saving.is_some() {
             return Err(DocumentError::Saving);
@@ -1501,8 +1329,9 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
         let callback = binding.callback.clone();
         let snapshot = DocumentSaveSnapshot {
             document: id,
-            model: self.content.clone(),
-            revision: self.revision,
+            model: self.history.content().clone(),
+            baseline: self.baseline.clone(),
+            revision: self.history.revision(),
             source_generation: self.source_generation,
             expected_source_version: self.source_version.clone(),
         };
@@ -1518,8 +1347,8 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
         self.group = None;
         self.last_save_error = None;
         self.saving = Some(ActiveSave {
-            snapshot: self.content.clone(),
-            revision: self.revision,
+            snapshot: self.history.content().clone(),
+            revision: self.history.revision(),
             source_generation: self.source_generation,
             binding_generation: self.binding_generation,
             destination: self.binding.as_ref().unwrap().destination_key.clone(),
@@ -1560,6 +1389,7 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
                     // Matching source observations are self-write echoes, not new
                     // edits. Only acknowledge the captured value; local undo/edits
                     // and their redo history remain exactly where the user left them.
+                    self.last_saved = Some((active.task.id, active.snapshot.clone()));
                     self.baseline = Some(active.snapshot);
                     self.source_version = version;
                     self.source_generation = next_counter(self.source_generation);
@@ -1574,6 +1404,7 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
                     DocumentSaveError::Conflict(_)
                         | DocumentSaveError::Cancelled
                         | DocumentSaveError::Panicked
+                        | DocumentSaveError::SourceChanged
                 ) {
                     self.refresh_required = true;
                     self.source_generation = next_counter(self.source_generation);
@@ -1594,5 +1425,34 @@ impl<M: DocumentModel> ErasedSession for Session<M> {
     }
 }
 
+#[path = "documents/policy.rs"]
+mod policy;
+pub use policy::*;
+#[path = "documents/bytes.rs"]
+mod bytes;
+pub use bytes::*;
+#[path = "documents/sources.rs"]
+mod sources;
+pub use sources::*;
 #[cfg(test)]
 mod tests;
+
+/// Contents actually acknowledged by this completion, independent of newer edits.
+pub fn saved_document_capture<M: DocumentModel>(
+    world: &World,
+    completion: &DocumentSaveFinished,
+) -> Option<M> {
+    if completion.result.is_err() {
+        return None;
+    }
+    let session = typed_session::<M>(world, completion.document).ok()?;
+    session
+        .last_saved
+        .as_ref()
+        .filter(|(work, _)| *work == completion.work)
+        .map(|(_, model)| model.clone())
+}
+
+#[cfg(test)]
+#[path = "documents/source_tests.rs"]
+mod source_tests;

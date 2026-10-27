@@ -17,3 +17,6 @@ bevy = { workspace = true, features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true
 libc.workspace = true
+
+[dev-dependencies]
+bedtime-workbench2 = { path = "../bedtime-workbench2", default-features = false, features = ["test-support"] }

@@ -3,6 +3,10 @@ mod commands;
 mod composition;
 mod document_commands;
 mod documents;
+#[cfg(any(test, feature = "test-support"))]
+mod test_support;
+#[cfg(any(test, feature = "test-support"))]
+pub use test_support::*;
 mod membership;
 pub use composition::{PanelTabStyle, reconcile_workbench};
 pub use document_commands::*;
@@ -11,6 +15,7 @@ mod geometry;
 mod layout;
 mod lifecycle;
 mod menus;
+pub mod native_path;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 mod work;

@@ -52,7 +52,7 @@ pub(super) fn focus(
 
 #[test]
 fn invalid_edits_are_atomic_and_history_uses_document_revisions() {
-    let mut document = TextDocument::new("aé🙂");
+    let mut document = MemoryTextSession::new("aé🙂");
     assert!(
         document
             .edit(
@@ -107,7 +107,7 @@ fn invalid_edits_are_atomic_and_history_uses_document_revisions() {
 fn typing_undo_and_more_typing_in_one_pass_keep_input_order() {
     let ctx = egui::Context::default();
     let mut view = EditorView::default();
-    let mut document = TextDocument::new("hello");
+    let mut document = MemoryTextSession::new("hello");
     let id = egui::Id::new("editor");
     focus(&ctx, &mut view, &mut document, id);
     frame(
@@ -147,7 +147,7 @@ fn typing_undo_and_more_typing_in_one_pass_keep_input_order() {
 #[test]
 fn shared_views_map_selections_through_each_edit_not_a_combined_replacement() {
     let ctx = egui::Context::default();
-    let mut document = TextDocument::new("abcdef");
+    let mut document = MemoryTextSession::new("abcdef");
     let mut first = EditorView::default();
     let mut second = EditorView::default();
     second.selection = TextSelection::caret(document.text(), 3).unwrap();
@@ -191,7 +191,7 @@ fn shared_views_map_selections_through_each_edit_not_a_combined_replacement() {
 fn external_reveal_scrolls_without_moving_selection_or_claiming_focus() {
     let ctx = egui::Context::default();
     let mut view = EditorView::default();
-    let mut document = TextDocument::new(
+    let mut document = MemoryTextSession::new(
         (0..200)
             .map(|line| format!("Line {line}\n"))
             .collect::<String>(),
@@ -236,7 +236,7 @@ fn external_reveal_scrolls_without_moving_selection_or_claiming_focus() {
 fn unicode_selection_clipboard_and_line_numbers_use_the_same_layout() {
     let ctx = egui::Context::default();
     let mut view = EditorView::default();
-    let mut document = TextDocument::new("aé🙂\nsecond");
+    let mut document = MemoryTextSession::new("aé🙂\nsecond");
     let id = egui::Id::new("unicode");
     focus(&ctx, &mut view, &mut document, id);
     let snapshot = document.snapshot().unwrap();
@@ -273,7 +273,7 @@ fn read_only_editor_keeps_text_and_history_unchanged() {
     let id = egui::Id::new("readonly");
     let mut view = EditorView::default();
     view.settings.read_only = true;
-    let mut document = TextDocument::new("Original");
+    let mut document = MemoryTextSession::new("Original");
     focus(&ctx, &mut view, &mut document, id);
     frame(
         &ctx,
@@ -295,7 +295,7 @@ fn mouse_hit_testing_respects_tabs_and_unicode_and_enters_text_at_that_position(
     let ctx = egui::Context::default();
     let id = egui::Id::new("mouse");
     let mut view = EditorView::default();
-    let mut document = TextDocument::new("a\tbé\nsecond");
+    let mut document = MemoryTextSession::new("a\tbé\nsecond");
     let output = frame(&ctx, &mut view, &mut document, id, vec![]);
     let font = egui::TextStyle::Monospace.resolve(&ctx.global_style());
     let cell = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, ' '));
@@ -346,7 +346,7 @@ fn custom_text_focus_reserves_noop_editing_keys_and_leaves_save_to_the_host() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("capture");
     let mut view = EditorView::default();
-    let mut document = TextDocument::new("");
+    let mut document = MemoryTextSession::new("");
     focus(&ctx, &mut view, &mut document, id);
     assert!(ctx.text_edit_focused());
     frame(
@@ -382,7 +382,7 @@ fn ime_preedit_is_a_draft_and_commits_once() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("ime");
     let mut view = EditorView::default();
-    let mut document = TextDocument::new("text");
+    let mut document = MemoryTextSession::new("text");
     focus(&ctx, &mut view, &mut document, id);
     let output = frame(
         &ctx,
@@ -422,7 +422,7 @@ fn ime_preedit_is_a_draft_and_commits_once() {
 
 #[test]
 fn a_second_view_cannot_clear_another_views_composition_gate() {
-    let mut document = TextDocument::new("text");
+    let mut document = MemoryTextSession::new("text");
     document.set_composing(egui::Id::new("first"), true);
     document.set_composing(egui::Id::new("second"), false);
     assert!(
@@ -446,7 +446,7 @@ fn switching_editing_views_never_merges_their_undo_groups() {
     let b = egui::Id::new("owner-b");
     let mut first = EditorView::default();
     let mut second = EditorView::default();
-    let mut document = TextDocument::new("base");
+    let mut document = MemoryTextSession::new("base");
     focus(&ctx, &mut first, &mut document, a);
     frame(
         &ctx,
@@ -475,7 +475,7 @@ fn journal_expiry_refreshes_positions_without_invalid_utf8_offsets() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("dormant");
     let mut view = EditorView::default();
-    let mut document = TextDocument::new("é🙂");
+    let mut document = MemoryTextSession::new("é🙂");
     view.selection = TextSelection::caret(document.text(), document.text().len()).unwrap();
     frame(&ctx, &mut view, &mut document, id, vec![]);
     for revision in 0..140 {
@@ -500,7 +500,7 @@ fn long_lines_are_virtualized_horizontally_and_delete_whole_graphemes() {
     let ctx = egui::Context::default();
     let id = egui::Id::new("long-line");
     let mut view = EditorView::default();
-    let mut document = TextDocument::new(format!("{}e\u{301}👩‍🚀", "x".repeat(2_000_000)));
+    let mut document = MemoryTextSession::new(format!("{}e\u{301}👩‍🚀", "x".repeat(2_000_000)));
     focus(&ctx, &mut view, &mut document, id);
     let snapshot = document.snapshot().unwrap();
     let end = snapshot.text.len();
@@ -554,7 +554,7 @@ fn million_line_editing_keeps_layout_bounded() {
     use std::time::Instant;
     let fixture = format!("{}\n", "x".repeat(111)).repeat(1_000_000);
     let started = Instant::now();
-    let mut document = TextDocument::new(fixture);
+    let mut document = MemoryTextSession::new(fixture);
     let load = started.elapsed();
     let ctx = egui::Context::default();
     let id = egui::Id::new("million");
@@ -666,7 +666,7 @@ fn independent_wheel_inputs_choose_their_axis_without_a_pause() {
 #[test]
 fn horizontal_scrolling_requires_overflow_and_is_disabled_when_wrapped() {
     let ctx = egui::Context::default();
-    let mut document = TextDocument::new("short text\n");
+    let mut document = MemoryTextSession::new("short text\n");
     let mut view = EditorView::default();
     let id = egui::Id::new("horizontal-overflow");
     let scroll_right = |rect: egui::Rect| {
@@ -693,7 +693,7 @@ fn horizontal_scrolling_requires_overflow_and_is_disabled_when_wrapped() {
         "fitting text must not scroll horizontally"
     );
 
-    let mut document = TextDocument::new("x".repeat(300));
+    let mut document = MemoryTextSession::new("x".repeat(300));
     frame(&ctx, &mut view, &mut document, id, vec![]);
     let overflowing = frame(
         &ctx,
@@ -726,7 +726,7 @@ fn horizontal_scrolling_requires_overflow_and_is_disabled_when_wrapped() {
 #[test]
 fn diagonal_wheel_inputs_switch_axes_without_a_gesture_restart() {
     let ctx = egui::Context::default();
-    let mut document = TextDocument::new(("x".repeat(200) + "\n").repeat(100));
+    let mut document = MemoryTextSession::new(("x".repeat(200) + "\n").repeat(100));
     let mut view = EditorView::default();
     let id = egui::Id::new("axis-locked-editor");
     let initial = frame(&ctx, &mut view, &mut document, id, vec![]);
@@ -781,7 +781,7 @@ fn diagonal_wheel_inputs_switch_axes_without_a_gesture_restart() {
 #[test]
 fn pointer_presses_place_caret_then_select_word_and_line_before_release() {
     let ctx = egui::Context::default();
-    let mut document = TextDocument::new("alpha beta\r\nnext");
+    let mut document = MemoryTextSession::new("alpha beta\r\nnext");
     let mut view = EditorView::default();
     let id = egui::Id::new("press-selection");
     let initial = frame(&ctx, &mut view, &mut document, id, vec![]);
@@ -836,7 +836,7 @@ fn pointer_presses_place_caret_then_select_word_and_line_before_release() {
 #[test]
 fn resizing_keeps_wrapped_text_while_new_width_is_prepared() {
     let ctx = egui::Context::default();
-    let mut document = TextDocument::new("alpha beta ".repeat(200));
+    let mut document = MemoryTextSession::new("alpha beta ".repeat(200));
     let snapshot = document.snapshot().unwrap();
     let mut view = EditorView::default();
     view.settings.wrap = true;

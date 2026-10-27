@@ -34,6 +34,7 @@ impl HexView {
     pub fn cursor(&self) -> u64 {
         self.cursor
     }
+    
     pub fn selection(&self, len: u64) -> Range<u64> {
         if len == 0 {
             return 0..0;
@@ -41,20 +42,24 @@ impl HexView {
         self.anchor.min(self.cursor).min(len)
             ..self.anchor.max(self.cursor).saturating_add(1).min(len)
     }
+    
     pub fn clamp(&mut self, len: u64) {
         self.cursor = self.cursor.min(len.saturating_sub(1));
         self.anchor = self.anchor.min(len.saturating_sub(1));
         self.top_row = self.top_row.min(len.saturating_sub(1) / BYTES_PER_ROW);
     }
+    
     pub fn select(&mut self, range: Range<u64>, len: u64) {
         self.anchor = range.start;
         self.cursor = range.end.saturating_sub(1).max(range.start);
         self.clamp(len);
         self.top_row = self.anchor / BYTES_PER_ROW;
     }
+    
     pub fn go_to(&mut self, offset: u64, len: u64) {
         self.select(offset..offset.saturating_add(1), len);
     }
+    
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -359,6 +364,7 @@ pub fn parse_hex(text: &str) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
     #[test]
     fn exact_large_offsets_and_selection_survive_truncation() {
         let mut view = HexView::default();
@@ -372,6 +378,7 @@ mod tests {
         view.clamp(0);
         assert_eq!(view.selection(0), 0..0);
     }
+    
     #[test]
     fn viewport_is_bounded_at_large_offsets_and_uses_application_text_size() {
         let ctx = egui::Context::default();
@@ -431,3 +438,6 @@ mod tests {
         assert!(parse_hex("xx").is_err());
     }
 }
+
+#[cfg(feature = "workbench")]
+pub mod workbench;
