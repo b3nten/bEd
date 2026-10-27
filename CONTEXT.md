@@ -125,7 +125,7 @@ Each step should produce a usable app. We can reorder at any point.
 1. ✅ Global settings: resource, config file, Settings panel (chosen first as the
    foundation for workspaces).
 2. ✅ Workbench document lifetime, autosave and close/quit flow (see Decisions).
-3. 🔄 Document handling cleanup (see step log).
+3. ✅ Document handling cleanup (see step log).
 4. Project root + file tree panel.
 2. Open a file into an editor tab (opening policy; observation 1).
 3. Other viewers: image / hex / model, chosen by file type; "Open with".
@@ -174,7 +174,9 @@ Each step should produce a usable app. We can reorder at any point.
   Not done yet: a manual test of the prompt in the running app (bed can't open
   documents yet).
 
-- **Step 3 (document cleanup)**, implemented 2026-10-26 and awaiting review.
+- **Step 3 (document cleanup)**, committed 2026-10-26 (`84ad11d`), then
+  `bedtime-document` was reorganized: `model.rs`, `history.rs`, `source.rs`, and
+  `text/` (`mod.rs` = `TextBuffer` API, `rope.rs` = internals, `edit.rs` = `BufferEdit`).
   - `bedtime-document`: `DocumentModel`, `History`, `TextBuffer`, and a smaller
     `DocumentSource` (`load`, `save(model, expected_version)`, optional
     `version`/`check_interval`/`writable`). Removed `BinaryDocument`,

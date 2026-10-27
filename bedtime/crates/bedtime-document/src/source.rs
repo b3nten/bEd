@@ -70,9 +70,9 @@ pub struct SourceLoad<M> {
 
 pub trait DocumentSource<M: DocumentModel>: Send + Sync + 'static {
     fn id(&self) -> SourceId;
-    
+
     fn title(&self) -> String;
-    
+
     fn load(&self) -> Result<SourceLoad<M>, SourceError>;
 
     /// Write `model`, refusing with `Changed` unless the source still holds
