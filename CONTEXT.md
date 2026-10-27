@@ -1,6 +1,6 @@
 # Project context
 
-Last updated: 2026-10-26. Keep this file short and current. Update the step log
+Last updated: 2026-10-27. Keep this file short and current. Update the step log
 and open questions as work proceeds; delete anything that turns out to be wrong.
 
 ## Goal
@@ -122,23 +122,21 @@ step, not decisions.
 Each step should produce a usable app. We can reorder at any point.
 
 0. ✅ Window, workbench surface, camera, close request → exit (current `bed/main.rs`).
-1. ✅ Global settings: resource, config file, Settings panel (chosen first as the
-   foundation for workspaces).
+1. ✅ Global settings: resource, config file, Settings panel.
 2. ✅ Workbench document lifetime, autosave and close/quit flow (see Decisions).
 3. ✅ Document handling cleanup (see step log).
 4. ✅ Workbench cleanup A + B (see step log).
-5. Project root + file tree panel.
-2. Open a file into an editor tab (opening policy; observation 1).
-3. Other viewers: image / hex / model, chosen by file type; "Open with".
-4. Save, dirty state, quit with unsaved documents (observation 4).
-5. Menus, toolbar, commands, keybindings (observation 3).
-6. Layouts + project session persistence (observation 2).
-7. Settings panel + global preferences (observation 5).
-8. Terminal.
-9. Structure panel (observation 7).
-10. LSP + status bar.
-11. Git panel + diff (observation 6).
-12. Extras: autosave, fonts, mascots, effects, shell `bed open`, automation.
+5. **Foundation** ([docs/foundation.md](docs/foundation.md)), in order:
+   stores + simplified persistence → settings + layers → workspaces in bed →
+   commands + keybindings → menus + toolbar.
+6. Project root + file tree panel.
+7. Open a file into an editor tab (opening policy; observation 1).
+8. Other viewers: image / hex / model, chosen by file type; "Open with".
+9. Terminal.
+10. Structure panel (observation 7).
+11. LSP + status bar.
+12. Git panel + diff (observation 6).
+13. Extras: fonts, mascots, effects, shell `bed open`, automation.
 
 ## Step log
 
@@ -221,6 +219,7 @@ Each step should produce a usable app. We can reorder at any point.
 ## Decisions
 
 - 2026-10-26: `config.rs` may move to bedtime later; it stays in bed for now.
+  (Superseded 2026-10-27: stores replace it.)
 - 2026-10-26: Settings *composition* is per-app, not per-plugin. Plugins may later
   expose widgets for their own settings. Deferred.
 - 2026-10-26: Unknown fields in config files are ignored and dropped on the next save.
@@ -252,8 +251,22 @@ Each step should produce a usable app. We can reorder at any point.
     the dialog is drawn by the `ui` feature.
   - Autosave policy is a workbench resource the app sets from its settings.
 
+- 2026-10-27: **Foundation design agreed** (details in
+  [docs/foundation.md](docs/foundation.md)): stores (workbench defines only
+  `WorkbenchStore`; apps add and bind others, with pluggable byte-level backends),
+  one `Persist` marker with per-app redirects, settings resolved through layers that
+  live in stores (`apply` on resolved change; the setting is the unit of override,
+  so per-entry things are split into separate settings). Keybindings are one
+  setting per command (`Keybinding<C>`); the command system owns a flat
+  command → chords table fed by those settings. Bindings have no panel scopes:
+  a chord shared by several commands runs the one with a handler in the most
+  specific scope (focused panel, then global). One
+  workspace per process; workspace data under the config directory as in bed_old;
+  settings and stores live in workbench; last writer wins across instances.
+
 ## Open questions
 
 - Should viewer switching ("Open with") replace the panel, or should one panel
   host several viewers? (Decide in step 2/3.)
-- Should persistence move into Workbench as a store, or stay a thin layer on top?
+- Foundation details still open: see the list at the end of
+  [docs/foundation.md](docs/foundation.md).
