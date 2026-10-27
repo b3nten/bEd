@@ -1,6 +1,7 @@
 use bedtime_ui::{BuiltinIcon, UiContext, UiPlugin, egui};
 use bedtime_workbench::{
     PanelFactory, Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface, panel_drag_source,
+    persistence::{DirectoryStore, StoreAppExt, WorkbenchStore},
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::PathBuf;
@@ -13,34 +14,40 @@ use settings::SettingsPanel;
 
 fn main() -> AppExit {
     let config = config_directory();
-    App::new()
-        .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "bEd".into(),
-                    resolution: (960, 640).into(),
-                    titlebar_show_title: false,
-                    titlebar_transparent: true,
-                    fullsize_content_view: true,
-                    transparent: true,
-                    composite_alpha_mode: if cfg!(target_os = "macos") {
-                        bevy::window::CompositeAlphaMode::PostMultiplied
-                    } else {
-                        bevy::window::CompositeAlphaMode::Auto
-                    },
-                    ..default()
-                }),
-                close_when_requested: false,
+    let mut app = App::new();
+    app.add_plugins((
+        DefaultPlugins.set(WindowPlugin {
+            primary_window: Some(Window {
+                title: "bEd".into(),
+                resolution: (960, 640).into(),
+                titlebar_show_title: false,
+                titlebar_transparent: true,
+                fullsize_content_view: true,
+                transparent: true,
+                composite_alpha_mode: if cfg!(target_os = "macos") {
+                    bevy::window::CompositeAlphaMode::PostMultiplied
+                } else {
+                    bevy::window::CompositeAlphaMode::Auto
+                },
                 ..default()
             }),
-            UiPlugin,
-            WorkbenchPlugin,
-            settings::SettingsPlugin {
-                path: config.map(|directory| directory.join("settings.ron")),
-            },
-        ))
-        .add_systems(Startup, setup)
-        .run()
+            close_when_requested: false,
+            ..default()
+        }),
+        UiPlugin,
+        WorkbenchPlugin,
+        settings::SettingsPlugin {
+            path: config
+                .as_ref()
+                .map(|directory| directory.join("settings.ron")),
+        },
+    ))
+    .add_systems(Startup, setup);
+    // Until workspaces exist, the layout is saved alongside the global settings.
+    if let Some(directory) = config {
+        app.add_store::<WorkbenchStore>(DirectoryStore::new(directory));
+    }
+    app.run()
 }
 
 /// `$BED_CONFIG_DIR`, else `$XDG_CONFIG_HOME/bed`, else `~/.config/bed`.

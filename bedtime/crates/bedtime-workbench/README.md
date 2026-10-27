@@ -750,190 +750,46 @@ cargo build --offline --locked -p bed --features automation
 python3 bedtime_old/tools/smoke_corners.py  # drives bed_old; not maintained
 ```
 
-## Optional reflected persistence
+## Persistence and stores (`persistence` feature)
 
-Enable `persistence`. `WorkbenchCorePlugin` registers the durable Workbench types;
-`persistence::register(app)` is also available for hosts that only need the type
-registry. Bevy 0.20 `bevy_world_serialization`/RON support is independent of
-`ui`/`native`; no renderer, window, AssetServer or scene spawning is required.
-
-Durable component/resource types opt in with reflection metadata:
+Components and resources opt in to being saved with reflection metadata. Saved
+data goes to a **store**; workbench defines one, `WorkbenchStore`, and the
+application decides where it lives by giving it a backend.
 
 ```rust,ignore
-use bedtime_workbench::{Workbench, persistence::{CapturedWorld, ReflectWorkbenchPersist}};
+use bedtime_workbench::persistence::{DirectoryStore, ReflectPersist, StoreAppExt, WorkbenchStore};
+
 #[derive(Component, Reflect, Default)]
-#[reflect(Component, WorkbenchPersist)]
-#[require(PanelInstance = PanelInstance::of::<Self>(), RuntimeOnly)]
+#[reflect(Component, Persist)]
+#[require(PanelInstance = PanelInstance::of::<Self>(), NotesRuntime)]
 struct Notes { text: String }
-app.register_type::<Notes>();
 
-let mut captured = Workbench::capture_world::<ReflectWorkbenchPersist>(world)?;
-// Optional edits affect detached data, never the live World.
-captured.insert_component(panel, Notes { text: "Exported text".into() });
-let snapshot = captured.serialize(world.resource::<AppTypeRegistry>())?;
-
-let captured = CapturedWorld::<ReflectWorkbenchPersist>::deserialize(&snapshot, registry)?;
-Workbench::restore_world(destination, captured)?;
-// After all startup partitions have loaded, before normal runtime admission:
-Workbench::finish_world_restore(destination);
+app.register_type::<Notes>()
+   .add_store::<WorkbenchStore>(DirectoryStore::new(config_dir));
 ```
 
-`CapturedWorld<M>` owns a public Bevy `DynamicWorld` (`dynamic.entities` and
-`dynamic.resources`). Applications can filter/edit it before encoding or restore;
-`component/components/resource`, `insert_component` and `replace_resource` provide
-typed access. Capture retains source entity identities for convenient edits.
-Serialization creates a detached copy with canonical snapshot IDs. It encodes data;
-it does not initialize entities or run ECS hooks. Graph traversal is iterative up to
-the entity limit. Captures may be incomplete while
-the host edits them; encoding, decoding and restore enforce the final invariants.
-Filtering structural entities also requires updating the owning ordered collections,
-selection/focus and layout-order resource. Dangling references are rejected, never
-silently repaired. Capture validates existing Workbench composition first.
-
-M selects reflection **type data**, not an entity marker. Applications can define
-independent partitions without changing Workbench:
-
-```rust,ignore
-#[derive(Clone)]
-struct ReflectGlobalPersist;
-impl<T> bevy::reflect::CreateTypeData<T> for ReflectGlobalPersist {
-    fn create_type_data(_: ()) -> Self { Self }
-}
-#[derive(Resource, Reflect, Default)]
-#[reflect(Resource, GlobalPersist)]
-struct GlobalSettings { large_text: bool }
-app.register_type::<GlobalSettings>();
-let globals = Workbench::capture_world::<ReflectGlobalPersist>(world)?;
-```
-
-The selected marker is enforced for both components and resources on encode/load.
-Ordinary panel composition needs no reflection registration or factory catalog.
-A durable panel component must require `PanelInstance` (directly or transitively)
-to reconstruct its concrete capability. Unsupported panels fail encoding rather
-than disappearing. Runtime handles, workers, presentation and document internals
-remain unmarked; ignored fields must be safe defaults.
-
-`Layout`, `Area`, durable `PanelInstance` fields, `ActiveLayout`, `LayoutAreas`,
-`AreaPanels`, `InPanel` and the existing layout-order resource are directly marked.
-There are no private structural DTO components or second live ordering model.
-The relationship target lists preserve meaningful order as well as membership;
-`InLayout`/`InArea` sources are rebuilt from those lists, not saved as duplicate
-ownership authority. Missing/empty reverse lists have equivalent encodings.
-Drawing runtime fields are excluded from `PanelInstance`; restore retains
-the concrete panel's required drawing defaults and applies its saved title/preview.
-
-Application-defined Bevy relationships can use the same ordered restoration path:
-
-```rust,ignore
-use bedtime_workbench::persistence::register_persisted_relationship;
-#[derive(Component, Reflect, Clone)]
-#[reflect(Component, WorkbenchPersist)]
-#[relationship(relationship_target = GroupMembers)]
-struct InGroup(#[entities] Entity);
-#[derive(Component, Reflect, Clone, Default)]
-#[reflect(Component, WorkbenchPersist)]
-#[relationship_target(relationship = InGroup)]
-struct GroupMembers(#[entities] Vec<Entity>);
-register_persisted_relationship::<InGroup>(&mut app);
-```
-
-Registration supplies typed relationship mechanics for both sides; it neither marks
-those types nor captures related entities implicitly. It works with any capture
-marker. Mark the source to save its component fields and reconstruct reverse
-membership; also mark the target to save its collection order (where ordered) and
-other fields. If only the target is marked, source values rebuild through
-`Relationship::from` with default extra fields. If both are marked, their membership
-must agree. Ordered target persistence requires pair registration; ordinary mapped
-references and unregistered source components retain their normal insertion behavior.
-Workbench registers `InLayout`, `InArea` and `InPanel` through this same API.
-
-Before live mutation, generic validation checks source/target agreement, duplicate
-members, reference closure, collection cardinality, self-link permission and cycles
-in linked-spawn ownership across all registered pairs. Non-owning cycles and permitted
-self-links are supported. Linked ownership must be acyclic. Missing entities are
-rejected rather than synthesized; an empty one-to-one target's `Entity::PLACEHOLDER`
-sentinel remains empty. New canonical IDs avoid that sentinel; earlier schema-2 IDs
-still remap with declared snapshot identities taking precedence.
-
-Restore inserts ordinary data/resources and empty target collections with saved
-payloads before source hooks inspect their targets. It inserts marked sources,
-attaches missing unmarked sources in linked ownership order, restores collection
-order, drains attachment maintenance, and reapplies saved target fields while keeping
-ignored runtime fields initialized by hooks. Trusted hooks must preserve restored
-membership. Workbench separately checks geometry/roles/selections and reapplies its
-saved focus/selection. No application-specific constructor/factory catalog is needed.
-
-`Snapshot { version, data }` is library schema **2**; reflected Rust type paths/fields
-are part of that schema. Previous schema-1 snapshots are explicitly rejected; hosts
-must migrate or preserve them. Payload limits: 4 MiB, 4096 entities, 128 resources/
-components per entity and bounded reflected traversal. Unknown/unmarked/duplicate
-types, invalid references/roles/geometry/order/selections and asset handles are
-rejected. Entity fields must participate in Bevy `#[entities]` mapping; resources
-with entity fields also need `MapEntities`/reflected mapping registration. Each
-partition must be reference-closed. Opaque/custom-Serde types must not conceal entity
-references or runtime/asset handles.
-
-Decode validates without inserting user components or constructing required defaults.
-Custom Serde/FromReflect and metadata registration are trusted pure transformations.
-Restore revalidates against the destination registry before mutation and requires
-an empty admitted Workbench for graph data. It allocates/remaps identities, inserts
-concrete data/defaults using ordinary reflected insertion, restores registered
-relationships generically in linked ownership order, flushes attachment maintenance,
-then reapplies target data and Workbench focus/selection. External work starts only through normal
-application/plugin activation after the graph is ready. Trusted hooks must not panic
-or start external I/O; arbitrary hook rollback/live-session merging is not provided.
-
-### Startup world restoration and runtime layout replacement
-
-World reconstruction establishes a session during startup. The host calls
-`Workbench::finish_world_restore(world)` after its loading/admission barrier; later
-`restore_world` calls reject both graph and resource restoration, even if all layouts
-have subsequently closed. The barrier is explicit because storage may load across
-many Bevy updates. Capture, encoding and decoding remain available during runtime.
-This API never clears the application's World or infers how to retire session
-services from persistence markers. Independent session replacement is unsupported.
-
-A layout has its own bounded capture/replacement API:
-
-```rust,ignore
-use bedtime_workbench::persistence::{CapturedLayout, ReflectWorkbenchPersist};
-let capture = Workbench::capture_layout::<ReflectWorkbenchPersist>(world, layout)?;
-let snapshot = capture.serialize(world.resource::<AppTypeRegistry>())?;
-let capture = CapturedLayout::<ReflectWorkbenchPersist>::deserialize(
-    &snapshot, world.resource::<AppTypeRegistry>(),
-)?;
-let replacement = Workbench::replace_layout(world, layout, capture)?;
-```
-
-`CapturedLayout<M>` exposes an editable `dynamic: DynamicWorld` and typed component
-access/edit helpers. `CapturedWorld::into_layout` selects a layout after application
-projection. Both follow only persistently declared linked ownership, including
-registered application relationship pairs; shared references never pull in extra
-entities. Layout data must contain exactly one layout and its ownership tree, no
-resources and no `ActiveLayout`. Encode/decode/replacement share world persistence's
-allowlist, limits, pure validation, entity remapping and ordered reconstruction.
-References leaving the tree reject the capture. `remove_panel` supports deliberate
-application filtering while maintaining tab order and selection; other dangling
-references remain errors rather than being repaired implicitly.
-
-Replacement is destructive: the layout/areas/panels receive fresh identities. It
-validates incoming data and the live destination, refuses viewer drafts/shutdown/UI
-drawing, builds the new tree, then retires the old one. The returned root retains
-its destination's layout order and active status. Hosts retain responsibility for
-root metadata such as numbered slots and for application close admission. Canonical
-documents and session services remain; closing viewers retains their documents and
-admitted saves. Panel-owned managed work cancels on normal polling, with the same
-cleanup/result rules as ordinary panel closure. Session resources are never replaced.
-External activation follows complete reconstruction through ordinary schedules.
-Trusted hooks must remain pure; rollback of arbitrary hook side effects is unsupported.
-
-Workbench owns graph correctness; hosts own envelopes, marker/destination policy,
-inheritance/unbind declarations, compatibility, bounded reads, atomic writes,
-concurrent writers, debounce/retry, late-load policy, external loading and recovery.
-bEd and `bed/examples/persist_world.rs` consume this same API.
-
-```sh
-cargo test --offline --locked -p bedtime-workbench --features persistence
-cargo test --offline --locked -p bedtime-workbench --no-default-features --features persistence
-cargo check --offline --locked -p bedtime-workbench --no-default-features
-```
+- **What's saved.** Entities with persisted components (layouts, areas, panels
+  and their marked components) go to `WorkbenchStore`. A persisted resource goes
+  there too unless the app redirects it: `app.persist_in::<RecentFiles, GlobalStore>()`,
+  where `GlobalStore` is any app-defined `Store` marker type with its own backend.
+- **Panels.** Save a panel's concrete component; its `PanelInstance` and runtime
+  state come back through `#[require]` and hooks. A panel with nothing persisted
+  is left out of the save. `PanelInstance` itself isn't saved (titles come from
+  `Panel::LABEL` or are set at runtime).
+- **Relationships.** Both sides are saved and written back exactly, the way Bevy
+  scenes work, so tab and area order survive. Entity fields must use Bevy's
+  `#[entities]` mapping, and every entity a saved value refers to must be saved
+  too. Asset handles can't be saved; save a path or other descriptor.
+- **When.** Each store's data is read and restored once, before `Startup`, and
+  saved about once a second while it changes, and on exit. Change detection
+  compares the new capture with what was last written.
+- **Failure.** A store whose saved data can't be read or restored is reported and
+  never written, so a damaged file isn't overwritten. `Stores::error::<S>()`
+  says why a store isn't being saved, or why its last save failed.
+- **Backends.** `StoreBackend` reads and writes named byte entries (`world`, and
+  later `settings`). `DirectoryStore` keeps one `<entry>.ron` file per entry,
+  written atomically. Other backends (SQLite, a remote service) need no knowledge
+  of ECS or reflection.
+- `persistence::capture::<S>(world)` and `restore::<S>(world, text)` capture and
+  restore a store's data directly, e.g. for export or tests. Layouts are only
+  restored into an empty workbench.

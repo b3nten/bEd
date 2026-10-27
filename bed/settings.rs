@@ -5,7 +5,8 @@ use crate::{
 };
 use bedtime_ui::{UiContext, UsesTheme, egui, themes};
 use bedtime_workbench::{
-    ErrorDialog, Panel, PanelInstance, WindowBlur, WorkbenchSurface, request_error_dialog,
+    ErrorDialog, Panel, PanelInstance, WindowBlur, WorkbenchSurface, persistence::ReflectPersist,
+    request_error_dialog,
 };
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -81,7 +82,8 @@ pub struct SettingsPlugin {
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ConfigPlugin::<Settings>::new(self.path.clone()))
+        app.register_type::<SettingsPanel>()
+            .add_plugins(ConfigPlugin::<Settings>::new(self.path.clone()))
             .add_systems(Update, (apply, report_errors));
     }
 }
@@ -136,7 +138,8 @@ impl PanelPolicy for SettingsPanel {
     fn key(_: &World, _: Entity) {}
 }
 
-#[derive(Component, Default)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Persist)]
 #[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct SettingsPanel;
 

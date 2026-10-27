@@ -1,6 +1,4 @@
 //! Stable contextual command identities with independently scoped bindings and handlers.
-#[cfg(feature = "persistence")]
-use crate::persistence::ReflectWorkbenchPersist;
 use crate::{Area, Layout, PanelInstance, Workbench};
 use bevy::{ecs::system::SystemId, prelude::*};
 use serde::{Deserialize, Serialize};
@@ -184,17 +182,13 @@ fn attached_removed<C: ContextCommand>(
 }
 
 #[derive(Component, Debug)]
-#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[component(on_insert = crate::membership::member_changed, on_remove = crate::membership::member_changed)]
 #[relationship(relationship_target = PanelCommandParts)]
-pub struct InPanel(#[cfg_attr(feature = "persistence", entities)] pub Entity);
+pub struct InPanel(pub Entity);
 
 #[derive(Component, Default)]
-#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component))]
 #[relationship_target(relationship = InPanel, linked_spawn)]
-pub struct PanelCommandParts(#[cfg_attr(feature = "persistence", entities)] Vec<Entity>);
+pub struct PanelCommandParts(Vec<Entity>);
 
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum InvocationContext {

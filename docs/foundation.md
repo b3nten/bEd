@@ -1,7 +1,7 @@
 # Foundation: stores, persistence, settings, workspaces, commands
 
-Status: **agreed design, not built yet** (2026-10-27). Review before implementing;
-update this file as decisions change during the build.
+Status (2026-10-27): **step 1 (stores and persistence) built**; the rest is the
+agreed design, not built yet. Update this file as decisions change during the build.
 
 The goal is a foundation solid enough that everything after it is "bring in a
 plugin": file tree, editor, viewers, terminal. Those plugins should only need to
@@ -279,6 +279,31 @@ unless that turns out to be needed.
 ### Menus
 
 Built afterwards on the same pieces: command labels plus resolved shortcuts.
+
+## Built so far
+
+### Step 1: stores and persistence
+
+As designed, with these specifics and differences:
+
+- Relationships are restored with Bevy's `DynamicWorld::write_to_world`, which
+  writes both sides exactly as saved without running relationship hooks. That
+  replaced the staged insertion, relationship plans and
+  `register_persisted_relationship`.
+- `PanelInstance` isn't saved. The concrete panel component supplies it through
+  `#[require]`; restoring both could lose the panel's draw function depending on
+  insertion order. Titles come from `Panel::LABEL` (or are set at runtime) and
+  the preview flag isn't kept.
+- A panel with nothing persisted is left out of the save (and out of its area's
+  tab list) instead of failing the save.
+- Saved files use runtime entity ids; Bevy remaps them on load. No canonical ids.
+- Saves are synchronous on the main thread, about once a second when changed,
+  and on `AppExit`. Restore happens in `PreStartup`.
+- Removed for now: capturing or replacing a single layout at runtime
+  (`CapturedLayout`). It returns with layout templates / reset layout.
+- A type in the saved file that isn't registered (e.g. a plugin that's no longer
+  loaded) fails the whole restore; the store is then blocked and its file kept.
+- bed stores `WorkbenchStore` in its config directory until workspaces exist.
 
 ## Build order
 

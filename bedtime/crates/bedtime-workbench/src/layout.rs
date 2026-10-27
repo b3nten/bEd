@@ -1,7 +1,7 @@
 //! ECS owns the tiling. Geometry snapshots are temporary calculations, never a
 //! second live model. This module alone commits membership and topology changes.
 #[cfg(feature = "persistence")]
-use crate::persistence::ReflectWorkbenchPersist;
+use crate::persistence::ReflectPersist;
 use crate::{Workbench, geometry};
 #[cfg(feature = "persistence")]
 use bevy::ecs::reflect::ReflectMapEntities;
@@ -18,7 +18,7 @@ use std::collections::HashMap;
 )]
 #[cfg_attr(
     feature = "persistence",
-    reflect(Resource, MapEntities, WorkbenchPersist)
+    reflect(Resource, MapEntities, Persist)
 )]
 pub(crate) struct LayoutOrder(#[cfg_attr(feature = "persistence", entities)] pub Vec<Entity>);
 pub fn layouts(world: &World) -> &[Entity] {
@@ -28,13 +28,13 @@ pub fn layouts(world: &World) -> &[Entity] {
 /// Selected layout in this World. Zero or one may be selected.
 #[derive(Component, Default)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
+#[cfg_attr(feature = "persistence", reflect(Component, Persist))]
 #[require(Layout)]
 pub struct ActiveLayout;
 
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
+#[cfg_attr(feature = "persistence", reflect(Component, Persist))]
 #[require(LayoutAreas)]
 #[component(on_add = crate::membership::layout_added, on_remove = crate::membership::layout_removed)]
 pub struct Layout {
@@ -58,7 +58,7 @@ impl Layout {
 
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
+#[cfg_attr(feature = "persistence", reflect(Component, Persist))]
 #[require(AreaPresentation, AreaLocation)]
 pub struct Area {
     pub rect: AreaRect,
@@ -85,16 +85,15 @@ impl Area {
     }
 }
 
+/// Not persisted: a panel's concrete component supplies it through `#[require]`
+/// (title from `Panel::LABEL`), so restoring that component restores this too.
 #[derive(Component, Debug, Default)]
-#[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
 #[require(PanelPresentation, PanelLocation)]
 pub struct PanelInstance {
     pub title: String,
     pub preview: bool,
     /// Optional ordinary drawing capability, available as soon as composition applies.
     #[cfg(feature = "ui")]
-    #[cfg_attr(feature = "persistence", reflect(ignore))]
     pub draw: Option<PanelDraw>,
 }
 
@@ -130,16 +129,15 @@ pub fn active_layout(world: &World) -> Option<Entity> {
 
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component))]
+#[cfg_attr(feature = "persistence", reflect(Component, Persist))]
 #[component(on_insert = crate::membership::area_inserted, on_discard = crate::membership::area_replaced, on_remove = crate::membership::area_removed)]
 #[relationship(relationship_target = LayoutAreas)]
 pub struct InLayout(#[cfg_attr(feature = "persistence", entities)] pub Entity);
 
-/// Ordered area membership. Persistence stores this order and rebuilds InLayout
-/// sources through attachment hooks instead of persisting ownership twice.
+/// Ordered area membership.
 #[derive(Component, Default)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
+#[cfg_attr(feature = "persistence", reflect(Component, Persist))]
 #[relationship_target(relationship = InLayout, linked_spawn)]
 pub struct LayoutAreas(#[cfg_attr(feature = "persistence", entities)] Vec<Entity>);
 
@@ -151,16 +149,15 @@ impl LayoutAreas {
 
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component))]
+#[cfg_attr(feature = "persistence", reflect(Component, Persist))]
 #[component(on_insert = crate::membership::panel_inserted, on_discard = crate::membership::panel_replaced, on_remove = crate::membership::panel_removed)]
 #[relationship(relationship_target = AreaPanels)]
 pub struct InArea(#[cfg_attr(feature = "persistence", entities)] pub Entity);
 
-/// Authoritative tab order as well as reverse membership. Persistence stores this
-/// list and rebuilds InArea sources in order; missing and empty lists are equivalent.
+/// Tab order as well as reverse membership.
 #[derive(Component, Default)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
-#[cfg_attr(feature = "persistence", reflect(Component, WorkbenchPersist))]
+#[cfg_attr(feature = "persistence", reflect(Component, Persist))]
 #[relationship_target(relationship = InArea, linked_spawn)]
 pub struct AreaPanels(#[cfg_attr(feature = "persistence", entities)] Vec<Entity>);
 

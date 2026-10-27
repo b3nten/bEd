@@ -216,6 +216,14 @@ Each step should produce a usable app. We can reorder at any point.
   - Deferred: command system (C, with menus), frontend split (D), surface/shell
     merge (D), persistence (E, with workspaces).
 
+- **Step 5.1 (stores + persistence)**, committed 2026-10-27.
+  See "Built so far" in [docs/foundation.md](docs/foundation.md). `persistence.rs`
+  (capture/restore on Bevy's `DynamicWorld`) + `persistence/stores.rs` (`Store`,
+  `WorkbenchStore`, `StoreBackend`, `DirectoryStore`, `add_store`, `persist_in`,
+  load in `PreStartup`, save ~1 s when changed and on exit). Non-test persistence
+  code went from ~1,490 to ~560 lines including the new stores. bed saves its
+  layout to `<config>/world.ron`; restore verified in the running app.
+
 ## Decisions
 
 - 2026-10-26: `config.rs` may move to bedtime later; it stays in bed for now.
