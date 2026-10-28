@@ -9,24 +9,23 @@ use crate::{
 };
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::{
-    CloseRequested, CommandAppExt, ContextCommand, ContextCommandId, ContextCommandInvocation,
-    ContextCommandRequests, ContextCommandResult, ErrorDialog, Handler, InMenu, InvocationContext,
-    Invokes, KeyChord, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator, NativeMenuBar,
-    PanelFactory, SaveDocument, command_available, draw_menu_bar, panel_drag_source,
-    request_error_dialog, shortcut_for,
+    Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult, CloseRequested,
+    ErrorDialog, Handler, InMenu, InvocationContext, Invokes, KeyChord, Menu, MenuBar, MenuEntries,
+    MenuItem, MenuSeparator, NativeMenuBar, PanelFactory, SaveDocument, action_available,
+    draw_menu_bar, panel_drag_source, request_error_dialog, shortcut_for,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
 
 pub struct Quit;
-impl ContextCommand for Quit {
+impl Action for Quit {
     const KEY: &'static str = "app.quit";
     const LABEL: &'static str = "Quit bEd";
     const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyQ)];
 }
 
 pub struct OpenFolder;
-impl ContextCommand for OpenFolder {
+impl Action for OpenFolder {
     const KEY: &'static str = "app.open_folder";
     const LABEL: &'static str = "Open Folder…";
     const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyO)];
@@ -35,21 +34,21 @@ impl ContextCommand for OpenFolder {
 /// From an Open Recent item, opens that item's folder; from a key, the most
 /// recent folder other than this one.
 pub struct OpenRecent;
-impl ContextCommand for OpenRecent {
+impl Action for OpenRecent {
     const KEY: &'static str = "app.open_recent";
     const LABEL: &'static str = "Open Recent";
 }
 
 /// Back to the default workspace, in this window.
 pub struct CloseFolder;
-impl ContextCommand for CloseFolder {
+impl Action for CloseFolder {
     const KEY: &'static str = "app.close_folder";
     const LABEL: &'static str = "Close Folder";
 }
 
 /// Another window, in its own process, starting as bed does from the command line.
 pub struct NewWindow;
-impl ContextCommand for NewWindow {
+impl Action for NewWindow {
     const KEY: &'static str = "app.new_window";
     const LABEL: &'static str = "New Window";
     const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::new(
@@ -76,17 +75,17 @@ impl Plugin for MenusPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RecentWorkspaces>()
             .init_non_send::<FolderDialog>()
-            .add_command_handler::<Quit>(Handler::new(quit))
-            .add_command_handler::<NewWindow>(Handler::new(new_window))
-            .add_command_handler::<CloseFolder>(
+            .add_action_handler::<Quit>(Handler::new(quit))
+            .add_action_handler::<NewWindow>(Handler::new(new_window))
+            .add_action_handler::<CloseFolder>(
                 Handler::new(close_folder)
                     .available_when(|world, _| !world.resource::<Workspace>().default),
             )
-            .add_command_handler::<OpenFolder>(
+            .add_action_handler::<OpenFolder>(
                 Handler::new(open_folder)
                     .available_when(|world, _| world.non_send::<FolderDialog>().0.is_none()),
             )
-            .add_command_handler::<OpenRecent>(
+            .add_action_handler::<OpenRecent>(
                 Handler::new(open_recent).available_when(|world, _| other_recent(world).is_some()),
             )
             .add_systems(Startup, compose_menus)
@@ -119,10 +118,10 @@ fn compose_menus(mut commands: Commands) {
         InMenu(app),
     ));
     commands.spawn((MenuSeparator, InMenu(app)));
-    commands.spawn((MenuItem::command::<Quit>(), InMenu(app)));
-    commands.spawn((MenuItem::command::<NewWindow>(), InMenu(file)));
+    commands.spawn((MenuItem::action::<Quit>(), InMenu(app)));
+    commands.spawn((MenuItem::action::<NewWindow>(), InMenu(file)));
     commands.spawn((MenuSeparator, InMenu(file)));
-    commands.spawn((MenuItem::command::<OpenFolder>(), InMenu(file)));
+    commands.spawn((MenuItem::action::<OpenFolder>(), InMenu(file)));
     commands.spawn((
         Menu {
             label: "Open Recent".into(),
@@ -130,23 +129,23 @@ fn compose_menus(mut commands: Commands) {
         RecentMenu,
         InMenu(file),
     ));
-    commands.spawn((MenuItem::command::<CloseFolder>(), InMenu(file)));
+    commands.spawn((MenuItem::action::<CloseFolder>(), InMenu(file)));
     commands.spawn((MenuSeparator, InMenu(file)));
-    commands.spawn((MenuItem::command::<SaveDocument>(), InMenu(file)));
+    commands.spawn((MenuItem::action::<SaveDocument>(), InMenu(file)));
     commands.spawn((
         MenuItem::new("Settings"),
         Invokes::of::<OpenSettings>(),
         InMenu(view),
     ));
-    commands.spawn((MenuItem::command::<OpenWorkspaces>(), InMenu(view)));
-    commands.spawn((MenuItem::command::<UseLayout<0>>(), InMenu(layout)));
-    commands.spawn((MenuItem::command::<UseLayout<1>>(), InMenu(layout)));
-    commands.spawn((MenuItem::command::<UseLayout<2>>(), InMenu(layout)));
-    commands.spawn((MenuItem::command::<UseLayout<3>>(), InMenu(layout)));
-    commands.spawn((MenuItem::command::<UseLayout<4>>(), InMenu(layout)));
+    commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<UseLayout<0>>(), InMenu(layout)));
+    commands.spawn((MenuItem::action::<UseLayout<1>>(), InMenu(layout)));
+    commands.spawn((MenuItem::action::<UseLayout<2>>(), InMenu(layout)));
+    commands.spawn((MenuItem::action::<UseLayout<3>>(), InMenu(layout)));
+    commands.spawn((MenuItem::action::<UseLayout<4>>(), InMenu(layout)));
     commands.spawn((MenuSeparator, InMenu(layout)));
-    commands.spawn((MenuItem::command::<SaveLayoutAsDefault>(), InMenu(layout)));
-    commands.spawn((MenuItem::command::<ResetLayout>(), InMenu(layout)));
+    commands.spawn((MenuItem::action::<SaveLayoutAsDefault>(), InMenu(layout)));
+    commands.spawn((MenuItem::action::<ResetLayout>(), InMenu(layout)));
 }
 
 /// Recent folders other than this one, in Open Recent.
@@ -187,7 +186,7 @@ fn fill_recent_menu(
     }
 }
 
-fn quit(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+fn quit(world: &mut World, _: ActionInvocation) -> ActionResult {
     world.write_message(CloseRequested { window: None });
     Ok(())
 }
@@ -197,7 +196,7 @@ fn quit(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult 
 #[derive(Default)]
 struct FolderDialog(Option<Pin<Box<dyn Future<Output = Option<rfd::FileHandle>>>>>);
 
-fn open_folder(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+fn open_folder(world: &mut World, _: ActionInvocation) -> ActionResult {
     let dialog = rfd::AsyncFileDialog::new()
         .set_title("Open Folder")
         .pick_folder();
@@ -220,7 +219,7 @@ fn poll_folder_dialog(world: &mut World) {
     }
 }
 
-fn open_recent(world: &mut World, invocation: ContextCommandInvocation) -> ContextCommandResult {
+fn open_recent(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let chosen = invocation
         .source
         .and_then(|source| world.get::<RecentPath>(source))
@@ -232,7 +231,7 @@ fn open_recent(world: &mut World, invocation: ContextCommandInvocation) -> Conte
     Ok(())
 }
 
-fn close_folder(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+fn close_folder(world: &mut World, _: ActionInvocation) -> ActionResult {
     switch(world, Start::Default);
     Ok(())
 }
@@ -264,7 +263,7 @@ pub fn switch(world: &mut World, start: Start) {
     }
 }
 
-fn new_window(_: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+fn new_window(_: &mut World, _: ActionInvocation) -> ActionResult {
     std::env::current_exe()
         .and_then(|bed| std::process::Command::new(bed).spawn())
         .map(|_| ())
@@ -295,15 +294,15 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
 
 /// A titlebar button running command `C`. Dragging it out creates a new panel
 /// from `factory` where it's dropped.
-fn tool<C: ContextCommand>(
+fn tool<C: Action>(
     ui: &mut egui::Ui,
     world: &mut World,
     context: &UiContext<'_>,
     icon: BuiltinIcon,
     factory: PanelFactory,
 ) {
-    let command = ContextCommandId::of::<C>();
-    let enabled = command_available(world, &command, InvocationContext::Focused);
+    let command = ActionId::of::<C>();
+    let enabled = action_available(world, &command, InvocationContext::Focused);
     let tooltip = match shortcut_for(world, &command, InvocationContext::Focused) {
         Some(chord) => format!("{} ({})", C::LABEL, chord.label()),
         None => C::LABEL.to_owned(),
@@ -316,7 +315,7 @@ fn tool<C: ContextCommand>(
         context.frame(ui).tooltip(&response, tooltip);
         panel_drag_source(&response, factory);
         if response.clicked() {
-            world.resource_mut::<ContextCommandRequests>().invoke::<C>();
+            world.resource_mut::<ActionRequests>().invoke::<C>();
         }
     });
 }
@@ -399,8 +398,8 @@ mod tests {
         let recent = menu(menu(&bar.entries, "File"), "Open Recent");
         assert_eq!(labels(recent), [("No Recent Folders".into(), false)]);
 
-        let open_recent = ContextCommandId::of::<OpenRecent>();
-        assert!(!command_available(
+        let open_recent = ActionId::of::<OpenRecent>();
+        assert!(!action_available(
             world,
             &open_recent,
             InvocationContext::Focused

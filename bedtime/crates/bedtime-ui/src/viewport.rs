@@ -16,7 +16,7 @@ pub(crate) fn install(app: &mut App) {
 }
 
 /// A scene output and its latest UI observations. Attach to the drawing view,
-/// then call `UiViewport::draw(ui, world, context, entity)` through [`crate::Component`].
+/// then call `UiViewport::draw(ui, world, context, entity)` through [`crate::UiComponent`].
 /// Drawing fills the supplied UI allocation and registers the image with egui.
 /// Use one output image per independently sized viewport/camera.
 #[derive(Component, Clone, Debug)]
@@ -82,7 +82,7 @@ impl UiViewport {
     }
 }
 
-impl crate::Component for UiViewport {
+impl crate::UiComponent for UiViewport {
     type Props<'a> = Entity;
 
     fn draw(ui: &mut egui::Ui, world: &mut World, _: &UiContext<'_>, entity: Entity) {
@@ -159,7 +159,7 @@ pub(crate) fn resize_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Component as _;
+    use crate::UiComponent as _;
     use bevy::ecs::system::RunSystemOnce;
 
     #[test]

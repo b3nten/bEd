@@ -232,8 +232,8 @@ Each command's chords are an ordinary setting, so layering, persistence and
 "reset to inherited" need nothing special:
 
 ```rust
-struct Keybinding<C: ContextCommand>(PhantomData<C>);
-impl<C: ContextCommand> Setting for Keybinding<C> {
+struct Keybinding<C: Action>(PhantomData<C>);
+impl<C: Action> Setting for Keybinding<C> {
     type Value = Vec<KeyChord>;
     fn key() -> Cow<'static, str> { format!("keys.{}", C::KEY).into() }
     fn default() -> Vec<KeyChord> { C::DEFAULT_KEYS.to_vec() }
@@ -402,12 +402,12 @@ As designed (`bedtime-workbench/src/settings.rs`), with these specifics:
 
 As designed (`bedtime-workbench/src/commands.rs`), with these specifics:
 
-- `ContextCommand` gained `DEFAULT_KEYS` and `REPEATS` (repeat is a property of
-  the command now, not of each binding). `app.register_command::<C>()` makes a
+- `Action` gained `DEFAULT_KEYS` and `REPEATS` (repeat is a property of
+  the command now, not of each binding). `app.register_action::<C>()` makes a
   command known and registers its `Keybinding<C>` setting (`keys.<KEY>`);
-  `app.add_command_handler::<C>(f)` also sets its global handler.
-- One handler type, `fn(&mut World, ContextCommandInvocation) -> Result`. Global
-  handlers live in `CommandRegistry`; panel handlers are `CommandHandler<C>`
+  `app.add_action_handler::<C>(f)` also sets its global handler.
+- One handler type, `fn(&mut World, ActionInvocation) -> Result`. Global
+  handlers live in `ActionRegistry`; panel handlers are `ActionHandler<C>`
   components. The registry finds a panel's handler through a function stored at
   registration, so there's no handler index, no handler entities and no
   generation counters. A global handler is told the panel it runs for (Save
@@ -440,8 +440,8 @@ Workbench:
 
 - **One handler type.** `Handler` holds what a command does and, optionally,
   when it can run (`available_when(fn(&World, Option<Entity>) -> bool)`). Global
-  handlers and `CommandHandler<C>` both hold one; the panel handler's `enabled`
-  field is gone. Menus, the toolbar and dispatch all use `command_available`,
+  handlers and `ActionHandler<C>` both hold one; the panel handler's `enabled`
+  field is gone. Menus, the toolbar and dispatch all use `action_available`,
   so apps need no availability sync system. Save/Undo/Redo are available only
   when the focused panel's document can be saved / has history.
 - `MenuItem.enabled` is gone; `MenuItem::command::<C>()` labels an item with

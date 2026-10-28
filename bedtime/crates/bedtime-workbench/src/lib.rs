@@ -1,14 +1,14 @@
 //! Composable workbench services; the application supplies Bevy's window and renderer.
+mod actions;
 mod closing;
-mod commands;
 mod composition;
-mod document_commands;
+mod document_actions;
 mod documents;
 mod membership;
 pub use composition::PanelTabStyle;
 #[cfg(any(debug_assertions, feature = "persistence"))]
 pub(crate) use composition::validate_workbench;
-pub use document_commands::*;
+pub use document_actions::*;
 pub use documents::*;
 mod geometry;
 mod layout;
@@ -19,8 +19,8 @@ pub mod persistence;
 #[cfg(feature = "persistence")]
 pub mod settings;
 mod work;
+pub use actions::*;
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument, close_prompt, resolve_close};
-pub use commands::*;
 pub use layout::*;
 pub use lifecycle::*;
 pub use menus::*;

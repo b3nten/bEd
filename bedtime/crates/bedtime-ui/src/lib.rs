@@ -16,7 +16,7 @@ pub mod tree;
 mod viewport;
 use bevy::prelude::*;
 pub use combo_box::ComboBox;
-pub use component::{Component, UiContext, UiDraw};
+pub use component::{UiComponent, UiContext, UiDraw};
 pub use egui;
 pub use embedded::{EmbeddedRenderPlugin, ViewportHostPlugin, ViewportOutput};
 pub use icons::{BuiltinIcon, Icon, IconSet, IconSource, UiIconStatus, UiIcons};
@@ -163,10 +163,10 @@ pub struct UiDiagnostics {
 
 #[derive(Component)]
 #[relationship(relationship_target = SurfaceViews)]
-pub struct OnSurface(pub Entity);
+pub struct InSurface(pub Entity);
 
 #[derive(Component, Default)]
-#[relationship_target(relationship = OnSurface, linked_spawn)]
+#[relationship_target(relationship = InSurface, linked_spawn)]
 pub struct SurfaceViews(Vec<Entity>);
 
 #[derive(Component)]
@@ -651,14 +651,14 @@ pub fn register_view(world: &mut World, surface: Entity, draw: UiDraw) -> Entity
         world.get::<UiSurface>(surface).is_some(),
         "Drawing requires a UiSurface"
     );
-    world.spawn((UiView { draw }, OnSurface(surface))).id()
+    world.spawn((UiView { draw }, InSurface(surface))).id()
 }
 
 /// Mount a component with no external props as a surface root. Components with
 /// props are composed by their caller and need no registration.
 pub fn register_component<C>(world: &mut World, surface: Entity) -> Entity
 where
-    for<'a> C: Component<Props<'a> = ()>,
+    for<'a> C: UiComponent<Props<'a> = ()>,
 {
     register_view(world, surface, |ui, world, context| {
         C::draw(ui, world, context, ())

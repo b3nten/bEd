@@ -3,7 +3,7 @@ use crate::*;
 use bevy::prelude::*;
 use std::sync::Mutex;
 
-pub trait Component {
+pub trait UiComponent {
     type Props<'a>;
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, props: Self::Props<'_>);
 }

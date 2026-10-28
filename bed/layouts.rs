@@ -9,8 +9,8 @@ use crate::{
     workspace::{Workspace, WorkspacesPanel},
 };
 use bedtime_workbench::{
-    CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, Handler,
-    KeyChord, Layout, PanelFactory, Workbench, active_layout, layouts,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout, PanelFactory,
+    Workbench, active_layout, layouts,
     persistence::{
         LayoutTemplate, ReflectPersist, StoreAppExt, capture_layout, instantiate_layout,
     },
@@ -38,7 +38,7 @@ pub struct LayoutDefaults(pub [Option<LayoutTemplate>; SLOTS]);
 
 /// Switch to numbered layout `N` (from 0).
 pub struct UseLayout<const N: usize>;
-impl<const N: usize> ContextCommand for UseLayout<N> {
+impl<const N: usize> Action for UseLayout<N> {
     const KEY: &'static str = ["layout.1", "layout.2", "layout.3", "layout.4", "layout.5"][N];
     const LABEL: &'static str = ["Layout 1", "Layout 2", "Layout 3", "Layout 4", "Layout 5"][N];
     const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(
@@ -54,14 +54,14 @@ impl<const N: usize> ContextCommand for UseLayout<N> {
 
 /// Make the current layout its slot's default, for every workspace.
 pub struct SaveLayoutAsDefault;
-impl ContextCommand for SaveLayoutAsDefault {
+impl Action for SaveLayoutAsDefault {
     const KEY: &'static str = "layout.save_default";
     const LABEL: &'static str = "Save Layout as Default";
 }
 
 /// Replace the current layout with its slot's default.
 pub struct ResetLayout;
-impl ContextCommand for ResetLayout {
+impl Action for ResetLayout {
     const KEY: &'static str = "layout.reset";
     const LABEL: &'static str = "Reset Layout";
 }
@@ -74,15 +74,15 @@ impl Plugin for LayoutsPlugin {
             .register_type::<LayoutDefaults>()
             .init_resource::<LayoutDefaults>()
             .persist_in::<LayoutDefaults, GlobalStore>()
-            .add_command_handler::<UseLayout<0>>(Handler::new(use_layout::<0>))
-            .add_command_handler::<UseLayout<1>>(Handler::new(use_layout::<1>))
-            .add_command_handler::<UseLayout<2>>(Handler::new(use_layout::<2>))
-            .add_command_handler::<UseLayout<3>>(Handler::new(use_layout::<3>))
-            .add_command_handler::<UseLayout<4>>(Handler::new(use_layout::<4>))
-            .add_command_handler::<SaveLayoutAsDefault>(
+            .add_action_handler::<UseLayout<0>>(Handler::new(use_layout::<0>))
+            .add_action_handler::<UseLayout<1>>(Handler::new(use_layout::<1>))
+            .add_action_handler::<UseLayout<2>>(Handler::new(use_layout::<2>))
+            .add_action_handler::<UseLayout<3>>(Handler::new(use_layout::<3>))
+            .add_action_handler::<UseLayout<4>>(Handler::new(use_layout::<4>))
+            .add_action_handler::<SaveLayoutAsDefault>(
                 Handler::new(save_as_default).available_when(|world, _| current(world).is_some()),
             )
-            .add_command_handler::<ResetLayout>(
+            .add_action_handler::<ResetLayout>(
                 Handler::new(reset).available_when(|world, _| current(world).is_some()),
             )
             .add_systems(Startup, open_first);
@@ -149,14 +149,11 @@ fn open_first(world: &mut World) {
     }
 }
 
-fn use_layout<const N: usize>(
-    world: &mut World,
-    _: ContextCommandInvocation,
-) -> ContextCommandResult {
+fn use_layout<const N: usize>(world: &mut World, _: ActionInvocation) -> ActionResult {
     switch(world, LayoutSlot(N)).map(|_| ())
 }
 
-fn save_as_default(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+fn save_as_default(world: &mut World, _: ActionInvocation) -> ActionResult {
     let slot = current(world).ok_or("This layout has no number")?;
     let layout = active_layout(world).ok_or("No layout is open")?;
     let template = capture_layout(world, layout)?;
@@ -166,7 +163,7 @@ fn save_as_default(world: &mut World, _: ContextCommandInvocation) -> ContextCom
 
 /// Build the replacement first, so a default that can't be used leaves the
 /// current layout alone.
-fn reset(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+fn reset(world: &mut World, _: ActionInvocation) -> ActionResult {
     let slot = current(world).ok_or("This layout has no number")?;
     let old = active_layout(world).ok_or("No layout is open")?;
     let new = create(world, slot)?;
@@ -185,8 +182,8 @@ mod tests {
     use super::*;
     use crate::{panels::open_panel, settings::SettingsPanel};
     use bedtime_workbench::{
-        ContextCommandId, ContextCommandRequest, ContextCommandRequests, InvocationContext,
-        PanelFactory, WorkbenchCorePlugin,
+        ActionId, ActionRequest, ActionRequests, InvocationContext, PanelFactory,
+        WorkbenchCorePlugin,
     };
 
     fn app() -> App {
@@ -197,11 +194,11 @@ mod tests {
         app
     }
 
-    fn run<C: ContextCommand>(app: &mut App) {
+    fn run<C: Action>(app: &mut App) {
         app.world_mut()
-            .resource_mut::<ContextCommandRequests>()
-            .submit(ContextCommandRequest {
-                command: ContextCommandId::of::<C>(),
+            .resource_mut::<ActionRequests>()
+            .submit(ActionRequest {
+                command: ActionId::of::<C>(),
                 context: InvocationContext::Focused,
                 source: None,
             });

@@ -15,10 +15,10 @@ pub(crate) fn install(app: &mut App) {
         .add_message::<CloseRequested>();
     #[cfg(feature = "ui")]
     app.init_resource::<WorkbenchUi>();
-    commands::install(app);
+    actions::install(app);
     documents::install(app);
     closing::install(app);
-    document_commands::install(app);
+    document_actions::install(app);
     #[cfg(feature = "ui")]
     layout::install(app);
     #[cfg(feature = "ui")]

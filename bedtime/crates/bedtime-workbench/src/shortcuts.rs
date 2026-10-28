@@ -9,7 +9,7 @@ pub(crate) fn install(app: &mut App) {
     app.add_systems(
         PreUpdate,
         collect
-            .in_set(ContextCommandSystems::CollectInput)
+            .in_set(ActionSystems::CollectInput)
             .after(UiSystems::Draw),
     );
 }
@@ -42,7 +42,7 @@ fn collect(world: &mut World) {
     {
         return;
     }
-    let panel = crate::commands::focused_panel(world);
+    let panel = crate::actions::focused_panel(world);
     let text = capture.text || ctx.text_edit_focused();
     let mut seen = HashSet::new();
     let mut chords: Vec<_> = world
@@ -171,42 +171,42 @@ mod tests {
     use super::*;
 
     struct Save;
-    impl ContextCommand for Save {
+    impl Action for Save {
         const KEY: &'static str = "test.save";
         const LABEL: &'static str = "Save";
     }
     struct Other;
-    impl ContextCommand for Other {
+    impl Action for Other {
         const KEY: &'static str = "test.other";
         const LABEL: &'static str = "Other";
     }
     struct Repeating;
-    impl ContextCommand for Repeating {
+    impl Action for Repeating {
         const KEY: &'static str = "test.repeating";
         const LABEL: &'static str = "Repeating";
         const REPEATS: bool = true;
     }
     #[derive(Resource, Default)]
-    struct Calls(Vec<ContextCommandId>);
+    struct Calls(Vec<ActionId>);
 
-    fn record(world: &mut World, invocation: ContextCommandInvocation) -> ContextCommandResult {
+    fn record(world: &mut World, invocation: ActionInvocation) -> ActionResult {
         world.resource_mut::<Calls>().0.push(invocation.command);
         Ok(())
     }
 
-    fn bind<C: ContextCommand>(app: &mut App, chord: KeyChord) {
+    fn bind<C: Action>(app: &mut App, chord: KeyChord) {
         app.world_mut()
             .resource_mut::<Keybindings>()
-            .set(ContextCommandId::of::<C>(), vec![chord]);
+            .set(ActionId::of::<C>(), vec![chord]);
     }
 
     fn app() -> (App, Entity, egui::Context) {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin))
             .init_resource::<Calls>()
-            .add_command_handler::<Save>(Handler::new(record))
-            .add_command_handler::<Other>(Handler::new(record))
-            .add_command_handler::<Repeating>(Handler::new(record));
+            .add_action_handler::<Save>(Handler::new(record))
+            .add_action_handler::<Other>(Handler::new(record))
+            .add_action_handler::<Repeating>(Handler::new(record));
         crate::tests::layout(app.world_mut());
         let surface = app
             .world_mut()
@@ -295,7 +295,7 @@ mod tests {
         );
         assert_eq!(
             app.world().resource::<Calls>().0,
-            vec![ContextCommandId::of::<Save>()]
+            vec![ActionId::of::<Save>()]
         );
     }
 
@@ -375,10 +375,7 @@ mod tests {
         );
         assert_eq!(
             app.world().resource::<Calls>().0,
-            vec![
-                ContextCommandId::of::<Save>(),
-                ContextCommandId::of::<Other>()
-            ]
+            vec![ActionId::of::<Save>(), ActionId::of::<Other>()]
         );
         frame(
             &mut app,
@@ -398,7 +395,7 @@ mod tests {
         );
         assert_eq!(
             app.world().resource::<Calls>().0.last(),
-            Some(&ContextCommandId::of::<Save>()),
+            Some(&ActionId::of::<Save>()),
             "Remaining egui input: {:?}",
             ctx.input(|input| input.events.clone())
         );
@@ -408,7 +405,7 @@ mod tests {
     fn text_editing_reserves_noop_edits_and_enter_but_allows_save() {
         let (mut app, surface, ctx) = app();
         app.world_mut().resource_mut::<Keybindings>().set(
-            ContextCommandId::of::<Other>(),
+            ActionId::of::<Other>(),
             vec![
                 KeyChord::new(Modifiers::default(), KeyCode::Delete),
                 KeyChord::new(Modifiers::default(), KeyCode::Enter),
@@ -434,7 +431,7 @@ mod tests {
         );
         assert_eq!(
             app.world().resource::<Calls>().0,
-            vec![ContextCommandId::of::<Save>()]
+            vec![ActionId::of::<Save>()]
         );
         frame(
             &mut app,

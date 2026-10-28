@@ -436,7 +436,7 @@ mod tests {
                 (|surfaces: Query<Entity, With<WorkbenchSurface>>,
                   themes: Query<&Theme>,
                   cameras: Query<&UiCamera>,
-                  views: Query<&bedtime_ui::OnSurface, With<bedtime_ui::UiView>>| {
+                  views: Query<&bedtime_ui::InSurface, With<bedtime_ui::UiView>>| {
                     for surface in &surfaces {
                         assert!(themes.get(surface).is_ok());
                         assert_eq!(cameras.single().unwrap().0, surface);

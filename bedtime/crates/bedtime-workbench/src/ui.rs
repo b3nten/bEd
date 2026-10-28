@@ -156,14 +156,12 @@ fn draw_entries(ui: &mut bedtime_ui::egui::Ui, world: &mut World, entries: &[Men
                     .inner;
                 observe_item(world, *entity, &response);
                 if response.clicked() {
-                    let request = ContextCommandRequest {
+                    let request = ActionRequest {
                         command: target.clone().expect("Enabled menu action"),
                         context: *context,
                         source: Some(*entity),
                     };
-                    world
-                        .resource_mut::<ContextCommandRequests>()
-                        .submit(request);
+                    world.resource_mut::<ActionRequests>().submit(request);
                     ui.close();
                 }
             }

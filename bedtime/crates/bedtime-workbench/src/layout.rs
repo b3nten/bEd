@@ -347,7 +347,7 @@ pub(crate) fn install(app: &mut App) {
             PreUpdate,
             WorkbenchSystems::Apply
                 .after(bedtime_ui::UiSystems::Draw)
-                .before(crate::ContextCommandSystems::CollectInput),
+                .before(crate::ActionSystems::CollectInput),
         )
         .add_systems(PreUpdate, apply_edits.in_set(WorkbenchSystems::Apply));
 }

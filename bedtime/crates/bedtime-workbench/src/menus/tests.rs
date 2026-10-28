@@ -2,13 +2,13 @@ use super::*;
 use crate::*;
 
 struct Copy;
-impl ContextCommand for Copy {
+impl Action for Copy {
     const KEY: &'static str = "tests.copy";
     const LABEL: &'static str = "Copy";
 }
 
 struct Paste;
-impl ContextCommand for Paste {
+impl Action for Paste {
     const KEY: &'static str = "tests.paste";
     const LABEL: &'static str = "Paste";
 }
@@ -17,22 +17,22 @@ fn app() -> App {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin);
     crate::tests::layout(app.world_mut());
-    app.add_command_handler::<Copy>(Handler::new(|_, _| Ok(())))
-        .add_command_handler::<Paste>(Handler::new(|_, _| Ok(())));
+    app.add_action_handler::<Copy>(Handler::new(|_, _| Ok(())))
+        .add_action_handler::<Paste>(Handler::new(|_, _| Ok(())));
     app
 }
 
-fn bind<C: ContextCommand>(world: &mut World, chord: KeyChord) {
+fn bind<C: Action>(world: &mut World, chord: KeyChord) {
     world
         .resource_mut::<Keybindings>()
-        .set(ContextCommandId::of::<C>(), vec![chord]);
+        .set(ActionId::of::<C>(), vec![chord]);
 }
 
 #[test]
 fn world_menu_snapshots_remain_enabled_without_workspaces() {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin)
-        .add_command_handler::<Copy>(Handler::new(|_, _| Ok(())));
+        .add_action_handler::<Copy>(Handler::new(|_, _| Ok(())));
     let world = app.world_mut();
     let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyC);
     bind::<Copy>(world, chord);
@@ -48,11 +48,7 @@ fn world_menu_snapshots_remain_enabled_without_workspaces() {
     assert!(
         matches!(&snapshot.entries[0], MenuNode::Item { enabled: true, shortcut: Some(c), context: InvocationContext::Global, .. } if *c == chord)
     );
-    assert!(
-        snapshot
-            .request(item, ContextCommandId::of::<Copy>())
-            .is_some()
-    );
+    assert!(snapshot.request(item, ActionId::of::<Copy>()).is_some());
 }
 
 #[test]
@@ -98,11 +94,7 @@ fn menus_can_be_edited_reordered_and_reparented_without_native_services() {
     let chord = KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyC);
     bind::<Copy>(world, chord);
     let snapshot = menu_snapshot(world, root, InvocationContext::Global).unwrap();
-    assert!(
-        snapshot
-            .request(first, ContextCommandId::of::<Copy>())
-            .is_some()
-    );
+    assert!(snapshot.request(first, ActionId::of::<Copy>()).is_some());
     let MenuNode::Menu { entries, .. } = &snapshot.entries[1] else {
         panic!("Tools")
     };
@@ -125,9 +117,9 @@ fn removing_menu_ownership_keeps_action_definitions_and_handlers() {
         .id();
     world.despawn(root);
     assert!(world.get_entity(item).is_err());
-    assert!(command_available(
+    assert!(action_available(
         world,
-        &ContextCommandId::of::<Copy>(),
+        &ActionId::of::<Copy>(),
         InvocationContext::Global
     ));
 }
@@ -141,7 +133,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
             label: "Context".into(),
         })
         .id();
-    let command = ContextCommandId::of::<Copy>();
+    let command = ActionId::of::<Copy>();
     let item = world
         .spawn((
             MenuItem::new("Copy"),
@@ -157,7 +149,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
     );
     let unavailable = Handler::new(|_, _| Ok(())).available_when(|_, _| false);
     world
-        .resource_mut::<CommandRegistry>()
+        .resource_mut::<ActionRegistry>()
         .set_global_handler::<Copy>(Some(unavailable));
     assert!(
         menu_snapshot(world, root, InvocationContext::Global)
@@ -166,7 +158,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
             .is_none()
     );
     world
-        .resource_mut::<CommandRegistry>()
+        .resource_mut::<ActionRegistry>()
         .set_global_handler::<Copy>(Some(Handler::new(|_, _| Ok(()))));
     world.entity_mut(item).remove::<InMenu>();
     assert!(
@@ -180,11 +172,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
         .insert((InMenu(root), Invokes::of::<Paste>()));
     let snapshot = menu_snapshot(world, root, InvocationContext::Global).unwrap();
     assert!(snapshot.request(item, command.clone()).is_none());
-    assert!(
-        snapshot
-            .request(item, ContextCommandId::of::<Paste>())
-            .is_some()
-    );
+    assert!(snapshot.request(item, ActionId::of::<Paste>()).is_some());
     world.despawn(item);
     assert!(
         menu_snapshot(world, root, InvocationContext::Global)

@@ -1,8 +1,6 @@
 //! The remote methods and the systems that carry them out.
 use bedtime_ui::{AccessibilityTree, egui::accesskit};
-use bedtime_workbench::{
-    CommandRegistry, ContextCommandRequest, ContextCommandRequests, InvocationContext,
-};
+use bedtime_workbench::{ActionRegistry, ActionRequest, ActionRequests, InvocationContext};
 use bevy::{
     input::{
         ButtonState,
@@ -358,14 +356,14 @@ struct Invoke {
 fn invoke(In(request): In<Option<Value>>, world: &mut World) -> BrpResult {
     let Invoke { command } = params(request)?;
     let id = world
-        .resource::<CommandRegistry>()
+        .resource::<ActionRegistry>()
         .commands()
         .find(|(id, _)| id.as_str() == command)
         .map(|(id, _)| id.clone())
         .ok_or_else(|| invalid(format!("No command {command}")))?;
     world
-        .resource_mut::<ContextCommandRequests>()
-        .submit(ContextCommandRequest {
+        .resource_mut::<ActionRequests>()
+        .submit(ActionRequest {
             command: id,
             context: InvocationContext::Focused,
             source: None,

@@ -3,7 +3,7 @@
 use super::{CONTROL_WIDTH, columns, overridden_marker, reset_button};
 use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::{
-    CommandRegistry, ContextCommandId, KeyChord, Keybindings, Modifiers, keys_at, keys_in,
+    ActionId, ActionRegistry, KeyChord, Keybindings, Modifiers, keys_at, keys_in,
     keys_overridden_above, persistence::StoreId, set_keys_in,
 };
 use bevy::prelude::*;
@@ -15,12 +15,12 @@ pub(super) fn section(
     layer: StoreId,
 ) {
     let commands: Vec<_> = world
-        .resource::<CommandRegistry>()
+        .resource::<ActionRegistry>()
         .commands()
         .map(|(command, label)| (command.clone(), label))
         .collect();
     let recording_id = ui.id().with("recording-keys");
-    let mut recording: Option<ContextCommandId> = ui.data(|data| data.get_temp(recording_id));
+    let mut recording: Option<ActionId> = ui.data(|data| data.get_temp(recording_id));
     for (command, label) in commands {
         let set_here = keys_in(world, &command, layer).is_some();
         let overridden = keys_overridden_above(world, &command, layer);
@@ -78,15 +78,15 @@ pub(super) fn section(
         Some(command) => {
             data.insert_temp(recording_id, command);
         }
-        None => data.remove::<ContextCommandId>(recording_id),
+        None => data.remove::<ActionId>(recording_id),
     });
 }
 
 /// "Also bound to Find" when another command shares one of these keys. Not an
 /// error: which one runs depends on the focused panel.
-fn shared_with(world: &World, command: &ContextCommandId) -> Option<String> {
+fn shared_with(world: &World, command: &ActionId) -> Option<String> {
     let bindings = world.resource::<Keybindings>();
-    let registry = world.resource::<CommandRegistry>();
+    let registry = world.resource::<ActionRegistry>();
     let mut others: Vec<_> = bindings
         .keys(command)
         .iter()

@@ -1,8 +1,8 @@
 //! Commands: named actions, the handlers that perform them, and their keys.
 //!
 //! A command is a marker type with a stable key, a label and default keys.
-//! Handlers perform it: one global handler in `CommandRegistry`, and any
-//! number of `CommandHandler<C>` components on panels. When a command runs
+//! Handlers perform it: one global handler in `ActionRegistry`, and any
+//! number of `ActionHandler<C>` components on panels. When a command runs
 //! with a panel in context, that panel's handler wins over the global one.
 //!
 //! Which keys trigger which command is a plain table, `Keybindings`. Commands
@@ -18,7 +18,7 @@ use crate::{Area, Layout, PanelInstance};
 use bevy::prelude::*;
 use std::{any::TypeId, borrow::Cow, collections::VecDeque, fmt, ops::BitOr};
 
-pub trait ContextCommand: Send + Sync + 'static {
+pub trait Action: Send + Sync + 'static {
     /// "document.save": stable, used in keybinding settings.
     const KEY: &'static str;
     const LABEL: &'static str;
@@ -29,10 +29,10 @@ pub trait ContextCommand: Send + Sync + 'static {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(transparent)]
-pub struct ContextCommandId(Cow<'static, str>);
+pub struct ActionId(Cow<'static, str>);
 
-impl ContextCommandId {
-    pub fn of<C: ContextCommand>() -> Self {
+impl ActionId {
+    pub fn of<C: Action>() -> Self {
         Self(Cow::Borrowed(C::KEY))
     }
     pub fn as_str(&self) -> &str {
@@ -42,31 +42,31 @@ impl ContextCommandId {
 
 /// On a menu item or button: the command it runs.
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
-pub struct Invokes(pub ContextCommandId);
+pub struct Invokes(pub ActionId);
 
 impl Invokes {
-    pub fn of<C: ContextCommand>() -> Self {
-        Self(ContextCommandId::of::<C>())
+    pub fn of<C: Action>() -> Self {
+        Self(ActionId::of::<C>())
     }
 }
 
 /// What a handler is told: which command, and the panel it runs for, if any.
 /// A global handler gets the panel too, e.g. to save the focused document.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ContextCommandInvocation {
-    pub command: ContextCommandId,
+pub struct ActionInvocation {
+    pub command: ActionId,
     pub panel: Option<Entity>,
     /// What triggered it, e.g. a menu item; handlers can read details from it.
     pub source: Option<Entity>,
 }
 
-pub type ContextCommandResult = Result<(), String>;
-pub type CommandFn = fn(&mut World, ContextCommandInvocation) -> ContextCommandResult;
+pub type ActionResult = Result<(), String>;
+pub type ActionFn = fn(&mut World, ActionInvocation) -> ActionResult;
 
 /// Performs a command, globally or for a panel.
 #[derive(Clone, Copy)]
 pub struct Handler {
-    run: CommandFn,
+    run: ActionFn,
     /// Whether it can run now, for the given panel. Menus and the toolbar grey
     /// out commands that can't. An unavailable panel handler still claims the
     /// command for its panel: it doesn't fall back to the global handler.
@@ -74,7 +74,7 @@ pub struct Handler {
 }
 
 impl Handler {
-    pub fn new(run: CommandFn) -> Self {
+    pub fn new(run: ActionFn) -> Self {
         Self {
             run,
             available: |_, _| true,
@@ -88,12 +88,12 @@ impl Handler {
 
 /// A panel's handler for command `C`.
 #[derive(Component)]
-pub struct CommandHandler<C: ContextCommand> {
+pub struct ActionHandler<C: Action> {
     pub handler: Handler,
     marker: std::marker::PhantomData<fn() -> C>,
 }
 
-impl<C: ContextCommand> CommandHandler<C> {
+impl<C: Action> ActionHandler<C> {
     pub fn new(handler: Handler) -> Self {
         Self {
             handler,
@@ -107,15 +107,15 @@ type SetKeysIn = fn(&mut World, StoreId, Option<Vec<KeyChord>>) -> Result<(), St
 
 /// The registered commands and their global handlers.
 #[derive(Resource, Default)]
-pub struct CommandRegistry(Vec<Registered>);
+pub struct ActionRegistry(Vec<Registered>);
 
 struct Registered {
-    id: ContextCommandId,
+    id: ActionId,
     label: &'static str,
     type_id: TypeId,
     repeats: bool,
     global: Option<Handler>,
-    /// The panel's `CommandHandler<C>`.
+    /// The panel's `ActionHandler<C>`.
     on_panel: fn(&World, Entity) -> Option<Handler>,
     /// `Keybinding<C>` in one layer, for settings UIs that don't know `C`.
     #[cfg(feature = "persistence")]
@@ -128,24 +128,24 @@ struct Registered {
     set_keys_in: SetKeysIn,
 }
 
-impl CommandRegistry {
-    fn get(&self, command: &ContextCommandId) -> Option<&Registered> {
+impl ActionRegistry {
+    fn get(&self, command: &ActionId) -> Option<&Registered> {
         self.0.iter().find(|registered| &registered.id == command)
     }
 
     /// Every registered command and its label, in registration order.
-    pub fn commands(&self) -> impl Iterator<Item = (&ContextCommandId, &'static str)> {
+    pub fn commands(&self) -> impl Iterator<Item = (&ActionId, &'static str)> {
         self.0
             .iter()
             .map(|registered| (&registered.id, registered.label))
     }
 
-    pub fn label(&self, command: &ContextCommandId) -> Option<&'static str> {
+    pub fn label(&self, command: &ActionId) -> Option<&'static str> {
         self.get(command).map(|registered| registered.label)
     }
 
     /// Set or replace (or with `None`, remove) `C`'s global handler.
-    pub fn set_global_handler<C: ContextCommand>(&mut self, handler: Option<Handler>) {
+    pub fn set_global_handler<C: Action>(&mut self, handler: Option<Handler>) {
         let registered = self
             .0
             .iter_mut()
@@ -154,16 +154,11 @@ impl CommandRegistry {
         registered.global = handler;
     }
 
-    pub fn has_global_handler(&self, command: &ContextCommandId) -> bool {
+    pub fn has_global_handler(&self, command: &ActionId) -> bool {
         self.get(command).is_some_and(|r| r.global.is_some())
     }
 
-    fn panel_handler(
-        &self,
-        world: &World,
-        command: &ContextCommandId,
-        panel: Entity,
-    ) -> Option<Handler> {
+    fn panel_handler(&self, world: &World, command: &ActionId, panel: Entity) -> Option<Handler> {
         self.get(command)
             .and_then(|registered| (registered.on_panel)(world, panel))
     }
@@ -171,17 +166,17 @@ impl CommandRegistry {
 
 /// Each command's keys. Dispatch, menus and the settings UI read this.
 #[derive(Resource, Default)]
-pub struct Keybindings(Vec<(ContextCommandId, Vec<KeyChord>)>);
+pub struct Keybindings(Vec<(ActionId, Vec<KeyChord>)>);
 
 impl Keybindings {
-    pub fn keys(&self, command: &ContextCommandId) -> &[KeyChord] {
+    pub fn keys(&self, command: &ActionId) -> &[KeyChord] {
         self.0
             .iter()
             .find(|(id, _)| id == command)
             .map_or(&[], |(_, chords)| chords)
     }
 
-    pub fn set(&mut self, command: ContextCommandId, chords: Vec<KeyChord>) {
+    pub fn set(&mut self, command: ActionId, chords: Vec<KeyChord>) {
         match self.0.iter_mut().find(|(id, _)| *id == command) {
             Some((_, existing)) => *existing = chords,
             None => self.0.push((command, chords)),
@@ -189,7 +184,7 @@ impl Keybindings {
     }
 
     /// The commands bound to `chord`.
-    pub fn commands_for(&self, chord: KeyChord) -> impl Iterator<Item = &ContextCommandId> {
+    pub fn commands_for(&self, chord: KeyChord) -> impl Iterator<Item = &ActionId> {
         let chord = chord.resolved();
         self.0
             .iter()
@@ -215,16 +210,16 @@ pub enum InvocationContext {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ContextCommandRequest {
-    pub command: ContextCommandId,
+pub struct ActionRequest {
+    pub command: ActionId,
     pub context: InvocationContext,
     pub source: Option<Entity>,
 }
 
-impl ContextCommandRequest {
-    pub fn new<C: ContextCommand>() -> Self {
+impl ActionRequest {
+    pub fn new<C: Action>() -> Self {
         Self {
-            command: ContextCommandId::of::<C>(),
+            command: ActionId::of::<C>(),
             context: InvocationContext::Focused,
             source: None,
         }
@@ -234,28 +229,28 @@ impl ContextCommandRequest {
 /// Commands waiting to run. They run in order in `PreUpdate`; requests made by
 /// a handler run in the next frame.
 #[derive(Resource, Default)]
-pub struct ContextCommandRequests(VecDeque<ContextCommandRequest>);
+pub struct ActionRequests(VecDeque<ActionRequest>);
 
-impl ContextCommandRequests {
+impl ActionRequests {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
-    pub fn invoke<C: ContextCommand>(&mut self) {
-        self.submit(ContextCommandRequest::new::<C>());
+    pub fn invoke<C: Action>(&mut self) {
+        self.submit(ActionRequest::new::<C>());
     }
-    pub fn submit(&mut self, request: ContextCommandRequest) {
+    pub fn submit(&mut self, request: ActionRequest) {
         self.0.push_back(request);
     }
 }
 
 #[derive(Message, Clone, Debug)]
-pub struct ContextCommandFinished {
-    pub invocation: ContextCommandInvocation,
-    pub result: ContextCommandResult,
+pub struct ActionFinished {
+    pub invocation: ActionInvocation,
+    pub result: ActionResult,
 }
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ContextCommandSystems {
+pub enum ActionSystems {
     CollectInput,
     Shortcuts,
     Dispatch,
@@ -438,27 +433,27 @@ pub struct BindingInput(pub Vec<BindingPress>);
 #[derive(Message, Clone, Debug)]
 pub struct BindingConflict {
     pub chord: KeyChord,
-    pub commands: Vec<ContextCommandId>,
+    pub commands: Vec<ActionId>,
 }
 
-pub trait CommandAppExt {
+pub trait ActionAppExt {
     /// Make `C` known: it can be bound, listed and handled. With settings, its
     /// keys become the setting `keys.<C::KEY>`.
-    fn register_command<C: ContextCommand>(&mut self) -> &mut Self;
+    fn register_action<C: Action>(&mut self) -> &mut Self;
     /// Register `C` and set its global handler.
-    fn add_command_handler<C: ContextCommand>(&mut self, handler: Handler) -> &mut Self;
+    fn add_action_handler<C: Action>(&mut self, handler: Handler) -> &mut Self;
 }
 
-impl CommandAppExt for App {
-    fn register_command<C: ContextCommand>(&mut self) -> &mut Self {
+impl ActionAppExt for App {
+    fn register_action<C: Action>(&mut self) -> &mut Self {
         assert!(
             crate::valid_key(C::KEY) && !C::LABEL.trim().is_empty(),
             "Command {:?} needs a dotted key and a label",
             C::KEY
         );
         let world = self.world_mut();
-        let mut registry = world.get_resource_or_init::<CommandRegistry>();
-        let id = ContextCommandId::of::<C>();
+        let mut registry = world.get_resource_or_init::<ActionRegistry>();
+        let id = ActionId::of::<C>();
         if let Some(existing) = registry.get(&id) {
             assert!(
                 existing.type_id == TypeId::of::<C>(),
@@ -475,7 +470,7 @@ impl CommandAppExt for App {
             global: None,
             on_panel: |world, panel| {
                 world
-                    .get::<CommandHandler<C>>(panel)
+                    .get::<ActionHandler<C>>(panel)
                     .map(|component| component.handler)
             },
             #[cfg(feature = "persistence")]
@@ -496,6 +491,7 @@ impl CommandAppExt for App {
                     .resource::<crate::settings::Settings>()
                     .overridden_above::<Keybinding<C>>(store)
             },
+            #[cfg(feature = "persistence")]
             set_keys_in: |world, store, chords| match chords {
                 Some(chords) => crate::settings::set_setting::<Keybinding<C>>(world, store, chords),
                 None => crate::settings::clear_setting::<Keybinding<C>>(world, store),
@@ -509,10 +505,10 @@ impl CommandAppExt for App {
         self
     }
 
-    fn add_command_handler<C: ContextCommand>(&mut self, handler: Handler) -> &mut Self {
-        self.register_command::<C>();
+    fn add_action_handler<C: Action>(&mut self, handler: Handler) -> &mut Self {
+        self.register_action::<C>();
         self.world_mut()
-            .resource_mut::<CommandRegistry>()
+            .resource_mut::<ActionRegistry>()
             .set_global_handler::<C>(Some(handler));
         self
     }
@@ -524,7 +520,7 @@ impl CommandAppExt for App {
 pub struct Keybinding<C>(std::marker::PhantomData<C>);
 
 #[cfg(feature = "persistence")]
-impl<C: ContextCommand> crate::settings::Setting for Keybinding<C> {
+impl<C: Action> crate::settings::Setting for Keybinding<C> {
     type Value = Vec<KeyChord>;
     fn key() -> Cow<'static, str> {
         format!("keys.{}", C::KEY).into()
@@ -535,22 +531,22 @@ impl<C: ContextCommand> crate::settings::Setting for Keybinding<C> {
     fn apply(world: &mut World, chords: &Vec<KeyChord>) {
         world
             .resource_mut::<Keybindings>()
-            .set(ContextCommandId::of::<C>(), chords.clone());
+            .set(ActionId::of::<C>(), chords.clone());
     }
 }
 
 /// The keys `command` has in one settings layer, if that layer sets them.
 #[cfg(feature = "persistence")]
-pub fn keys_in(world: &World, command: &ContextCommandId, store: StoreId) -> Option<Vec<KeyChord>> {
-    let registered = world.resource::<CommandRegistry>().get(command)?;
+pub fn keys_in(world: &World, command: &ActionId, store: StoreId) -> Option<Vec<KeyChord>> {
+    let registered = world.resource::<ActionRegistry>().get(command)?;
     (registered.keys_in)(world, store)
 }
 
 /// `command`'s keys as one settings layer and those below it give them.
 #[cfg(feature = "persistence")]
-pub fn keys_at(world: &World, command: &ContextCommandId, store: StoreId) -> Vec<KeyChord> {
+pub fn keys_at(world: &World, command: &ActionId, store: StoreId) -> Vec<KeyChord> {
     world
-        .resource::<CommandRegistry>()
+        .resource::<ActionRegistry>()
         .get(command)
         .map(|registered| (registered.keys_at)(world, store))
         .unwrap_or_default()
@@ -558,12 +554,8 @@ pub fn keys_at(world: &World, command: &ContextCommandId, store: StoreId) -> Vec
 
 /// The nearest settings layer above `store` that sets `command`'s keys.
 #[cfg(feature = "persistence")]
-pub fn keys_overridden_above(
-    world: &World,
-    command: &ContextCommandId,
-    store: StoreId,
-) -> Option<StoreId> {
-    let registered = world.resource::<CommandRegistry>().get(command)?;
+pub fn keys_overridden_above(world: &World, command: &ActionId, store: StoreId) -> Option<StoreId> {
+    let registered = world.resource::<ActionRegistry>().get(command)?;
     (registered.keys_overridden_above)(world, store)
 }
 
@@ -571,12 +563,12 @@ pub fn keys_overridden_above(
 #[cfg(feature = "persistence")]
 pub fn set_keys_in(
     world: &mut World,
-    command: &ContextCommandId,
+    command: &ActionId,
     store: StoreId,
     chords: Option<Vec<KeyChord>>,
 ) -> Result<(), String> {
     let set = world
-        .resource::<CommandRegistry>()
+        .resource::<ActionRegistry>()
         .get(command)
         .ok_or("Unknown command")?
         .set_keys_in;
@@ -584,26 +576,26 @@ pub fn set_keys_in(
 }
 
 pub(crate) fn install(app: &mut App) {
-    app.init_resource::<CommandRegistry>()
+    app.init_resource::<ActionRegistry>()
         .init_resource::<Keybindings>()
         .init_resource::<BindingInput>()
-        .init_resource::<ContextCommandRequests>()
-        .add_message::<ContextCommandFinished>()
+        .init_resource::<ActionRequests>()
+        .add_message::<ActionFinished>()
         .add_message::<BindingConflict>()
         .configure_sets(
             PreUpdate,
             (
-                ContextCommandSystems::CollectInput.after(crate::SessionSystems::Prepare),
-                ContextCommandSystems::Shortcuts,
-                ContextCommandSystems::Dispatch,
+                ActionSystems::CollectInput.after(crate::SessionSystems::Prepare),
+                ActionSystems::Shortcuts,
+                ActionSystems::Dispatch,
             )
                 .chain(),
         )
         .add_systems(
             PreUpdate,
             (
-                shortcuts.in_set(ContextCommandSystems::Shortcuts),
-                dispatch.in_set(ContextCommandSystems::Dispatch),
+                shortcuts.in_set(ActionSystems::Shortcuts),
+                dispatch.in_set(ActionSystems::Dispatch),
             ),
         );
 }
@@ -623,12 +615,8 @@ fn context_panel(world: &World, context: InvocationContext) -> Option<Entity> {
 }
 
 /// The handler that would run `command` for `panel`.
-fn resolve(
-    world: &World,
-    command: &ContextCommandId,
-    panel: Option<Entity>,
-) -> Result<CommandFn, String> {
-    let registry = world.resource::<CommandRegistry>();
+fn resolve(world: &World, command: &ActionId, panel: Option<Entity>) -> Result<ActionFn, String> {
+    let registry = world.resource::<ActionRegistry>();
     let registered = registry.get(command).ok_or("Unknown command")?;
     if panel.is_some_and(|panel| world.get::<PanelInstance>(panel).is_none()) {
         return Err("The panel is gone".into());
@@ -645,11 +633,7 @@ fn resolve(
 }
 
 /// Whether `command` would run in `context` right now.
-pub fn command_available(
-    world: &World,
-    command: &ContextCommandId,
-    context: InvocationContext,
-) -> bool {
+pub fn action_available(world: &World, command: &ActionId, context: InvocationContext) -> bool {
     resolve(world, command, context_panel(world, context)).is_ok()
 }
 
@@ -659,8 +643,8 @@ fn chord_target(
     world: &World,
     chord: KeyChord,
     panel: Option<Entity>,
-) -> Result<Option<ContextCommandId>, Vec<ContextCommandId>> {
-    let registry = world.resource::<CommandRegistry>();
+) -> Result<Option<ActionId>, Vec<ActionId>> {
+    let registry = world.resource::<ActionRegistry>();
     let bound: Vec<_> = world
         .resource::<Keybindings>()
         .commands_for(chord)
@@ -692,7 +676,7 @@ fn chord_target(
 /// this platform.
 pub fn shortcut_for(
     world: &World,
-    command: &ContextCommandId,
+    command: &ActionId,
     context: InvocationContext,
 ) -> Option<KeyChord> {
     let panel = context_panel(world, context);
@@ -720,7 +704,7 @@ fn shortcuts(world: &mut World) {
             }
         };
         let repeats = world
-            .resource::<CommandRegistry>()
+            .resource::<ActionRegistry>()
             .get(&command)
             .is_some_and(|registered| registered.repeats);
         if press.repeat && !repeats {
@@ -728,8 +712,8 @@ fn shortcuts(world: &mut World) {
         }
         let context = panel.map_or(InvocationContext::Global, InvocationContext::Panel);
         world
-            .resource_mut::<ContextCommandRequests>()
-            .submit(ContextCommandRequest {
+            .resource_mut::<ActionRequests>()
+            .submit(ActionRequest {
                 command,
                 context,
                 source: None,
@@ -738,16 +722,16 @@ fn shortcuts(world: &mut World) {
 }
 
 fn dispatch(world: &mut World) {
-    let pending = std::mem::take(&mut world.resource_mut::<ContextCommandRequests>().0);
+    let pending = std::mem::take(&mut world.resource_mut::<ActionRequests>().0);
     for request in pending {
-        let invocation = ContextCommandInvocation {
+        let invocation = ActionInvocation {
             panel: context_panel(world, request.context),
             command: request.command,
             source: request.source,
         };
         let result = resolve(world, &invocation.command, invocation.panel)
             .and_then(|call| call(world, invocation.clone()));
-        world.write_message(ContextCommandFinished { invocation, result });
+        world.write_message(ActionFinished { invocation, result });
     }
 }
 

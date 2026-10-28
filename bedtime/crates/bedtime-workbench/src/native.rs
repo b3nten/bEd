@@ -228,7 +228,7 @@ fn poll_menus(world: &mut World) {
                 .filter(|request| request.context == context)
             {
                 world
-                    .resource_mut::<crate::ContextCommandRequests>()
+                    .resource_mut::<crate::ActionRequests>()
                     .submit(request);
             }
         }
@@ -275,14 +275,14 @@ pub(crate) fn shutdown(world: &mut World) {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use crate::{ContextCommandId, InvocationContext, MenuNode, MenuSnapshot};
+    use crate::{ActionId, InvocationContext, MenuNode, MenuSnapshot};
     use bevy::prelude::Entity;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
     use std::{collections::HashMap, io};
 
     pub(super) struct InstalledMenu {
         menu: Menu,
-        actions: HashMap<MenuId, (Entity, ContextCommandId, InvocationContext)>,
+        actions: HashMap<MenuId, (Entity, ActionId, InvocationContext)>,
     }
 
     fn accelerator(chord: crate::KeyChord) -> Option<muda::accelerator::Accelerator> {
@@ -306,7 +306,7 @@ mod macos {
     fn build_submenu(
         label: &str,
         entries: &[MenuNode],
-        actions: &mut HashMap<MenuId, (Entity, ContextCommandId, InvocationContext)>,
+        actions: &mut HashMap<MenuId, (Entity, ActionId, InvocationContext)>,
     ) -> io::Result<Submenu> {
         let submenu = Submenu::new(label, true);
         for entry in entries {
@@ -366,9 +366,7 @@ mod macos {
         pub(super) fn remove(&self) {
             self.menu.remove_for_nsapp();
         }
-        pub(super) fn take_activations(
-            &self,
-        ) -> Vec<(Entity, ContextCommandId, InvocationContext)> {
+        pub(super) fn take_activations(&self) -> Vec<(Entity, ActionId, InvocationContext)> {
             MenuEvent::receiver()
                 .try_iter()
                 .filter_map(|event| self.actions.get(&event.id).cloned())

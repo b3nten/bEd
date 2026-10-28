@@ -1,7 +1,7 @@
 //! bEd's settings: what they are, how they reach the window, and the panel.
 //!
-//! Each setting writes into `Appearance` when its value changes; one system
-//! applies `Appearance` to the theme and workbench surface.
+//! Each setting writes into `AppearanceSettings` when its value changes; one system
+//! applies `AppearanceSettings` to the theme and workbench surface.
 use crate::{panels::PanelPolicy, workspace::Workspace};
 use bedtime_ui::{
     BuiltinIcon, Metrics, UiContext, egui,
@@ -9,8 +9,8 @@ use bedtime_ui::{
     theme::{FONT_SIZES, ThemeFolder},
 };
 use bedtime_workbench::{
-    CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, Handler,
-    KeyChord, Panel, PanelFactory, PanelInstance, WindowBlur, WorkbenchSurface,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Panel, PanelFactory,
+    PanelInstance, WindowBlur, WorkbenchSurface,
     persistence::{ReflectPersist, Store, StoreId, Stores, WorkbenchStore},
     setting,
     settings::{Setting, Settings, SettingsAppExt, clear_setting, set_setting},
@@ -33,36 +33,36 @@ pub struct GlobalLocation(pub Option<PathBuf>);
 setting! {
     /// A theme's id: the name of a file in the themes folder (`tokyo`).
     pub ColorTheme: String = crate::themes::DEFAULT.into(), key = "appearance.theme",
-    apply = |world, theme| world.resource_mut::<Appearance>().theme = theme.clone(),
+    apply = |world, theme| world.resource_mut::<AppearanceSettings>().theme = theme.clone(),
 }
 setting! {
     pub FontSize: f32 = 15.5, key = "appearance.font_size",
-    apply = |world, size| world.resource_mut::<Appearance>().font_size = limit(*size, FONT_SIZES, 15.5),
+    apply = |world, size| world.resource_mut::<AppearanceSettings>().font_size = limit(*size, FONT_SIZES, 15.5),
 }
 setting! {
     /// An installed font family; `None` is the bundled Bedfont.
     pub FontFamily: Option<String> = None, key = "appearance.font_family",
-    apply = |world, family| world.resource_mut::<Appearance>().font_family = family.clone(),
+    apply = |world, family| world.resource_mut::<AppearanceSettings>().font_family = family.clone(),
 }
 setting! {
     pub WindowOpacity: f32 = 1.0, key = "appearance.window_opacity",
-    apply = |world, opacity| world.resource_mut::<Appearance>().window_opacity = limit(*opacity, OPACITY, 1.0),
+    apply = |world, opacity| world.resource_mut::<AppearanceSettings>().window_opacity = limit(*opacity, OPACITY, 1.0),
 }
 setting! {
-    pub WindowBlurSetting: bool = false, key = "appearance.window_blur",
-    apply = |world, blur| world.resource_mut::<Appearance>().window_blur = *blur,
+    pub WindowBlurEnabled: bool = false, key = "appearance.window_blur",
+    apply = |world, blur| world.resource_mut::<AppearanceSettings>().window_blur = *blur,
 }
 setting! {
     pub PanelOpacity: f32 = 1.0, key = "appearance.panel_opacity",
-    apply = |world, opacity| world.resource_mut::<Appearance>().panel_opacity = limit(*opacity, OPACITY, 1.0),
+    apply = |world, opacity| world.resource_mut::<AppearanceSettings>().panel_opacity = limit(*opacity, OPACITY, 1.0),
 }
 setting! {
     pub PanelRadius: f32 = 7.0, key = "appearance.panel_radius",
-    apply = |world, radius| world.resource_mut::<Appearance>().panel_radius = limit(*radius, PANEL_RADIUS, 7.0),
+    apply = |world, radius| world.resource_mut::<AppearanceSettings>().panel_radius = limit(*radius, PANEL_RADIUS, 7.0),
 }
 setting! {
     pub PanelGap: f32 = 5.0, key = "appearance.panel_gap",
-    apply = |world, gap| world.resource_mut::<Appearance>().panel_gap = limit(*gap, PANEL_GAP, 5.0),
+    apply = |world, gap| world.resource_mut::<AppearanceSettings>().panel_gap = limit(*gap, PANEL_GAP, 5.0),
 }
 
 setting! {
@@ -82,7 +82,7 @@ pub(crate) fn limit(value: f32, range: RangeInclusive<f32>, default: f32) -> f32
 
 /// How the window and workbench look, fed by the appearance settings.
 #[derive(Resource, Clone, PartialEq)]
-pub struct Appearance {
+pub struct AppearanceSettings {
     pub theme: String,
     pub font_size: f32,
     pub font_family: Option<String>,
@@ -93,14 +93,14 @@ pub struct Appearance {
     pub panel_gap: f32,
 }
 
-impl Default for Appearance {
+impl Default for AppearanceSettings {
     fn default() -> Self {
         Self {
             theme: ColorTheme::default(),
             font_size: FontSize::default(),
             font_family: FontFamily::default(),
             window_opacity: WindowOpacity::default(),
-            window_blur: WindowBlurSetting::default(),
+            window_blur: WindowBlurEnabled::default(),
             panel_opacity: PanelOpacity::default(),
             panel_radius: PanelRadius::default(),
             panel_gap: PanelGap::default(),
@@ -111,13 +111,13 @@ impl Default for Appearance {
 mod keys;
 
 pub struct OpenSettings;
-impl ContextCommand for OpenSettings {
+impl Action for OpenSettings {
     const KEY: &'static str = "app.open_settings";
     const LABEL: &'static str = "Open Settings";
     const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::Comma)];
 }
 
-fn open_settings(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+fn open_settings(world: &mut World, _: ActionInvocation) -> ActionResult {
     let factory = PanelFactory::of::<SettingsPanel>();
     crate::panels::open_panel::<SettingsPanel>(world, (), factory).map(|_| ())
 }
@@ -127,18 +127,18 @@ pub struct SettingsPlugin;
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<SettingsPanel>()
-            .init_resource::<Appearance>()
+            .init_resource::<AppearanceSettings>()
             .add_settings_layer::<GlobalStore>()
             .register_setting::<ColorTheme>()
             .register_setting::<FontSize>()
             .register_setting::<FontFamily>()
             .register_setting::<WindowOpacity>()
-            .register_setting::<WindowBlurSetting>()
+            .register_setting::<WindowBlurEnabled>()
             .register_setting::<PanelOpacity>()
             .register_setting::<PanelRadius>()
             .register_setting::<PanelGap>()
             .register_setting::<ReopenLastWorkspace>()
-            .add_command_handler::<OpenSettings>(Handler::new(open_settings))
+            .add_action_handler::<OpenSettings>(Handler::new(open_settings))
             .add_systems(Update, apply_appearance);
     }
 }
@@ -146,7 +146,7 @@ impl Plugin for SettingsPlugin {
 /// Puts the chosen theme and sizes on each surface: when the appearance or
 /// the themes folder changes (a theme file was edited), and on a new surface.
 fn apply_appearance(
-    appearance: Res<Appearance>,
+    appearance: Res<AppearanceSettings>,
     folder: Option<Res<ThemeFolder>>,
     mut surfaces: Query<(Entity, &mut WorkbenchSurface)>,
     mut commands: Commands,
@@ -230,7 +230,7 @@ impl Panel for SettingsPanel {
                         slider(ui, opacity, OPACITY, "", 2)
                     });
                     if cfg!(target_os = "macos") {
-                        row::<WindowBlurSetting>(ui, world, context, layer, "Blur", |ui, blur| {
+                        row::<WindowBlurEnabled>(ui, world, context, layer, "Blur", |ui, blur| {
                             context.frame(ui).toggle(blur, "").changed()
                         });
                     }
@@ -533,24 +533,30 @@ mod tests {
         let world = app.world_mut();
         set_setting::<FontSize>(world, global, 20.0).unwrap();
         set_setting::<ColorTheme>(world, global, "tokyo".into()).unwrap();
-        assert_eq!(world.resource::<Appearance>().font_size, 20.0);
-        assert_eq!(world.resource::<Appearance>().theme, "tokyo");
+        assert_eq!(world.resource::<AppearanceSettings>().font_size, 20.0);
+        assert_eq!(world.resource::<AppearanceSettings>().theme, "tokyo");
         // As if hand-edited: the value is kept, but what's applied is in range.
         set_setting::<FontSize>(world, global, 500.0).unwrap();
-        assert_eq!(world.resource::<Appearance>().font_size, 72.0);
+        assert_eq!(world.resource::<AppearanceSettings>().font_size, 72.0);
         clear_setting::<FontSize>(world, global).unwrap();
-        assert_eq!(world.resource::<Appearance>().font_size, 15.5);
+        assert_eq!(world.resource::<AppearanceSettings>().font_size, 15.5);
         // A workspace can choose its own font.
         let workspace = StoreId::of::<WorkbenchStore>();
         set_setting::<FontFamily>(world, global, Some("Menlo".into())).unwrap();
         set_setting::<FontFamily>(world, workspace, Some("PT Mono".into())).unwrap();
         assert_eq!(
-            world.resource::<Appearance>().font_family.as_deref(),
+            world
+                .resource::<AppearanceSettings>()
+                .font_family
+                .as_deref(),
             Some("PT Mono")
         );
         clear_setting::<FontFamily>(world, workspace).unwrap();
         assert_eq!(
-            world.resource::<Appearance>().font_family.as_deref(),
+            world
+                .resource::<AppearanceSettings>()
+                .font_family
+                .as_deref(),
             Some("Menlo")
         );
     }

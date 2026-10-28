@@ -6,9 +6,9 @@ use super::{RecentWorkspaces, Start, Workspace, available, delete};
 use crate::{menus::switch, panels::PanelPolicy, settings::GlobalLocation};
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::{
-    CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, ErrorDialog,
-    Handler, Panel, PanelFactory, PanelInstance, persistence::DirectoryStore,
-    persistence::ReflectPersist, request_error_dialog,
+    Action, ActionAppExt, ActionInvocation, ActionResult, ErrorDialog, Handler, Panel,
+    PanelFactory, PanelInstance, persistence::DirectoryStore, persistence::ReflectPersist,
+    request_error_dialog,
 };
 use bevy::prelude::*;
 use std::{
@@ -17,7 +17,7 @@ use std::{
 };
 
 pub struct OpenWorkspaces;
-impl ContextCommand for OpenWorkspaces {
+impl Action for OpenWorkspaces {
     const KEY: &'static str = "app.open_workspaces";
     const LABEL: &'static str = "Workspaces";
 }
@@ -39,11 +39,11 @@ impl Plugin for WorkspacesPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<WorkspacesPanel>()
             .init_resource::<KnownWorkspaces>()
-            .add_command_handler::<OpenWorkspaces>(Handler::new(open_workspaces));
+            .add_action_handler::<OpenWorkspaces>(Handler::new(open_workspaces));
     }
 }
 
-fn open_workspaces(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+fn open_workspaces(world: &mut World, _: ActionInvocation) -> ActionResult {
     let factory = PanelFactory::of::<WorkspacesPanel>();
     crate::panels::open_panel::<WorkspacesPanel>(world, (), factory).map(|_| ())
 }
@@ -103,7 +103,7 @@ fn folder_workspace(folder: &Path) -> Workspace {
 }
 
 /// What a row's buttons asked for.
-enum Action {
+enum Choice {
     Open(PathBuf),
     Delete(PathBuf),
 }
@@ -154,13 +154,13 @@ impl Panel for WorkspacesPanel {
                             };
                             match row.draw(ui, context) {
                                 Some(RowAction::Open) => {
-                                    action = Some(Action::Open(known.folder.clone()));
+                                    action = Some(Choice::Open(known.folder.clone()));
                                 }
                                 Some(RowAction::AskToDelete) => {
                                     confirming = Some(known.folder.clone());
                                 }
                                 Some(RowAction::Delete) => {
-                                    action = Some(Action::Delete(known.folder.clone()));
+                                    action = Some(Choice::Delete(known.folder.clone()));
                                     confirming = None;
                                 }
                                 Some(RowAction::Cancel) => confirming = None,
@@ -176,8 +176,8 @@ impl Panel for WorkspacesPanel {
             None => data.remove::<PathBuf>(confirming_id),
         });
         match action {
-            Some(Action::Open(folder)) => switch(world, Start::Folder(folder)),
-            Some(Action::Delete(folder)) => forget(world, &folder, config.as_deref()),
+            Some(Choice::Open(folder)) => switch(world, Start::Folder(folder)),
+            Some(Choice::Delete(folder)) => forget(world, &folder, config.as_deref()),
             None => {}
         }
     }

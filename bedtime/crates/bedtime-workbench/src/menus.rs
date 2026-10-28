@@ -1,7 +1,7 @@
 //! Abstract ordered menus. Native and egui presenters use the same snapshots.
 use crate::{
-    ContextCommand, ContextCommandId, ContextCommandRequest, InvocationContext, Invokes, KeyChord,
-    command_available, shortcut_for,
+    Action, ActionId, ActionRequest, InvocationContext, Invokes, KeyChord, action_available,
+    shortcut_for,
 };
 use bevy::prelude::*;
 use std::collections::HashSet;
@@ -29,7 +29,7 @@ impl MenuItem {
     }
 
     /// An item running command `C`, labelled with the command's label.
-    pub fn command<C: ContextCommand>() -> (Self, Invokes) {
+    pub fn action<C: Action>() -> (Self, Invokes) {
         (Self::new(C::LABEL), Invokes::of::<C>())
     }
 }
@@ -69,7 +69,7 @@ pub enum MenuNode {
         label: String,
         enabled: bool,
         shortcut: Option<KeyChord>,
-        target: Option<ContextCommandId>,
+        target: Option<ActionId>,
         context: InvocationContext,
     },
     Separator(Entity),
@@ -78,16 +78,8 @@ pub enum MenuNode {
 impl MenuSnapshot {
     /// Revalidate a captured native binding against today's ownership, action
     /// type and availability. Removed or retargeted sources cannot invoke it.
-    pub fn request(
-        &self,
-        source: Entity,
-        target: ContextCommandId,
-    ) -> Option<ContextCommandRequest> {
-        fn find(
-            nodes: &[MenuNode],
-            source: Entity,
-            target: ContextCommandId,
-        ) -> Option<ContextCommandRequest> {
+    pub fn request(&self, source: Entity, target: ActionId) -> Option<ActionRequest> {
+        fn find(nodes: &[MenuNode], source: Entity, target: ActionId) -> Option<ActionRequest> {
             nodes.iter().find_map(|node| match node {
                 MenuNode::Menu { entries, .. } => find(entries, source, target.clone()),
                 MenuNode::Item {
@@ -97,7 +89,7 @@ impl MenuSnapshot {
                     context,
                     ..
                 } if *entity == source && *enabled && *current == Some(target.clone()) => {
-                    Some(ContextCommandRequest {
+                    Some(ActionRequest {
                         command: target.clone(),
                         context: *context,
                         source: Some(source),
@@ -136,7 +128,7 @@ pub fn menu_snapshot(
 
 fn capture_context(world: &mut World, context: InvocationContext) -> InvocationContext {
     match context {
-        InvocationContext::Focused => crate::commands::focused_panel(world)
+        InvocationContext::Focused => crate::actions::focused_panel(world)
             .map_or(InvocationContext::Global, InvocationContext::Panel),
         explicit => explicit,
     }
@@ -188,7 +180,7 @@ fn read_entries(
                 let target = world.get::<Invokes>(entity).map(|a| a.0.clone());
                 let enabled = target
                     .as_ref()
-                    .is_some_and(|t| command_available(world, t, context));
+                    .is_some_and(|t| action_available(world, t, context));
                 let shortcut = target
                     .as_ref()
                     .and_then(|t| shortcut_for(world, t, context));

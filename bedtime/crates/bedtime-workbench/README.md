@@ -48,7 +48,7 @@ close_when_requested: false. Workbench handles `CloseRequested` itself; see
 
 Workbench uses the application's World and renderer. The World is the editing
 session: there is no Workspace component, mandatory Session entity, activation
-scope or scope membership. `ManagedWork`, `ContextCommandRequests` and (with UI)
+scope or scope membership. `ManagedWork`, `ActionRequests` and (with UI)
 `WorkbenchUi` are resources. Applications own
 project roots, settings and opening/closing another session.
 
@@ -274,7 +274,7 @@ commands.spawn((Notes { text: "Draft".into() }, InArea(area)));
 ~~~
 
 Panel draw methods are ordinary Rust calls with exclusive world access, not
-registered Bevy systems. Panels compose `bedtime_ui::Component` renderers with
+registered Bevy systems. Panels compose `bedtime_ui::UiComponent` renderers with
 arbitrary associated props. The shell, panels, menus, titlebars and status renderers all draw in the
 application World during the same egui pass. Scheduled input,
 commands and updates remain Bevy systems. `Panel` has no initializer. Bevy
@@ -570,31 +570,32 @@ can instead call `shutdown_work(world)` and keep updating until
 Dropping the World alone is a fallback, not orderly shutdown. Tasks must return
 after cancellation.
 
-## Commands, handlers and keybindings
+## Actions, handlers and keybindings
 
-A command is a marker type with a stable dotted `KEY`, a `LABEL`, and optional
+An action (a command the user can run: from a menu, a key, a button) is a
+marker type implementing `Action`, with a stable dotted `KEY`, a `LABEL`, and optional
 `DEFAULT_KEYS` and `REPEATS` (whether held keys run it again).
 
 ```rust,ignore
 struct Save;
-impl ContextCommand for Save {
+impl Action for Save {
     const KEY: &'static str = "document.save";
     const LABEL: &'static str = "Save";
     const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyS)];
 }
 
-app.register_command::<Save>(); // known, bindable, listed
+app.register_action::<Save>(); // known, bindable, listed
 // Also sets its global handler, available only when there's something to save.
-app.add_command_handler::<Save>(Handler::new(save_focused).available_when(can_save));
+app.add_action_handler::<Save>(Handler::new(save_focused).available_when(can_save));
 // A panel's own handler.
-commands.spawn((MyEditor, CommandHandler::<Save>::new(Handler::new(save_editor))));
+commands.spawn((MyEditor, ActionHandler::<Save>::new(Handler::new(save_editor))));
 ```
 
 There is one handler type, `Handler`: what the command does
-(`fn(&mut World, ContextCommandInvocation) -> ContextCommandResult`) and,
+(`fn(&mut World, ActionInvocation) -> ActionResult`) and,
 optionally, whether it can run now (`fn(&World, Option<Entity>) -> bool`, given
-the panel). A command has at most one global handler, kept in `CommandRegistry`
-(`set_global_handler::<C>`), and any panel may carry a `CommandHandler<C>`
+the panel). A command has at most one global handler, kept in `ActionRegistry`
+(`set_global_handler::<C>`), and any panel may carry a `ActionHandler<C>`
 component. When a command runs for a panel, that panel's handler wins;
 otherwise the global handler runs, and is told the panel too. A panel handler
 that isn't available makes the command unavailable in that panel rather than
@@ -615,17 +616,17 @@ most specific scope: the focused panel, then global. If the same scope handles
 several of them, nothing runs and `BindingConflict` is sent. Modifiers match
 exactly.
 
-`ContextCommandRequests` queues commands (`invoke::<Save>()`, or a request with
+`ActionRequests` queues commands (`invoke::<Save>()`, or a request with
 `InvocationContext::{Focused, Global, Panel(entity)}`). Dispatch runs them in
-order in `PreUpdate` and sends `ContextCommandFinished` with each result.
-Requests made by handlers run next frame. `command_available` and
+order in `PreUpdate` and sends `ActionFinished` with each result.
+Requests made by handlers run next frame. `action_available` and
 `shortcut_for` answer the same questions for menus.
 
 ## Menus
 
 Native and egui presenters consume the same abstract menu snapshots. An item
 with `Invokes` is enabled when its command is available in the menu's context;
-`MenuItem::command::<C>()` makes one labelled with the command's label. Shortcut hints show the chord that would run
+`MenuItem::action::<A>()` makes one labelled with the action's label. Shortcut hints show the chord that would run
 the item's command in that context. Roots normally use the focused panel;
 explicit invocation contexts can be attached to roots or descendants.
 Snapshot requests reject removed,
@@ -661,7 +662,7 @@ Workbench owns Quit shortcut dispatch and disables egui's built-in Quit shortcut
 on its camera, preserving the application's command and shutdown policy.
 
 The PreUpdate order is UI/shell drawing, focus observations, shortcut collection
-(`ContextCommandSystems::CollectInput`), binding resolution, ContextCommand
+(`ActionSystems::CollectInput`), binding resolution, Action
 dispatch and queued layout edits. The headless core accepts
 normalized `BindingInput` directly and has no egui dependency.
 

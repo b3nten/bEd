@@ -244,8 +244,8 @@ Each step should produce a usable app. We can reorder at any point.
   Settings panel. See "Step 3" in [docs/foundation.md](docs/foundation.md).
 
 - **Step 5.4 (commands + keybindings)**, committed 2026-10-27.
-  `bedtime-workbench/src/commands.rs` rewritten: `CommandRegistry` (global
-  handlers), `CommandHandler<C>` on panels, `Keybindings` table, `Keybinding<C>`
+  `bedtime-workbench/src/commands.rs` rewritten: `ActionRegistry` (global
+  handlers), `ActionHandler<C>` on panels, `Keybindings` table, `Keybinding<C>`
   setting per command, dispatch by handler scope. bed: `OpenSettings` command,
   Keyboard Shortcuts section in Settings. See "Step 4" in
   [docs/foundation.md](docs/foundation.md).
@@ -275,6 +275,13 @@ Each step should produce a usable app. We can reorder at any point.
   after egui and before bedtime-ui's `UiSystems::PrepareOutput`. Settings has an
   Effects section whose sliders show only while effects are on.
   `tests/automation/effects.py`.
+
+- **Naming pass**, 2026-10-28: commands are **actions** (`Action`, `ActionId`,
+  `ActionRequests`, `ActionRegistry`, `ActionHandler`, `ActionAppExt`,
+  `MenuItem::action`, `actions.rs`; keys unchanged). bedtime-ui's `Component`
+  trait is `UiComponent`; `OnSurface` is `InSurface`; bed's `Appearance`
+  resource is `AppearanceSettings` and `WindowBlurSetting` is
+  `WindowBlurEnabled`. Earlier entries keep the old names.
 
 - **Themes**, implemented 2026-10-28: a surface carries `Theme` (colors) and
   `Metrics` (sizes) components directly (`UsesTheme` is gone); a theme file is

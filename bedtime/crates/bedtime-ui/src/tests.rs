@@ -400,7 +400,7 @@ fn borrowed_frames_execute_once_and_despawning_a_surface_takes_its_views() {
 #[test]
 fn borrowed_props_compose_in_normal_egui_layout_and_keep_instances_independent() {
     struct Detail;
-    impl crate::Component for Detail {
+    impl crate::UiComponent for Detail {
         type Props<'a> = (&'a str, Entity);
         fn draw(
             ui: &mut egui::Ui,
@@ -413,7 +413,7 @@ fn borrowed_props_compose_in_normal_egui_layout_and_keep_instances_independent()
         }
     }
     struct Row;
-    impl crate::Component for Row {
+    impl crate::UiComponent for Row {
         type Props<'a> = [(&'a str, Entity); 2];
         fn draw(
             ui: &mut egui::Ui,
