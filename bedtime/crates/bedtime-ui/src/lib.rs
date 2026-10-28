@@ -338,6 +338,29 @@ impl<'services> UiFrame<'services> {
         edit.show(self.ui)
     }
 
+    /// An icon in the layout, `side` points square, drawn in `tint`. Hover it
+    /// for a tooltip; it isn't a button.
+    pub fn icon(
+        &mut self,
+        icon: impl Into<IconSource>,
+        side: f32,
+        tint: egui::Color32,
+    ) -> egui::Response {
+        let (rect, response) = self
+            .ui
+            .allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+        let pixels = (side * self.ui.ctx().pixels_per_point()).ceil().max(1.0) as u32;
+        if let Some(texture) = self.icons.lock().unwrap().texture(&icon.into(), pixels) {
+            self.ui.painter().image(
+                texture,
+                rect,
+                egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
+                tint,
+            );
+        }
+        response
+    }
+
     pub fn icon_at(&self, icon: impl Into<IconSource>, min: [f32; 2], side: f32) {
         let pixels = (side * self.ui.ctx().pixels_per_point()).ceil().max(1.0) as u32;
         if let Some(texture) = self.icons.lock().unwrap().texture(&icon.into(), pixels) {

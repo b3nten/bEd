@@ -33,6 +33,7 @@ icon_catalog! {
     RefreshCw => "refresh-cw",
     RotateCcw => "rotate-ccw",
     Trash => "trash",
+    CircleAlert => "circle-alert",
     SplitRight => "split_right",
     SplitDown => "split_down",
     ViewerImage => "viewer-image",

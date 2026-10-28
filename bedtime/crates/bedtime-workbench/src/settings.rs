@@ -145,15 +145,32 @@ impl Settings {
             .unwrap_or_else(S::default)
     }
 
-    /// The nearest layer above `store` that sets a value for `S`: changes in
-    /// `store` won't show while it does.
+    /// The layer above `store` whose different value is in use instead of
+    /// `store`'s: changes in `store` won't show while it sets one. A layer
+    /// above that sets the same value overrides nothing.
     pub fn overridden_above<S: Setting>(&self, store: StoreId) -> Option<StoreId> {
         let index = self.layers.iter().position(|layer| layer.store == store)?;
-        self.layers[index + 1..]
+        let (source, value) = self.resolve::<S>()?;
+        let above = self.layers[index + 1..]
             .iter()
+            .any(|layer| layer.store == source);
+        (above && value != self.get_at::<S>(store)).then_some(source)
+    }
+
+    /// The value `store` would have without its own: from the layers below
+    /// it, or the default.
+    pub fn inherited<S: Setting>(&self, store: StoreId) -> S::Value {
+        let below = self
+            .layers
+            .iter()
+            .position(|layer| layer.store == store)
+            .unwrap_or(0);
+        self.layers[..below]
+            .iter()
+            .rev()
             .filter(|layer| S::allowed_in(layer.store))
-            .find(|layer| decode::<S>(layer).is_some())
-            .map(|layer| layer.store)
+            .find_map(decode::<S>)
+            .unwrap_or_else(S::default)
     }
 
     /// The value set in one layer, if any.
@@ -214,6 +231,12 @@ pub fn set_setting<S: Setting>(
 ) -> Result<(), String> {
     if !S::allowed_in(store) {
         return Err(format!("{} can't be set in {}", S::key(), store.name()));
+    }
+    // Setting what the layer would inherit anyway stores nothing, so it keeps
+    // following the layers below (a workspace set back to the global value
+    // follows later global changes).
+    if value == world.resource::<Settings>().inherited::<S>(store) {
+        return clear_setting::<S>(world, store);
     }
     let encoded = encode(&value)?;
     let mut settings = world.resource_mut::<Settings>();

@@ -195,7 +195,8 @@ impl Panel for SettingsPanel {
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, _: Entity) {
         egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
             let layer = choose_layer(ui, world);
-            ui.label(egui::RichText::new(location(world, layer)).small().weak());
+            let location = location(world, layer);
+            ui.add(egui::Label::new(egui::RichText::new(&location).small().weak()).truncate());
             let stores = world.resource::<Stores>();
             let store_error = if layer == StoreId::of::<GlobalStore>() {
                 stores.error::<GlobalStore>()
@@ -212,7 +213,9 @@ impl Panel for SettingsPanel {
             ui.add_space(4.0);
             ui.separator();
 
-            egui::ScrollArea::vertical()
+            // Both ways: rows have fixed columns, so a narrow panel scrolls
+            // sideways rather than clipping controls.
+            egui::ScrollArea::both()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     // Leaves room for the value box beside each slider.
@@ -308,11 +311,13 @@ pub(crate) fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(2.0);
 }
 
-/// One row of the panel: a label, a control and then `state`, each in its own
-/// column at a fixed height so rows line up across sections.
+/// One row of the panel: a label (then `marker`, such as an override warning),
+/// a control and then `state`, each in its own column at a fixed height so
+/// rows line up across sections.
 pub(crate) fn columns<R>(
     ui: &mut egui::Ui,
     label: &str,
+    marker: impl FnOnce(&mut egui::Ui),
     control: impl FnOnce(&mut egui::Ui) -> R,
     state: impl FnOnce(&mut egui::Ui),
 ) -> R {
@@ -323,7 +328,13 @@ pub(crate) fn columns<R>(
         ui.set_min_height(row_height);
         ui.allocate_ui_with_layout(egui::vec2(LABEL_WIDTH, row_height), layout, |ui| {
             ui.set_min_size(egui::vec2(LABEL_WIDTH, row_height));
-            ui.add(egui::Label::new(label).truncate());
+            ui.spacing_mut().item_spacing.x = 6.0;
+            // Leave room for the marker after a long label.
+            ui.scope(|ui| {
+                ui.set_max_width(LABEL_WIDTH - 28.0);
+                ui.add(egui::Label::new(label).truncate());
+            });
+            marker(ui);
         });
         let inner = ui
             .allocate_ui_with_layout(egui::vec2(CONTROL_WIDTH, row_height), layout, |ui| {
@@ -331,8 +342,8 @@ pub(crate) fn columns<R>(
                 control(ui)
             })
             .inner;
-        let rest = egui::vec2(ui.available_width(), row_height);
-        ui.allocate_ui_with_layout(rest, layout, state);
+        // As wide as it needs: past the panel's edge it scrolls sideways.
+        state(ui);
         inner
     })
     .inner
@@ -406,7 +417,9 @@ fn choose_layer(ui: &mut egui::Ui, world: &World) -> StoreId {
     };
     let id = ui.id().with("settings-layer");
     let mut editing_workspace = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
-    ui.horizontal(|ui| {
+    // Wrap rather than overflow: an overflowing row would widen everything
+    // after it, and the panel would stop scrolling sideways.
+    ui.horizontal_wrapped(|ui| {
         ui.selectable_value(&mut editing_workspace, false, "Global");
         let label = format!("Workspace: {}", workspace.name());
         ui.selectable_value(&mut editing_workspace, true, label);
@@ -450,14 +463,12 @@ fn row_with_note<S: Setting>(
     let changed = columns(
         ui,
         label,
+        |ui| overridden_marker(ui, context, overridden),
         |ui| edit(ui, &mut value),
         |ui| {
             reset = reset_button(ui, context, layer, set_here);
             if let Some(note) = note {
                 ui.weak(note);
-            }
-            if let Some(above) = overridden {
-                overridden_note(ui, above);
             }
         },
     );
@@ -469,18 +480,28 @@ fn row_with_note<S: Setting>(
     }
 }
 
-/// Says that a layer above the one being edited sets this too, so changes
-/// here won't show until it's cleared there.
-pub(crate) fn overridden_note(ui: &mut egui::Ui, above: StoreId) {
-    let (text, hint) = if above == StoreId::of::<WorkbenchStore>() {
-        (
-            "Set differently in this workspace",
-            "This workspace's value is used here. Clear it on the Workspace tab to use this one.",
-        )
-    } else {
-        ("Overridden", "A higher settings layer sets this.")
+/// After a label: a warning icon when a layer above the one being edited sets
+/// this too, so changes here won't show until it's cleared there.
+pub(crate) fn overridden_marker(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    above: Option<StoreId>,
+) {
+    let Some(above) = above else {
+        return;
     };
-    ui.weak(text).on_hover_text(hint);
+    let hint = if above == StoreId::of::<WorkbenchStore>() {
+        "Set differently in this workspace, which uses its own value. \
+         Clear it on the Workspace tab to use this one."
+    } else {
+        "A higher settings layer sets this, so its value is used."
+    };
+    let tint = bedtime_ui::theme::color(context.theme.palette.warning);
+    let mut frame = context.frame(ui);
+    let side = context.theme.metrics.font_size;
+    let icon = frame.icon(BuiltinIcon::CircleAlert, side, tint);
+    icon.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Overridden"));
+    frame.tooltip(&icon, hint);
 }
 
 /// When `layer` holds a value: a button that clears it (default, or the global

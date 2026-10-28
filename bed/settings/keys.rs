@@ -1,6 +1,6 @@
 //! The Keyboard Shortcuts section: every registered command and its keys in
 //! the layer being edited. Click a command's keys, then press the new ones.
-use super::{CONTROL_WIDTH, columns, overridden_note, reset_button};
+use super::{CONTROL_WIDTH, columns, overridden_marker, reset_button};
 use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::{
     CommandRegistry, ContextCommandId, KeyChord, Keybindings, Modifiers, keys_at, keys_in,
@@ -29,6 +29,7 @@ pub(super) fn section(
         columns(
             ui,
             label,
+            |ui| overridden_marker(ui, context, overridden),
             |ui| {
                 let size = egui::vec2(CONTROL_WIDTH, 0.0);
                 if recording.as_ref() == Some(&command) {
@@ -64,9 +65,7 @@ pub(super) fn section(
             },
             |ui| {
                 reset = reset_button(ui, context, layer, set_here);
-                if let Some(above) = overridden {
-                    overridden_note(ui, above);
-                } else if let Some(note) = shared {
+                if let Some(note) = shared {
                     ui.weak(note);
                 }
             },

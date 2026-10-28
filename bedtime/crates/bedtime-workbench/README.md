@@ -854,7 +854,9 @@ set_setting::<FileTreeIndent>(world, StoreId::of::<GlobalStore>(), 18.0)?;
 An editor for one layer should show `Settings::get_at::<S>(layer)`, the value
 that layer and those below it give, not the resolved value: otherwise editing a
 lower layer looks like it does nothing while a higher one overrides it.
-`overridden_above::<S>(layer)` names that higher layer. `keys_at` and
+`overridden_above::<S>(layer)` names that higher layer, when its value differs.
+`set_setting` with the value a layer would inherit anyway (`inherited::<S>`)
+clears the layer instead, so it keeps following the layers below. `keys_at` and
 `keys_overridden_above` do the same for keybindings.
 
 `read_setting::<S>(&backend)` reads one setting straight from a store's
