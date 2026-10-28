@@ -155,6 +155,81 @@ fn references_to_entities_that_arent_saved_are_refused() {
     assert!(error.contains("Pointer"));
 }
 
+#[test]
+fn a_layout_template_builds_independent_copies_of_one_layout() {
+    let mut source = app();
+    let world = source.world_mut();
+    let layout = crate::tests::layout(world);
+    let mut workbench = Workbench::new(world);
+    let left = workbench.destination_area(layout).unwrap();
+    let right = workbench
+        .split_area(left, SplitAxis::Horizontal, 6000, [100, 100])
+        .unwrap();
+    // Other layouts aren't part of the template.
+    workbench.create_layout("Other").unwrap();
+    let world = workbench.world_mut();
+    note(world, left, "a");
+    let b = note(world, left, "b");
+    let d = note(world, right, "d");
+    // Refers to a panel in the layout: kept, and pointed at the copy.
+    world.entity_mut(d).insert(Pointer(b));
+    // Refers to something outside the layout (a document, say): left out.
+    let outside = world.spawn_empty().id();
+    let tied = note(world, right, "tied to a document");
+    world.entity_mut(tied).insert(Pointer(outside));
+    world.get_mut::<Area>(left).unwrap().selected = Some(b);
+    world.get_mut::<Layout>(layout).unwrap().focused_area = Some(right);
+    let template = capture_layout(world, layout).unwrap();
+    assert!(!template.as_str().contains("ActiveLayout"));
+    assert!(capture_layout(world, left).is_err());
+
+    // Into another workbench, after its layouts, and not made active.
+    let mut target = app();
+    let world = target.world_mut();
+    let existing = crate::tests::layout(world);
+    let copies = [
+        instantiate_layout(world, &template).unwrap(),
+        instantiate_layout(world, &template).unwrap(),
+    ];
+    assert_eq!(layouts(world), [existing, copies[0], copies[1]]);
+    assert_eq!(active_layout(world), Some(existing));
+    for copy in copies {
+        assert_eq!(world.get::<Layout>(copy).unwrap().name, "Test");
+        let areas = world.get::<LayoutAreas>(copy).unwrap().entities().to_vec();
+        let (left, right) = (areas[0], areas[1]);
+        assert_eq!(texts(world, left), ["a", "b"]);
+        assert_eq!(texts(world, right), ["d"]);
+        assert_eq!(world.get::<Area>(right).unwrap().rect().min[0], 6000);
+        let selected = world.get::<Area>(left).unwrap().selected.unwrap();
+        assert_eq!(world.get::<Note>(selected).unwrap().text, "b");
+        assert_eq!(world.get::<Layout>(copy).unwrap().focused_area, Some(right));
+        let d = panels_in_area(world, right)[0];
+        assert_eq!(world.get::<Pointer>(d).unwrap().0, selected);
+    }
+    // The copies don't share panels.
+    let panel =
+        |copy| panels_in_area(world, world.get::<LayoutAreas>(copy).unwrap().entities()[0])[0];
+    assert_ne!(panel(copies[0]), panel(copies[1]));
+}
+
+#[test]
+fn a_bad_layout_template_adds_nothing() {
+    let mut source = app();
+    let world = source.world_mut();
+    crate::tests::layout(world);
+    Workbench::new(world).create_layout("Second").unwrap();
+    let whole = capture::<WorkbenchStore>(world).unwrap();
+
+    let mut target = app();
+    let world = target.world_mut();
+    // A whole workbench save holds two layouts and a resource.
+    let error = instantiate_layout(world, &LayoutTemplate(whole)).unwrap_err();
+    assert!(error.contains("resources"), "{error}");
+    assert!(instantiate_layout(world, &LayoutTemplate("not ron".into())).is_err());
+    assert!(layouts(world).is_empty());
+    assert_eq!(world.query::<&Area>().iter(world).count(), 0);
+}
+
 /// An in-memory backend that counts writes and versions each entry.
 #[derive(Clone, Default)]
 pub(crate) struct MemoryBackend(Arc<Mutex<MemoryState>>);

@@ -2,9 +2,8 @@
 //! this module decides whether an existing panel is focused instead, and where a
 //! new one goes. Drag-and-drop bypasses this on purpose: dragging a panel out
 //! always creates a new one where the user dropped it.
-use bedtime_workbench::{
-    ActiveLayout, Area, InLayout, Layout, Panel, PanelFactory, Workbench, active_layout,
-};
+use crate::layouts::{self, LayoutSlot};
+use bedtime_workbench::{Panel, PanelFactory, Workbench, active_layout};
 use bevy::prelude::*;
 
 /// What makes two panels of one type show the same thing.
@@ -19,7 +18,10 @@ pub fn open_panel<P: PanelPolicy>(
     key: P::Key,
     factory: PanelFactory,
 ) -> Result<Entity, String> {
-    let layout = active_layout(world).unwrap_or_else(|| new_layout(world));
+    let layout = match active_layout(world) {
+        Some(layout) => layout,
+        None => layouts::switch(world, LayoutSlot(0))?,
+    };
     let mut workbench = Workbench::new(world);
     let existing = workbench.panels(layout).into_iter().find(|&panel| {
         let world = workbench.world();
@@ -36,21 +38,6 @@ pub fn open_panel<P: PanelPolicy>(
     Ok(panel)
 }
 
-/// A selected layout with one full-size area.
-fn new_layout(world: &mut World) -> Entity {
-    let layout = world
-        .spawn((
-            Layout {
-                name: "Layout 1".into(),
-                ..default()
-            },
-            ActiveLayout,
-        ))
-        .id();
-    world.spawn((Area::default(), InLayout(layout)));
-    layout
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,7 +51,7 @@ mod tests {
     #[test]
     fn opening_focuses_an_equivalent_panel_in_the_active_layout() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
+        app.add_plugins((WorkbenchCorePlugin, layouts::LayoutsPlugin));
         let world = app.world_mut();
 
         let first = open_settings(world);
@@ -80,12 +67,11 @@ mod tests {
     #[test]
     fn opening_ignores_panels_in_other_layouts() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
+        app.add_plugins((WorkbenchCorePlugin, layouts::LayoutsPlugin));
         let world = app.world_mut();
 
         let first = open_settings(world);
         let layout = Workbench::new(world).create_layout("Other").unwrap();
-        world.spawn((Area::default(), InLayout(layout)));
         Workbench::new(world).activate_layout(layout).unwrap();
         assert_ne!(open_settings(world), first);
     }

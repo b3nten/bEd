@@ -546,6 +546,28 @@ code in the app or plugins beyond adding one plugin.
 - `tests/automation/workspaces.py` switches to the default workspace and back,
   checking each workspace's layout is its own and the window keeps its size.
 
+### Step 9: layout templates and five layouts
+
+Workbench (`persistence/templates.rs`): `capture_layout`, `instantiate_layout`,
+`LayoutTemplate`. Capture and restore share filtering, serialization, parsing
+and writing with whole-store saves. Panels referring outside the layout are
+left out, so file-bound panels don't end up in defaults without a marker.
+
+bed (`bed/layouts.rs`):
+
+- `LayoutSlot(0..5)` on each numbered layout, saved with the workspace.
+  Layout 1…5 (Cmd+1…5) switches, making the slot's layout the first time from
+  its default. At startup the saved active layout stays; otherwise layout 1 is
+  opened (a workbench saved before slots gets its active layout as layout 1).
+- `LayoutDefaults([Option<LayoutTemplate>; 5])`, persisted in the global
+  store: Save Layout as Default sets the current slot's; Reset Layout rebuilds
+  the current layout from it (built first, so a bad default leaves the layout
+  alone). No default is a single empty area.
+- Layout menu: Layout 1…5, Save Layout as Default, Reset Layout.
+- `tests/automation/layouts.py`: slots keep their panels, and a saved default
+  builds layout 1 in another workspace.
+- Next: the Workspaces panel as the default workspace's built-in layout 1.
+
 ## Build order
 
 Each step depends on the one before.

@@ -537,7 +537,11 @@ mod tests {
     fn the_open_settings_keys_open_one_settings_panel() {
         use bedtime_workbench::{BindingInput, BindingPress, InvocationContext};
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, SettingsPlugin));
+        app.add_plugins((
+            WorkbenchCorePlugin,
+            SettingsPlugin,
+            crate::layouts::LayoutsPlugin,
+        ));
         app.update();
         let chord = KeyChord::primary(KeyCode::Comma);
         for _ in 0..2 {

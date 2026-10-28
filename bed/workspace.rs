@@ -161,7 +161,12 @@ pub enum Start {
 /// Decide which workspace to open and claim its store. A folder named
 /// explicitly opens even if another instance has it, but isn't saved; one
 /// only reopened from the recent list is skipped instead.
-pub fn open(start: Start, config: Option<&Path>, recent: &RecentWorkspaces, reopen_last: bool) -> Opened {
+pub fn open(
+    start: Start,
+    config: Option<&Path>,
+    recent: &RecentWorkspaces,
+    reopen_last: bool,
+) -> Opened {
     let named = |path: PathBuf| match Workspace::from_path(path) {
         Ok(workspace) => Some(workspace),
         Err(error) => {

@@ -791,6 +791,12 @@ app.register_type::<Notes>()
 - `persistence::capture::<S>(world)` and `restore::<S>(world, text)` capture and
   restore a store's data directly, e.g. for export or tests. Layouts are only
   restored into an empty workbench.
+- **Layout templates.** `capture_layout(world, layout)` saves one layout's
+  areas and panels as a `LayoutTemplate` (RON text, reflectable, so an app can
+  keep templates in a persisted resource). `instantiate_layout(world, &template)`
+  builds a new, inactive layout from it, after the existing ones; failure adds
+  nothing. A panel that refers to an entity outside the layout (a document,
+  say) belongs to one workspace's data, so it's left out of templates.
 
 ## Settings (`persistence` feature)
 

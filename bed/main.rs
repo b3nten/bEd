@@ -8,6 +8,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::{Path, PathBuf};
 use workspace::{Opened, RecentWorkspaces, Start};
 
+mod layouts;
 mod menus;
 mod panels;
 mod settings;
@@ -77,6 +78,7 @@ pub fn app(start: Start) -> App {
         WorkbenchPlugin,
         settings::SettingsPlugin,
         menus::MenusPlugin,
+        layouts::LayoutsPlugin,
         automation,
     ))
     .insert_resource(recent)

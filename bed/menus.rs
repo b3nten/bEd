@@ -3,6 +3,7 @@
 //! Menus and tools only name commands: labels, shortcuts and whether they're
 //! enabled all come from the command and its handler.
 use crate::{
+    layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
     settings::{OpenSettings, SettingsPanel},
     workspace::{self, RecentWorkspaces, Start, Workspace},
 };
@@ -111,6 +112,7 @@ fn compose_menus(mut commands: Commands) {
     let app = menu("bEd");
     let file = menu("File");
     let view = menu("View");
+    let layout = menu("Layout");
     commands.spawn((
         MenuItem::new("Settings…"),
         Invokes::of::<OpenSettings>(),
@@ -136,6 +138,14 @@ fn compose_menus(mut commands: Commands) {
         Invokes::of::<OpenSettings>(),
         InMenu(view),
     ));
+    commands.spawn((MenuItem::command::<UseLayout<0>>(), InMenu(layout)));
+    commands.spawn((MenuItem::command::<UseLayout<1>>(), InMenu(layout)));
+    commands.spawn((MenuItem::command::<UseLayout<2>>(), InMenu(layout)));
+    commands.spawn((MenuItem::command::<UseLayout<3>>(), InMenu(layout)));
+    commands.spawn((MenuItem::command::<UseLayout<4>>(), InMenu(layout)));
+    commands.spawn((MenuSeparator, InMenu(layout)));
+    commands.spawn((MenuItem::command::<SaveLayoutAsDefault>(), InMenu(layout)));
+    commands.spawn((MenuItem::command::<ResetLayout>(), InMenu(layout)));
 }
 
 /// Recent folders other than this one, in Open Recent.
@@ -342,6 +352,7 @@ mod tests {
         app.add_plugins((
             WorkbenchCorePlugin,
             crate::settings::SettingsPlugin,
+            crate::layouts::LayoutsPlugin,
             MenusPlugin,
         ))
         .insert_resource(RecentWorkspaces(vec!["/a".into(), "/b".into()]))
@@ -361,7 +372,8 @@ mod tests {
             [
                 ("bEd".into(), true),
                 ("File".into(), true),
-                ("View".into(), true)
+                ("View".into(), true),
+                ("Layout".into(), true)
             ]
         );
         let file = menu(&bar.entries, "File");
