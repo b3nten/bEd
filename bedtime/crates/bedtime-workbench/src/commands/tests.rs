@@ -59,7 +59,7 @@ fn app() -> App {
         .init_resource::<Calls>()
         .register_command::<Find>()
         .register_command::<ToggleBackfaces>()
-        .add_command_handler::<Zoom>(zoom);
+        .add_command_handler::<Zoom>(Handler::new(zoom));
     crate::tests::layout(app.world_mut());
     app
 }
@@ -100,11 +100,13 @@ fn a_shared_chord_runs_the_command_handled_in_the_most_specific_scope() {
     let editor = panel(&mut app);
     app.world_mut()
         .entity_mut(editor)
-        .insert(CommandHandler::<Find>::new(find_in_panel));
+        .insert(CommandHandler::<Find>::new(Handler::new(find_in_panel)));
     let viewer = panel(&mut app);
     app.world_mut()
         .entity_mut(viewer)
-        .insert(CommandHandler::<ToggleBackfaces>::new(toggle_in_panel));
+        .insert(CommandHandler::<ToggleBackfaces>::new(Handler::new(
+            toggle_in_panel,
+        )));
     let neither = panel(&mut app);
 
     Workbench::new(app.world_mut()).focus_panel(editor).unwrap();
@@ -125,7 +127,7 @@ fn a_shared_chord_runs_the_command_handled_in_the_most_specific_scope() {
     // With a global Find, it runs where no panel claims the chord...
     app.world_mut()
         .resource_mut::<CommandRegistry>()
-        .set_global_handler::<Find>(Some(find_global));
+        .set_global_handler::<Find>(Some(Handler::new(find_global)));
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("find", "global", Some(neither))]);
     // ...but the viewer's own command still beats it.
@@ -139,8 +141,8 @@ fn a_panel_handling_two_commands_on_one_chord_is_a_conflict() {
     let mut app = app();
     let panel = panel(&mut app);
     app.world_mut().entity_mut(panel).insert((
-        CommandHandler::<Find>::new(find_in_panel),
-        CommandHandler::<ToggleBackfaces>::new(toggle_in_panel),
+        CommandHandler::<Find>::new(Handler::new(find_in_panel)),
+        CommandHandler::<ToggleBackfaces>::new(Handler::new(toggle_in_panel)),
     ));
     press(&mut app, CTRL_F, false);
     assert!(calls(&mut app).is_empty());
@@ -166,17 +168,18 @@ fn a_panel_handler_wins_and_a_disabled_one_blocks_the_global_handler() {
     let mut app = app();
     app.world_mut()
         .resource_mut::<CommandRegistry>()
-        .set_global_handler::<Find>(Some(find_global));
+        .set_global_handler::<Find>(Some(Handler::new(find_global)));
     let panel = panel(&mut app);
     app.world_mut()
         .entity_mut(panel)
-        .insert(CommandHandler::<Find>::new(find_in_panel));
+        .insert(CommandHandler::<Find>::new(Handler::new(find_in_panel)));
     let invoke = |app: &mut App, context| {
         app.world_mut()
             .resource_mut::<ContextCommandRequests>()
             .submit(ContextCommandRequest {
                 command: ContextCommandId::of::<Find>(),
                 context,
+                source: None,
             });
         app.update();
     };
@@ -190,7 +193,7 @@ fn a_panel_handler_wins_and_a_disabled_one_blocks_the_global_handler() {
     app.world_mut()
         .get_mut::<CommandHandler<Find>>(panel)
         .unwrap()
-        .enabled = false;
+        .handler = Handler::new(find_in_panel).available_when(|_, _| false);
     let world = app.world();
     let find = ContextCommandId::of::<Find>();
     assert!(!command_available(world, &find, InvocationContext::Focused));
@@ -218,7 +221,7 @@ fn requests_run_in_order_and_requests_from_handlers_run_next_frame() {
     let mut app = app();
     app.world_mut()
         .resource_mut::<CommandRegistry>()
-        .set_global_handler::<Find>(Some(again));
+        .set_global_handler::<Find>(Some(Handler::new(again)));
     let mut requests = app.world_mut().resource_mut::<ContextCommandRequests>();
     requests.invoke::<Zoom>();
     requests.invoke::<Find>();
@@ -246,7 +249,7 @@ fn held_keys_repeat_only_commands_that_repeat_and_modifiers_match_exactly() {
 
     app.world_mut()
         .resource_mut::<CommandRegistry>()
-        .set_global_handler::<Find>(Some(find_global));
+        .set_global_handler::<Find>(Some(Handler::new(find_global)));
     press(&mut app, CTRL_F, true);
     assert!(calls(&mut app).is_empty());
 }
@@ -257,10 +260,12 @@ fn menu_hints_show_the_chord_that_would_run_the_command() {
     let panel = panel(&mut app);
     app.world_mut()
         .entity_mut(panel)
-        .insert(CommandHandler::<ToggleBackfaces>::new(toggle_in_panel));
+        .insert(CommandHandler::<ToggleBackfaces>::new(Handler::new(
+            toggle_in_panel,
+        )));
     app.world_mut()
         .resource_mut::<CommandRegistry>()
-        .set_global_handler::<Find>(Some(find_global));
+        .set_global_handler::<Find>(Some(Handler::new(find_global)));
     let world = app.world();
     let find = ContextCommandId::of::<Find>();
     // Ctrl+F toggles backfaces in this panel, so Find shows no shortcut here.
@@ -358,7 +363,7 @@ fn requests_made_while_drawing_run_in_the_same_frame() {
     let mut app = App::new();
     app.add_plugins((WorkbenchCorePlugin, crate::WorkbenchUiPlugin))
         .init_resource::<Calls>()
-        .add_command_handler::<Zoom>(zoom)
+        .add_command_handler::<Zoom>(Handler::new(zoom))
         .add_systems(
             PreUpdate,
             (|world: &mut World| {

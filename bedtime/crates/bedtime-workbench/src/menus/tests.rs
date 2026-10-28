@@ -17,8 +17,8 @@ fn app() -> App {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin);
     crate::tests::layout(app.world_mut());
-    app.add_command_handler::<Copy>(|_, _| Ok(()))
-        .add_command_handler::<Paste>(|_, _| Ok(()));
+    app.add_command_handler::<Copy>(Handler::new(|_, _| Ok(())))
+        .add_command_handler::<Paste>(Handler::new(|_, _| Ok(())));
     app
 }
 
@@ -32,7 +32,7 @@ fn bind<C: ContextCommand>(world: &mut World, chord: KeyChord) {
 fn world_menu_snapshots_remain_enabled_without_workspaces() {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin)
-        .add_command_handler::<Copy>(|_, _| Ok(()));
+        .add_command_handler::<Copy>(Handler::new(|_, _| Ok(())));
     let world = app.world_mut();
     let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyC);
     bind::<Copy>(world, chord);
@@ -133,7 +133,7 @@ fn removing_menu_ownership_keeps_action_definitions_and_handlers() {
 }
 
 #[test]
-fn captured_bindings_expire_on_disable_detach_retarget_and_removal() {
+fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
     let mut app = app();
     let world = app.world_mut();
     let root = world
@@ -155,14 +155,19 @@ fn captured_bindings_expire_on_disable_detach_retarget_and_removal() {
             .request(item, command.clone())
             .is_some()
     );
-    world.get_mut::<MenuItem>(item).unwrap().enabled = false;
+    let unavailable = Handler::new(|_, _| Ok(())).available_when(|_, _| false);
+    world
+        .resource_mut::<CommandRegistry>()
+        .set_global_handler::<Copy>(Some(unavailable));
     assert!(
         menu_snapshot(world, root, InvocationContext::Global)
             .unwrap()
             .request(item, command.clone())
             .is_none()
     );
-    world.get_mut::<MenuItem>(item).unwrap().enabled = true;
+    world
+        .resource_mut::<CommandRegistry>()
+        .set_global_handler::<Copy>(Some(Handler::new(|_, _| Ok(()))));
     world.entity_mut(item).remove::<InMenu>();
     assert!(
         menu_snapshot(world, root, InvocationContext::Global)

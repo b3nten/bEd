@@ -27,7 +27,8 @@ need to write this again?* If yes, it probably belongs in Bedtime.
 ## Repository map
 
 - `bed/` — the new app: window, workbench, settings (`settings.rs`), workspaces
-  (`workspace.rs`), panel opening policy (`panels.rs`). Run `bed [folder]`.
+  (`workspace.rs`), panel opening policy (`panels.rs`), menus, toolbar and app
+  commands (`menus.rs`). Run `bed [folder]`.
 - `bed_old/` — the previous app, kept as reference only. Not in the workspace.
 - `bedtime/crates/` — the maintained library: `bedtime-workbench`, `bedtime-ui`,
   `bedtime-document`, `bedtime-clipboard`.
@@ -242,6 +243,12 @@ Each step should produce a usable app. We can reorder at any point.
   setting per command, dispatch by handler scope. bed: `OpenSettings` command,
   Keyboard Shortcuts section in Settings. See "Step 4" in
   [docs/foundation.md](docs/foundation.md).
+
+- **Step 5.5 (menus + toolbar)**, implemented 2026-10-27 and awaiting review.
+  Workbench: one `Handler` type with optional availability, invocation
+  `source`, `MenuItem::command`, `read_setting`. bed: `menus.rs` (bEd/File/View
+  menus, Quit, Open Folder…, Open Recent, toolbar), recent folders, reopen last
+  workspace. See "Step 5" in [docs/foundation.md](docs/foundation.md).
 
 ## Decisions
 

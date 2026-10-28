@@ -39,9 +39,23 @@ pub(crate) fn install(app: &mut App) {
 /// Handle Save, Undo and Redo globally, for the focused panel's document.
 pub fn register_document_handlers(world: &mut World) {
     let mut registry = world.resource_mut::<CommandRegistry>();
-    registry.set_global_handler::<SaveDocument>(Some(save));
-    registry.set_global_handler::<UndoDocument>(Some(undo));
-    registry.set_global_handler::<RedoDocument>(Some(redo));
+    registry.set_global_handler::<SaveDocument>(Some(Handler::new(save).available_when(
+        |world, panel| {
+            info(world, panel).is_some_and(|info| info.dirty && info.writable && !info.saving)
+        },
+    )));
+    registry.set_global_handler::<UndoDocument>(Some(Handler::new(undo).available_when(
+        |world, panel| info(world, panel).is_some_and(|i| i.undo_label.is_some()),
+    )));
+    registry.set_global_handler::<RedoDocument>(Some(Handler::new(redo).available_when(
+        |world, panel| info(world, panel).is_some_and(|i| i.redo_label.is_some()),
+    )));
+}
+
+/// The state of the document `panel` references.
+fn info(world: &World, panel: Option<Entity>) -> Option<DocumentInfo> {
+    let reference = world.get::<DocumentReference>(panel?)?;
+    inspect_document(world, reference.document()).ok()
 }
 
 fn target(world: &World, invocation: &ContextCommandInvocation) -> Result<DocumentId, String> {

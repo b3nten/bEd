@@ -7,12 +7,15 @@
 //! A workspace's store lives under the config directory, keyed by a stable
 //! hash of the folder's path, so repositories aren't touched. A lock file
 //! stops two instances from saving the same workspace over each other.
-use bedtime_workbench::{ErrorDialog, request_error_dialog};
+use bedtime_workbench::{ErrorDialog, persistence::StoreBackend, request_error_dialog};
 use bevy::prelude::*;
 use std::{
     fs::{self, File, TryLockError},
     path::{Path, PathBuf},
 };
+
+const RECENT_ENTRY: &str = "recent";
+const RECENT_LIMIT: usize = 10;
 
 /// The open folder.
 #[derive(Resource, Clone, Debug)]
@@ -21,10 +24,8 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// The folder named on the command line, if any. A path that isn't a
-    /// folder is reported and ignored.
-    pub fn from_args() -> Option<Self> {
-        let argument = std::env::args_os().nth(1)?;
+    /// `argument` as a folder. A path that isn't one is reported and ignored.
+    pub fn from_path(argument: PathBuf) -> Option<Self> {
         match fs::canonicalize(&argument) {
             Ok(root) if root.is_dir() => Some(Self { root }),
             Ok(root) => {
@@ -32,7 +33,7 @@ impl Workspace {
                 None
             }
             Err(error) => {
-                eprintln!("{}: {error}", PathBuf::from(argument).display());
+                eprintln!("{}: {error}", argument.display());
                 None
             }
         }
@@ -93,6 +94,91 @@ pub fn lock(directory: &Path, workspace: &Workspace) -> Result<Option<WorkspaceL
     claim().map_err(|e| format!("{}: {e}", directory.display()))
 }
 
+/// Recently opened folders, most recent first. Kept in the global store's
+/// directory as its own entry, so it can be read before the app is built.
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct RecentWorkspaces(pub Vec<PathBuf>);
+
+impl RecentWorkspaces {
+    pub fn read(store: &dyn StoreBackend) -> Self {
+        let read = || -> Option<Vec<PathBuf>> {
+            let bytes = store.read(RECENT_ENTRY).ok()??;
+            ron::de::from_bytes(&bytes).ok()
+        };
+        Self(read().unwrap_or_default())
+    }
+
+    /// Move `root` to the front and save the list.
+    pub fn remember(&mut self, store: &dyn StoreBackend, root: &Path) -> Result<(), String> {
+        self.0.retain(|path| path != root);
+        self.0.insert(0, root.to_owned());
+        self.0.truncate(RECENT_LIMIT);
+        let text = ron::ser::to_string_pretty(&self.0, default()).map_err(|e| e.to_string())?;
+        store.write(RECENT_ENTRY, text.as_bytes())
+    }
+}
+
+/// The workspace this instance opened, and how it went.
+pub struct Opened {
+    pub workspace: Option<Workspace>,
+    pub lock: Option<WorkspaceLock>,
+    /// Why the workspace's store wasn't claimed, to show once the window exists.
+    pub unclaimed: Option<String>,
+}
+
+/// Decide which workspace to open: the folder named on the command line, else
+/// (if `reopen_last`) the most recent one that still exists. A reopened
+/// workspace that's open elsewhere is skipped rather than shared.
+pub fn open(
+    argument: Option<PathBuf>,
+    config: Option<&Path>,
+    recent: &RecentWorkspaces,
+    reopen_last: bool,
+) -> Opened {
+    let named = argument.is_some();
+    let workspace = match argument {
+        Some(argument) => Workspace::from_path(argument),
+        None if reopen_last => recent
+            .0
+            .iter()
+            .find(|path| path.is_dir())
+            .map(|root| Workspace { root: root.clone() }),
+        None => None,
+    };
+    let (Some(workspace), Some(config)) = (workspace.clone(), config) else {
+        return Opened {
+            workspace,
+            lock: None,
+            unclaimed: None,
+        };
+    };
+    let directory = workspace.store_directory(config);
+    let unclaimed = match lock(&directory, &workspace) {
+        Ok(Some(lock)) => {
+            return Opened {
+                workspace: Some(workspace),
+                lock: Some(lock),
+                unclaimed: None,
+            };
+        }
+        Ok(None) => format!("{} is in use by another instance", directory.display()),
+        Err(error) => error,
+    };
+    if named {
+        Opened {
+            workspace: Some(workspace),
+            lock: None,
+            unclaimed: Some(unclaimed),
+        }
+    } else {
+        Opened {
+            workspace: None,
+            lock: None,
+            unclaimed: None,
+        }
+    }
+}
+
 /// Shown when the workspace couldn't be claimed, once the window exists.
 #[derive(Resource)]
 pub struct Unclaimed(pub String);
@@ -127,6 +213,59 @@ mod tests {
             workspace.store_directory(config),
             config.join("workspaces/3d7337650bbf4540")
         );
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!("bed-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&directory);
+        fs::create_dir_all(&directory).unwrap();
+        fs::canonicalize(directory).unwrap()
+    }
+
+    #[test]
+    fn recent_folders_are_most_recent_first_without_duplicates() {
+        let directory = scratch("recent");
+        let store = bedtime_workbench::persistence::DirectoryStore::new(&directory);
+        let mut recent = RecentWorkspaces::read(&store);
+        assert!(recent.0.is_empty());
+        for name in ["a", "b", "a"] {
+            recent.remember(&store, Path::new(name)).unwrap();
+        }
+        assert_eq!(recent.0, [PathBuf::from("a"), PathBuf::from("b")]);
+        for index in 0..20 {
+            recent
+                .remember(&store, Path::new(&index.to_string()))
+                .unwrap();
+        }
+        let reread = RecentWorkspaces::read(&store);
+        assert_eq!(reread.0.len(), RECENT_LIMIT);
+        assert_eq!(reread.0[0], PathBuf::from("19"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn without_a_folder_the_last_one_reopens_unless_it_is_open_elsewhere() {
+        let root = scratch("reopen");
+        let (config, project) = (root.join("config"), root.join("project"));
+        fs::create_dir_all(&project).unwrap();
+        let recent = RecentWorkspaces(vec![root.join("deleted"), project.clone()]);
+
+        let opened = open(None, Some(&config), &recent, false);
+        assert!(opened.workspace.is_none());
+
+        let first = open(None, Some(&config), &recent, true);
+        assert_eq!(first.workspace.as_ref().unwrap().root, project);
+        assert!(first.lock.is_some());
+
+        // Open in another instance: start without a folder instead.
+        let second = open(None, Some(&config), &recent, true);
+        assert!(second.workspace.is_none() && second.unclaimed.is_none());
+        // Named explicitly, it opens anyway, unclaimed.
+        let named = open(Some(project.clone()), Some(&config), &recent, true);
+        assert!(named.workspace.is_some() && named.unclaimed.is_some());
+
+        drop(first);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

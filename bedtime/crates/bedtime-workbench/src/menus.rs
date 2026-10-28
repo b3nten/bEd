@@ -1,6 +1,6 @@
 //! Abstract ordered menus. Native and egui presenters use the same snapshots.
 use crate::{
-    ContextCommandId, ContextCommandRequest, InvocationContext, Invokes, KeyChord,
+    ContextCommand, ContextCommandId, ContextCommandRequest, InvocationContext, Invokes, KeyChord,
     command_available, shortcut_for,
 };
 use bevy::prelude::*;
@@ -14,18 +14,23 @@ pub struct Menu {
     pub label: String,
 }
 
+/// A menu entry. With `Invokes` it runs that command, and is enabled when the
+/// command is available in the menu's context.
 #[derive(Component, Clone, Debug)]
 pub struct MenuItem {
     pub label: String,
-    pub enabled: bool,
 }
 
 impl MenuItem {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            enabled: true,
         }
+    }
+
+    /// An item running command `C`, labelled with the command's label.
+    pub fn command<C: ContextCommand>() -> (Self, Invokes) {
+        (Self::new(C::LABEL), Invokes::of::<C>())
     }
 }
 
@@ -95,6 +100,7 @@ impl MenuSnapshot {
                     Some(ContextCommandRequest {
                         command: target.clone(),
                         context: *context,
+                        source: Some(source),
                     })
                 }
                 _ => None,
@@ -180,10 +186,9 @@ fn read_entries(
                     return Err("Menu item requires a label and cannot contain entries".into());
                 }
                 let target = world.get::<Invokes>(entity).map(|a| a.0.clone());
-                let enabled = item.enabled
-                    && target
-                        .as_ref()
-                        .is_some_and(|t| command_available(world, t, context));
+                let enabled = target
+                    .as_ref()
+                    .is_some_and(|t| command_available(world, t, context));
                 let shortcut = target
                     .as_ref()
                     .and_then(|t| shortcut_for(world, t, context));

@@ -56,26 +56,47 @@ impl Invokes {
 pub struct ContextCommandInvocation {
     pub command: ContextCommandId,
     pub panel: Option<Entity>,
+    /// What triggered it, e.g. a menu item; handlers can read details from it.
+    pub source: Option<Entity>,
 }
 
 pub type ContextCommandResult = Result<(), String>;
 pub type CommandFn = fn(&mut World, ContextCommandInvocation) -> ContextCommandResult;
 
+/// Performs a command, globally or for a panel.
+#[derive(Clone, Copy)]
+pub struct Handler {
+    run: CommandFn,
+    /// Whether it can run now, for the given panel. Menus and the toolbar grey
+    /// out commands that can't. An unavailable panel handler still claims the
+    /// command for its panel: it doesn't fall back to the global handler.
+    available: fn(&World, Option<Entity>) -> bool,
+}
+
+impl Handler {
+    pub fn new(run: CommandFn) -> Self {
+        Self {
+            run,
+            available: |_, _| true,
+        }
+    }
+
+    pub fn available_when(self, available: fn(&World, Option<Entity>) -> bool) -> Self {
+        Self { available, ..self }
+    }
+}
+
 /// A panel's handler for command `C`.
 #[derive(Component)]
 pub struct CommandHandler<C: ContextCommand> {
-    /// A disabled handler still claims the command for its panel: the command
-    /// is unavailable there rather than falling back to the global handler.
-    pub enabled: bool,
-    call: CommandFn,
+    pub handler: Handler,
     marker: std::marker::PhantomData<fn() -> C>,
 }
 
 impl<C: ContextCommand> CommandHandler<C> {
-    pub fn new(call: CommandFn) -> Self {
+    pub fn new(handler: Handler) -> Self {
         Self {
-            enabled: true,
-            call,
+            handler,
             marker: std::marker::PhantomData,
         }
     }
@@ -93,9 +114,9 @@ struct Registered {
     label: &'static str,
     type_id: TypeId,
     repeats: bool,
-    global: Option<CommandFn>,
-    /// The panel's `CommandHandler<C>`, as (enabled, call).
-    on_panel: fn(&World, Entity) -> Option<(bool, CommandFn)>,
+    global: Option<Handler>,
+    /// The panel's `CommandHandler<C>`.
+    on_panel: fn(&World, Entity) -> Option<Handler>,
     /// `Keybinding<C>` in one layer, for settings UIs that don't know `C`.
     #[cfg(feature = "persistence")]
     keys_in: fn(&World, StoreId) -> Option<Vec<KeyChord>>,
@@ -120,7 +141,7 @@ impl CommandRegistry {
     }
 
     /// Set or replace (or with `None`, remove) `C`'s global handler.
-    pub fn set_global_handler<C: ContextCommand>(&mut self, handler: Option<CommandFn>) {
+    pub fn set_global_handler<C: ContextCommand>(&mut self, handler: Option<Handler>) {
         let registered = self
             .0
             .iter_mut()
@@ -138,7 +159,7 @@ impl CommandRegistry {
         world: &World,
         command: &ContextCommandId,
         panel: Entity,
-    ) -> Option<(bool, CommandFn)> {
+    ) -> Option<Handler> {
         self.get(command)
             .and_then(|registered| (registered.on_panel)(world, panel))
     }
@@ -193,6 +214,7 @@ pub enum InvocationContext {
 pub struct ContextCommandRequest {
     pub command: ContextCommandId,
     pub context: InvocationContext,
+    pub source: Option<Entity>,
 }
 
 impl ContextCommandRequest {
@@ -200,6 +222,7 @@ impl ContextCommandRequest {
         Self {
             command: ContextCommandId::of::<C>(),
             context: InvocationContext::Focused,
+            source: None,
         }
     }
 }
@@ -419,7 +442,7 @@ pub trait CommandAppExt {
     /// keys become the setting `keys.<C::KEY>`.
     fn register_command<C: ContextCommand>(&mut self) -> &mut Self;
     /// Register `C` and set its global handler.
-    fn add_command_handler<C: ContextCommand>(&mut self, handler: CommandFn) -> &mut Self;
+    fn add_command_handler<C: ContextCommand>(&mut self, handler: Handler) -> &mut Self;
 }
 
 impl CommandAppExt for App {
@@ -449,7 +472,7 @@ impl CommandAppExt for App {
             on_panel: |world, panel| {
                 world
                     .get::<CommandHandler<C>>(panel)
-                    .map(|handler| (handler.enabled, handler.call))
+                    .map(|component| component.handler)
             },
             #[cfg(feature = "persistence")]
             keys_in: |world, store| {
@@ -471,7 +494,7 @@ impl CommandAppExt for App {
         self
     }
 
-    fn add_command_handler<C: ContextCommand>(&mut self, handler: CommandFn) -> &mut Self {
+    fn add_command_handler<C: ContextCommand>(&mut self, handler: Handler) -> &mut Self {
         self.register_command::<C>();
         self.world_mut()
             .resource_mut::<CommandRegistry>()
@@ -571,21 +594,18 @@ fn resolve(
 ) -> Result<CommandFn, String> {
     let registry = world.resource::<CommandRegistry>();
     let registered = registry.get(command).ok_or("Unknown command")?;
-    if let Some(panel) = panel {
-        if world.get::<PanelInstance>(panel).is_none() {
-            return Err("The panel is gone".into());
-        }
-        if let Some((enabled, call)) = (registered.on_panel)(world, panel) {
-            return if enabled {
-                Ok(call)
-            } else {
-                Err("Disabled in this panel".into())
-            };
-        }
+    if panel.is_some_and(|panel| world.get::<PanelInstance>(panel).is_none()) {
+        return Err("The panel is gone".into());
     }
-    registered
-        .global
-        .ok_or_else(|| "Nothing handles this here".into())
+    let handler = panel
+        .and_then(|panel| (registered.on_panel)(world, panel))
+        .or(registered.global)
+        .ok_or("Nothing handles this here")?;
+    if (handler.available)(world, panel) {
+        Ok(handler.run)
+    } else {
+        Err("Not available now".into())
+    }
 }
 
 /// Whether `command` would run in `context` right now.
@@ -673,7 +693,11 @@ fn shortcuts(world: &mut World) {
         let context = panel.map_or(InvocationContext::Global, InvocationContext::Panel);
         world
             .resource_mut::<ContextCommandRequests>()
-            .submit(ContextCommandRequest { command, context });
+            .submit(ContextCommandRequest {
+                command,
+                context,
+                source: None,
+            });
     }
 }
 
@@ -683,6 +707,7 @@ fn dispatch(world: &mut World) {
         let invocation = ContextCommandInvocation {
             panel: context_panel(world, request.context),
             command: request.command,
+            source: request.source,
         };
         let result = resolve(world, &invocation.command, invocation.panel)
             .and_then(|call| call(world, invocation.clone()));

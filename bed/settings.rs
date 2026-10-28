@@ -5,8 +5,8 @@
 use crate::{panels::PanelPolicy, workspace::Workspace};
 use bedtime_ui::{UiContext, UsesTheme, egui, themes};
 use bedtime_workbench::{
-    CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, KeyChord, Panel,
-    PanelFactory, PanelInstance, WindowBlur, WorkbenchSurface,
+    CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, Handler,
+    KeyChord, Panel, PanelFactory, PanelInstance, WindowBlur, WorkbenchSurface,
     persistence::{ReflectPersist, Store, StoreId, Stores, WorkbenchStore},
     setting,
     settings::{Setting, Settings, SettingsAppExt, clear_setting, set_setting},
@@ -62,6 +62,11 @@ setting! {
 setting! {
     pub PanelGap: f32 = 5.0, key = "appearance.panel_gap",
     apply = |world, gap| world.resource_mut::<Appearance>().panel_gap = limit(*gap, PANEL_GAP, 5.0),
+}
+
+setting! {
+    /// Started without a folder, reopen the last workspace.
+    pub ReopenLastWorkspace: bool = true, key = "startup.reopen_last", only_in = [GlobalStore],
 }
 
 /// Hand-edited files can hold anything; bring numbers into range before use.
@@ -127,7 +132,8 @@ impl Plugin for SettingsPlugin {
             .register_setting::<PanelOpacity>()
             .register_setting::<PanelRadius>()
             .register_setting::<PanelGap>()
-            .add_command_handler::<OpenSettings>(open_settings)
+            .register_setting::<ReopenLastWorkspace>()
+            .add_command_handler::<OpenSettings>(Handler::new(open_settings))
             .add_systems(Update, apply_appearance);
     }
 }
@@ -244,6 +250,14 @@ impl Panel for SettingsPanel {
                     ui.add(egui::Slider::new(gap, PANEL_GAP).text("Panel gap"))
                         .changed()
                 });
+                if layer == StoreId::of::<GlobalStore>() {
+                    ui.add_space(12.0);
+                    ui.heading("Startup");
+                    row::<ReopenLastWorkspace>(ui, world, layer, |ui, reopen| {
+                        ui.checkbox(reopen, "Reopen the last folder when started without one")
+                            .changed()
+                    });
+                }
                 ui.add_space(12.0);
                 keys::section(ui, world, layer);
             });

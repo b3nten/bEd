@@ -12,7 +12,7 @@
 //!
 //! The unit of override is the setting. Anything that should be overridable per
 //! entry is split into one setting per entry with a derived key.
-use crate::persistence::{Store, StoreId, StoreSystems, Stores};
+use crate::persistence::{Store, StoreBackend, StoreId, StoreSystems, Stores};
 use bevy::prelude::*;
 use ron::value::RawValue;
 use serde::{Serialize, de::DeserializeOwned};
@@ -314,6 +314,16 @@ pub(crate) fn install(app: &mut App) {
             Last,
             (reload_changed_layers, save_layers).before(crate::SessionSystems::Close),
         );
+}
+
+/// One setting's value as stored in `backend`'s layer, read directly, e.g. to
+/// decide something before the app is built. `None` when it isn't set there or
+/// can't be read.
+pub fn read_setting<S: Setting>(backend: &dyn StoreBackend) -> Option<S::Value> {
+    let bytes = backend.read(ENTRY).ok()??;
+    let text = std::str::from_utf8(&bytes).ok()?;
+    let values: BTreeMap<String, Box<RawValue>> = ron::from_str(text).ok()?;
+    values.get(S::key().as_ref())?.into_rust().ok()
 }
 
 /// Read one layer's file. `None` means it doesn't exist yet.

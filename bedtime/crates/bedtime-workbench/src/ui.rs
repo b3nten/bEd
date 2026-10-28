@@ -159,6 +159,7 @@ fn draw_entries(ui: &mut bedtime_ui::egui::Ui, world: &mut World, entries: &[Men
                     let request = ContextCommandRequest {
                         command: target.clone().expect("Enabled menu action"),
                         context: *context,
+                        source: Some(*entity),
                     };
                     world
                         .resource_mut::<ContextCommandRequests>()

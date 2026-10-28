@@ -1,7 +1,7 @@
 # Foundation: stores, persistence, settings, workspaces, commands
 
-Status (2026-10-27): **steps 1–4 (stores, persistence, settings, workspaces,
-commands and keybindings) built**; the rest is the agreed design, not built yet. Update this file as decisions change during the build.
+Status (2026-10-27): **steps 1–5 built** (stores, persistence, settings,
+workspaces, commands and keybindings, menus and toolbar). Update this file as decisions change during the build.
 
 The goal is a foundation solid enough that everything after it is "bring in a
 plugin": file tree, editor, viewers, terminal. Those plugins should only need to
@@ -383,6 +383,44 @@ As designed (`bedtime-workbench/src/commands.rs`), with these specifics:
 - Not done: recording a chord can also trigger that chord's command (the
   shortcut collector still sees it); recording sets a single chord, replacing
   any others the command had.
+
+### Step 5: menus and toolbar
+
+Workbench:
+
+- **One handler type.** `Handler` holds what a command does and, optionally,
+  when it can run (`available_when(fn(&World, Option<Entity>) -> bool)`). Global
+  handlers and `CommandHandler<C>` both hold one; the panel handler's `enabled`
+  field is gone. Menus, the toolbar and dispatch all use `command_available`,
+  so apps need no availability sync system. Save/Undo/Redo are available only
+  when the focused panel's document can be saved / has history.
+- `MenuItem.enabled` is gone; `MenuItem::command::<C>()` labels an item with
+  its command.
+- Invocations carry a `source` (the menu item or button), so one command can
+  serve several items: each Open Recent item carries its path.
+- `settings::read_setting::<S>(&backend)` reads a setting before the app
+  exists.
+
+bed (`bed/menus.rs`):
+
+- Menus: **bEd** (Settings…, Quit), **File** (Open Folder…, Open Recent ▸,
+  Save), **View** (Settings). Native on macOS, an egui bar in the titlebar
+  elsewhere.
+- Commands: `app.quit` (Primary+Q, sends `CloseRequested`), `app.open_folder`
+  (Primary+O, folder dialog), `app.open_recent` (from a menu item, that folder;
+  from a key, the most recent other folder). Opening a folder launches a new
+  `bed <folder>` process; the folder already open here is ignored.
+- Toolbar: `tool::<C>(icon, factory)`; tooltip, shortcut and enabled state come
+  from the command; dragging creates a panel from `factory`.
+- Recent folders are the `recent` entry of the global store's directory
+  (`recent.ron`), written directly through the backend at startup so `main` can
+  read it before the app exists. At most 10.
+- Startup: with no argument and `startup.reopen_last` (global-only, default on),
+  bed reopens the most recent folder that still exists. If it's open in another
+  instance, bed starts without a folder instead of sharing it.
+- Deferred: Edit menu (Cut/Copy/Paste and widget undo; with the editor plugin),
+  layout slots and reset/save layout (need layout templates), panel-owned menu
+  entries.
 
 ## Build order
 

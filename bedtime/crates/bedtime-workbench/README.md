@@ -574,18 +574,23 @@ impl ContextCommand for Save {
     const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyS)];
 }
 
-app.register_command::<Save>();              // known, bindable, listed
-app.add_command_handler::<Save>(save_focused); // also sets its global handler
-commands.spawn((MyEditor, CommandHandler::<Save>::new(save_editor))); // panel handler
+app.register_command::<Save>(); // known, bindable, listed
+// Also sets its global handler, available only when there's something to save.
+app.add_command_handler::<Save>(Handler::new(save_focused).available_when(can_save));
+// A panel's own handler.
+commands.spawn((MyEditor, CommandHandler::<Save>::new(Handler::new(save_editor))));
 ```
 
-There is one kind of handler, `fn(&mut World, ContextCommandInvocation) ->
-ContextCommandResult`. A command has at most one global handler, kept in
-`CommandRegistry` (`set_global_handler::<C>`), and any panel may carry a
-`CommandHandler<C>` component. When a command runs for a panel, that panel's
-handler wins; otherwise the global handler runs, and is told the panel too. A
-disabled panel handler makes the command unavailable in that panel rather
-than falling back.
+There is one handler type, `Handler`: what the command does
+(`fn(&mut World, ContextCommandInvocation) -> ContextCommandResult`) and,
+optionally, whether it can run now (`fn(&World, Option<Entity>) -> bool`, given
+the panel). A command has at most one global handler, kept in `CommandRegistry`
+(`set_global_handler::<C>`), and any panel may carry a `CommandHandler<C>`
+component. When a command runs for a panel, that panel's handler wins;
+otherwise the global handler runs, and is told the panel too. A panel handler
+that isn't available makes the command unavailable in that panel rather than
+falling back. The invocation also names its `source` (e.g. the menu item), so
+a handler can read details from it.
 
 `Keybindings` is a plain table from command to chords, filled with each
 command's defaults on registration. With the `persistence` feature, each
@@ -609,8 +614,9 @@ Requests made by handlers run next frame. `command_available` and
 
 ## Menus
 
-Native and egui presenters consume the same abstract menu snapshots. Availability
-uses the handler that would run. Shortcut hints show the chord that would run
+Native and egui presenters consume the same abstract menu snapshots. An item
+with `Invokes` is enabled when its command is available in the menu's context;
+`MenuItem::command::<C>()` makes one labelled with the command's label. Shortcut hints show the chord that would run
 the item's command in that context. Roots normally use the focused panel;
 explicit invocation contexts can be attached to roots or descendants.
 Snapshot requests reject removed,
@@ -829,3 +835,7 @@ set_setting::<FileTreeIndent>(world, StoreId::of::<GlobalStore>(), 18.0)?;
 - **The unit of override is the setting.** Anything overridable per entry is
   split into one setting per entry with a derived key (`Setting::key()` is a
   function, so generic settings can compute it).
+
+`read_setting::<S>(&backend)` reads one setting straight from a store's
+backend, for decisions made before the app is built (bEd uses it to decide
+whether to reopen the last folder).

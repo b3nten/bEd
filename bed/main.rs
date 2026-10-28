@@ -1,24 +1,38 @@
-use bedtime_ui::{BuiltinIcon, UiContext, UiPlugin, egui};
+use bedtime_ui::UiPlugin;
 use bedtime_workbench::{
-    ContextCommandId, ContextCommandRequests, InvocationContext, PanelFactory, Titlebar,
-    WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface, panel_drag_source,
+    Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface,
     persistence::{DirectoryStore, StoreAppExt, WorkbenchStore},
-    settings::SettingsAppExt,
+    settings::{Setting, SettingsAppExt, read_setting},
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::{Path, PathBuf};
-use workspace::Workspace;
+use workspace::{Opened, RecentWorkspaces};
 
+mod menus;
 mod panels;
 mod settings;
 mod workspace;
 
-use settings::{OpenSettings, SettingsPanel};
-
 fn main() -> AppExit {
     let config = config_directory();
-    let workspace = Workspace::from_args();
-    let title = workspace.as_ref().map_or("bEd".into(), |workspace| {
+    let global = config.as_ref().map(|config| config.join("global"));
+    // Which workspace to open is decided before the app exists, from what the
+    // global store holds.
+    let mut recent = RecentWorkspaces::default();
+    let mut reopen_last = <settings::ReopenLastWorkspace as Setting>::default();
+    if let Some(global) = &global {
+        let store = DirectoryStore::new(global);
+        recent = RecentWorkspaces::read(&store);
+        reopen_last = read_setting::<settings::ReopenLastWorkspace>(&store).unwrap_or(reopen_last);
+    }
+    let argument = std::env::args_os().nth(1).map(PathBuf::from);
+    let opened = workspace::open(argument, config.as_deref(), &recent, reopen_last);
+    if let (Some(workspace), Some(global)) = (&opened.workspace, &global)
+        && let Err(error) = recent.remember(&DirectoryStore::new(global), &workspace.root)
+    {
+        warn!("Couldn't update recent folders: {error}");
+    }
+    let title = opened.workspace.as_ref().map_or("bEd".into(), |workspace| {
         format!("{} — bEd", workspace.name())
     });
     let mut app = App::new();
@@ -44,22 +58,23 @@ fn main() -> AppExit {
         UiPlugin,
         WorkbenchPlugin,
         settings::SettingsPlugin,
+        menus::MenusPlugin,
     ))
+    .insert_resource(recent)
     .add_systems(Startup, setup);
-    stores(&mut app, config.as_deref(), workspace);
+    stores(&mut app, config.as_deref(), global, opened);
     app.run()
 }
 
 /// Where things are saved. Global settings and data go in `<config>/global`.
 /// The workbench (layout, panels, workspace settings) goes in the workspace's
 /// store, or in `<config>/workbench` when no folder is open.
-fn stores(app: &mut App, config: Option<&Path>, workspace: Option<Workspace>) {
-    let global = config.map(|config| config.join("global"));
+fn stores(app: &mut App, config: Option<&Path>, global: Option<PathBuf>, opened: Opened) {
     if let Some(global) = &global {
         app.add_store::<settings::GlobalStore>(DirectoryStore::new(global));
     }
     app.insert_resource(settings::GlobalLocation(global));
-    let Some(workspace) = workspace else {
+    let Some(workspace) = opened.workspace else {
         if let Some(config) = config {
             app.add_store::<WorkbenchStore>(DirectoryStore::new(config.join("workbench")));
         }
@@ -68,21 +83,12 @@ fn stores(app: &mut App, config: Option<&Path>, workspace: Option<Workspace>) {
     // Workspace settings override global ones. Without a claimed store they
     // still apply, but only in memory.
     app.add_settings_layer::<WorkbenchStore>();
-    if let Some(config) = config {
-        let directory = workspace.store_directory(config);
-        match workspace::lock(&directory, &workspace) {
-            Ok(Some(lock)) => {
-                app.add_store::<WorkbenchStore>(DirectoryStore::new(directory))
-                    .insert_resource(lock);
-            }
-            Ok(None) => {
-                let held = format!("{} is in use by another instance", directory.display());
-                app.insert_resource(workspace::Unclaimed(held));
-            }
-            Err(error) => {
-                app.insert_resource(workspace::Unclaimed(error));
-            }
-        }
+    if let (Some(lock), Some(config)) = (opened.lock, config) {
+        app.add_store::<WorkbenchStore>(DirectoryStore::new(workspace.store_directory(config)))
+            .insert_resource(lock);
+    }
+    if let Some(unclaimed) = opened.unclaimed {
+        app.insert_resource(workspace::Unclaimed(unclaimed));
     }
     app.insert_resource(workspace)
         .add_systems(Update, workspace::report_unclaimed);
@@ -108,34 +114,8 @@ fn setup(mut commands: Commands, window: Single<Entity, With<PrimaryWindow>>) {
             } else {
                 40.0
             },
-            draw: draw_titlebar,
+            draw: menus::draw_titlebar,
         },
     ));
     commands.spawn((Camera2d, WorkbenchCamera));
-}
-
-fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
-    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.add_space(4.0);
-        ui.visuals_mut().button_frame = false;
-        let response = context
-            .frame(ui)
-            .icon_button_sized(BuiltinIcon::Settings, 16.0)
-            .interact(egui::Sense::click_and_drag());
-        let shortcut = bedtime_workbench::shortcut_for(
-            world,
-            &ContextCommandId::of::<OpenSettings>(),
-            InvocationContext::Global,
-        );
-        let tooltip = shortcut.map_or("Settings".into(), |chord| {
-            format!("Settings ({})", chord.label())
-        });
-        context.frame(ui).tooltip(&response, tooltip);
-        panel_drag_source(&response, PanelFactory::of::<SettingsPanel>());
-        if response.clicked() {
-            world
-                .resource_mut::<ContextCommandRequests>()
-                .invoke::<OpenSettings>();
-        }
-    });
 }

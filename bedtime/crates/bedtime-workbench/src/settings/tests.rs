@@ -184,3 +184,15 @@ fn enum_values_round_trip_through_a_saved_layer() {
         Shade::Light
     );
 }
+
+#[test]
+fn a_setting_can_be_read_before_the_app_exists() {
+    let backend = MemoryBackend::default();
+    assert_eq!(read_setting::<RestoreLast>(&backend), None);
+    backend
+        .write(ENTRY, b"{\"test.restore\": false, \"test.shade\": Light}")
+        .unwrap();
+    assert_eq!(read_setting::<RestoreLast>(&backend), Some(false));
+    assert_eq!(read_setting::<ShadeSetting>(&backend), Some(Shade::Light));
+    assert_eq!(read_setting::<Indent>(&backend), None);
+}

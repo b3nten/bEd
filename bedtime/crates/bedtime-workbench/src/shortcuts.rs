@@ -204,9 +204,9 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin))
             .init_resource::<Calls>()
-            .add_command_handler::<Save>(record)
-            .add_command_handler::<Other>(record)
-            .add_command_handler::<Repeating>(record);
+            .add_command_handler::<Save>(Handler::new(record))
+            .add_command_handler::<Other>(Handler::new(record))
+            .add_command_handler::<Repeating>(Handler::new(record));
         crate::tests::layout(app.world_mut());
         let surface = app
             .world_mut()
