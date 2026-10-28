@@ -6,7 +6,7 @@ use bedtime_workbench::{
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::{Path, PathBuf};
-use workspace::{Opened, RecentWorkspaces};
+use workspace::{Opened, RecentWorkspaces, Start};
 
 mod menus;
 mod panels;
@@ -15,12 +15,12 @@ mod workspace;
 
 fn main() -> AppExit {
     let argument = std::env::args_os().nth(1).map(PathBuf::from);
-    app(argument).run()
+    app(Start::CommandLine(argument)).run()
 }
 
 /// The App for one workspace. Switching workspace drops it and builds another
-/// in the same window (`bevy_winit::relaunch`).
-pub fn app(argument: Option<PathBuf>) -> App {
+/// in the same window (`bevy::winit::relaunch`).
+pub fn app(start: Start) -> App {
     let config = config_directory();
     let global = config.as_ref().map(|config| config.join("global"));
     // Which workspace to open is decided before the app exists, from what the
@@ -32,15 +32,19 @@ pub fn app(argument: Option<PathBuf>) -> App {
         recent = RecentWorkspaces::read(&store);
         reopen_last = read_setting::<settings::ReopenLastWorkspace>(&store).unwrap_or(reopen_last);
     }
-    let opened = workspace::open(argument, config.as_deref(), &recent, reopen_last);
-    if let (Some(workspace), Some(global)) = (&opened.workspace, &global)
+    let opened = workspace::open(start, config.as_deref(), &recent, reopen_last);
+    let workspace = &opened.workspace;
+    if !workspace.default
+        && let Some(global) = &global
         && let Err(error) = recent.remember(&DirectoryStore::new(global), &workspace.root)
     {
         warn!("Couldn't update recent folders: {error}");
     }
-    let title = opened.workspace.as_ref().map_or("bEd".into(), |workspace| {
+    let title = if workspace.default {
+        "bEd".into()
+    } else {
         format!("{} — bEd", workspace.name())
-    });
+    };
     let automation = bedtime_automation::AutomationPlugin::from_env();
     let mut app = App::new();
     // Logging is set up once per process; a relaunched App leaves it alone.
@@ -85,18 +89,13 @@ pub fn app(argument: Option<PathBuf>) -> App {
 
 /// Where things are saved. Global settings and data go in `<config>/global`.
 /// The workbench (layout, panels, workspace settings) goes in the workspace's
-/// store, or in `<config>/workbench` when no folder is open.
+/// store.
 fn stores(app: &mut App, config: Option<&Path>, global: Option<PathBuf>, opened: Opened) {
     if let Some(global) = &global {
         app.add_store::<settings::GlobalStore>(DirectoryStore::new(global));
     }
     app.insert_resource(settings::GlobalLocation(global));
-    let Some(workspace) = opened.workspace else {
-        if let Some(config) = config {
-            app.add_store::<WorkbenchStore>(DirectoryStore::new(config.join("workbench")));
-        }
-        return;
-    };
+    let workspace = opened.workspace;
     // Workspace settings override global ones. Without a claimed store they
     // still apply, but only in memory.
     app.add_settings_layer::<WorkbenchStore>();
@@ -112,7 +111,7 @@ fn stores(app: &mut App, config: Option<&Path>, global: Option<PathBuf>, opened:
 }
 
 /// `$BED_CONFIG_DIR`, else `$XDG_CONFIG_HOME/bed`, else `~/.config/bed`.
-fn config_directory() -> Option<PathBuf> {
+pub fn config_directory() -> Option<PathBuf> {
     if let Some(directory) = std::env::var_os("BED_CONFIG_DIR") {
         return Some(directory.into());
     }

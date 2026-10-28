@@ -23,6 +23,13 @@ windows outlive the App:
   App) instead of creating one, taking its size, scale and position, and
   setting the new title.
 - AccessKit adapters are dropped on relaunch; adopted windows have none yet.
+- macOS: wgpu draws into a `CAMetalLayer` that `raw-window-metal` adds as a
+  sublayer of the window's view and never removes. After dropping the old App,
+  relaunch removes the view's `CAMetalLayer` sublayers, or the old renderer's
+  last frame stays in the window (visible through transparency and blur).
+  This is the one `unsafe` block, so `#![forbid(unsafe_code)]` became `deny`.
+  Adds macOS-only `objc2`, `objc2-app-kit`, `objc2-quartz-core` and
+  `raw-window-handle` dependencies.
 
 Measured on an M4 Pro (2026-10-27): the next App draws about 0.08 s after the
 request; memory stays flat over repeated relaunches. `tests/automation/relaunch.py`

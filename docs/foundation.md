@@ -191,13 +191,20 @@ That's bed_old's Global/Workspace toggle and ↶ button, from the general mechan
 
 ## Workspaces (bed)
 
-- **One workspace per process.** Opening another folder starts a new instance.
-- A workspace is a folder plus `WorkbenchStore` bound to
-  `~/.config/bed/workspaces/<hash of path>/` (as bed_old did, so repos aren't
-  touched). Opening one: bind the store, add its settings layer, restore the
-  session world.
-- Built in bed first; moved to an optional bedtime plugin once its shape settles,
-  if it turns out to be reusable.
+- **There's always one workspace per App**: the folder bed was opened at, or
+  the **default workspace**, rooted at the home folder, for using bed without
+  a project (as a terminal). Both are saved the same way: `WorkbenchStore`
+  bound to `<config>/workspaces/<hash of path>/` (`default/` for the default),
+  plus its settings layer above the global one.
+- **Switching replaces the workspace in the same window** by rebuilding the
+  App (see "Switching workspace"), so no plugin state carries over. Open
+  Folder, Open Recent, Close Folder (back to the default) and later a
+  terminal's `+open` all switch; New Window starts another process.
+- Startup: `bed <folder>` opens that folder; otherwise the default workspace,
+  or with `startup.reopen_last` (global only, off by default) the most recent
+  folder that isn't open in another window.
+- Features that need a project can check `Workspace::default` and step back
+  (a command that isn't available, no toolbar button).
 - Later possibility: a shared, committable `<repo>/.bed/settings.ron` as another
   app-defined store and layer between Global and the workspace.
 
@@ -311,9 +318,9 @@ workspaces. So each workspace gets a fresh App, and only the window survives:
 - `vendor/bevy_winit` (see its `BED_PATCHES.md`): `bevy::winit::relaunch(world,
   make)` exits the App normally (stores save), drops it, builds the next with
   `make`, and the next App adopts the open native window.
-- bed: `app(argument) -> App` builds the App for one workspace; `main` runs it.
-  A temporary `app.relaunch` command (Cmd+Shift+R) rebuilds it with the same
-  workspace.
+- bed: `app(Start) -> App` builds the App for one workspace; `main` runs it.
+  `workspace::switch(world, Start)` relaunches into another workspace, refusing
+  a folder another window has open (`workspace::available` probes its lock).
 - bedtime-automation keeps its HTTP server across relaunches (the server lives
   on Bevy's global task pool); the next App takes over its request mailbox.
 - Result: the next App draws about 0.08 s after the request, the window keeps
@@ -523,6 +530,21 @@ code in the app or plugins beyond adding one plugin.
   `target/automation/`.
 - Rule: when a script can't see something, reflect it or label its widget;
   don't add app-specific methods.
+
+### Step 8: the default workspace and switching in place
+
+- `Workspace { root, default }` always exists. `workspace::open(Start, ..)`:
+  `Start::CommandLine(path)` (reopen-last applies when there's no path),
+  `Start::Folder(path)`, `Start::Default`. The default workspace's store is
+  `<config>/workspaces/default/`; `<config>/workbench/` is no longer used.
+- A second window on the default workspace runs unsaved without a dialog; a
+  folder named explicitly that's open elsewhere opens unsaved with one;
+  switching to such a folder is refused instead.
+- File menu: New Window (Cmd+Shift+N), Open Folder…, Open Recent ▸, Close
+  Folder, Save. Recent folders exclude the default workspace.
+- Settings: the layer selector reads "Default workspace" there.
+- `tests/automation/workspaces.py` switches to the default workspace and back,
+  checking each workspace's layout is its own and the window keeps its size.
 
 ## Build order
 

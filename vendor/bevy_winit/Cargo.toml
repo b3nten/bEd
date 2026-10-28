@@ -205,3 +205,20 @@ unused_qualifications = "warn"
 level = "warn"
 priority = 0
 check-cfg = ["cfg(docsrs_dep)"]
+
+# bEd: relaunch removes the previous renderer's Metal layers from windows.
+[target.'cfg(target_os = "macos")'.dependencies.objc2]
+version = "=0.6.5"
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-app-kit]
+version = "=0.3.2"
+default-features = false
+features = ["std", "NSResponder", "NSView", "objc2-quartz-core"]
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-quartz-core]
+version = "=0.3.2"
+default-features = false
+features = ["std", "CALayer", "CAMetalLayer"]
+
+[target.'cfg(target_os = "macos")'.dependencies.raw-window-handle]
+version = "0.6"

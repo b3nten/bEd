@@ -528,6 +528,39 @@ impl ApplicationHandler<WinitUserEvent> for WinitAppRunnerState {
     }
 }
 
+/// bEd: wgpu draws into a `CAMetalLayer` it adds as a sublayer of the window's
+/// view, and never removes it. After a relaunch the previous renderer's layer
+/// would stay, still showing its last frame: hidden behind an opaque window,
+/// visible through a transparent one. Remove them before the next renderer
+/// adds its own.
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn remove_metal_layers(window: &winit::window::Window) {
+    use objc2::{ClassType, runtime::NSObjectProtocol};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else {
+        return;
+    };
+    // SAFETY: winit keeps the window, and so its content view, alive. This
+    // runs on the main thread, in the event loop.
+    let view = unsafe { handle.ns_view.cast::<objc2_app_kit::NSView>().as_ref() };
+    let Some(root) = view.layer() else {
+        return;
+    };
+    // SAFETY: reading a layer's sublayers on the main thread.
+    let Some(sublayers) = (unsafe { root.sublayers() }) else {
+        return;
+    };
+    for layer in sublayers.iter() {
+        if layer.isKindOfClass(objc2_quartz_core::CAMetalLayer::class()) {
+            layer.removeFromSuperlayer();
+        }
+    }
+}
+
 impl WinitAppRunnerState {
     fn redraw_requested(&mut self, event_loop: &ActiveEventLoop) {
         let mut redraw_message_cursor = MessageCursor::<RequestRedraw>::default();
@@ -780,6 +813,12 @@ impl WinitAppRunnerState {
         });
         ACCESS_KIT_ADAPTERS.with_borrow_mut(|adapters| adapters.0.clear());
         drop(core::mem::replace(&mut self.app, App::empty()));
+        #[cfg(target_os = "macos")]
+        WINIT_WINDOWS.with_borrow(|windows| {
+            for window in windows.windows.values() {
+                remove_metal_layers(window);
+            }
+        });
         self.app = make();
         self.windows_system_state = SystemState::new(self.app.world_mut());
         self.app_exit = None;

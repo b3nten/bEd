@@ -262,6 +262,11 @@ Each step should produce a usable app. We can reorder at any point.
   `appearance.font_family` setting (any layer) and a Font row listing installed
   monospaced families. See "Step 6" in [docs/foundation.md](docs/foundation.md).
 
+- **Step 5.8 (relaunch spike)**, committed 2026-10-27: `vendor/bevy_winit`
+  rebuilds the App in the same window. **Step 5.9 (default workspace and
+  switching)**, implemented 2026-10-27 and awaiting review. See "Switching
+  workspace" and "Step 8" in [docs/foundation.md](docs/foundation.md).
+
 - **Step 5.7 (automation)**, implemented 2026-10-27 and awaiting review.
   `bedtime-automation` (BRP methods: status, input, ui, screenshot, invoke,
   exit; does nothing unless its `enabled` feature is on and

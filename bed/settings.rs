@@ -74,8 +74,9 @@ setting! {
 }
 
 setting! {
-    /// Started without a folder, reopen the last workspace.
-    pub ReopenLastWorkspace: bool = true, key = "startup.reopen_last", only_in = [GlobalStore],
+    /// Started without a folder, reopen the last one rather than the default
+    /// workspace.
+    pub ReopenLastWorkspace: bool = false, key = "startup.reopen_last", only_in = [GlobalStore],
 }
 
 /// Hand-edited files can hold anything; bring numbers into range before use.
@@ -412,11 +413,12 @@ fn choose_layer(ui: &mut egui::Ui, world: &World) -> StoreId {
     let mut editing_workspace = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
     ui.horizontal(|ui| {
         ui.selectable_value(&mut editing_workspace, false, "Global");
-        ui.selectable_value(
-            &mut editing_workspace,
-            true,
-            format!("Workspace: {}", workspace.name()),
-        );
+        let label = if workspace.default {
+            workspace.name()
+        } else {
+            format!("Workspace: {}", workspace.name())
+        };
+        ui.selectable_value(&mut editing_workspace, true, label);
     });
     ui.data_mut(|data| data.insert_temp(id, editing_workspace));
     if editing_workspace {

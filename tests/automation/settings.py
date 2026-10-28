@@ -10,7 +10,11 @@ def centre(widget):
 with Bed() as bed:
     bed.key("Primary+Comma")
     assert bed.exists("Appearance"), "Settings didn't open"
-    bed.wait(30)  # installed fonts are found in the background
+    # Installed fonts are found in the background.
+    for _ in range(100):
+        if not bed.exists("Loading installed fonts…"):
+            break
+        bed.wait(5)
     bed.screenshot("settings")
 
     # Each label is centred on its control.

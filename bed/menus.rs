@@ -4,7 +4,7 @@
 //! enabled all come from the command and its handler.
 use crate::{
     settings::{OpenSettings, SettingsPanel},
-    workspace::{RecentWorkspaces, Workspace},
+    workspace::{self, RecentWorkspaces, Start, Workspace},
 };
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::{
@@ -39,26 +39,22 @@ impl ContextCommand for OpenRecent {
     const LABEL: &'static str = "Open Recent";
 }
 
-/// Spike: rebuild the App in the same window, with the same workspace.
-pub struct Relaunch;
-impl ContextCommand for Relaunch {
-    const KEY: &'static str = "app.relaunch";
-    const LABEL: &'static str = "Relaunch";
-    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::new(
-        bedtime_workbench::Modifiers::PRIMARY.union(bedtime_workbench::Modifiers::SHIFT),
-        KeyCode::KeyR,
-    )];
+/// Back to the default workspace, in this window.
+pub struct CloseFolder;
+impl ContextCommand for CloseFolder {
+    const KEY: &'static str = "app.close_folder";
+    const LABEL: &'static str = "Close Folder";
 }
 
-fn relaunch(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
-    let folder = world.get_resource::<Workspace>().map(|w| w.root.clone());
-    let started = std::time::Instant::now();
-    bevy::winit::relaunch(world, move || {
-        let app = crate::app(folder);
-        info!("Relaunch: built the next App in {:?}", started.elapsed());
-        app
-    });
-    Ok(())
+/// Another window, in its own process, starting as bed does from the command line.
+pub struct NewWindow;
+impl ContextCommand for NewWindow {
+    const KEY: &'static str = "app.new_window";
+    const LABEL: &'static str = "New Window";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::new(
+        bedtime_workbench::Modifiers::PRIMARY.union(bedtime_workbench::Modifiers::SHIFT),
+        KeyCode::KeyN,
+    )];
 }
 
 /// On an Open Recent item: the folder it opens.
@@ -80,7 +76,11 @@ impl Plugin for MenusPlugin {
         app.init_resource::<RecentWorkspaces>()
             .init_non_send::<FolderDialog>()
             .add_command_handler::<Quit>(Handler::new(quit))
-            .add_command_handler::<Relaunch>(Handler::new(relaunch))
+            .add_command_handler::<NewWindow>(Handler::new(new_window))
+            .add_command_handler::<CloseFolder>(
+                Handler::new(close_folder)
+                    .available_when(|world, _| !world.resource::<Workspace>().default),
+            )
             .add_command_handler::<OpenFolder>(
                 Handler::new(open_folder)
                     .available_when(|world, _| world.non_send::<FolderDialog>().0.is_none()),
@@ -117,8 +117,9 @@ fn compose_menus(mut commands: Commands) {
         InMenu(app),
     ));
     commands.spawn((MenuSeparator, InMenu(app)));
-    commands.spawn((MenuItem::command::<Relaunch>(), InMenu(app)));
     commands.spawn((MenuItem::command::<Quit>(), InMenu(app)));
+    commands.spawn((MenuItem::command::<NewWindow>(), InMenu(file)));
+    commands.spawn((MenuSeparator, InMenu(file)));
     commands.spawn((MenuItem::command::<OpenFolder>(), InMenu(file)));
     commands.spawn((
         Menu {
@@ -127,6 +128,7 @@ fn compose_menus(mut commands: Commands) {
         RecentMenu,
         InMenu(file),
     ));
+    commands.spawn((MenuItem::command::<CloseFolder>(), InMenu(file)));
     commands.spawn((MenuSeparator, InMenu(file)));
     commands.spawn((MenuItem::command::<SaveDocument>(), InMenu(file)));
     commands.spawn((
@@ -152,7 +154,9 @@ fn fill_recent_menu(
     for &entry in entries.map_or(&[][..], |entries| entries.entities()) {
         commands.entity(entry).despawn();
     }
-    let current = workspace.map(|workspace| workspace.root.clone());
+    let current = workspace
+        .filter(|workspace| !workspace.default)
+        .map(|workspace| workspace.root.clone());
     let others: Vec<_> = recent
         .0
         .iter()
@@ -201,7 +205,7 @@ fn poll_folder_dialog(world: &mut World) {
     };
     dialog.0 = None;
     if let Some(folder) = chosen {
-        launch(world, folder.path().to_owned());
+        switch(world, Start::Folder(folder.path().to_owned()));
     }
 }
 
@@ -213,37 +217,47 @@ fn open_recent(world: &mut World, invocation: ContextCommandInvocation) -> Conte
     let folder = chosen
         .or_else(|| other_recent(world))
         .ok_or("No recent folder")?;
-    launch(world, folder);
+    switch(world, Start::Folder(folder));
     Ok(())
 }
 
-/// The most recent folder other than this instance's.
+fn close_folder(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+    switch(world, Start::Default);
+    Ok(())
+}
+
+/// This window's folder, if it isn't the default workspace.
+fn current_folder(world: &World) -> Option<&PathBuf> {
+    let workspace = world.get_resource::<Workspace>()?;
+    (!workspace.default).then_some(&workspace.root)
+}
+
+/// The most recent folder other than this window's.
 fn other_recent(world: &World) -> Option<PathBuf> {
-    let current = world.get_resource::<Workspace>().map(|w| &w.root);
+    let current = current_folder(world);
     let recent = world.resource::<RecentWorkspaces>();
     recent.0.iter().find(|path| Some(*path) != current).cloned()
 }
 
-/// Open `folder` in a new bEd instance (one workspace per process). The folder
-/// already open here is left alone.
-fn launch(world: &mut World, folder: PathBuf) {
-    let current = world.get_resource::<Workspace>().map(|w| w.root.clone());
-    if Workspace::from_path(folder.clone()).map(|w| w.root) == current && current.is_some() {
-        return;
-    }
-    let result = std::env::current_exe()
-        .and_then(|bed| std::process::Command::new(bed).arg(&folder).spawn())
-        .map_err(|error| error.to_string());
-    if let Err(error) = result {
+/// Switch this window to `start`'s workspace, or explain why not.
+fn switch(world: &mut World, start: Start) {
+    if let Err(error) = workspace::switch(world, start) {
         request_error_dialog(
             world,
             ErrorDialog {
                 title: "Open Folder".into(),
-                message: format!("Couldn't open {}.", folder.display()),
-                details: Some(error),
+                message: error,
+                details: None,
             },
         );
     }
+}
+
+fn new_window(_: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+    std::env::current_exe()
+        .and_then(|bed| std::process::Command::new(bed).spawn())
+        .map(|_| ())
+        .map_err(|error| format!("Couldn't start another bEd: {error}"))
 }
 
 /// The menu bar, where the platform has no native one, then the tools.
@@ -331,7 +345,10 @@ mod tests {
             MenusPlugin,
         ))
         .insert_resource(RecentWorkspaces(vec!["/a".into(), "/b".into()]))
-        .insert_resource(Workspace { root: "/a".into() });
+        .insert_resource(Workspace {
+            root: "/a".into(),
+            default: false,
+        });
         app.update();
         let world = app.world_mut();
         let root = world
@@ -352,8 +369,10 @@ mod tests {
         assert_eq!(
             labels(file),
             [
+                ("New Window".into(), true),
                 ("Open Folder…".into(), true),
                 ("Open Recent".into(), true),
+                ("Close Folder".into(), true),
                 ("Save".into(), false)
             ]
         );
@@ -366,11 +385,27 @@ mod tests {
         let bar = menu_snapshot(world, root, InvocationContext::Focused).unwrap();
         let recent = menu(menu(&bar.entries, "File"), "Open Recent");
         assert_eq!(labels(recent), [("No Recent Folders".into(), false)]);
+
         let open_recent = ContextCommandId::of::<OpenRecent>();
         assert!(!command_available(
             world,
             &open_recent,
             InvocationContext::Focused
         ));
+
+        // In the default workspace there's no folder to close, and every
+        // recent folder can be opened.
+        *world.resource_mut::<Workspace>() = Workspace {
+            root: "/a".into(),
+            default: true,
+        };
+        // An App's workspace never changes; refill as a new App would.
+        world.resource_mut::<RecentWorkspaces>().set_changed();
+        app.update();
+        let world = app.world_mut();
+        let bar = menu_snapshot(world, root, InvocationContext::Focused).unwrap();
+        let file = menu(&bar.entries, "File");
+        assert!(labels(file).contains(&("Close Folder".into(), false)));
+        assert_eq!(labels(menu(file, "Open Recent")), [("/a".into(), true)]);
     }
 }

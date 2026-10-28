@@ -104,7 +104,7 @@ class Bed:
         self.name = name or Path(sys.argv[0]).stem or "bed"
         OUTPUT.mkdir(parents=True, exist_ok=True)
         self.config = Path(tempfile.mkdtemp(prefix="bed-automation-"))
-        values = {"startup.reopen_last": "false", **(settings or {})}
+        values = settings or {}
         global_dir = self.config / "global"
         global_dir.mkdir()
         (global_dir / "settings.ron").write_text(
@@ -298,6 +298,22 @@ class Bed:
     def wait(self, frames):
         self.input({"wait": frames})
 
+    def relaunched(self, action, timeout=10):
+        """Run `action`, which switches workspace, and wait until the next App
+        (rebuilt in the same window) is drawing. Returns the seconds taken."""
+        frame = self.status()["frame"]
+        start = time.monotonic()
+        action()
+        while time.monotonic() - start < timeout:
+            try:
+                status = self.status()
+                if status["frame"] < frame and status["frame"] >= 3 and self.widgets():
+                    return time.monotonic() - start
+            except (urllib.error.URLError, ConnectionError, AutomationError):
+                pass
+            time.sleep(0.01)
+        raise AutomationError("the next App didn't start drawing")
+
     # --- ending ---
 
     def close(self, timeout=10):
@@ -321,7 +337,7 @@ class Bed:
 def run(paths):
     """Run each script in its own process; report and return the failures."""
     scripts = []
-    for path in map(Path, paths or [ROOT / "tests" / "automation"]):
+    for path in (Path(path).resolve() for path in paths or [ROOT / "tests" / "automation"]):
         scripts += sorted(path.glob("*.py")) if path.is_dir() else [path]
     build()
     env = {**os.environ, "PYTHONPATH": str(ROOT / "tools")}
