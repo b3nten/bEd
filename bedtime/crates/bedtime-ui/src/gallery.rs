@@ -7,8 +7,6 @@ pub struct GalleryState {
     pub visible: bool,
     /// Draw inside an application/workbench-owned content window.
     pub embedded: bool,
-    pub light: Entity,
-    pub dark: Entity,
     pub text: String,
     pub checked: bool,
     pub toggled: bool,
@@ -27,14 +25,14 @@ pub struct GalleryState {
     pub custom_icon: Handle<Icon>,
 }
 
-pub fn spawn(world: &mut World, surface: Entity, light: Entity, dark: Entity) -> Entity {
-    let state = create_state(world, light, dark);
+pub fn spawn(world: &mut World, surface: Entity) -> Entity {
+    let state = create_state(world);
     let view = register_view(world, surface, draw_gallery);
     world.entity_mut(view).insert(state);
     view
 }
 
-pub fn create_state(world: &mut World, light: Entity, dark: Entity) -> GalleryState {
+pub fn create_state(world: &mut World) -> GalleryState {
     let custom_icon = world.resource_mut::<Assets<Icon>>().add(
         Icon::from_svg(include_bytes!("../assets/gallery/custom.svg"))
             .expect("Gallery SVG is valid"),
@@ -48,8 +46,6 @@ pub fn create_state(world: &mut World, light: Entity, dark: Entity) -> GallerySt
     GalleryState {
         visible: true,
         embedded: false,
-        light,
-        dark,
         text: "A little room for good ideas".into(),
         checked: true,
         toggled: false,
@@ -90,7 +86,7 @@ pub fn draw_gallery(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_
     for action in actions {
         match action {
             GalleryAction::Theme(theme) => {
-                world.entity_mut(context.surface).insert(UsesTheme(theme));
+                world.entity_mut(context.surface).insert(theme);
             }
             GalleryAction::Icons(Some(icons)) => {
                 world.entity_mut(context.surface).insert(UiIcons(icons));
@@ -104,7 +100,7 @@ pub fn draw_gallery(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_
 
 /// Changes to the hosting surface, applied by its owner after drawing.
 pub enum GalleryAction {
-    Theme(Entity),
+    Theme(Theme),
     Icons(Option<Handle<IconSet>>),
 }
 
@@ -146,13 +142,13 @@ pub fn draw_contents(
                 state.observations.insert("light", light.rect);
                 f.tooltip(&light, "Light / Everforest Medium");
                 if light.clicked() {
-                    actions.push(GalleryAction::Theme(state.light));
+                    actions.push(GalleryAction::Theme(Theme::light()));
                 }
                 let dark = f.icon_button(BuiltinIcon::Moon);
                 state.observations.insert("dark", dark.rect);
                 f.tooltip(&dark, "Dark / Everforest Medium");
                 if dark.clicked() {
-                    actions.push(GalleryAction::Theme(state.dark));
+                    actions.push(GalleryAction::Theme(Theme::dark()));
                 }
                 f.ui.checkbox(&mut policy.enabled, "Motion");
                 f.ui.add(egui::Slider::new(&mut policy.seconds, 0.08..=0.8).text("seconds"));
@@ -301,7 +297,7 @@ pub fn draw_contents(
                     rect.min + egui::vec2(state.icon_size + 10.0, 4.0),
                     egui::Align2::LEFT_TOP,
                     icon.key(),
-                    egui::FontId::proportional(frame.theme.metrics.font_size),
+                    egui::FontId::proportional(frame.metrics.font_size),
                     theme::color(frame.theme.palette.text),
                 );
             }

@@ -218,7 +218,7 @@ impl Row<'_> {
             None
         };
         let openable = status.is_none() && !self.confirming;
-        let height = bedtime_ui::theme::control_height(&context.theme.metrics) + 4.0;
+        let height = bedtime_ui::theme::control_height(context.metrics) + 4.0;
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(ui.available_width(), height),
             egui::Sense::hover(),
@@ -258,7 +258,7 @@ impl Row<'_> {
         if let Some(fill) = fill {
             ui.painter().rect_filled(
                 rect,
-                context.theme.metrics.rounding,
+                context.metrics.rounding,
                 bedtime_ui::theme::color(fill),
             );
         }

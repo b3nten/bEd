@@ -230,7 +230,7 @@ mod tests {
         world.init_resource::<Assets<Image>>();
         world.init_resource::<EguiUserTextures>();
         let ctx = egui::Context::default();
-        let theme = crate::themes::dark();
+        let theme = crate::Theme::dark();
         let icons = std::sync::Mutex::new(crate::icon_cache::IconCache::default());
         let mut entity = None;
         let mut texture = None;
@@ -262,6 +262,7 @@ mod tests {
                         view: entity,
                         surface: Entity::PLACEHOLDER,
                         theme: &theme,
+                        metrics: &crate::Metrics::default(),
                         motion: default(),
                         icons: &icons,
                     };
@@ -313,12 +314,13 @@ mod tests {
         let id = image.id();
         let viewport = app.world_mut().spawn(UiViewport::new(image.clone())).id();
         let ctx = egui::Context::default();
-        let theme = crate::themes::dark();
+        let theme = crate::Theme::dark();
         let icons = std::sync::Mutex::new(crate::icon_cache::IconCache::default());
         let context = UiContext {
             view: viewport,
             surface: Entity::PLACEHOLDER,
             theme: &theme,
+            metrics: &crate::Metrics::default(),
             motion: default(),
             icons: &icons,
         };

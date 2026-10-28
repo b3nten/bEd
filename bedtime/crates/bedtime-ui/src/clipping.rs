@@ -131,7 +131,7 @@ fn clip_mesh(mut mesh: Mesh, boundary: &[Pos2]) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{UiFrame, icon_cache, themes};
+    use crate::{Theme, UiFrame, icon_cache};
     use bevy::prelude::{Entity, default};
     use std::sync::Mutex;
 
@@ -141,7 +141,7 @@ mod tests {
             for radius in [0.0, 7.0, 40.0, 200.0] {
                 let ctx = Context::default();
                 ctx.set_pixels_per_point(dpi);
-                let theme = themes::dark();
+                let theme = Theme::dark();
                 let icons = Mutex::new(icon_cache::IconCache::default());
                 let outline = Rect::from_min_max(egui::pos2(50.0, 60.0), egui::pos2(250.0, 180.0));
                 let content = outline.with_min_y(90.0);
@@ -155,6 +155,7 @@ mod tests {
                         surface: Entity::PLACEHOLDER,
                         ui,
                         theme: &theme,
+                        metrics: &crate::Metrics::default(),
                         motion: default(),
                         icons: &icons,
                     };
@@ -228,7 +229,7 @@ mod tests {
     #[test]
     fn clipping_is_local_to_content_and_keeps_overlays_and_following_paint() {
         let ctx = Context::default();
-        let theme = themes::dark();
+        let theme = Theme::dark();
         let icons = Mutex::new(icon_cache::IconCache::default());
         let outline = Rect::from_min_size(egui::pos2(40.0, 50.0), egui::vec2(100.0, 80.0));
         let outside = Rect::from_min_size(egui::pos2(220.0, 50.0), egui::vec2(60.0, 60.0));
@@ -238,6 +239,7 @@ mod tests {
                 surface: Entity::PLACEHOLDER,
                 ui,
                 theme: &theme,
+                metrics: &crate::Metrics::default(),
                 motion: default(),
                 icons: &icons,
             };

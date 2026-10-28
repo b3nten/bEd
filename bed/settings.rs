@@ -4,10 +4,9 @@
 //! applies `Appearance` to the theme and workbench surface.
 use crate::{panels::PanelPolicy, workspace::Workspace};
 use bedtime_ui::{
-    BuiltinIcon, UiContext, UsesTheme, egui,
+    BuiltinIcon, Metrics, UiContext, egui,
     fonts::{DEFAULT_FAMILY, InstalledFonts},
-    theme::FONT_SIZES,
-    themes,
+    theme::{FONT_SIZES, ThemeFolder},
 };
 use bedtime_workbench::{
     CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, Handler,
@@ -17,7 +16,6 @@ use bedtime_workbench::{
     settings::{Setting, Settings, SettingsAppExt, clear_setting, set_setting},
 };
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::{ops::RangeInclusive, path::PathBuf};
 
 const OPACITY: RangeInclusive<f32> = 0.0..=1.0;
@@ -32,16 +30,10 @@ impl Store for GlobalStore {}
 #[derive(Resource)]
 pub struct GlobalLocation(pub Option<PathBuf>);
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ThemeChoice {
-    #[default]
-    Dark,
-    Light,
-}
-
 setting! {
-    pub Theme: ThemeChoice = ThemeChoice::Dark, key = "appearance.theme",
-    apply = |world, theme| world.resource_mut::<Appearance>().theme = *theme,
+    /// A theme's id: the name of a file in the themes folder (`tokyo`).
+    pub ColorTheme: String = crate::themes::DEFAULT.into(), key = "appearance.theme",
+    apply = |world, theme| world.resource_mut::<Appearance>().theme = theme.clone(),
 }
 setting! {
     pub FontSize: f32 = 15.5, key = "appearance.font_size",
@@ -91,7 +83,7 @@ pub(crate) fn limit(value: f32, range: RangeInclusive<f32>, default: f32) -> f32
 /// How the window and workbench look, fed by the appearance settings.
 #[derive(Resource, Clone, PartialEq)]
 pub struct Appearance {
-    pub theme: ThemeChoice,
+    pub theme: String,
     pub font_size: f32,
     pub font_family: Option<String>,
     pub window_opacity: f32,
@@ -104,7 +96,7 @@ pub struct Appearance {
 impl Default for Appearance {
     fn default() -> Self {
         Self {
-            theme: Theme::default(),
+            theme: ColorTheme::default(),
             font_size: FontSize::default(),
             font_family: FontFamily::default(),
             window_opacity: WindowOpacity::default(),
@@ -137,7 +129,7 @@ impl Plugin for SettingsPlugin {
         app.register_type::<SettingsPanel>()
             .init_resource::<Appearance>()
             .add_settings_layer::<GlobalStore>()
-            .register_setting::<Theme>()
+            .register_setting::<ColorTheme>()
             .register_setting::<FontSize>()
             .register_setting::<FontFamily>()
             .register_setting::<WindowOpacity>()
@@ -151,28 +143,34 @@ impl Plugin for SettingsPlugin {
     }
 }
 
-/// Runs when the appearance changes, and when a surface first gets its theme.
+/// Puts the chosen theme and sizes on each surface: when the appearance or
+/// the themes folder changes (a theme file was edited), and on a new surface.
 fn apply_appearance(
     appearance: Res<Appearance>,
-    mut surfaces: Query<(Entity, &mut WorkbenchSurface, Ref<UsesTheme>)>,
+    folder: Option<Res<ThemeFolder>>,
+    mut surfaces: Query<(Entity, &mut WorkbenchSurface)>,
     mut commands: Commands,
 ) {
-    for (surface, mut style, theme) in &mut surfaces {
-        if !appearance.is_changed() && !theme.is_added() {
+    let folder_changed = folder.as_ref().is_some_and(|folder| folder.is_changed());
+    for (surface, mut style) in &mut surfaces {
+        if !appearance.is_changed() && !folder_changed && !style.is_added() {
             continue;
         }
-        let mut palette = match appearance.theme {
-            ThemeChoice::Dark => themes::dark(),
-            ThemeChoice::Light => themes::light(),
+        let mut theme = folder
+            .as_ref()
+            .and_then(|folder| folder.get(&appearance.theme))
+            .cloned()
+            .unwrap_or_else(bedtime_ui::Theme::dark);
+        theme.palette.background[3] = appearance.window_opacity;
+        theme.palette.panel_background[3] = appearance.panel_opacity;
+        let metrics = Metrics {
+            font_size: appearance.font_size,
+            font_family: appearance.font_family.clone(),
+            ..default()
         };
-        palette.palette.background[3] = appearance.window_opacity;
-        palette.palette.panel_background[3] = appearance.panel_opacity;
-        palette.metrics.font_size = appearance.font_size;
-        palette.metrics.font_family = appearance.font_family.clone();
-        commands.entity(theme.0).insert(palette);
         commands
             .entity(surface)
-            .insert(WindowBlur(appearance.window_blur));
+            .insert((theme, metrics, WindowBlur(appearance.window_blur)));
         style.rounding = appearance.panel_radius;
         style.panel_gap = appearance.panel_gap;
     }
@@ -221,14 +219,7 @@ impl Panel for SettingsPanel {
                     // Leaves room for the value box beside each slider.
                     ui.spacing_mut().slider_width = CONTROL_WIDTH - 76.0;
                     section(ui, "Appearance");
-                    row::<Theme>(ui, world, context, layer, "Theme", |ui, theme| {
-                        let before = *theme;
-                        combo(ui, "theme", format!("{theme:?}"), |ui| {
-                            ui.selectable_value(theme, ThemeChoice::Dark, "Dark");
-                            ui.selectable_value(theme, ThemeChoice::Light, "Light");
-                        });
-                        before != *theme
-                    });
+                    crate::themes::row(ui, world, context, layer);
                     font_family_row(ui, world, context, layer);
                     row::<FontSize>(ui, world, context, layer, "Font size", |ui, size| {
                         slider(ui, size, FONT_SIZES, " pt", 1)
@@ -282,7 +273,7 @@ impl Panel for SettingsPanel {
 }
 
 /// The width of the label column, so every section's controls line up.
-pub(crate) const LABEL_WIDTH: f32 = 180.0;
+pub(crate) const LABEL_WIDTH: f32 = 210.0;
 /// The width of combo boxes, sliders and key buttons.
 pub(crate) const CONTROL_WIDTH: f32 = 240.0;
 
@@ -498,7 +489,7 @@ pub(crate) fn overridden_marker(
     };
     let tint = bedtime_ui::theme::color(context.theme.palette.warning);
     let mut frame = context.frame(ui);
-    let side = context.theme.metrics.font_size;
+    let side = context.metrics.font_size;
     let icon = frame.icon(BuiltinIcon::CircleAlert, side, tint);
     icon.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Overridden"));
     frame.tooltip(&icon, hint);
@@ -507,7 +498,7 @@ pub(crate) fn overridden_marker(
 /// When `layer` holds a value: a button that clears it (default, or the global
 /// value for a workspace). Returns whether it was clicked. Rows without one
 /// show the value from below.
-fn reset_button(
+pub(crate) fn reset_button(
     ui: &mut egui::Ui,
     context: &UiContext<'_>,
     layer: StoreId,
@@ -541,9 +532,9 @@ mod tests {
         let global = StoreId::of::<GlobalStore>();
         let world = app.world_mut();
         set_setting::<FontSize>(world, global, 20.0).unwrap();
-        set_setting::<Theme>(world, global, ThemeChoice::Light).unwrap();
+        set_setting::<ColorTheme>(world, global, "tokyo".into()).unwrap();
         assert_eq!(world.resource::<Appearance>().font_size, 20.0);
-        assert_eq!(world.resource::<Appearance>().theme, ThemeChoice::Light);
+        assert_eq!(world.resource::<Appearance>().theme, "tokyo");
         // As if hand-edited: the value is kept, but what's applied is in range.
         set_setting::<FontSize>(world, global, 500.0).unwrap();
         assert_eq!(world.resource::<Appearance>().font_size, 72.0);

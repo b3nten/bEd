@@ -276,6 +276,14 @@ Each step should produce a usable app. We can reorder at any point.
   Effects section whose sliders show only while effects are on.
   `tests/automation/effects.py`.
 
+- **Themes**, implemented 2026-10-28: a surface carries `Theme` (colors) and
+  `Metrics` (sizes) components directly (`UsesTheme` is gone); a theme file is
+  a `Theme` in RON. bedtime-ui bundles Everforest Medium light/dark and
+  `ThemeFolder` (reads a folder of themes, kept up to date). bed writes its 20
+  themes into `<config>/themes` when missing and reads them from there; the
+  `appearance.theme` setting (`ColorTheme`) names a file.
+  `tests/automation/themes.py`.
+
 - **Step 5.7 (automation)**, implemented 2026-10-27 and awaiting review.
   `bedtime-automation` (BRP methods: status, input, ui, screenshot, invoke,
   exit; does nothing unless its `enabled` feature is on and

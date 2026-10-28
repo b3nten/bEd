@@ -24,9 +24,9 @@ fn retargeting_is_continuous_and_reduced_motion_settles() {
 #[test]
 fn themes_validate_boundary_values_and_map_to_egui() {
     let ctx = egui::Context::default();
-    let dark = themes::dark();
+    let dark = Theme::dark();
     dark.validate().unwrap();
-    dark.apply(&ctx);
+    dark.apply(&crate::Metrics::default(), &ctx);
     assert_eq!(
         ctx.global_style().visuals.panel_fill,
         theme::color(dark.palette.panel_background)
@@ -35,9 +35,9 @@ fn themes_validate_boundary_values_and_map_to_egui() {
         ctx.global_style().visuals.hyperlink_color,
         theme::color(dark.palette.accent)
     );
-    let light = themes::light();
+    let light = Theme::light();
     light.validate().unwrap();
-    light.apply(&ctx);
+    light.apply(&crate::Metrics::default(), &ctx);
     assert_eq!(
         ctx.global_style().visuals.panel_fill,
         theme::color(light.palette.panel_background)
@@ -46,10 +46,12 @@ fn themes_validate_boundary_values_and_map_to_egui() {
         ctx.global_style().visuals.hyperlink_color,
         theme::color(light.palette.accent)
     );
-    let mut bad = light;
-    bad.metrics.font_size = f32::NAN;
+    let bad = crate::Metrics {
+        font_size: f32::NAN,
+        ..default()
+    };
     assert!(bad.validate().is_err());
-    bad = dark;
+    let mut bad = dark;
     bad.palette.text[0] = 2.0;
     assert!(bad.validate().is_err());
 }
@@ -58,7 +60,7 @@ fn themes_validate_boundary_values_and_map_to_egui() {
 fn terminal_palettes_match_everforest_medium_ansi_order() {
     for (theme, expected) in [
         (
-            themes::dark(),
+            Theme::dark(),
             [
                 0x475258_u32,
                 0xe67e80,
@@ -71,7 +73,7 @@ fn terminal_palettes_match_everforest_medium_ansi_order() {
             ],
         ),
         (
-            themes::light(),
+            Theme::light(),
             [
                 0x5c6a72, 0xf85552, 0x8da101, 0xdfa000, 0x3a94c5, 0xdf69ba, 0x35a77c, 0xe6e2cc,
             ],
@@ -91,7 +93,7 @@ fn terminal_palettes_match_everforest_medium_ansi_order() {
 
 #[test]
 fn terminal_colors_validate_every_entry_and_channel() {
-    for theme in [themes::dark(), themes::light()] {
+    for theme in [Theme::dark(), Theme::light()] {
         for entry in 0..theme.palette.terminal.len() {
             for channel in 0..4 {
                 for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.01, 1.01] {
@@ -113,26 +115,30 @@ fn terminal_colors_validate_every_entry_and_channel() {
 }
 
 #[test]
-fn themes_roundtrip_preset_and_edited_terminal_colors() {
-    for preset in [themes::dark(), themes::light()] {
+fn themes_roundtrip_through_theme_files() {
+    // Theme files hold 8-bit colors.
+    let byte = |v: u8| v as f32 / 255.0;
+    for preset in [Theme::dark(), Theme::light()] {
         let mut edited = preset.clone();
-        edited.palette.terminal[0] = [0.1, 0.2, 0.3, 0.4];
-        edited.palette.terminal[15] = [0.6, 0.7, 0.8, 0.9];
+        edited.palette.terminal[0] = [byte(26), byte(51), byte(77), byte(102)];
+        edited.palette.terminal[15] = [byte(153), byte(179), byte(204), 1.0];
         for theme in [preset, edited] {
-            let json = serde_json::to_string(&theme).unwrap();
-            let restored: Theme = serde_json::from_str(&json).unwrap();
-            restored.validate().unwrap();
-            assert_eq!(restored, theme);
+            let text = theme.to_ron();
+            assert!(text.contains("\"#"), "colors are #rrggbb: {text}");
+            assert_eq!(Theme::from_ron(&text).unwrap(), theme);
         }
     }
+    let mut text = Theme::dark().to_ron();
+    text = text.replacen("\"#", "\"", 1);
+    assert!(Theme::from_ron(&text).unwrap_err().contains("#rrggbb"));
 }
 
 #[test]
 fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widgets() {
-    for theme in [themes::dark(), themes::light()] {
+    for theme in [Theme::dark(), Theme::light()] {
         let ctx = egui::Context::default();
         ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
-        theme.apply(&ctx);
+        theme.apply(&crate::Metrics::default(), &ctx);
         ctx.global_style_mut(|s| s.animation_time = 0.0);
         let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
         let mut target = egui::pos2(-100.0, -100.0);
@@ -154,6 +160,7 @@ fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widget
                     surface: Entity::PLACEHOLDER,
                     ui,
                     theme: &theme,
+                    metrics: &crate::Metrics::default(),
                     motion: default(),
                     icons: &icons,
                 };
@@ -196,8 +203,8 @@ fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widget
 #[test]
 fn custom_control_colors_fade_through_hover_press_and_release() {
     let ctx = egui::Context::default();
-    let theme = themes::dark();
-    theme.apply(&ctx);
+    let theme = Theme::dark();
+    theme.apply(&crate::Metrics::default(), &ctx);
     let icons = Mutex::new(icon_cache::IconCache::default());
     let render = |time, pointer, button: Option<bool>, enabled| {
         ctx.global_style_mut(|s| {
@@ -229,6 +236,7 @@ fn custom_control_colors_fade_through_hover_press_and_release() {
                     surface: Entity::PLACEHOLDER,
                     ui,
                     theme: &theme,
+                    metrics: &crate::Metrics::default(),
                     motion: MotionPolicy {
                         enabled,
                         ..default()
@@ -287,9 +295,9 @@ fn custom_control_colors_fade_through_hover_press_and_release() {
 #[test]
 fn scroll_track_clears_rounded_corners_without_insetting_content() {
     let ctx = egui::Context::default();
-    let theme = themes::dark();
+    let theme = Theme::dark();
     let corner_radius = 18.0;
-    theme.apply(&ctx);
+    theme.apply(&crate::Metrics::default(), &ctx);
     ctx.global_style_mut(|s| {
         s.spacing.scroll = egui::style::ScrollStyle::solid();
         s.animation_time = 0.0;
@@ -315,6 +323,7 @@ fn scroll_track_clears_rounded_corners_without_insetting_content() {
                     surface: Entity::PLACEHOLDER,
                     ui,
                     theme: &theme,
+                    metrics: &crate::Metrics::default(),
                     motion: default(),
                     icons: &icons,
                 };
@@ -356,22 +365,22 @@ fn draw_counter(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
 }
 
 #[test]
-fn borrowed_frames_execute_once_and_surface_ownership_keeps_shared_themes() {
+fn borrowed_frames_execute_once_and_despawning_a_surface_takes_its_views() {
     let mut world = World::new();
-    let theme = world.spawn(themes::dark()).id();
-    let surface = world.spawn((UiSurface, UsesTheme(theme))).id();
+    let surface = world.spawn(UiSurface).id();
     let view = register_view(&mut world, surface, draw_counter);
     world.entity_mut(view).insert(Counter::default());
     let part = world.spawn(InView(view)).id();
     let ctx = egui::Context::default();
     ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
     let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
-    let theme_data = themes::dark();
+    let theme_data = Theme::dark();
     let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
         let context = UiContext {
             view,
             surface,
             theme: &theme_data,
+            metrics: &crate::Metrics::default(),
             motion: default(),
             icons: &icons,
         };
@@ -386,7 +395,6 @@ fn borrowed_frames_execute_once_and_surface_ownership_keeps_shared_themes() {
     world.despawn(surface);
     assert!(world.get_entity(view).is_err());
     assert!(world.get_entity(part).is_err());
-    assert!(world.get::<Theme>(theme).is_some());
 }
 
 #[test]
@@ -423,12 +431,13 @@ fn borrowed_props_compose_in_normal_egui_layout_and_keep_instances_independent()
     let mut world = World::new();
     let a = world.spawn(Counter::default()).id();
     let b = world.spawn(Counter::default()).id();
-    let theme = themes::dark();
+    let theme = Theme::dark();
     let icons = default();
     let context = UiContext {
         view: a,
         surface: a,
         theme: &theme,
+        metrics: &crate::Metrics::default(),
         motion: default(),
         icons: &icons,
     };
@@ -445,8 +454,8 @@ fn borrowed_props_compose_in_normal_egui_layout_and_keep_instances_independent()
 #[test]
 fn tooltip_contents_fade_at_their_final_size_and_pixel_grid() {
     let ctx = egui::Context::default();
-    let theme = themes::dark();
-    theme.apply(&ctx);
+    let theme = Theme::dark();
+    theme.apply(&crate::Metrics::default(), &ctx);
     ctx.global_style_mut(|style| {
         style.animation_time = MotionPolicy::default().seconds;
         style.interaction.tooltip_delay = 0.0;
@@ -468,6 +477,7 @@ fn tooltip_contents_fade_at_their_final_size_and_pixel_grid() {
                     surface: Entity::PLACEHOLDER,
                     ui,
                     theme: &theme,
+                    metrics: &crate::Metrics::default(),
                     motion: default(),
                     icons: &icons,
                 };
@@ -520,7 +530,7 @@ fn tooltip_contents_fade_at_their_final_size_and_pixel_grid() {
 #[test]
 fn dropdown_clears_its_anchor_and_long_lists_still_scroll() {
     let ctx = egui::Context::default();
-    themes::dark().apply(&ctx);
+    Theme::dark().apply(&crate::Metrics::default(), &ctx);
     let render = |time, events| {
         let mut button = None;
         let mut first = None;
@@ -583,7 +593,7 @@ fn clicking_a_toggle_flips_it_and_reports_a_change() {
     let ctx = egui::Context::default();
     ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
     let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
-    let theme = themes::dark();
+    let theme = Theme::dark();
     let mut on = false;
     let mut changes = 0;
     // Draws a frame; returns the toggle's rect.
@@ -598,6 +608,7 @@ fn clicking_a_toggle_flips_it_and_reports_a_change() {
                 view: Entity::PLACEHOLDER,
                 surface: Entity::PLACEHOLDER,
                 theme: &theme,
+                metrics: &crate::Metrics::default(),
                 motion: default(),
                 icons: &icons,
             };

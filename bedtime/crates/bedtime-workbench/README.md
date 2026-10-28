@@ -216,7 +216,7 @@ world.spawn((Camera2d, WorkbenchCamera));
 ~~~
 
 Configure panel appearance and interaction directly on `WorkbenchSurface`.
-Supply `UsesTheme` or `WorkbenchShell` on the same window to configure them
+Supply `Theme`, `Metrics` or `WorkbenchShell` on the same window to configure them
 explicitly. Mark an existing application camera instead of
 spawning a new one if appropriate:
 

@@ -1,6 +1,11 @@
 use bevy::prelude::*;
 use egui::{Color32, Context};
 
+mod folder;
+mod hex;
+pub use folder::ThemeFolder;
+pub(crate) use folder::poll_theme_folder;
+
 pub type Rgba = [f32; 4];
 
 /// Line height over font size for the bundled Bedfont; installed monospace
@@ -14,26 +19,97 @@ pub const FONT_SIZES: std::ops::RangeInclusive<f32> = 8.0..=72.0;
 #[serde(deny_unknown_fields)]
 pub struct Palette {
     /// Window background, including titlebar, status bar, menu bar and panel gaps.
+    #[serde(with = "hex")]
     pub background: Rgba,
     /// Panel bodies and tab bars.
+    #[serde(with = "hex")]
     pub panel_background: Rgba,
+    #[serde(with = "hex")]
     pub surface: Rgba,
+    #[serde(with = "hex")]
     pub elevated: Rgba,
+    #[serde(with = "hex")]
     pub border: Rgba,
+    #[serde(with = "hex")]
     pub text: Rgba,
+    #[serde(with = "hex")]
     pub muted: Rgba,
+    #[serde(with = "hex")]
     pub accent: Rgba,
+    #[serde(with = "hex")]
     pub selection: Rgba,
+    #[serde(with = "hex")]
     pub success: Rgba,
+    #[serde(with = "hex")]
     pub warning: Rgba,
+    #[serde(with = "hex")]
     pub error: Rgba,
     /// ANSI colors: 0..=7 normal, 8..=15 bright, each ordered black, red, green,
     /// yellow, blue, magenta, cyan, white. Host default foreground and background
     /// colors are independent of these entries.
+    #[serde(with = "hex::list")]
     pub terminal: [Rgba; 16],
+    /// Code colors, for editors and viewers.
+    pub syntax: Syntax,
 }
 
+/// Colors for the roles of highlighted code.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Syntax {
+    #[serde(with = "hex")]
+    pub text: Rgba,
+    #[serde(with = "hex")]
+    pub comment: Rgba,
+    #[serde(with = "hex")]
+    pub keyword: Rgba,
+    #[serde(with = "hex")]
+    pub string: Rgba,
+    #[serde(with = "hex")]
+    pub number: Rgba,
+    #[serde(with = "hex")]
+    pub function: Rgba,
+    #[serde(with = "hex")]
+    pub r#type: Rgba,
+    #[serde(with = "hex")]
+    pub variable: Rgba,
+    #[serde(with = "hex")]
+    pub parameter: Rgba,
+    #[serde(with = "hex")]
+    pub property: Rgba,
+    #[serde(with = "hex")]
+    pub constant: Rgba,
+    #[serde(with = "hex")]
+    pub operator: Rgba,
+    #[serde(with = "hex")]
+    pub punctuation: Rgba,
+    #[serde(with = "hex")]
+    pub special: Rgba,
+}
+
+impl Syntax {
+    fn colors(&self) -> [Rgba; 14] {
+        [
+            self.text,
+            self.comment,
+            self.keyword,
+            self.string,
+            self.number,
+            self.function,
+            self.r#type,
+            self.variable,
+            self.parameter,
+            self.property,
+            self.constant,
+            self.operator,
+            self.punctuation,
+            self.special,
+        ]
+    }
+}
+
+/// A surface's sizes: font, padding, spacing and corners.
+#[derive(Component, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Metrics {
     pub font_size: f32,
@@ -68,14 +144,55 @@ impl Default for Metrics {
     }
 }
 
+/// A surface's colors. A theme file is this, in RON.
 #[derive(Component, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Theme {
+    pub name: String,
+    pub appearance: Appearance,
     pub palette: Palette,
-    pub metrics: Metrics,
+}
+
+/// Whether a theme is light or dark, for anything that adapts (the native
+/// window appearance, say).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Appearance {
+    Light,
+    Dark,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self::dark()
+    }
 }
 
 impl Theme {
+    /// bedtime-ui's dark theme (Everforest Dark Medium).
+    pub fn dark() -> Self {
+        Self::from_ron(include_str!("../assets/themes/everforest-dark-medium.ron"))
+            .expect("bundled theme")
+    }
+
+    /// bedtime-ui's light theme (Everforest Light Medium).
+    pub fn light() -> Self {
+        Self::from_ron(include_str!("../assets/themes/everforest-light-medium.ron"))
+            .expect("bundled theme")
+    }
+
+    /// A theme file.
+    pub fn from_ron(text: &str) -> Result<Self, String> {
+        let theme: Self = ron::from_str(text).map_err(|error| error.to_string())?;
+        theme.validate()?;
+        Ok(theme)
+    }
+
+    /// As a theme file.
+    pub fn to_ron(&self) -> String {
+        let config = ron::ser::PrettyConfig::new().indentor("    ".to_owned());
+        ron::ser::to_string_pretty(self, config).expect("themes serialize") + "\n"
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         let p = &self.palette;
         if [
@@ -94,12 +211,19 @@ impl Theme {
         ]
         .into_iter()
         .chain(p.terminal)
+        .chain(p.syntax.colors())
         .flatten()
         .any(|v| !v.is_finite() || !(0.0..=1.0).contains(&v))
         {
             return Err("Theme colors must be finite values in 0..=1".into());
         }
-        let m = &self.metrics;
+        Ok(())
+    }
+}
+
+impl Metrics {
+    pub fn validate(&self) -> Result<(), String> {
+        let m = self;
         if !m.font_size.is_finite()
             || !FONT_SIZES.contains(&m.font_size)
             || m.padding
@@ -117,10 +241,12 @@ impl Theme {
         }
         Ok(())
     }
+}
 
-    pub(crate) fn apply(&self, context: &Context) {
+impl Theme {
+    pub(crate) fn apply(&self, metrics: &Metrics, context: &Context) {
         let p = &self.palette;
-        let m = &self.metrics;
+        let m = metrics;
         let mut style = (*context.global_style()).clone();
         style.animation_time = 0.16;
         style.interaction.selectable_labels = false;
@@ -154,16 +280,20 @@ impl Theme {
         style.visuals.hyperlink_color = color(p.accent);
         style.visuals.window_stroke = egui::Stroke::new(1.0, color(p.border));
         style.visuals.window_corner_radius = egui::CornerRadius::same(m.popup_rounding as u8);
+        // Controls are drawn in `surface`. Some themes make it nearly the
+        // panel background, which would hide borderless parts (a slider's
+        // rail), so lift it toward the text color until it stands out.
+        let surface = distinct(p.surface, p.panel_background, p.text);
         for (widget, fill) in [
-            (&mut style.visuals.widgets.noninteractive, p.surface),
-            (&mut style.visuals.widgets.inactive, p.surface),
+            (&mut style.visuals.widgets.noninteractive, surface),
+            (&mut style.visuals.widgets.inactive, surface),
             (
                 &mut style.visuals.widgets.hovered,
-                mix(p.surface, p.accent, 0.2),
+                mix(surface, p.accent, 0.2),
             ),
             (
                 &mut style.visuals.widgets.active,
-                mix(p.surface, p.accent, 0.35),
+                mix(surface, p.accent, 0.35),
             ),
             (&mut style.visuals.widgets.open, p.elevated),
         ] {
@@ -177,6 +307,20 @@ impl Theme {
     }
 }
 
+/// `color`, or if it's hard to tell from `background`, moved toward `toward`
+/// just far enough to be.
+fn distinct(color: Rgba, background: Rgba, toward: Rgba) -> Rgba {
+    let difference = |a: Rgba, b: Rgba| (0..3).map(|i| (a[i] - b[i]).abs()).sum::<f32>();
+    const ENOUGH: f32 = 0.09;
+    if difference(color, background) >= ENOUGH {
+        return color;
+    }
+    (1..=10)
+        .map(|step| mix(color, toward, step as f32 * 0.02))
+        .find(|lifted| difference(*lifted, background) >= ENOUGH)
+        .unwrap_or_else(|| mix(color, toward, 0.2))
+}
+
 /// The height of a standard control: buttons, combo boxes, sliders, toggles.
 pub fn control_height(metrics: &Metrics) -> f32 {
     (metrics.font_size * LINE_HEIGHT).ceil() + 2.0 * metrics.padding[1]
@@ -184,70 +328,6 @@ pub fn control_height(metrics: &Metrics) -> f32 {
 
 pub fn mix(a: Rgba, b: Rgba, amount: f32) -> Rgba {
     std::array::from_fn(|i| a[i] + (b[i] - a[i]) * amount)
-}
-
-fn rgb(hex: u32) -> Rgba {
-    [
-        ((hex >> 16) & 255) as f32 / 255.0,
-        ((hex >> 8) & 255) as f32 / 255.0,
-        (hex & 255) as f32 / 255.0,
-        1.0,
-    ]
-}
-
-/// Everforest Medium palettes. See assets/everforest-LICENSE.txt for attribution.
-pub mod themes {
-    use super::*;
-
-    pub fn dark() -> Theme {
-        Theme {
-            palette: Palette {
-                background: rgb(0x343f44),
-                panel_background: rgb(0x2d353b),
-                surface: rgb(0x343f44),
-                elevated: rgb(0x3d484d),
-                border: rgb(0x56635f),
-                text: rgb(0xd6ccb9),
-                muted: rgb(0x9da9a0),
-                accent: rgb(0xa7c080),
-                selection: rgb(0x425047),
-                success: rgb(0xa7c080),
-                warning: rgb(0xdbbc7f),
-                error: rgb(0xe67e80),
-                terminal: [
-                    0x475258, 0xe67e80, 0xa7c080, 0xdbbc7f, 0x7fbbb3, 0xd699b6, 0x83c092, 0xd3c6aa,
-                    0x475258, 0xe67e80, 0xa7c080, 0xdbbc7f, 0x7fbbb3, 0xd699b6, 0x83c092, 0xd3c6aa,
-                ]
-                .map(rgb),
-            },
-            metrics: Metrics::default(),
-        }
-    }
-
-    pub fn light() -> Theme {
-        Theme {
-            palette: Palette {
-                background: rgb(0xf4f0d9),
-                panel_background: rgb(0xfdf6e3),
-                surface: rgb(0xf4f0d9),
-                elevated: rgb(0xefebd4),
-                border: rgb(0xbdc3af),
-                text: rgb(0x5c6a72),
-                muted: rgb(0x829181),
-                accent: rgb(0x8da101),
-                selection: rgb(0xeaedc8),
-                success: rgb(0x8da101),
-                warning: rgb(0xdfa000),
-                error: rgb(0xf85552),
-                terminal: [
-                    0x5c6a72, 0xf85552, 0x8da101, 0xdfa000, 0x3a94c5, 0xdf69ba, 0x35a77c, 0xe6e2cc,
-                    0x5c6a72, 0xf85552, 0x8da101, 0xdfa000, 0x3a94c5, 0xdf69ba, 0x35a77c, 0xe6e2cc,
-                ]
-                .map(rgb),
-            },
-            metrics: Metrics::default(),
-        }
-    }
 }
 
 pub fn color(rgba: Rgba) -> Color32 {

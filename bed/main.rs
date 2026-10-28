@@ -13,6 +13,7 @@ mod layouts;
 mod menus;
 mod panels;
 mod settings;
+mod themes;
 mod workspace;
 
 fn main() -> AppExit {
@@ -85,6 +86,7 @@ pub fn app(start: Start) -> App {
         menus::MenusPlugin,
         layouts::LayoutsPlugin,
         effects::EffectsPlugin,
+        themes::ThemesPlugin,
         workspace::WorkspacesPanelPlugin,
         automation,
     ))

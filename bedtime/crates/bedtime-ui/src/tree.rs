@@ -6,7 +6,7 @@ pub const INSET: f32 = 8.0;
 pub const INDENT: f32 = 16.0;
 
 pub fn row_height(context: &UiContext<'_>) -> f32 {
-    (context.theme.metrics.font_size + 10.0).max(24.0)
+    (context.metrics.font_size + 10.0).max(24.0)
 }
 
 /// A row's artwork. `label: None` reserves the name for an inline editor.
@@ -33,7 +33,7 @@ pub fn paint_row(
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(alpha.clamp(0.0, 1.0));
     let x = rect.left() + INSET + row.depth as f32 * indent;
-    let side = context.theme.metrics.font_size.min(18.0);
+    let side = context.metrics.font_size.min(18.0);
     if let Some(open) = row.expanded {
         // The caller's stable row ID also scopes its disclosure animation.
         let id = response.map_or_else(|| ui.id(), |response| response.id);
@@ -51,7 +51,7 @@ pub fn paint_row(
         } else {
             row.ink
         };
-        let font = egui::FontId::proportional(context.theme.metrics.font_size);
+        let font = egui::FontId::proportional(context.metrics.font_size);
         let mut job = egui::text::LayoutJob::simple_singleline(label.to_owned(), font, ink);
         job.wrap.max_width = (rect.right() - x - 42.0).max(0.0);
         job.wrap.max_rows = 1;
@@ -161,11 +161,12 @@ mod tests {
         fn draw(opacity: f32, alpha: f32) -> (f32, u8) {
             let ctx = egui::Context::default();
             let icons = std::sync::Mutex::new(crate::icon_cache::IconCache::default());
-            let theme = crate::themes::dark();
+            let theme = crate::Theme::dark();
             let context = UiContext {
                 view: bevy::prelude::Entity::PLACEHOLDER,
                 surface: bevy::prelude::Entity::PLACEHOLDER,
                 theme: &theme,
+                metrics: &crate::Metrics::default(),
                 motion: MotionPolicy {
                     enabled: false,
                     ..Default::default()

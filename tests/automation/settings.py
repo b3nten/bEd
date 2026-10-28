@@ -18,7 +18,7 @@ with Bed() as bed:
     bed.screenshot("settings")
 
     # Each label is centred on its control.
-    for label, control in [("Theme", "Dark"), ("Font", "Bedfont"), ("Font size", "15.5 pt")]:
+    for label, control in [("Theme", "Everforest Dark Medium"), ("Font", "Bedfont"), ("Font size", "15.5 pt")]:
         offset = centre(bed.find(label)) - centre(bed.find(control))
         assert abs(offset) < 1, f"{label} is {offset:.1f}pt off its control"
 

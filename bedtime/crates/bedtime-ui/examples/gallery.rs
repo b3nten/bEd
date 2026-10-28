@@ -323,13 +323,9 @@ fn smoke(world: &mut World) {
             });
     }
     if frame > 430 && world.resource::<Smoke>().captured == 17 {
-        let state = world
-            .query::<&gallery::GalleryState>()
-            .single(world)
-            .unwrap();
         assert_eq!(
-            world.get::<UsesTheme>(window).unwrap().0,
-            state.light,
+            world.get::<Theme>(window).unwrap(),
+            &Theme::light(),
             "Native light theme click"
         );
         let diag = world.get::<UiDiagnostics>(window).unwrap();
@@ -349,17 +345,13 @@ fn smoke(world: &mut World) {
 }
 
 fn setup(world: &mut World) {
-    let light = world.spawn(themes::light()).id();
-    let dark = world.spawn(themes::dark()).id();
     let surface = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
         .single(world)
         .unwrap();
-    world
-        .entity_mut(surface)
-        .insert((UiSurface, UsesTheme(dark)));
+    world.entity_mut(surface).insert((UiSurface, Theme::dark()));
     world.spawn((Camera2d, UiCamera(surface)));
-    gallery::spawn(world, surface, light, dark);
+    gallery::spawn(world, surface);
 }
 
 fn close(

@@ -485,6 +485,7 @@ dependencies = [
  "egui",
  "fontdb",
  "resvg",
+ "ron",
  "serde",
  "serde_json",
 ]

@@ -22,7 +22,7 @@ pub use embedded::{EmbeddedRenderPlugin, ViewportHostPlugin, ViewportOutput};
 pub use icons::{BuiltinIcon, Icon, IconSet, IconSource, UiIconStatus, UiIcons};
 pub use motion::MotionPolicy;
 use std::sync::Mutex;
-pub use theme::{Theme, themes};
+pub use theme::{Metrics, Theme};
 pub use viewport::{UiViewport, viewport_image};
 
 /// While this resource exists, each frame's AccessKit tree (every widget's
@@ -109,7 +109,17 @@ pub fn paint_drop_overlay(
 }
 
 #[derive(Component, Default)]
-#[require(UiCapture, MotionPolicy, UiDiagnostics, UiIconStatus, UiBackground)]
+/// A surface draws with its own `Theme` (colors) and `Metrics` (sizes),
+/// bedtime-ui's dark theme and default sizes unless the app sets others.
+#[require(
+    UiCapture,
+    MotionPolicy,
+    UiDiagnostics,
+    UiIconStatus,
+    UiBackground,
+    Theme,
+    Metrics
+)]
 pub struct UiSurface;
 
 /// Choose whether UI paints the theme background or the application paints its
@@ -150,14 +160,6 @@ pub struct UiDiagnostics {
     pub icon_textures: usize,
     pub icon_rasterizations: u64,
 }
-
-#[derive(Component)]
-#[relationship(relationship_target = ThemeUsers)]
-pub struct UsesTheme(pub Entity);
-
-#[derive(Component, Default)]
-#[relationship_target(relationship = UsesTheme)]
-pub struct ThemeUsers(Vec<Entity>);
 
 #[derive(Component)]
 #[relationship(relationship_target = SurfaceViews)]
@@ -202,6 +204,7 @@ pub struct UiFrame<'a> {
     pub surface: Entity,
     pub ui: &'a mut egui::Ui,
     pub theme: &'a Theme,
+    pub metrics: &'a Metrics,
     pub motion: MotionPolicy,
     pub(crate) icons: &'a Mutex<icon_cache::IconCache>,
 }
@@ -213,6 +216,7 @@ impl<'services> UiFrame<'services> {
             view: self.view,
             surface: self.surface,
             theme: self.theme,
+            metrics: self.metrics,
             motion: self.motion,
             icons: self.icons,
         }
@@ -224,6 +228,7 @@ impl<'services> UiFrame<'services> {
             surface: self.surface,
             ui,
             theme: self.theme,
+            metrics: self.metrics,
             motion: self.motion,
             icons: self.icons,
         }
@@ -235,6 +240,7 @@ impl<'services> UiFrame<'services> {
             surface,
             ui,
             theme,
+            metrics,
             motion,
             icons,
         } = self;
@@ -244,6 +250,7 @@ impl<'services> UiFrame<'services> {
                 surface: *surface,
                 ui,
                 theme,
+                metrics,
                 motion: *motion,
                 icons,
             })
@@ -285,6 +292,7 @@ impl<'services> UiFrame<'services> {
             surface,
             ui,
             theme,
+            metrics,
             motion,
             icons,
         } = self;
@@ -302,6 +310,7 @@ impl<'services> UiFrame<'services> {
                     surface: *surface,
                     ui,
                     theme,
+                    metrics,
                     motion: *motion,
                     icons,
                 })
@@ -316,6 +325,7 @@ impl<'services> UiFrame<'services> {
             surface,
             ui,
             theme,
+            metrics,
             motion,
             icons,
         } = self;
@@ -327,6 +337,7 @@ impl<'services> UiFrame<'services> {
                     surface: *surface,
                     ui,
                     theme,
+                    metrics,
                     motion: *motion,
                     icons,
                 })
@@ -422,7 +433,7 @@ impl<'services> UiFrame<'services> {
     }
 
     pub fn icon_button(&mut self, icon: impl Into<IconSource>) -> egui::Response {
-        self.icon_button_sized(icon, self.theme.metrics.font_size)
+        self.icon_button_sized(icon, self.metrics.font_size)
     }
 
     /// Fixed artwork size in points; button padding still comes from egui spacing.
@@ -480,10 +491,10 @@ impl<'services> UiFrame<'services> {
 
     pub fn toggle(&mut self, value: &mut bool, label: &str) -> egui::Response {
         // A control's height, with a track a little inside it.
-        let height = theme::control_height(&self.theme.metrics);
+        let height = theme::control_height(&self.metrics);
         let track_size = egui::vec2(height * 1.6, height - 6.0);
         let knob = track_size.y / 2.0 - 3.0;
-        let font = egui::FontId::proportional(self.theme.metrics.font_size);
+        let font = egui::FontId::proportional(self.metrics.font_size);
         let text =
             self.ui
                 .painter()
@@ -565,13 +576,13 @@ impl<'services> UiFrame<'services> {
         response: &egui::Response,
         draw: impl FnOnce(UiFrame<'_>) -> R,
     ) -> Option<R> {
-        let mut tooltip = egui::Tooltip::for_enabled(response).gap(self.theme.metrics.popup_gap);
+        let mut tooltip = egui::Tooltip::for_enabled(response).gap(self.metrics.popup_gap);
         tooltip.popup = tooltip
             .popup
             .frame(
                 egui::Frame::popup(self.ui.style()).inner_margin(egui::Margin::symmetric(
-                    self.theme.metrics.tooltip_padding[0] as i8,
-                    self.theme.metrics.tooltip_padding[1] as i8,
+                    self.metrics.tooltip_padding[0] as i8,
+                    self.metrics.tooltip_padding[1] as i8,
                 )),
             );
         tooltip
@@ -612,6 +623,7 @@ impl Plugin for UiPlugin {
         app.add_message::<UiError>()
             .init_resource::<bedtime_clipboard::Clipboard>()
             .init_resource::<runtime::Runtime>()
+            .add_systems(Update, theme::poll_theme_folder)
             .configure_sets(
                 PreUpdate,
                 UiSystems::Draw.after(bevy_egui::EguiPreUpdateSet::ProcessInput),

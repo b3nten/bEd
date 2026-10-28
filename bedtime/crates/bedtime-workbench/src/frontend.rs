@@ -1127,7 +1127,7 @@ fn draw(
             .unwrap();
         let show_tabs = shows_tab_bar(settings.tab_bar, group.tabs.len(), groups.len());
         let bar_height = if show_tabs {
-            frame.theme.metrics.font_size + 15.0
+            frame.metrics.font_size + 15.0
         } else {
             0.0
         };
@@ -1181,7 +1181,7 @@ fn draw(
             egui::Stroke::new(1.0, bedtime_ui::theme::color(p.border)),
         );
         let tabs_min = bar.min;
-        let font = egui::FontId::proportional(frame.theme.metrics.font_size);
+        let font = egui::FontId::proportional(frame.metrics.font_size);
         let labels: Vec<_> = group
             .tabs
             .iter()
@@ -1192,7 +1192,7 @@ fn draw(
                     + 37.0
                     + if t.dirty { 8.0 } else { 0.0 }
                     + if t.icon.is_some() {
-                        frame.theme.metrics.font_size + 5.0
+                        frame.metrics.font_size + 5.0
                     } else {
                         0.0
                     })
@@ -1325,7 +1325,7 @@ fn draw(
             let text_x = position.min.x
                 + 8.0
                 + if tab.icon.is_some() {
-                    frame.theme.metrics.font_size + 5.0
+                    frame.metrics.font_size + 5.0
                 } else {
                     0.0
                 };
@@ -1347,9 +1347,9 @@ fn draw(
                     icon,
                     [
                         position.min.x + 8.0,
-                        bar.center().y - frame.theme.metrics.font_size * 0.5,
+                        bar.center().y - frame.metrics.font_size * 0.5,
                     ],
-                    frame.theme.metrics.font_size,
+                    frame.metrics.font_size,
                 );
                 frame.ui.set_clip_rect(clip);
             }
@@ -2068,7 +2068,7 @@ mod tests {
             ))
             .id();
         for density in [1.0, 1.25, 2.0] {
-            for mut theme in [bedtime_ui::themes::dark(), bedtime_ui::themes::light()] {
+            for mut theme in [bedtime_ui::Theme::dark(), bedtime_ui::Theme::light()] {
                 // The opacity multiplier must preserve an already-translucent theme.
                 theme.palette.text[3] = 0.8;
                 theme.palette.muted[3] = 0.6;

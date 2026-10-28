@@ -18,6 +18,7 @@ pub struct UiContext<'a> {
     pub view: Entity,
     pub surface: Entity,
     pub theme: &'a Theme,
+    pub metrics: &'a Metrics,
     pub motion: MotionPolicy,
     pub(crate) icons: &'a Mutex<icon_cache::IconCache>,
 }
@@ -33,6 +34,7 @@ impl UiContext<'_> {
             surface: self.surface,
             ui,
             theme: self.theme,
+            metrics: self.metrics,
             motion: self.motion,
             icons: self.icons,
         }

@@ -6,7 +6,8 @@ use std::{collections::HashMap, time::Instant};
 #[derive(Resource, Default)]
 pub(crate) struct Runtime {
     icons: Mutex<icon_cache::IconCache>,
-    themes: HashMap<Entity, Theme>,
+    /// The theme and metrics each camera's context was last styled with.
+    themes: HashMap<Entity, (Theme, Metrics)>,
     /// The font family each camera's context has. New contexts get Bedfont, so
     /// no entry means `None`.
     fonts: HashMap<Entity, Option<String>>,
@@ -132,10 +133,11 @@ pub(crate) fn draw(world: &mut World) {
     }
     assert_eq!(cameras.len(), 1, "UI currently supports one active surface");
     let (camera, surface) = cameras[0];
-    let Some(uses) = world.get::<UsesTheme>(surface) else {
+    let (Some(theme), Some(metrics)) = (world.get::<Theme>(surface), world.get::<Metrics>(surface))
+    else {
         return;
     };
-    let theme = world.get::<Theme>(uses.0).expect("Surface theme").clone();
+    let (theme, metrics) = (theme.clone(), metrics.clone());
     let policy = *world.get::<MotionPolicy>(surface).unwrap();
     let ctx = world
         .get_mut::<EguiContext>(camera)
@@ -143,16 +145,17 @@ pub(crate) fn draw(world: &mut World) {
         .get_mut()
         .clone();
     let mut runtime = world.remove_resource::<Runtime>().unwrap();
-    if runtime.themes.get(&camera) != Some(&theme) {
-        if let Err(error) = theme.validate() {
+    let style = (theme.clone(), metrics.clone());
+    if runtime.themes.get(&camera) != Some(&style) {
+        if let Err(error) = theme.validate().and_then(|()| metrics.validate()) {
             world.write_message(UiError(error));
             world.insert_resource(runtime);
             return;
         }
-        theme.apply(&ctx);
-        runtime.themes.insert(camera, theme.clone());
+        theme.apply(&metrics, &ctx);
+        runtime.themes.insert(camera, style);
     }
-    let family = &theme.metrics.font_family;
+    let family = &metrics.font_family;
     if runtime.fonts.get(&camera).unwrap_or(&None) != family
         && let Some(fonts) = crate::fonts::resolve(world, family.as_deref())
     {
@@ -164,9 +167,7 @@ pub(crate) fn draw(world: &mut World) {
         s.interaction.tooltip_delay = 0.0;
         s.interaction.show_tooltips_only_when_still = false;
     });
-    let pixels = (theme.metrics.font_size * ctx.pixels_per_point())
-        .ceil()
-        .max(1.0) as u32;
+    let pixels = (metrics.font_size * ctx.pixels_per_point()).ceil().max(1.0) as u32;
     let icons_result = runtime.icons.get_mut().unwrap().prepare(
         &mut ctx.clone(),
         world.resource::<Assets<Icon>>(),
@@ -240,6 +241,7 @@ pub(crate) fn draw(world: &mut World) {
                     view: *view,
                     surface,
                     theme: &theme,
+                    metrics: &metrics,
                     motion: policy,
                     icons: &runtime.icons,
                 };
@@ -331,10 +333,7 @@ mod tests {
             .insert_resource(bedtime_clipboard::Clipboard::memory());
         icons::install(&mut app);
         let world = app.world_mut();
-        let theme = world.spawn(themes::dark()).id();
-        let surface = world
-            .spawn((Window::default(), UiSurface, UsesTheme(theme)))
-            .id();
+        let surface = world.spawn((Window::default(), UiSurface)).id();
         let camera = world.spawn((Camera2d, UiCamera(surface))).id();
         configure(world);
         let view = register_view(world, surface, |ui, world, context| {
@@ -450,10 +449,7 @@ mod tests {
             .insert_resource(bedtime_clipboard::Clipboard::memory());
         icons::install(&mut app);
         let world = app.world_mut();
-        let theme = world.spawn(themes::dark()).id();
-        let surface = world
-            .spawn((Window::default(), UiSurface, UsesTheme(theme)))
-            .id();
+        let surface = world.spawn((Window::default(), UiSurface)).id();
         let camera = world.spawn((Camera2d, UiCamera(surface))).id();
         configure(world);
         let view = register_view(world, surface, |ui, world, context| {

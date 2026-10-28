@@ -1,6 +1,8 @@
 //! Default shell wiring, with explicit entities remaining the source of truth.
 use crate::*;
-use bedtime_ui::{InView, UiBackground, UiCamera, UiSurface, UsesTheme, register_view, themes};
+#[cfg(test)]
+use bedtime_ui::Theme;
+use bedtime_ui::{UiBackground, UiCamera, UiSurface, register_view};
 use bevy::{camera::RenderTarget, prelude::*, window::WindowRef};
 
 /// Workbench configuration on a window, rendered by an explicit WorkbenchCamera.
@@ -110,7 +112,6 @@ struct SurfaceBinding {
     managed_ui_camera: bool,
     original_target: RenderTarget,
     quit_shortcuts: Vec<bedtime_ui::egui::KeyboardShortcut>,
-    generated_theme: Option<Entity>,
     #[cfg(feature = "native")]
     original_background: Option<WindowBackground>,
 }
@@ -127,17 +128,6 @@ fn teardown(
         let surface = context.entity;
         if world.get_entity(binding.root).is_ok() {
             world.despawn(binding.root);
-        }
-        if let Some(theme) = binding.generated_theme {
-            if world
-                .get::<UsesTheme>(surface)
-                .is_some_and(|uses| uses.0 == theme)
-            {
-                world.entity_mut(surface).remove::<UsesTheme>();
-            }
-            if world.get_entity(theme).is_ok() {
-                world.despawn(theme);
-            }
         }
         if let Some(mut context) = world.get_mut::<bevy_egui::EguiContext>(binding.camera) {
             context
@@ -302,14 +292,6 @@ pub(crate) fn configure(world: &mut World) {
         _ => panic!("WorkbenchCamera must target its window"),
     }
 
-    let generated_theme = if world.get::<UsesTheme>(surface).is_none() {
-        let theme = world.spawn((themes::dark(), InView(surface))).id();
-        world.entity_mut(surface).insert(UsesTheme(theme));
-        Some(theme)
-    } else {
-        None
-    };
-
     if initializing {
         let root = register_view(world, surface, crate::ui::draw_active);
         let binding = SurfaceBinding {
@@ -318,7 +300,6 @@ pub(crate) fn configure(world: &mut World) {
             managed_ui_camera,
             original_target,
             quit_shortcuts: quit_shortcuts.unwrap(),
-            generated_theme,
             #[cfg(feature = "native")]
             original_background: world.get::<WindowBackground>(surface).copied(),
         };
@@ -334,18 +315,6 @@ pub(crate) fn configure(world: &mut World) {
             world.get::<bedtime_ui::UiView>(root).is_some(),
             "Workbench root was removed"
         );
-        if let Some(theme) = generated_theme {
-            let previous = world
-                .get_mut::<SurfaceBinding>(surface)
-                .unwrap()
-                .generated_theme
-                .replace(theme);
-            if let Some(previous) = previous {
-                if world.get_entity(previous).is_ok() {
-                    world.despawn(previous);
-                }
-            }
-        }
     }
 }
 
@@ -371,16 +340,12 @@ mod tests {
         let camera = app.world_mut().spawn((Camera2d, WorkbenchCamera)).id();
         app.update();
         let root = app.world().get::<SurfaceBinding>(surface).unwrap().root;
-        let generated = app.world().get::<UsesTheme>(surface).unwrap().0;
-        let supplied = app.world_mut().spawn(themes::light()).id();
-        app.world_mut()
-            .entity_mut(surface)
-            .insert(UsesTheme(supplied));
+        // The surface's theme is the application's; detaching keeps it.
+        app.world_mut().entity_mut(surface).insert(Theme::light());
         app.world_mut()
             .entity_mut(surface)
             .remove::<WorkbenchSurface>();
         assert!(app.world().get_entity(root).is_err());
-        assert!(app.world().get_entity(generated).is_err());
         assert!(app.world().get::<Window>(surface).is_some());
         assert!(app.world().get::<Titlebar>(surface).is_some());
         assert!(app.world().get::<Camera>(camera).is_some());
@@ -389,7 +354,7 @@ mod tests {
             app.world().get::<RenderTarget>(camera),
             Some(RenderTarget::Window(WindowRef::Primary))
         ));
-        assert_eq!(app.world().get::<UsesTheme>(surface).unwrap().0, supplied);
+        assert_eq!(app.world().get::<Theme>(surface), Some(&Theme::light()));
         assert!(app.world().get::<bevy_egui::EguiContext>(camera).is_none());
         app.update();
         app.world_mut()
@@ -408,11 +373,10 @@ mod tests {
                 .get_mut()
                 .options(|options| options.quit_shortcuts.is_empty())
         );
-        assert_eq!(app.world().get::<UsesTheme>(surface).unwrap().0, supplied);
+        assert_eq!(app.world().get::<Theme>(surface), Some(&Theme::light()));
         app.world_mut()
             .entity_mut(surface)
             .remove::<WorkbenchSurface>();
-        assert!(app.world().get::<bedtime_ui::Theme>(supplied).is_some());
         assert!(app.world().get::<UiCamera>(camera).is_none());
     }
 
@@ -420,13 +384,12 @@ mod tests {
     fn removing_surface_preserves_supplied_ui_binding_and_unrelated_views() {
         let mut app = App::new();
         app.add_plugins(WorkbenchUiPlugin);
-        let theme = app.world_mut().spawn(themes::dark()).id();
         let surface = app
             .world_mut()
             .spawn((
                 Window::default(),
                 WorkbenchSurface::default(),
-                UsesTheme(theme),
+                Theme::light(),
             ))
             .id();
         let camera = app
@@ -448,8 +411,7 @@ mod tests {
         assert!(app.world().get_entity(root).is_err());
         assert!(app.world().get::<bedtime_ui::UiView>(view).is_some());
         assert_eq!(app.world().get::<UiCamera>(camera).unwrap().0, surface);
-        assert_eq!(app.world().get::<UsesTheme>(surface).unwrap().0, theme);
-        assert!(app.world().get::<bedtime_ui::Theme>(theme).is_some());
+        assert_eq!(app.world().get::<Theme>(surface), Some(&Theme::light()));
         assert_eq!(
             app.world_mut()
                 .get_mut::<bevy_egui::EguiContext>(camera)
@@ -472,7 +434,7 @@ mod tests {
             .add_systems(
                 PreUpdate,
                 (|surfaces: Query<Entity, With<WorkbenchSurface>>,
-                  themes: Query<&UsesTheme>,
+                  themes: Query<&Theme>,
                   cameras: Query<&UiCamera>,
                   views: Query<&bedtime_ui::OnSurface, With<bedtime_ui::UiView>>| {
                     for surface in &surfaces {
@@ -493,7 +455,6 @@ mod tests {
             .query_filtered::<Entity, With<UiCamera>>()
             .single(world)
             .unwrap();
-        let theme = world.get::<UsesTheme>(surface).unwrap().0;
         let root = world
             .query_filtered::<Entity, With<bedtime_ui::UiView>>()
             .single(world)
@@ -510,11 +471,10 @@ mod tests {
         let world = app.world_mut();
         assert_eq!(world.query::<&UiCamera>().iter(world).count(), 1);
         assert_eq!(world.get::<UiCamera>(camera).unwrap().0, surface);
-        assert_eq!(world.get::<UsesTheme>(surface).unwrap().0, theme);
+        assert_eq!(world.get::<Theme>(surface), Some(&Theme::dark()));
         assert_eq!(world.query::<&bedtime_ui::UiView>().iter(world).count(), 1);
         world.despawn(surface);
         assert!(world.get_entity(camera).is_ok());
-        assert!(world.get_entity(theme).is_err());
         assert!(world.get_entity(root).is_err());
         app.update();
     }
@@ -524,7 +484,6 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(WorkbenchUiPlugin);
         let world = app.world_mut();
-        let theme = world.spawn(themes::light()).id();
         let settings = WorkbenchSurface {
             rounding: 11.0,
             panel_gap: 8.0,
@@ -534,7 +493,7 @@ mod tests {
             .spawn((
                 Window::default(),
                 settings,
-                UsesTheme(theme),
+                Theme::light(),
                 UiBackground::Theme,
                 WorkbenchShell {
                     minimum_area_size: Vec2::new(120.0, 90.0),
@@ -559,7 +518,7 @@ mod tests {
         let (camera, ui_camera) = world.query::<(Entity, &UiCamera)>().single(world).unwrap();
         assert_eq!(ui_camera.0, surface);
         assert_eq!(world.get::<Camera>(camera).unwrap().order, 7);
-        assert_eq!(world.get::<UsesTheme>(surface).unwrap().0, theme);
+        assert_eq!(world.get::<Theme>(surface), Some(&Theme::light()));
         assert_eq!(
             *world.get::<UiBackground>(surface).unwrap(),
             UiBackground::Theme
@@ -574,7 +533,6 @@ mod tests {
         );
         world.despawn(surface);
         assert!(world.get_entity(camera).is_ok());
-        assert!(world.get_entity(theme).is_ok());
     }
 
     #[test]

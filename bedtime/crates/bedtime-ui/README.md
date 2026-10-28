@@ -16,8 +16,8 @@ camera targeting that window:
 
 ```rust,ignore
 app.add_plugins(UiPlugin);
-let dark = world.spawn(themes::dark()).id();
-world.entity_mut(window).insert((UiSurface, UsesTheme(dark)));
+// Theme::dark() and default Metrics unless given.
+world.entity_mut(window).insert((UiSurface, Theme::light()));
 world.spawn((Camera2d, UiCamera(window)));
 let view = register_view(world, window, draw_form);
 world.entity_mut(view).insert(FormState::default());
@@ -99,8 +99,8 @@ managed texture lifetime, cursor, IME and repaint integration.
 
 ## Appearance and motion
 
-`Theme`, `UsesTheme` and Everforest light/dark values retain semantic colors and
-metrics. `Palette.background` colors the window, titlebar, status bar, menu bar
+`Theme` holds semantic colors and `Metrics` sizes, both components on the
+surface. `Palette.background` colors the window, titlebar, status bar, menu bar
 and panel gaps; `panel_background` colors panel bodies and tab bars. The built-in
 themes keep their original panel colors, with a slightly lighter window background
 in dark mode and a slightly darker one in light mode.
@@ -115,6 +115,16 @@ faces and egui's Unicode fallbacks for hosts customizing their font definitions.
 `fonts::DEFAULT_FAMILY` is the application-facing name, **Bedfont**. The original
 font files are unmodified; [provenance and license](assets/fonts/UPSTREAM.md)
 travel with the embedded assets.
+
+A surface's colors are its `Theme` component (name, light or dark, and a
+`Palette` including terminal and syntax colors); its sizes are its `Metrics`
+component (font size and family, padding, spacing, corners). `UiSurface`
+requires both, defaulting to `Theme::dark()` (Everforest Dark Medium, bundled
+with `Theme::light()`) and default metrics; an app replaces either by
+inserting a new value. A theme file is a `Theme` in RON (`Theme::from_ron`,
+`to_ron`), colors written `"#rrggbb"`. `theme::ThemeFolder`, inserted as a
+resource, reads every `<id>.ron` in a folder and is kept up to date (about once
+a second) as files change; files that don't parse are listed in `errors()`.
 
 Every standard control (button, combo box, slider, toggle) is one height,
 `theme::control_height`: a line of text plus `Metrics::padding`. The theme sets
