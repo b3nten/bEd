@@ -577,3 +577,49 @@ fn dropdown_clears_its_anchor_and_long_lists_still_scroll() {
     );
     assert!(egui::Popup::is_id_open(&ctx, popup));
 }
+
+#[test]
+fn clicking_a_toggle_flips_it_and_reports_a_change() {
+    let ctx = egui::Context::default();
+    ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+    let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
+    let theme = themes::dark();
+    let mut on = false;
+    let mut changes = 0;
+    // Draws a frame; returns the toggle's rect.
+    let mut frame = |events: Vec<egui::Event>| {
+        let mut rect = egui::Rect::NOTHING;
+        let input = egui::RawInput {
+            events,
+            ..default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            let context = UiContext {
+                view: Entity::PLACEHOLDER,
+                surface: Entity::PLACEHOLDER,
+                theme: &theme,
+                motion: default(),
+                icons: &icons,
+            };
+            let response = context.frame(ui).toggle(&mut on, "Blur");
+            rect = response.rect;
+            changes += usize::from(response.changed());
+        });
+        output.textures_delta.clear();
+        rect
+    };
+    let rect = frame(vec![]);
+    let pos = rect.left_center() + egui::vec2(12.0, 0.0);
+    let button = |pressed| egui::Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: default(),
+    };
+    frame(vec![egui::Event::PointerMoved(pos)]);
+    frame(vec![button(true)]);
+    frame(vec![button(false)]);
+    drop(frame);
+    assert!(on);
+    assert_eq!(changes, 1);
+}

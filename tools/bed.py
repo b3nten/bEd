@@ -121,7 +121,11 @@ class Bed:
         }
         command = [str(BINARY)] + ([str(folder)] if folder else [])
         self.process = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
-        self._wait_ready(timeout)
+        try:
+            self._wait_ready(timeout)
+        except BaseException:
+            self.close()
+            raise
 
     # --- protocol ---
 
@@ -154,7 +158,10 @@ class Bed:
             except (urllib.error.URLError, ConnectionError, socket.timeout):
                 pass
             if time.monotonic() > deadline:
-                raise AutomationError(f"bed didn't start; see {self.log_path}")
+                raise AutomationError(
+                    f"bed didn't answer on its automation port; see {self.log_path}. "
+                    "Was it built with --features automation?"
+                )
             time.sleep(0.05)
 
     def settle(self, frames=2, timeout=10):

@@ -472,8 +472,10 @@ impl<'services> UiFrame<'services> {
             ),
             egui::Sense::click(),
         );
+        let mut response = response;
         if response.clicked() {
             *value = !*value;
+            response.mark_changed();
         }
         let enabled = self.ui.is_enabled();
         response.widget_info(|| {

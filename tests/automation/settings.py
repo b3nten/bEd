@@ -27,3 +27,10 @@ with Bed() as bed:
 
     bed.click("rotate-ccw")
     assert bed.exists("Bedfont") and not bed.exists("rotate-ccw"), "reset didn't clear the font"
+
+    # Toggles (Window blur on macOS) can be switched on.
+    toggle = bed.find(role="CheckBox")
+    assert toggle["toggled"] == "False"
+    bed.click(toggle)
+    assert bed.find(role="CheckBox")["toggled"] == "True", "the toggle didn't switch on"
+    assert bed.exists("rotate-ccw"), "switching the toggle didn't set the setting"
