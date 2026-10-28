@@ -1,7 +1,8 @@
 bEd is distributed under GNU GPL version 3 only; see LICENSE.
 Third-party code and assets retain their original licenses and notices.
 
-Portions of the terminal implementation derive from ned by nealmick and contributors:
+Portions of the terminal implementation and the screen effects shader
+(bed/effects.wesl) derive from ned by nealmick and contributors:
 https://github.com/nealmick/ned at 2d3e9b53b0ebc44c6da6901ff242a95edaa4a1ff.
 The original MIT/X Consortium license is retained below. Language-protocol adapters
 retain the lsp-framework attribution below.

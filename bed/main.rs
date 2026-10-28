@@ -8,6 +8,7 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::{Path, PathBuf};
 use workspace::{Opened, RecentWorkspaces, Start};
 
+mod effects;
 mod layouts;
 mod menus;
 mod panels;
@@ -83,6 +84,7 @@ pub fn app(start: Start) -> App {
         settings::SettingsPlugin,
         menus::MenusPlugin,
         layouts::LayoutsPlugin,
+        effects::EffectsPlugin,
         workspace::WorkspacesPanelPlugin,
         automation,
     ))

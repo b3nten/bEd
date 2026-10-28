@@ -269,6 +269,13 @@ Each step should produce a usable app. We can reorder at any point.
   implemented 2026-10-27 and awaiting review. See "Switching workspace",
   "Step 8", "Step 9" and "Step 10" in [docs/foundation.md](docs/foundation.md).
 
+- **Effects**, implemented 2026-10-28: `bed/effects.rs` + `effects.wesl`, ported
+  from bed_old. Each effect is a setting (`effects.enabled`, `effects.*`
+  intensities, any layer), feeding an `Effects` resource; the render passes run
+  after egui and before bedtime-ui's `UiSystems::PrepareOutput`. Settings has an
+  Effects section whose sliders show only while effects are on.
+  `tests/automation/effects.py`.
+
 - **Step 5.7 (automation)**, implemented 2026-10-27 and awaiting review.
   `bedtime-automation` (BRP methods: status, input, ui, screenshot, invoke,
   exit; does nothing unless its `enabled` feature is on and

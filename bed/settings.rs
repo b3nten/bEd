@@ -80,7 +80,7 @@ setting! {
 }
 
 /// Hand-edited files can hold anything; bring numbers into range before use.
-fn limit(value: f32, range: RangeInclusive<f32>, default: f32) -> f32 {
+pub(crate) fn limit(value: f32, range: RangeInclusive<f32>, default: f32) -> f32 {
     if value.is_nan() {
         default
     } else {
@@ -269,6 +269,8 @@ impl Panel for SettingsPanel {
                         );
                     }
 
+                    crate::effects::section(ui, world, context, layer);
+
                     section(ui, "Keyboard Shortcuts");
                     keys::section(ui, world, context, layer);
                 });
@@ -336,8 +338,10 @@ pub(crate) fn columns<R>(
     .inner
 }
 
-/// A slider with its value, `decimals` places.
-fn slider(
+/// A slider with its value shown to `decimals` places. Only the text is
+/// rounded: egui writes a slider's value back every frame, and rounding it
+/// there (`fixed_decimals`) would change a setting just by showing it.
+pub(crate) fn slider(
     ui: &mut egui::Ui,
     value: &mut f32,
     range: RangeInclusive<f32>,
@@ -346,7 +350,7 @@ fn slider(
 ) -> bool {
     let slider = egui::Slider::new(value, range)
         .suffix(suffix)
-        .fixed_decimals(decimals);
+        .custom_formatter(move |value, _| format!("{value:.decimals$}"));
     ui.add(slider).changed()
 }
 
