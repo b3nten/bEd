@@ -7,6 +7,9 @@ use std::{collections::HashMap, time::Instant};
 pub(crate) struct Runtime {
     icons: Mutex<icon_cache::IconCache>,
     themes: HashMap<Entity, Theme>,
+    /// The font family each camera's context has. New contexts get Bedfont, so
+    /// no entry means `None`.
+    fonts: HashMap<Entity, Option<String>>,
 }
 
 #[derive(Component)]
@@ -38,6 +41,7 @@ pub(crate) fn remove_camera(
     }
     if let Some(mut runtime) = world.get_resource_mut::<Runtime>() {
         runtime.themes.remove(&entity);
+        runtime.fonts.remove(&entity);
     }
     world.commands().queue(move |world: &mut World| {
         let Ok(mut camera) = world.get_entity_mut(entity) else {
@@ -147,6 +151,13 @@ pub(crate) fn draw(world: &mut World) {
         }
         theme.apply(&ctx);
         runtime.themes.insert(camera, theme.clone());
+    }
+    let family = &theme.metrics.font_family;
+    if runtime.fonts.get(&camera).unwrap_or(&None) != family
+        && let Some(fonts) = crate::fonts::resolve(world, family.as_deref())
+    {
+        ctx.set_fonts(fonts);
+        runtime.fonts.insert(camera, family.clone());
     }
     ctx.global_style_mut(|s| {
         s.animation_time = if policy.enabled { policy.seconds } else { 0.0 };

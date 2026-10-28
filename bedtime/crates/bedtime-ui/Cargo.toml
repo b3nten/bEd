@@ -6,10 +6,15 @@ publish = false
 license.workspace = true
 description = "ECS presentation, themes and egui rendering for Bevy"
 
+[features]
+# `InstalledFonts`: discover installed font families.
+system-fonts = ["dep:fontdb"]
+
 [dependencies]
 bedtime-clipboard.workspace = true
 bevy = { workspace = true, features = ["std", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse"] }
 egui.workspace = true
+fontdb = { workspace = true, optional = true }
 bevy_egui.workspace = true
 resvg.workspace = true
 serde = { workspace = true, features = ["derive"] }

@@ -114,10 +114,18 @@ face exposed by `fonts::monospace_bold(size)`. `fonts::definitions()` supplies b
 faces and egui's Unicode fallbacks for hosts customizing their font definitions.
 `fonts::DEFAULT_FAMILY` is the application-facing name, **Bedfont**. The original
 font files are unmodified; [provenance and license](assets/fonts/UPSTREAM.md)
-travel with the embedded assets. System font discovery and selection belong to
-the host application.
-Hosts replacing the definitions must retain that named bold family for terminal
-rendering. Workbench layout and panel configuration
+travel with the embedded assets.
+
+The theme chooses the font: `Metrics::font_family` names an installed family,
+`None` is Bedfont. The runtime applies fonts itself when a context first draws
+and when the family changes; hosts don't call `set_fonts`. A named family's
+regular and bold faces go in front of Bedfont, so Bedfont and egui's Unicode
+fallbacks cover what it lacks. With the `system-fonts` feature, initialising
+the `fonts::InstalledFonts` resource discovers installed families on a
+background thread (`loading()`, `error()`, `families()` with a `monospaced`
+flag). While it's loading, a named family waits and the current fonts stay; a
+family that isn't installed, or any family without discovery, falls back to
+Bedfont. Which families to offer is the host's choice. Workbench layout and panel configuration
 belongs to the workbench crate's `WorkbenchSurface`, independently of `Theme`.
 UI has no workbench configuration components; ordinary egui widgets and layout
 remain available directly.

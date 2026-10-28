@@ -3,7 +3,12 @@
 //! Each setting writes into `Appearance` when its value changes; one system
 //! applies `Appearance` to the theme and workbench surface.
 use crate::{panels::PanelPolicy, workspace::Workspace};
-use bedtime_ui::{UiContext, UsesTheme, egui, themes};
+use bedtime_ui::{
+    UiContext, UsesTheme, egui,
+    fonts::{DEFAULT_FAMILY, InstalledFonts},
+    theme::FONT_SIZES,
+    themes,
+};
 use bedtime_workbench::{
     CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, Handler,
     KeyChord, Panel, PanelFactory, PanelInstance, WindowBlur, WorkbenchSurface,
@@ -15,7 +20,6 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{ops::RangeInclusive, path::PathBuf};
 
-const FONT_SIZE: RangeInclusive<f32> = 8.0..=72.0;
 const OPACITY: RangeInclusive<f32> = 0.0..=1.0;
 const PANEL_RADIUS: RangeInclusive<f32> = 0.0..=32.0;
 const PANEL_GAP: RangeInclusive<f32> = 0.0..=32.0;
@@ -41,7 +45,12 @@ setting! {
 }
 setting! {
     pub FontSize: f32 = 15.5, key = "appearance.font_size",
-    apply = |world, size| world.resource_mut::<Appearance>().font_size = limit(*size, FONT_SIZE, 15.5),
+    apply = |world, size| world.resource_mut::<Appearance>().font_size = limit(*size, FONT_SIZES, 15.5),
+}
+setting! {
+    /// An installed font family; `None` is the bundled Bedfont.
+    pub FontFamily: Option<String> = None, key = "appearance.font_family",
+    apply = |world, family| world.resource_mut::<Appearance>().font_family = family.clone(),
 }
 setting! {
     pub WindowOpacity: f32 = 1.0, key = "appearance.window_opacity",
@@ -83,6 +92,7 @@ fn limit(value: f32, range: RangeInclusive<f32>, default: f32) -> f32 {
 pub struct Appearance {
     pub theme: ThemeChoice,
     pub font_size: f32,
+    pub font_family: Option<String>,
     pub window_opacity: f32,
     pub window_blur: bool,
     pub panel_opacity: f32,
@@ -95,6 +105,7 @@ impl Default for Appearance {
         Self {
             theme: Theme::default(),
             font_size: FontSize::default(),
+            font_family: FontFamily::default(),
             window_opacity: WindowOpacity::default(),
             window_blur: WindowBlurSetting::default(),
             panel_opacity: PanelOpacity::default(),
@@ -127,6 +138,7 @@ impl Plugin for SettingsPlugin {
             .add_settings_layer::<GlobalStore>()
             .register_setting::<Theme>()
             .register_setting::<FontSize>()
+            .register_setting::<FontFamily>()
             .register_setting::<WindowOpacity>()
             .register_setting::<WindowBlurSetting>()
             .register_setting::<PanelOpacity>()
@@ -155,6 +167,7 @@ fn apply_appearance(
         palette.palette.background[3] = appearance.window_opacity;
         palette.palette.panel_background[3] = appearance.panel_opacity;
         palette.metrics.font_size = appearance.font_size;
+        palette.metrics.font_family = appearance.font_family.clone();
         commands.entity(theme.0).insert(palette);
         commands
             .entity(surface)
@@ -219,9 +232,10 @@ impl Panel for SettingsPanel {
                         });
                     before != *theme
                 });
+                font_family_row(ui, world, layer);
                 row::<FontSize>(ui, world, layer, |ui, size| {
                     ui.add(
-                        egui::Slider::new(size, FONT_SIZE)
+                        egui::Slider::new(size, FONT_SIZES)
                             .text("Font size")
                             .suffix(" pt"),
                     )
@@ -263,6 +277,44 @@ impl Panel for SettingsPanel {
             });
         });
     }
+}
+
+/// Bedfont and the installed monospaced families: the editor and terminal
+/// need fixed-width text.
+fn font_family_row(ui: &mut egui::Ui, world: &mut World, layer: StoreId) {
+    let chosen = world.resource::<Settings>().get::<FontFamily>();
+    let installed = world.get_resource::<InstalledFonts>();
+    let families: Vec<String> = installed
+        .map(|fonts| fonts.families())
+        .unwrap_or_default()
+        .iter()
+        .filter(|family| family.monospaced)
+        .map(|family| family.name.clone())
+        .collect();
+    let note = match (installed, &chosen) {
+        (Some(fonts), _) if fonts.loading() => Some("Loading installed fonts…".to_owned()),
+        (Some(fonts), _) if fonts.error().is_some() => fonts.error().map(str::to_owned),
+        (_, Some(family)) if !families.contains(family) => {
+            Some(format!("{family} isn't installed; using {DEFAULT_FAMILY}"))
+        }
+        _ => None,
+    };
+    row::<FontFamily>(ui, world, layer, |ui, family| {
+        let before = family.clone();
+        egui::ComboBox::from_label("Font")
+            .selected_text(family.as_deref().unwrap_or(DEFAULT_FAMILY))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(family, None, DEFAULT_FAMILY);
+                for name in families {
+                    let label = name.clone();
+                    ui.selectable_value(family, Some(name), label);
+                }
+            });
+        if let Some(note) = note {
+            ui.weak(note);
+        }
+        before != *family
+    });
 }
 
 /// Which layer the panel edits: global, or (with a folder open) the workspace.
@@ -335,7 +387,8 @@ mod tests {
     #[test]
     fn appearance_follows_the_settings_and_stays_in_range() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, SettingsPlugin));
+        app.add_plugins((WorkbenchCorePlugin, SettingsPlugin))
+            .add_settings_layer::<WorkbenchStore>();
         app.update();
         let global = StoreId::of::<GlobalStore>();
         let world = app.world_mut();
@@ -348,6 +401,19 @@ mod tests {
         assert_eq!(world.resource::<Appearance>().font_size, 72.0);
         clear_setting::<FontSize>(world, global).unwrap();
         assert_eq!(world.resource::<Appearance>().font_size, 15.5);
+        // A workspace can choose its own font.
+        let workspace = StoreId::of::<WorkbenchStore>();
+        set_setting::<FontFamily>(world, global, Some("Menlo".into())).unwrap();
+        set_setting::<FontFamily>(world, workspace, Some("PT Mono".into())).unwrap();
+        assert_eq!(
+            world.resource::<Appearance>().font_family.as_deref(),
+            Some("PT Mono")
+        );
+        clear_setting::<FontFamily>(world, workspace).unwrap();
+        assert_eq!(
+            world.resource::<Appearance>().font_family.as_deref(),
+            Some("Menlo")
+        );
     }
 
     #[test]

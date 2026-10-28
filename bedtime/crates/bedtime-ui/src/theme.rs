@@ -3,6 +3,9 @@ use egui::{Color32, Context};
 
 pub type Rgba = [f32; 4];
 
+/// The font sizes a theme can use, in points.
+pub const FONT_SIZES: std::ops::RangeInclusive<f32> = 8.0..=72.0;
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Palette {
@@ -30,6 +33,9 @@ pub struct Palette {
 #[serde(deny_unknown_fields)]
 pub struct Metrics {
     pub font_size: f32,
+    /// An installed family (see `fonts::InstalledFonts`); `None` is Bedfont.
+    #[serde(default)]
+    pub font_family: Option<String>,
     pub padding: [f32; 2],
     pub spacing: [f32; 2],
     /// Corner radius for ordinary widgets, independent of panels and popups.
@@ -45,6 +51,7 @@ impl Default for Metrics {
     fn default() -> Self {
         Self {
             font_size: 15.5,
+            font_family: None,
             padding: [10.0, 6.0],
             spacing: [10.0, 8.0],
             rounding: 4.0,
@@ -90,7 +97,7 @@ impl Theme {
         }
         let m = &self.metrics;
         if !m.font_size.is_finite()
-            || !(8.0..=72.0).contains(&m.font_size)
+            || !FONT_SIZES.contains(&m.font_size)
             || m.padding
                 .into_iter()
                 .chain(m.spacing)

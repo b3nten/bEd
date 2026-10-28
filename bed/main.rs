@@ -61,6 +61,8 @@ fn main() -> AppExit {
         menus::MenusPlugin,
     ))
     .insert_resource(recent)
+    // Look for installed fonts now, so Settings can list them when opened.
+    .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     .add_systems(Startup, setup);
     stores(&mut app, config.as_deref(), global, opened);
     app.run()

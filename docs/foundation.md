@@ -1,7 +1,7 @@
 # Foundation: stores, persistence, settings, workspaces, commands
 
-Status (2026-10-27): **steps 1–5 built** (stores, persistence, settings,
-workspaces, commands and keybindings, menus and toolbar). Update this file as decisions change during the build.
+Status (2026-10-27): **steps 1–6 built** (stores, persistence, settings,
+workspaces, commands and keybindings, menus and toolbar, fonts). Update this file as decisions change during the build.
 
 The goal is a foundation solid enough that everything after it is "bring in a
 plugin": file tree, editor, viewers, terminal. Those plugins should only need to
@@ -280,6 +280,26 @@ unless that turns out to be needed.
 
 Built afterwards on the same pieces: command labels plus resolved shortcuts.
 
+## Fonts
+
+bedtime-ui owns the mechanism; the app decides which families to offer.
+
+- The theme carries the font: `Metrics::font_family: Option<String>` next to
+  `font_size`. `None` is the bundled Bedfont.
+- The UI runtime applies fonts itself, when a context first draws and whenever
+  the theme's family changes. Apps never call `set_fonts`. A named family
+  replaces the primary regular and bold faces; Bedfont's and egui's Unicode
+  fallbacks stay behind it. A family that can't be found falls back to Bedfont.
+- `InstalledFonts` (feature `system-fonts`, fontdb) scans installed fonts on a
+  background thread. An app opts in by initialising the resource. It reports
+  `loading()`, `error()` and `families()` (name, monospaced). While it's
+  loading, a named family waits and the current fonts stay; once it's ready
+  the family is applied or falls back.
+- bed: an `appearance.font_family` setting (any layer) flows through
+  `Appearance` into the theme like the size. Settings lists Bedfont plus the
+  installed monospaced families (the editor and terminal need fixed-width
+  text), and says when the saved family is missing.
+
 ## Built so far
 
 ### Step 1: stores and persistence
@@ -422,6 +442,31 @@ bed (`bed/menus.rs`):
   layout slots and reset/save layout (need layout templates), panel-owned menu
   entries.
 
+### Step 6: fonts
+
+bedtime-ui:
+
+- `Metrics::font_family: Option<String>` (serde default `None`, Bedfont).
+- The runtime tracks each camera's applied family and calls `set_fonts` when
+  the theme's family differs; new contexts start with Bedfont. While
+  `InstalledFonts` is loading, a named family isn't applied (and isn't recorded,
+  so it's retried each frame until discovery finishes).
+- `fonts::InstalledFonts` (feature `system-fonts`): discovery thread, polled
+  before drawing. A family is monospaced when all its faces are; names starting
+  with `.` (platform-private) are hidden. `fonts::with_primary(regular, bold)`
+  builds definitions with a family in front of Bedfont.
+- `theme::FONT_SIZES` is the one font size range; bed's setting clamps to it.
+- Removed from bed_old's `fonts.rs`: per-camera `AppliedFont` tracking and the
+  ordering against UI's own `set_fonts`.
+
+bed:
+
+- `appearance.font_family` (`Option<String>`, any layer) → `Appearance` → the
+  theme, beside the size.
+- `main` initialises `InstalledFonts` at startup. The Font row lists Bedfont and
+  the installed monospaced families, and notes when fonts are loading, when
+  discovery failed, or when the chosen family isn't installed.
+
 ## Build order
 
 Each step depends on the one before.
@@ -435,6 +480,7 @@ Each step depends on the one before.
 4. Commands and keybindings (one `Keybinding<C>` setting per command; dispatch by
    handler scope).
 5. Menus and the toolbar.
+6. Fonts: the theme's family, applied by bedtime-ui; installed fonts.
 
 ## Open questions
 

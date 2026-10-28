@@ -578,6 +578,8 @@ impl Plugin for UiPlugin {
                     .chain()
                     .in_set(UiSystems::Draw),
             );
+        #[cfg(feature = "system-fonts")]
+        app.add_systems(PreUpdate, fonts::installed::poll.before(UiSystems::Draw));
     }
 }
 

@@ -1,18 +1,24 @@
-//! Bundled UI typography and the matching bold monospace face.
+//! Typography: the bundled Bedfont, the theme's font family, and (with the
+//! `system-fonts` feature) the installed families it can name.
+//!
+//! The UI runtime applies fonts itself: when a context first draws, and when
+//! the theme's `font_family` changes. Hosts never call `set_fonts`.
 use egui::{FontData, FontDefinitions, FontFamily, FontId};
 use std::sync::Arc;
+
+#[cfg(feature = "system-fonts")]
+pub(crate) mod installed;
+#[cfg(feature = "system-fonts")]
+pub use installed::{InstalledFamily, InstalledFonts};
 
 pub const DEFAULT_FAMILY: &str = "Bedfont";
 
 /// The bold companion to `FontId::monospace`, installed by UI.
-/// Hosts replacing the font definitions should retain this family and supply
-/// their chosen monospace bold face with matching cell metrics.
 pub fn monospace_bold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("Monospace Bold".into()))
 }
 
-/// Bedfont (bundled Nordwand Mono) regular/bold, retaining egui's Unicode fallbacks. Applications
-/// can customize these definitions before passing them to `Context::set_fonts`.
+/// Bedfont (bundled Nordwand Mono) regular/bold, retaining egui's Unicode fallbacks.
 pub fn definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     for (name, bytes) in [
@@ -40,6 +46,51 @@ pub fn definitions() -> FontDefinitions {
     bold.insert(0, "Bedfont-Bold".into());
     fonts.families.insert(monospace_bold(1.0).family, bold);
     fonts
+}
+
+/// Bedfont's definitions with `regular` and `bold` in front: they draw what
+/// they cover, Bedfont and egui's fallbacks the rest.
+pub fn with_primary(regular: Arc<FontData>, bold: Arc<FontData>) -> FontDefinitions {
+    let mut fonts = definitions();
+    fonts.font_data.insert("Primary Regular".into(), regular);
+    fonts.font_data.insert("Primary Bold".into(), bold);
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        fonts
+            .families
+            .get_mut(&family)
+            .unwrap()
+            .insert(0, "Primary Regular".into());
+    }
+    fonts
+        .families
+        .get_mut(&monospace_bold(1.0).family)
+        .unwrap()
+        .insert(0, "Primary Bold".into());
+    fonts
+}
+
+/// The definitions for `family` (`None` or Bedfont: the bundled fonts). `None`
+/// while installed fonts are still being discovered: keep the current fonts and
+/// ask again. A family that can't be found falls back to Bedfont.
+pub(crate) fn resolve(
+    world: &bevy::prelude::World,
+    family: Option<&str>,
+) -> Option<FontDefinitions> {
+    let Some(family) = family.filter(|family| *family != DEFAULT_FAMILY) else {
+        return Some(definitions());
+    };
+    #[cfg(feature = "system-fonts")]
+    if let Some(installed) = world.get_resource::<InstalledFonts>() {
+        if installed.loading() {
+            return None;
+        }
+        if let Some(fonts) = installed.definitions(family) {
+            return Some(fonts);
+        }
+    }
+    #[cfg(not(feature = "system-fonts"))]
+    let _ = (world, family);
+    Some(definitions())
 }
 
 #[cfg(test)]

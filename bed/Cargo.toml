@@ -11,7 +11,7 @@ name = "bed"
 path = "main.rs"
 
 [dependencies]
-bedtime-ui.workspace = true
+bedtime-ui = { workspace = true, features = ["system-fonts"] }
 bedtime-workbench = { workspace = true, features = ["persistence"] }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }
 rfd = { workspace = true }
