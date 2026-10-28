@@ -300,6 +300,29 @@ bedtime-ui owns the mechanism; the app decides which families to offer.
   installed monospaced families (the editor and terminal need fixed-width
   text), and says when the saved family is missing.
 
+## Switching workspace (spike, 2026-10-27)
+
+Opening another folder (Open Folder, Open Recent, a terminal `+open`) should
+replace the window's workspace rather than open a new window. Swapping stores
+inside one App would leave plugin state (resources and entities that aren't
+persisted) behind from the previous workspace, and plugins can't know about
+workspaces. So each workspace gets a fresh App, and only the window survives:
+
+- `vendor/bevy_winit` (see its `BED_PATCHES.md`): `bevy::winit::relaunch(world,
+  make)` exits the App normally (stores save), drops it, builds the next with
+  `make`, and the next App adopts the open native window.
+- bed: `app(argument) -> App` builds the App for one workspace; `main` runs it.
+  A temporary `app.relaunch` command (Cmd+Shift+R) rebuilds it with the same
+  workspace.
+- bedtime-automation keeps its HTTP server across relaunches (the server lives
+  on Bevy's global task pool); the next App takes over its request mailbox.
+- Result: the next App draws about 0.08 s after the request, the window keeps
+  its size and position, the layout is restored from the workspace store, and
+  memory stays flat over repeated relaunches. Native window pieces (blur view,
+  menu) are removed by their `Drop` with the old App.
+- Not yet: carrying state such as a terminal's shell into the next App (a
+  handoff store, deferred), an effect over the switch if it ever feels slow.
+
 ## Built so far
 
 ### Step 1: stores and persistence

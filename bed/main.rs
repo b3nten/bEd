@@ -14,6 +14,13 @@ mod settings;
 mod workspace;
 
 fn main() -> AppExit {
+    let argument = std::env::args_os().nth(1).map(PathBuf::from);
+    app(argument).run()
+}
+
+/// The App for one workspace. Switching workspace drops it and builds another
+/// in the same window (`bevy_winit::relaunch`).
+pub fn app(argument: Option<PathBuf>) -> App {
     let config = config_directory();
     let global = config.as_ref().map(|config| config.join("global"));
     // Which workspace to open is decided before the app exists, from what the
@@ -25,7 +32,6 @@ fn main() -> AppExit {
         recent = RecentWorkspaces::read(&store);
         reopen_last = read_setting::<settings::ReopenLastWorkspace>(&store).unwrap_or(reopen_last);
     }
-    let argument = std::env::args_os().nth(1).map(PathBuf::from);
     let opened = workspace::open(argument, config.as_deref(), &recent, reopen_last);
     if let (Some(workspace), Some(global)) = (&opened.workspace, &global)
         && let Err(error) = recent.remember(&DirectoryStore::new(global), &workspace.root)
@@ -37,8 +43,13 @@ fn main() -> AppExit {
     });
     let automation = bedtime_automation::AutomationPlugin::from_env();
     let mut app = App::new();
+    // Logging is set up once per process; a relaunched App leaves it alone.
+    let mut defaults = DefaultPlugins.build();
+    if bevy::winit::relaunching() {
+        defaults = defaults.disable::<bevy::log::LogPlugin>();
+    }
     app.add_plugins((
-        DefaultPlugins.set(WindowPlugin {
+        defaults.set(WindowPlugin {
             primary_window: Some(Window {
                 title,
                 resolution: (960, 640).into(),
@@ -69,7 +80,7 @@ fn main() -> AppExit {
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     .add_systems(Startup, setup);
     stores(&mut app, config.as_deref(), global, opened);
-    app.run()
+    app
 }
 
 /// Where things are saved. Global settings and data go in `<config>/global`.

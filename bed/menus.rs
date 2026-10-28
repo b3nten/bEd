@@ -39,6 +39,28 @@ impl ContextCommand for OpenRecent {
     const LABEL: &'static str = "Open Recent";
 }
 
+/// Spike: rebuild the App in the same window, with the same workspace.
+pub struct Relaunch;
+impl ContextCommand for Relaunch {
+    const KEY: &'static str = "app.relaunch";
+    const LABEL: &'static str = "Relaunch";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::new(
+        bedtime_workbench::Modifiers::PRIMARY.union(bedtime_workbench::Modifiers::SHIFT),
+        KeyCode::KeyR,
+    )];
+}
+
+fn relaunch(world: &mut World, _: ContextCommandInvocation) -> ContextCommandResult {
+    let folder = world.get_resource::<Workspace>().map(|w| w.root.clone());
+    let started = std::time::Instant::now();
+    bevy::winit::relaunch(world, move || {
+        let app = crate::app(folder);
+        info!("Relaunch: built the next App in {:?}", started.elapsed());
+        app
+    });
+    Ok(())
+}
+
 /// On an Open Recent item: the folder it opens.
 #[derive(Component)]
 struct RecentPath(PathBuf);
@@ -58,6 +80,7 @@ impl Plugin for MenusPlugin {
         app.init_resource::<RecentWorkspaces>()
             .init_non_send::<FolderDialog>()
             .add_command_handler::<Quit>(Handler::new(quit))
+            .add_command_handler::<Relaunch>(Handler::new(relaunch))
             .add_command_handler::<OpenFolder>(
                 Handler::new(open_folder)
                     .available_when(|world, _| world.non_send::<FolderDialog>().0.is_none()),
@@ -94,6 +117,7 @@ fn compose_menus(mut commands: Commands) {
         InMenu(app),
     ));
     commands.spawn((MenuSeparator, InMenu(app)));
+    commands.spawn((MenuItem::command::<Relaunch>(), InMenu(app)));
     commands.spawn((MenuItem::command::<Quit>(), InMenu(app)));
     commands.spawn((MenuItem::command::<OpenFolder>(), InMenu(file)));
     commands.spawn((

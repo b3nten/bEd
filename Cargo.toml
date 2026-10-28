@@ -60,6 +60,7 @@ objc2-quartz-core = { version = "=0.3.2", default-features = false, features = [
 
 [patch.crates-io]
 bevy_render = { path = "vendor/bevy_render" }
+bevy_winit = { path = "vendor/bevy_winit" }
 egui = { path = "vendor/egui" }
 # Re-enable with the terminal plugin (bedtime_old/crates/bedtime-terminal).
 # rio-vt = { path = "vendor/rio-vt" }

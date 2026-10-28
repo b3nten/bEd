@@ -11,7 +11,7 @@ use bevy::{
         touch::TouchPhase,
     },
     prelude::*,
-    remote::{BrpError, BrpResult, RemotePlugin, error_codes, http::RemoteHttpPlugin},
+    remote::{BrpError, BrpReceiver, BrpResult, RemotePlugin, error_codes, http::RemoteHttpPlugin},
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
     window::{CursorMoved, PrimaryWindow, WindowEvent},
 };
@@ -53,8 +53,14 @@ struct Automation {
     errors: Vec<String>,
 }
 
+/// The request mailbox of the HTTP server this process started. The server
+/// outlives an App (it runs on Bevy's global task pool), so when an App exits
+/// its mailbox is kept here for the next App in the same process (after a
+/// relaunch), which serves the same port.
+static MAILBOX: std::sync::Mutex<Option<BrpReceiver>> = std::sync::Mutex::new(None);
+
 pub(crate) fn install(app: &mut App, port: u16) {
-    app.add_plugins((
+    app.add_plugins(
         RemotePlugin::default()
             .with_method_main("bedtime.status", status)
             .with_method_main("bedtime.input", input)
@@ -62,8 +68,24 @@ pub(crate) fn install(app: &mut App, port: u16) {
             .with_method_main("bedtime.screenshot", screenshot)
             .with_method_main("bedtime.invoke", invoke)
             .with_method_main("bedtime.exit", exit),
-        RemoteHttpPlugin::default().with_port(port),
-    ))
+    );
+    if MAILBOX.lock().unwrap().is_some() {
+        app.add_systems(Startup, |world: &mut World| {
+            if let Some(mailbox) = MAILBOX.lock().unwrap().take() {
+                world.insert_resource(mailbox);
+            }
+        });
+    } else {
+        app.add_plugins(RemoteHttpPlugin::default().with_port(port));
+    }
+    app.add_systems(Last, |world: &mut World| {
+        if world.resource::<Messages<AppExit>>().is_empty() {
+            return;
+        }
+        if let Some(mailbox) = world.remove_resource::<BrpReceiver>() {
+            *MAILBOX.lock().unwrap() = Some(mailbox);
+        }
+    })
     .init_resource::<Automation>()
     .init_resource::<AccessibilityTree>()
     .add_systems(First, (pretend_focus, run_step))
