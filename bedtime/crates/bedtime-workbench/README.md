@@ -297,6 +297,15 @@ world.entity_mut(window).insert(WorkbenchSurface {
 });
 ~~~
 
+`TabBarVisibility` shows an area's tab bar `Always`, while it has
+`MultipleTabs`, while the layout has `MultipleAreas`, with
+`MultipleTabsOrAreas` (either), or keeps it `Hidden`. `area_background`
+(`AreaBackground::Always`, `MultipleAreas`, `Never`) says when areas paint the
+theme's panel background. With `MultipleTabsOrAreas` and `MultipleAreas`, a
+layout of one area with one tab is just that panel, drawn straight onto the
+window like a native terminal; tabs return once there's a second tab or area to
+move panels between. bEd uses both.
+
 Disabling `drag_corners` removes corner hit targets and cancels any ongoing
 corner gesture. Divider resizing and other layout operations remain available.
 Hidden tab bars reserve no space; each area's selected panel continues drawing
@@ -841,6 +850,12 @@ set_setting::<FileTreeIndent>(world, StoreId::of::<GlobalStore>(), 18.0)?;
 - **The unit of override is the setting.** Anything overridable per entry is
   split into one setting per entry with a derived key (`Setting::key()` is a
   function, so generic settings can compute it).
+
+An editor for one layer should show `Settings::get_at::<S>(layer)`, the value
+that layer and those below it give, not the resolved value: otherwise editing a
+lower layer looks like it does nothing while a higher one overrides it.
+`overridden_above::<S>(layer)` names that higher layer. `keys_at` and
+`keys_overridden_above` do the same for keybindings.
 
 `read_setting::<S>(&backend)` reads one setting straight from a store's
 backend, for decisions made before the app is built (bEd uses it to decide

@@ -1,6 +1,6 @@
 use bedtime_ui::UiPlugin;
 use bedtime_workbench::{
-    Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface,
+    AreaBackground, TabBarVisibility, Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface,
     persistence::{DirectoryStore, StoreAppExt, WorkbenchStore},
     settings::{Setting, SettingsAppExt, read_setting},
 };
@@ -135,7 +135,13 @@ pub fn config_directory() -> Option<PathBuf> {
 
 fn setup(mut commands: Commands, window: Single<Entity, With<PrimaryWindow>>) {
     commands.entity(*window).insert((
-        WorkbenchSurface::default(),
+        // A layout of one panel is just that panel, drawn onto the window:
+        // no tab bar, no background (a terminal looks native this way).
+        WorkbenchSurface {
+            tab_bar: TabBarVisibility::MultipleTabsOrAreas,
+            area_background: AreaBackground::MultipleAreas,
+            ..default()
+        },
         Titlebar {
             height: if cfg!(target_os = "macos") {
                 18.0

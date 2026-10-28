@@ -594,11 +594,17 @@ fn er(r: Rect) -> egui::Rect {
     egui::Rect::from_min_max(egui::pos2(r.min.x, r.min.y), egui::pos2(r.max.x, r.max.y))
 }
 
-fn hit(ui: &egui::Ui, name: &str, rect: Rect) -> (bool, bool) {
+/// `label` names the target for accessibility (and scripts), if it has one.
+fn hit(ui: &egui::Ui, name: &str, rect: Rect, label: Option<&str>) -> (bool, bool) {
     if rect.width() <= 0.0 || rect.height() <= 0.0 {
         return (false, false);
     }
     let response = ui.interact(er(rect), ui.id().with(name), egui::Sense::click_and_drag());
+    if let Some(label) = label {
+        let enabled = ui.is_enabled();
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    }
     (
         response.hovered(),
         response.is_pointer_button_down_on()
@@ -1094,6 +1100,7 @@ fn draw(
                 frame.ui,
                 &format!("border-{}-{index}", entity.to_bits()),
                 zone,
+                None,
             );
             if hovered && state.gesture.is_none() {
                 frame.ui.ctx().set_cursor_icon(if index == 0 {
@@ -1112,16 +1119,13 @@ fn draw(
             }
         }
     }
+    let background = paints_background(settings.area_background, groups.len());
     for group in &groups {
         let (_, _, r, s) = *visual
             .iter()
             .find(|(e, _, _, _)| *e == group.entity)
             .unwrap();
-        let show_tabs = match settings.tab_bar {
-            TabBarVisibility::Always => true,
-            TabBarVisibility::MultipleTabs => group.tabs.len() > 1,
-            TabBarVisibility::Hidden => false,
-        };
+        let show_tabs = shows_tab_bar(settings.tab_bar, group.tabs.len(), groups.len());
         let bar_height = if show_tabs {
             frame.theme.metrics.font_size + 15.0
         } else {
@@ -1140,11 +1144,13 @@ fn draw(
             tab_bar: bar,
             content,
         };
-        painter.rect_filled(
-            er(s),
-            settings.rounding,
-            bedtime_ui::theme::color(p.panel_background),
-        );
+        if background {
+            painter.rect_filled(
+                er(s),
+                settings.rounding,
+                bedtime_ui::theme::color(p.panel_background),
+            );
+        }
         if group.tabs.is_empty() {
             let response = frame.ui.interact(
                 er(content),
@@ -1253,7 +1259,12 @@ fn draw(
                 position.max.min(bar.max),
             );
             let (close_hover, close_pressed) = if settings.panel_closure {
-                hit(frame.ui, &format!("close-{}", tab.entity.to_bits()), close)
+                hit(
+                    frame.ui,
+                    &format!("close-{}", tab.entity.to_bits()),
+                    close,
+                    Some(&format!("Close {}", tab.title)),
+                )
             } else {
                 (false, false)
             };
@@ -1266,6 +1277,16 @@ fn draw(
                 frame.ui.id().with(("tab", tab.entity)),
                 egui::Sense::click_and_drag(),
             );
+            let enabled = frame.ui.is_enabled();
+            let is_selected = group.selected == Some(tab.entity);
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::SelectableLabel,
+                    enabled,
+                    is_selected,
+                    &tab.title,
+                )
+            });
             let hovered = response.hovered();
             let pressed = response.is_pointer_button_down_on()
                 && frame
@@ -1873,8 +1894,47 @@ fn corner_target(
     }
 }
 
+/// Whether an area with `tabs` tabs shows its tab bar, in a layout of `areas`.
+fn shows_tab_bar(visibility: TabBarVisibility, tabs: usize, areas: usize) -> bool {
+    match visibility {
+        TabBarVisibility::Always => true,
+        TabBarVisibility::MultipleTabs => tabs > 1,
+        TabBarVisibility::MultipleAreas => areas > 1,
+        TabBarVisibility::MultipleTabsOrAreas => tabs > 1 || areas > 1,
+        TabBarVisibility::Hidden => false,
+    }
+}
+
+/// Whether areas paint their background, in a layout of `areas`.
+fn paints_background(background: AreaBackground, areas: usize) -> bool {
+    match background {
+        AreaBackground::Always => true,
+        AreaBackground::MultipleAreas => areas > 1,
+        AreaBackground::Never => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_lone_panel_can_drop_its_tab_bar_and_background() {
+        use super::{AreaBackground as B, TabBarVisibility as T, *};
+        // (tabs in the area, areas in the layout)
+        let cases = [(1, 1), (2, 1), (1, 2), (2, 2)];
+        let shown = |visibility| cases.map(|(tabs, areas)| shows_tab_bar(visibility, tabs, areas));
+        assert_eq!(shown(T::Always), [true; 4]);
+        assert_eq!(shown(T::MultipleTabs), [false, true, false, true]);
+        assert_eq!(shown(T::MultipleAreas), [false, false, true, true]);
+        // Only one area with one tab is just its panel.
+        assert_eq!(shown(T::MultipleTabsOrAreas), [false, true, true, true]);
+        assert_eq!(shown(T::Hidden), [false; 4]);
+
+        assert!(paints_background(B::Always, 1));
+        assert!(!paints_background(B::MultipleAreas, 1));
+        assert!(paints_background(B::MultipleAreas, 2));
+        assert!(!paints_background(B::Never, 2));
+    }
+
     use super::*;
     use crate::tests::TestPanels;
 

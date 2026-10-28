@@ -121,6 +121,10 @@ struct Registered {
     #[cfg(feature = "persistence")]
     keys_in: fn(&World, StoreId) -> Option<Vec<KeyChord>>,
     #[cfg(feature = "persistence")]
+    keys_at: fn(&World, StoreId) -> Vec<KeyChord>,
+    #[cfg(feature = "persistence")]
+    keys_overridden_above: fn(&World, StoreId) -> Option<StoreId>,
+    #[cfg(feature = "persistence")]
     set_keys_in: SetKeysIn,
 }
 
@@ -481,6 +485,17 @@ impl CommandAppExt for App {
                     .get_in::<Keybinding<C>>(store)
             },
             #[cfg(feature = "persistence")]
+            keys_at: |world, store| {
+                world
+                    .resource::<crate::settings::Settings>()
+                    .get_at::<Keybinding<C>>(store)
+            },
+            #[cfg(feature = "persistence")]
+            keys_overridden_above: |world, store| {
+                world
+                    .resource::<crate::settings::Settings>()
+                    .overridden_above::<Keybinding<C>>(store)
+            },
             set_keys_in: |world, store, chords| match chords {
                 Some(chords) => crate::settings::set_setting::<Keybinding<C>>(world, store, chords),
                 None => crate::settings::clear_setting::<Keybinding<C>>(world, store),
@@ -529,6 +544,27 @@ impl<C: ContextCommand> crate::settings::Setting for Keybinding<C> {
 pub fn keys_in(world: &World, command: &ContextCommandId, store: StoreId) -> Option<Vec<KeyChord>> {
     let registered = world.resource::<CommandRegistry>().get(command)?;
     (registered.keys_in)(world, store)
+}
+
+/// `command`'s keys as one settings layer and those below it give them.
+#[cfg(feature = "persistence")]
+pub fn keys_at(world: &World, command: &ContextCommandId, store: StoreId) -> Vec<KeyChord> {
+    world
+        .resource::<CommandRegistry>()
+        .get(command)
+        .map(|registered| (registered.keys_at)(world, store))
+        .unwrap_or_default()
+}
+
+/// The nearest settings layer above `store` that sets `command`'s keys.
+#[cfg(feature = "persistence")]
+pub fn keys_overridden_above(
+    world: &World,
+    command: &ContextCommandId,
+    store: StoreId,
+) -> Option<StoreId> {
+    let registered = world.resource::<CommandRegistry>().get(command)?;
+    (registered.keys_overridden_above)(world, store)
 }
 
 /// Set `command`'s keys in one settings layer, or with `None` clear them there.

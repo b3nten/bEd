@@ -361,7 +361,7 @@ fn combo(ui: &mut egui::Ui, id: &str, selected: String, options: impl FnOnce(&mu
 /// Bedfont and the installed monospaced families: the editor and terminal
 /// need fixed-width text.
 fn font_family_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
-    let chosen = world.resource::<Settings>().get::<FontFamily>();
+    let chosen = world.resource::<Settings>().get_at::<FontFamily>(layer);
     let installed = world.get_resource::<InstalledFonts>();
     let families: Vec<String> = installed
         .map(|fonts| fonts.families())
@@ -438,8 +438,10 @@ fn row_with_note<S: Setting>(
     edit: impl FnOnce(&mut egui::Ui, &mut S::Value) -> bool,
 ) {
     let settings = world.resource::<Settings>();
-    let mut value = settings.get::<S>();
+    // The layer's own view: what it would be without the layers above it.
+    let mut value = settings.get_at::<S>(layer);
     let set_here = settings.get_in::<S>(layer).is_some();
+    let overridden = settings.overridden_above::<S>(layer);
     let mut reset = false;
     let changed = columns(
         ui,
@@ -450,6 +452,9 @@ fn row_with_note<S: Setting>(
             if let Some(note) = note {
                 ui.weak(note);
             }
+            if let Some(above) = overridden {
+                overridden_note(ui, above);
+            }
         },
     );
     if changed {
@@ -458,6 +463,20 @@ fn row_with_note<S: Setting>(
     if reset {
         let _ = clear_setting::<S>(world, layer);
     }
+}
+
+/// Says that a layer above the one being edited sets this too, so changes
+/// here won't show until it's cleared there.
+pub(crate) fn overridden_note(ui: &mut egui::Ui, above: StoreId) {
+    let (text, hint) = if above == StoreId::of::<WorkbenchStore>() {
+        (
+            "Set differently in this workspace",
+            "This workspace's value is used here. Clear it on the Workspace tab to use this one.",
+        )
+    } else {
+        ("Overridden", "A higher settings layer sets this.")
+    };
+    ui.weak(text).on_hover_text(hint);
 }
 
 /// When `layer` holds a value: a button that clears it (default, or the global

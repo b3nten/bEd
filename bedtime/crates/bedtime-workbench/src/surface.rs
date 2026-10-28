@@ -24,6 +24,8 @@ pub struct WorkbenchSurface {
     /// Suppress panel borders, rounding and gaps when the layout has one area.
     pub single_area_edge_to_edge: bool,
     pub tab_bar: TabBarVisibility,
+    /// Whether areas paint the theme's panel background behind their panel.
+    pub area_background: AreaBackground,
     /// Enable corner handles for splitting, joining and swapping areas.
     /// Disabling them leaves divider resizing and tab dragging available.
     pub drag_corners: bool,
@@ -42,6 +44,7 @@ impl Default for WorkbenchSurface {
             debug: false,
             single_area_edge_to_edge: true,
             tab_bar: TabBarVisibility::Always,
+            area_background: AreaBackground::Always,
             drag_corners: true,
             layout_editing: true,
             panel_creation: true,
@@ -69,8 +72,28 @@ impl WorkbenchSurface {
 pub enum TabBarVisibility {
     #[default]
     Always,
+    /// Show an area's tab bar while it has more than one tab.
     MultipleTabs,
+    /// Show tab bars while the layout has more than one area.
+    MultipleAreas,
+    /// Either: hidden only for a layout of one area with one tab, which is
+    /// then just that panel. Tabs come back as soon as there's something to
+    /// switch between or move between areas.
+    MultipleTabsOrAreas,
     Hidden,
+}
+
+/// When areas paint a background. Backgrounds separate areas from each other;
+/// with one area, leaving it out lets the panel draw straight onto the window
+/// (a terminal under a transparent titlebar, say).
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AreaBackground {
+    #[default]
+    Always,
+    /// Only while the layout has more than one area.
+    MultipleAreas,
+    Never,
 }
 
 /// Required application-owned camera. UiCamera (and its EguiContext) is supplied

@@ -82,6 +82,31 @@ fn later_layers_override_earlier_ones_and_clearing_inherits() {
 }
 
 #[test]
+fn each_layer_has_its_own_view_and_knows_what_overrides_it() {
+    let mut app = app(&MemoryBackend::default(), &MemoryBackend::default());
+    let world = app.world_mut();
+    let settings = world.resource::<Settings>();
+    assert_eq!(settings.get_at::<Indent>(global()), 16.0);
+    assert_eq!(settings.overridden_above::<Indent>(global()), None);
+
+    set_setting::<Indent>(world, global(), 18.0).unwrap();
+    let settings = world.resource::<Settings>();
+    // The workspace inherits the global value.
+    assert_eq!(settings.get_at::<Indent>(workspace()), 18.0);
+
+    set_setting::<Indent>(world, workspace(), 12.0).unwrap();
+    let settings = world.resource::<Settings>();
+    assert_eq!(settings.get::<Indent>(), 12.0);
+    // Editing the global layer starts from its own value, not the workspace's.
+    assert_eq!(settings.get_at::<Indent>(global()), 18.0);
+    assert_eq!(
+        settings.overridden_above::<Indent>(global()),
+        Some(workspace())
+    );
+    assert_eq!(settings.overridden_above::<Indent>(workspace()), None);
+}
+
+#[test]
 fn settings_can_be_limited_to_some_layers() {
     let mut app = app(&MemoryBackend::default(), &MemoryBackend::default());
     let world = app.world_mut();

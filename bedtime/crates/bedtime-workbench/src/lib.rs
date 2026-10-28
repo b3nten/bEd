@@ -44,7 +44,7 @@ mod frontend;
 #[cfg(feature = "ui")]
 mod surface;
 #[cfg(feature = "ui")]
-pub use surface::{TabBarVisibility, WorkbenchCamera, WorkbenchSurface};
+pub use surface::{AreaBackground, TabBarVisibility, WorkbenchCamera, WorkbenchSurface};
 #[cfg(feature = "ui")]
 mod shortcuts;
 #[cfg(feature = "ui")]

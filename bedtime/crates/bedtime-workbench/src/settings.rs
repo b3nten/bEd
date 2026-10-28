@@ -129,6 +129,33 @@ impl Settings {
         self.resolve::<S>().map(|(store, _)| store)
     }
 
+    /// The value as `store` and the layers below it give it, ignoring layers
+    /// above: what a settings editor shows while editing that layer.
+    pub fn get_at<S: Setting>(&self, store: StoreId) -> S::Value {
+        let below = self
+            .layers
+            .iter()
+            .position(|layer| layer.store == store)
+            .map_or(0, |index| index + 1);
+        self.layers[..below]
+            .iter()
+            .rev()
+            .filter(|layer| S::allowed_in(layer.store))
+            .find_map(decode::<S>)
+            .unwrap_or_else(S::default)
+    }
+
+    /// The nearest layer above `store` that sets a value for `S`: changes in
+    /// `store` won't show while it does.
+    pub fn overridden_above<S: Setting>(&self, store: StoreId) -> Option<StoreId> {
+        let index = self.layers.iter().position(|layer| layer.store == store)?;
+        self.layers[index + 1..]
+            .iter()
+            .filter(|layer| S::allowed_in(layer.store))
+            .find(|layer| decode::<S>(layer).is_some())
+            .map(|layer| layer.store)
+    }
+
     /// The value set in one layer, if any.
     pub fn get_in<S: Setting>(&self, store: StoreId) -> Option<S::Value> {
         let layer = self.layers.iter().find(|layer| layer.store == store)?;
