@@ -4,7 +4,7 @@
 //! applies `Appearance` to the theme and workbench surface.
 use crate::{panels::PanelPolicy, workspace::Workspace};
 use bedtime_ui::{
-    UiContext, UsesTheme, egui,
+    BuiltinIcon, UiContext, UsesTheme, egui,
     fonts::{DEFAULT_FAMILY, InstalledFonts},
     theme::FONT_SIZES,
     themes,
@@ -194,17 +194,7 @@ impl Panel for SettingsPanel {
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, _: Entity) {
         egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
             let layer = choose_layer(ui, world);
-            let location = if layer == StoreId::of::<GlobalStore>() {
-                world
-                    .resource::<GlobalLocation>()
-                    .0
-                    .as_ref()
-                    .map(|path| path.join("settings.ron").display().to_string())
-                    .unwrap_or("Not saved: no configuration directory".into())
-            } else {
-                "Saved with this workspace; overrides global settings".into()
-            };
-            ui.label(egui::RichText::new(location).small().weak());
+            ui.label(egui::RichText::new(location(world, layer)).small().weak());
             let stores = world.resource::<Stores>();
             let store_error = if layer == StoreId::of::<GlobalStore>() {
                 stores.error::<GlobalStore>()
@@ -218,70 +208,170 @@ impl Panel for SettingsPanel {
             for error in errors.into_iter().flatten() {
                 ui.colored_label(ui.visuals().error_fg_color, error);
             }
+            ui.add_space(4.0);
             ui.separator();
 
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.heading("Appearance");
-                row::<Theme>(ui, world, layer, |ui, theme| {
-                    let before = *theme;
-                    egui::ComboBox::from_label("Theme")
-                        .selected_text(format!("{theme:?}"))
-                        .show_ui(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    // Leaves room for the value box beside each slider.
+                    ui.spacing_mut().slider_width = CONTROL_WIDTH - 76.0;
+                    section(ui, "Appearance");
+                    row::<Theme>(ui, world, context, layer, "Theme", |ui, theme| {
+                        let before = *theme;
+                        combo(ui, "theme", format!("{theme:?}"), |ui| {
                             ui.selectable_value(theme, ThemeChoice::Dark, "Dark");
                             ui.selectable_value(theme, ThemeChoice::Light, "Light");
                         });
-                    before != *theme
-                });
-                font_family_row(ui, world, layer);
-                row::<FontSize>(ui, world, layer, |ui, size| {
-                    ui.add(
-                        egui::Slider::new(size, FONT_SIZES)
-                            .text("Font size")
-                            .suffix(" pt"),
-                    )
-                    .changed()
-                });
-                ui.separator();
-                row::<WindowOpacity>(ui, world, layer, |ui, opacity| {
-                    ui.add(egui::Slider::new(opacity, OPACITY).text("Window opacity"))
-                        .changed()
-                });
-                if cfg!(target_os = "macos") {
-                    row::<WindowBlurSetting>(ui, world, layer, |ui, blur| {
-                        context.frame(ui).toggle(blur, "Window blur").changed()
+                        before != *theme
                     });
-                }
-                ui.separator();
-                row::<PanelOpacity>(ui, world, layer, |ui, opacity| {
-                    ui.add(egui::Slider::new(opacity, OPACITY).text("Panel opacity"))
-                        .changed()
-                });
-                row::<PanelRadius>(ui, world, layer, |ui, radius| {
-                    ui.add(egui::Slider::new(radius, PANEL_RADIUS).text("Panel radius"))
-                        .changed()
-                });
-                row::<PanelGap>(ui, world, layer, |ui, gap| {
-                    ui.add(egui::Slider::new(gap, PANEL_GAP).text("Panel gap"))
-                        .changed()
-                });
-                if layer == StoreId::of::<GlobalStore>() {
-                    ui.add_space(12.0);
-                    ui.heading("Startup");
-                    row::<ReopenLastWorkspace>(ui, world, layer, |ui, reopen| {
-                        ui.checkbox(reopen, "Reopen the last folder when started without one")
-                            .changed()
+                    font_family_row(ui, world, context, layer);
+                    row::<FontSize>(ui, world, context, layer, "Font size", |ui, size| {
+                        slider(ui, size, FONT_SIZES, " pt", 1)
                     });
-                }
-                ui.add_space(12.0);
-                keys::section(ui, world, layer);
-            });
+
+                    section(ui, "Window");
+                    row::<WindowOpacity>(ui, world, context, layer, "Opacity", |ui, opacity| {
+                        slider(ui, opacity, OPACITY, "", 2)
+                    });
+                    if cfg!(target_os = "macos") {
+                        row::<WindowBlurSetting>(ui, world, context, layer, "Blur", |ui, blur| {
+                            context.frame(ui).toggle(blur, "").changed()
+                        });
+                    }
+
+                    section(ui, "Panels");
+                    row::<PanelOpacity>(ui, world, context, layer, "Opacity", |ui, opacity| {
+                        slider(ui, opacity, OPACITY, "", 2)
+                    });
+                    row::<PanelRadius>(ui, world, context, layer, "Corner radius", |ui, radius| {
+                        slider(ui, radius, PANEL_RADIUS, "", 1)
+                    });
+                    row::<PanelGap>(ui, world, context, layer, "Gap", |ui, gap| {
+                        slider(ui, gap, PANEL_GAP, "", 1)
+                    });
+
+                    if layer == StoreId::of::<GlobalStore>() {
+                        section(ui, "Startup");
+                        row::<ReopenLastWorkspace>(
+                            ui,
+                            world,
+                            context,
+                            layer,
+                            "Reopen last folder",
+                            |ui, reopen| {
+                                let response = context.frame(ui).toggle(reopen, "");
+                                response
+                                    .on_hover_text("When bEd is started without a folder")
+                                    .changed()
+                            },
+                        );
+                    }
+
+                    section(ui, "Keyboard Shortcuts");
+                    keys::section(ui, world, context, layer);
+                });
         });
     }
 }
 
+/// The width of the label column, so every section's controls line up.
+const LABEL_WIDTH: f32 = 180.0;
+/// The width of combo boxes, sliders and key buttons.
+const CONTROL_WIDTH: f32 = 240.0;
+const ROW_HEIGHT: f32 = 34.0;
+
+/// Where the layer being edited is saved, shown under the layer tabs.
+fn location(world: &World, layer: StoreId) -> String {
+    if layer != StoreId::of::<GlobalStore>() {
+        return "Saved with this workspace. Values set here override the global ones.".into();
+    }
+    let Some(directory) = &world.resource::<GlobalLocation>().0 else {
+        return "Not saved: there's no configuration directory".into();
+    };
+    let path = directory.join("settings.ron");
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    match home
+        .as_deref()
+        .and_then(|home| path.strip_prefix(home).ok())
+    {
+        Some(relative) => format!("~/{}", relative.display()),
+        None => path.display().to_string(),
+    }
+}
+
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(14.0);
+    ui.heading(title);
+    ui.add_space(2.0);
+}
+
+/// One row of the panel: a label, a control and then `state`, each in its own
+/// column at a fixed height so rows line up across sections.
+fn columns<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    control: impl FnOnce(&mut egui::Ui) -> R,
+    state: impl FnOnce(&mut egui::Ui),
+) -> R {
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    let row = egui::vec2(ui.available_width(), ROW_HEIGHT);
+    ui.allocate_ui_with_layout(row, layout, |ui| {
+        ui.set_min_height(ROW_HEIGHT);
+        ui.allocate_ui_with_layout(egui::vec2(LABEL_WIDTH, ROW_HEIGHT), layout, |ui| {
+            ui.set_min_size(egui::vec2(LABEL_WIDTH, ROW_HEIGHT));
+            ui.add(egui::Label::new(label).truncate());
+        });
+        let inner = ui
+            .allocate_ui_with_layout(egui::vec2(CONTROL_WIDTH, ROW_HEIGHT), layout, |ui| {
+                ui.set_min_size(egui::vec2(CONTROL_WIDTH, ROW_HEIGHT));
+                control(ui)
+            })
+            .inner;
+        let rest = egui::vec2(ui.available_width(), ROW_HEIGHT);
+        ui.allocate_ui_with_layout(rest, layout, state);
+        inner
+    })
+    .inner
+}
+
+/// A slider and its value box. egui's own value box sits in a nested row
+/// that falls below the row's centre, so they're separate widgets here.
+fn slider(
+    ui: &mut egui::Ui,
+    value: &mut f32,
+    range: RangeInclusive<f32>,
+    suffix: &str,
+    decimals: usize,
+) -> bool {
+    let speed = (range.end() - range.start()) / 200.0;
+    let slider = ui.add(egui::Slider::new(value, range.clone()).show_value(false));
+    let typed = ui.add(
+        egui::DragValue::new(value)
+            .range(range)
+            .speed(speed)
+            .suffix(suffix)
+            .fixed_decimals(decimals),
+    );
+    slider.changed() || typed.changed()
+}
+
+/// A combo box filling the control column.
+fn combo(ui: &mut egui::Ui, id: &str, selected: String, options: impl FnOnce(&mut egui::Ui)) {
+    ui.scope(|ui| {
+        // egui nests the button in a row that starts at this height; at the
+        // default it grows downward, below the row's centre.
+        ui.spacing_mut().interact_size.y = ROW_HEIGHT - 2.0;
+        egui::ComboBox::from_id_salt(id)
+            .width(CONTROL_WIDTH)
+            .selected_text(selected)
+            .show_ui(ui, options);
+    });
+}
+
 /// Bedfont and the installed monospaced families: the editor and terminal
 /// need fixed-width text.
-fn font_family_row(ui: &mut egui::Ui, world: &mut World, layer: StoreId) {
+fn font_family_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
     let chosen = world.resource::<Settings>().get::<FontFamily>();
     let installed = world.get_resource::<InstalledFonts>();
     let families: Vec<String> = installed
@@ -295,24 +385,20 @@ fn font_family_row(ui: &mut egui::Ui, world: &mut World, layer: StoreId) {
         (Some(fonts), _) if fonts.loading() => Some("Loading installed fonts…".to_owned()),
         (Some(fonts), _) if fonts.error().is_some() => fonts.error().map(str::to_owned),
         (_, Some(family)) if !families.contains(family) => {
-            Some(format!("{family} isn't installed; using {DEFAULT_FAMILY}"))
+            Some(format!("Not installed; using {DEFAULT_FAMILY}"))
         }
         _ => None,
     };
-    row::<FontFamily>(ui, world, layer, |ui, family| {
+    row_with_note::<FontFamily>(ui, world, context, layer, "Font", note, |ui, family| {
         let before = family.clone();
-        egui::ComboBox::from_label("Font")
-            .selected_text(family.as_deref().unwrap_or(DEFAULT_FAMILY))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(family, None, DEFAULT_FAMILY);
-                for name in families {
-                    let label = name.clone();
-                    ui.selectable_value(family, Some(name), label);
-                }
-            });
-        if let Some(note) = note {
-            ui.weak(note);
-        }
+        let shown = family.clone().unwrap_or(DEFAULT_FAMILY.into());
+        combo(ui, "font", shown, |ui| {
+            ui.selectable_value(family, None, DEFAULT_FAMILY);
+            for name in families {
+                let label = name.clone();
+                ui.selectable_value(family, Some(name), label);
+            }
+        });
         before != *family
     });
 }
@@ -340,43 +426,72 @@ fn choose_layer(ui: &mut egui::Ui, world: &World) -> StoreId {
     }
 }
 
-/// One setting's editor, showing the resolved value. Changes go to `layer`.
-/// When `layer` holds a value, ↶ clears it so the value is inherited again.
+/// One setting's row, showing the resolved value. Changes go to `layer`.
 fn row<S: Setting>(
     ui: &mut egui::Ui,
     world: &mut World,
+    context: &UiContext<'_>,
     layer: StoreId,
+    label: &str,
+    edit: impl FnOnce(&mut egui::Ui, &mut S::Value) -> bool,
+) {
+    row_with_note::<S>(ui, world, context, layer, label, None, edit);
+}
+
+/// A setting's row with a note after it, such as why its value isn't used.
+fn row_with_note<S: Setting>(
+    ui: &mut egui::Ui,
+    world: &mut World,
+    context: &UiContext<'_>,
+    layer: StoreId,
+    label: &str,
+    note: Option<String>,
     edit: impl FnOnce(&mut egui::Ui, &mut S::Value) -> bool,
 ) {
     let settings = world.resource::<Settings>();
     let mut value = settings.get::<S>();
     let set_here = settings.get_in::<S>(layer).is_some();
-    ui.horizontal(|ui| {
-        if edit(ui, &mut value) {
-            let _ = set_setting::<S>(world, layer, value);
-        }
-        if layer_state(ui, layer, set_here) {
-            let _ = clear_setting::<S>(world, layer);
-        }
-    });
+    let mut reset = false;
+    let changed = columns(
+        ui,
+        label,
+        |ui| edit(ui, &mut value),
+        |ui| {
+            reset = reset_button(ui, context, layer, set_here);
+            if let Some(note) = note {
+                ui.weak(note);
+            }
+        },
+    );
+    if changed {
+        let _ = set_setting::<S>(world, layer, value);
+    }
+    if reset {
+        let _ = clear_setting::<S>(world, layer);
+    }
 }
 
-/// After a setting's editor: ↶ when `layer` holds a value (returns whether it
-/// was clicked), or a note that the value is inherited.
-fn layer_state(ui: &mut egui::Ui, layer: StoreId, set_here: bool) -> bool {
-    let global = layer == StoreId::of::<GlobalStore>();
-    if set_here {
-        let hint = if global {
-            "Reset to default"
-        } else {
-            "Use the global value"
-        };
-        return ui.small_button("↶").on_hover_text(hint).clicked();
+/// When `layer` holds a value: a button that clears it (default, or the global
+/// value for a workspace). Returns whether it was clicked. Rows without one
+/// show the value from below.
+fn reset_button(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    layer: StoreId,
+    set_here: bool,
+) -> bool {
+    if !set_here {
+        return false;
     }
-    if !global {
-        ui.weak("inherited");
-    }
-    false
+    let hint = if layer == StoreId::of::<GlobalStore>() {
+        "Reset to default"
+    } else {
+        "Use the global value"
+    };
+    let mut frame = context.frame(ui);
+    let response = frame.icon_button_sized(BuiltinIcon::RotateCcw, 14.0);
+    frame.tooltip(&response, hint);
+    response.clicked()
 }
 
 #[cfg(test)]

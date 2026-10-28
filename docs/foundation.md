@@ -1,7 +1,7 @@
 # Foundation: stores, persistence, settings, workspaces, commands
 
-Status (2026-10-27): **steps 1–6 built** (stores, persistence, settings,
-workspaces, commands and keybindings, menus and toolbar, fonts). Update this file as decisions change during the build.
+Status (2026-10-27): **steps 1–7 built** (stores, persistence, settings,
+workspaces, commands and keybindings, menus and toolbar, fonts, automation). Update this file as decisions change during the build.
 
 The goal is a foundation solid enough that everything after it is "bring in a
 plugin": file tree, editor, viewers, terminal. Those plugins should only need to
@@ -467,6 +467,40 @@ bed:
   the installed monospaced families, and notes when fonts are loading, when
   discovery failed, or when the chosen family isn't installed.
 
+### Step 7: automation
+
+Scripts drive the real app over the Bevy Remote Protocol, with no automation
+code in the app or plugins beyond adding one plugin.
+
+- `bedtime-automation`: `AutomationPlugin::from_env()`. With the crate's
+  `enabled` feature and `BEDTIME_AUTOMATION_PORT` set, it adds Bevy's
+  `RemotePlugin` (so `world.query`, `world.get_resources`... work on reflected
+  types) and these methods: `bedtime.status` (frame, queued steps, window size
+  and scale, finished screenshots, errors), `bedtime.input` (steps run one per
+  frame: move, press/release, key_down/key_up by `KeyCode`, text, scroll,
+  wait), `bedtime.ui` (the AccessKit tree: role, label, value, rect in logical
+  pixels, state), `bedtime.screenshot` (the window as rendered; written then
+  renamed, so a listed file is complete), `bedtime.invoke` (a command by key),
+  `bedtime.exit`. Otherwise the plugin does nothing.
+- Unfocused: `AutomationPlugin::active()` tells the app to open its window with
+  `focused: false` (on macOS winit then doesn't activate the app). Each frame
+  the plugin marks the window focused without change detection and restores it
+  in `PostUpdate`, before winit applies window changes in `Last`, so shortcuts
+  and egui behave as if focused while the user keeps working elsewhere.
+- bedtime-ui `accessibility` feature: while `AccessibilityTree` exists, the
+  runtime enables AccessKit and records each frame's tree.
+- bed: `automation` feature (`bedtime-automation/enabled`); `main` adds the
+  plugin and uses `active()` for the window's focus. Nothing else.
+- `tools/bed.py` (stdlib only): `Bed(folder, settings={key: ron})` launches
+  with a temporary config dir and free port; `click(label)`, `key(chord)`,
+  `type`, `scroll`, `drag`, `invoke`, `find`/`exists`/`widgets`,
+  `screenshot(name)`, `call(method, params)` for anything else; `close()`
+  exits normally. `python3 tools/bed.py run [paths]` runs saved scripts in
+  `tests/automation/` (alias `cargo test-automation`). Output in
+  `target/automation/`.
+- Rule: when a script can't see something, reflect it or label its widget;
+  don't add app-specific methods.
+
 ## Build order
 
 Each step depends on the one before.
@@ -481,6 +515,7 @@ Each step depends on the one before.
    handler scope).
 5. Menus and the toolbar.
 6. Fonts: the theme's family, applied by bedtime-ui; installed fonts.
+7. Automation: scripts drive the real app and take screenshots.
 
 ## Open questions
 

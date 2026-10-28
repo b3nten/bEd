@@ -25,6 +25,13 @@ use std::sync::Mutex;
 pub use theme::{Theme, themes};
 pub use viewport::{UiViewport, viewport_image};
 
+/// While this resource exists, each frame's AccessKit tree (every widget's
+/// role, label and bounds in points) is recorded in it. egui builds the whole
+/// tree each frame.
+#[cfg(feature = "accessibility")]
+#[derive(Resource, Default)]
+pub struct AccessibilityTree(pub Option<egui::accesskit::TreeUpdate>);
+
 /// bEd's selected text/caret cycle: three sine waves, 120 degrees apart.
 /// Repaint only while a consumer is visible; reduced motion uses the theme accent.
 pub fn rainbow_ink(ui: &egui::Ui, motion: MotionPolicy) -> egui::Color32 {
@@ -397,13 +404,21 @@ impl<'services> UiFrame<'services> {
 
     /// Fixed artwork size in points; button padding still comes from egui spacing.
     pub fn icon_button_sized(&mut self, icon: impl Into<IconSource>, side: f32) -> egui::Response {
+        let icon = icon.into();
         let size = egui::vec2(side, side);
         let pixels = (side * self.ui.ctx().pixels_per_point()).ceil().max(1.0) as u32;
-        let texture = self.icons.lock().unwrap().texture(&icon.into(), pixels);
+        let texture = self.icons.lock().unwrap().texture(&icon, pixels);
         let padding = self.ui.spacing().button_padding;
         let (rect, response) = self
             .ui
             .allocate_exact_size(size + padding * 2.0, egui::Sense::click());
+        // Accessibility (and scripts) name a built-in icon's button by its key.
+        let enabled = self.ui.is_enabled();
+        let name = match &icon {
+            IconSource::Builtin(icon) => icon.key(),
+            IconSource::Asset(_) => "",
+        };
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
         let t = self.animate_bool(
             response.id.with("icon-hover"),
             response.hovered() || response.has_focus(),
@@ -460,6 +475,10 @@ impl<'services> UiFrame<'services> {
         if response.clicked() {
             *value = !*value;
         }
+        let enabled = self.ui.is_enabled();
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, *value, label)
+        });
         let t = motion::scalar(
             self.ui.ctx(),
             response.id.with("toggle-motion"),

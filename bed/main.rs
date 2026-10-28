@@ -35,12 +35,15 @@ fn main() -> AppExit {
     let title = opened.workspace.as_ref().map_or("bEd".into(), |workspace| {
         format!("{} — bEd", workspace.name())
     });
+    let automation = bedtime_automation::AutomationPlugin::from_env();
     let mut app = App::new();
     app.add_plugins((
         DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title,
                 resolution: (960, 640).into(),
+                // A script is driving: don't take focus from what you're doing.
+                focused: !automation.active(),
                 titlebar_show_title: false,
                 titlebar_transparent: true,
                 fullsize_content_view: true,
@@ -59,6 +62,7 @@ fn main() -> AppExit {
         WorkbenchPlugin,
         settings::SettingsPlugin,
         menus::MenusPlugin,
+        automation,
     ))
     .insert_resource(recent)
     // Look for installed fonts now, so Settings can list them when opened.

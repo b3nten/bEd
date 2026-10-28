@@ -31,6 +31,7 @@ icon_catalog! {
     ArrowDownToLine => "arrow-down-to-line",
     ArrowUpFromLine => "arrow-up-from-line",
     RefreshCw => "refresh-cw",
+    RotateCcw => "rotate-ccw",
     SplitRight => "split_right",
     SplitDown => "split_down",
     ViewerImage => "viewer-image",

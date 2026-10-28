@@ -4,6 +4,7 @@ members = [
     "bedtime/crates/bedtime-clipboard",
     "bedtime/crates/bedtime-document",
     "bedtime/crates/bedtime-ui",
+    "bedtime/crates/bedtime-automation",
     "bedtime/crates/bedtime-workbench",
 ]
 default-members = ["bed"]
@@ -23,6 +24,7 @@ opt-level = 1
 bedtime-document = { path = "bedtime/crates/bedtime-document" }
 bedtime-clipboard = { path = "bedtime/crates/bedtime-clipboard", default-features = false }
 bedtime-ui = { path = "bedtime/crates/bedtime-ui" }
+bedtime-automation = { path = "bedtime/crates/bedtime-automation" }
 bedtime-workbench = { path = "bedtime/crates/bedtime-workbench" }
 wgpu = "=30.0.1"
 bevy = { version = "=0.20.0", default-features = false }

@@ -2,5 +2,5 @@
 bed-test = "test --locked -p bed --features automation"
 bedtime-test = "test --locked --workspace --exclude bed --all-features"
 test-full = "test --locked --workspace --all-features"
-test-automation = "!python3 bedtime/tools/smoke_bed.py"
+test-automation = "!python3 tools/bed.py run"
 test-native = "!python3 scripts/run-native-smokes.py"

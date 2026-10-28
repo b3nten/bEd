@@ -1,15 +1,19 @@
 //! The Keyboard Shortcuts section: every registered command and its keys in
 //! the layer being edited. Click a command's keys, then press the new ones.
-use super::layer_state;
-use bedtime_ui::egui;
+use super::{CONTROL_WIDTH, columns, reset_button};
+use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::{
     CommandRegistry, ContextCommandId, KeyChord, Keybindings, Modifiers, keys_in,
     persistence::StoreId, set_keys_in,
 };
 use bevy::prelude::*;
 
-pub(super) fn section(ui: &mut egui::Ui, world: &mut World, layer: StoreId) {
-    ui.heading("Keyboard Shortcuts");
+pub(super) fn section(
+    ui: &mut egui::Ui,
+    world: &mut World,
+    context: &UiContext<'_>,
+    layer: StoreId,
+) {
     let commands: Vec<_> = world
         .resource::<CommandRegistry>()
         .commands()
@@ -17,50 +21,56 @@ pub(super) fn section(ui: &mut egui::Ui, world: &mut World, layer: StoreId) {
         .collect();
     let recording_id = ui.id().with("recording-keys");
     let mut recording: Option<ContextCommandId> = ui.data(|data| data.get_temp(recording_id));
-    egui::Grid::new("keyboard-shortcuts")
-        .num_columns(2)
-        .striped(true)
-        .show(ui, |ui| {
-            for (command, label) in commands {
-                ui.label(label);
-                ui.horizontal(|ui| {
-                    if recording.as_ref() == Some(&command) {
-                        let cancel = ui.button("Press keys… (Esc cancels)").clicked();
-                        match pressed_chord(world) {
-                            Some(Ok(chord)) => {
-                                let _ = set_keys_in(world, &command, layer, Some(vec![chord]));
-                                recording = None;
-                            }
-                            Some(Err(())) => recording = None,
-                            None if cancel => recording = None,
-                            None => {}
+    for (command, label) in commands {
+        let set_here = keys_in(world, &command, layer).is_some();
+        let shared = shared_with(world, &command);
+        let mut reset = false;
+        columns(
+            ui,
+            label,
+            |ui| {
+                let size = egui::vec2(CONTROL_WIDTH, 0.0);
+                if recording.as_ref() == Some(&command) {
+                    let cancel = ui
+                        .add(egui::Button::new("Press keys…").min_size(size))
+                        .on_hover_text("Escape or click to cancel")
+                        .clicked();
+                    match pressed_chord(world) {
+                        Some(Ok(chord)) => {
+                            let _ = set_keys_in(world, &command, layer, Some(vec![chord]));
+                            recording = None;
                         }
+                        Some(Err(())) => recording = None,
+                        None if cancel => recording = None,
+                        None => {}
+                    }
+                } else {
+                    let keys = world.resource::<Keybindings>().keys(&command);
+                    let text = if keys.is_empty() {
+                        egui::RichText::new("Not set").weak()
                     } else {
-                        let keys = world.resource::<Keybindings>().keys(&command);
-                        let text = if keys.is_empty() {
-                            "None".to_owned()
-                        } else {
-                            keys.iter()
-                                .map(|chord| chord.label())
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        };
-                        let response = ui.button(text).on_hover_text("Click to change");
-                        if response.clicked() {
-                            recording = Some(command.clone());
-                        }
+                        let labels: Vec<_> = keys.iter().map(|chord| chord.label()).collect();
+                        egui::RichText::new(labels.join(", "))
+                    };
+                    let response = ui
+                        .add(egui::Button::new(text).min_size(size))
+                        .on_hover_text("Click, then press the new keys");
+                    if response.clicked() {
+                        recording = Some(command.clone());
                     }
-                    let set_here = keys_in(world, &command, layer).is_some();
-                    if layer_state(ui, layer, set_here) {
-                        let _ = set_keys_in(world, &command, layer, None);
-                    }
-                    if let Some(note) = shared_with(world, &command) {
-                        ui.weak(note);
-                    }
-                });
-                ui.end_row();
-            }
-        });
+                }
+            },
+            |ui| {
+                reset = reset_button(ui, context, layer, set_here);
+                if let Some(note) = shared {
+                    ui.weak(note);
+                }
+            },
+        );
+        if reset {
+            let _ = set_keys_in(world, &command, layer, None);
+        }
+    }
     ui.data_mut(|data| match recording {
         Some(command) => {
             data.insert_temp(recording_id, command);

@@ -9,6 +9,8 @@ description = "ECS presentation, themes and egui rendering for Bevy"
 [features]
 # `InstalledFonts`: discover installed font families.
 system-fonts = ["dep:fontdb"]
+# `AccessibilityTree`: egui's AccessKit tree, recorded each frame.
+accessibility = []
 
 [dependencies]
 bedtime-clipboard.workspace = true

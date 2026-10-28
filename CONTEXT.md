@@ -31,7 +31,9 @@ need to write this again?* If yes, it probably belongs in Bedtime.
   commands (`menus.rs`). Run `bed [folder]`.
 - `bed_old/` — the previous app, kept as reference only. Not in the workspace.
 - `bedtime/crates/` — the maintained library: `bedtime-workbench`, `bedtime-ui`,
-  `bedtime-document`, `bedtime-clipboard`.
+  `bedtime-document`, `bedtime-clipboard`, `bedtime-automation`.
+- `tools/bed.py` — drive bed from Python scripts (launch unfocused, click, type,
+  read widgets, screenshot). Saved scripts: `tests/automation/`.
 - `bedtime_old/` — the other plugins (editor, filesystem, filetree, terminal, hex,
   image, model, LSP, git, tree-sitter, grammars, mascots, automation) plus the old
   smoke-test tools and fixtures. Reference only, not in the workspace, and they
@@ -54,6 +56,10 @@ cargo check -p bed
 cargo run -p bed
 cargo test -p bedtime-workbench --all-features   # or whichever crate changed
 ```
+
+Drive the real app: `python3 tools/bed.py run` (saved scripts), or write a
+script with `from bed import Bed` and run it with `PYTHONPATH=tools`.
+Screenshots and logs land in `target/automation/`. The window opens unfocused.
 
 Use `--all-features`: many integration tests (editor, hex, LSP workbench) are
 behind features and silently don't run otherwise.
@@ -250,11 +256,24 @@ Each step should produce a usable app. We can reorder at any point.
   menus, Quit, Open Folder…, Open Recent, toolbar), recent folders, reopen last
   workspace. See "Step 5" in [docs/foundation.md](docs/foundation.md).
 
-- **Step 5.6 (fonts)**, implemented 2026-10-27 and awaiting review.
+- **Step 5.6 (fonts)**, committed 2026-10-27.
   bedtime-ui: `Metrics::font_family`, fonts applied by the UI runtime,
   `InstalledFonts` (feature `system-fonts`), `theme::FONT_SIZES`. bed:
   `appearance.font_family` setting (any layer) and a Font row listing installed
   monospaced families. See "Step 6" in [docs/foundation.md](docs/foundation.md).
+
+- **Step 5.7 (automation)**, implemented 2026-10-27 and awaiting review.
+  `bedtime-automation` (BRP methods: status, input, ui, screenshot, invoke,
+  exit; does nothing unless its `enabled` feature is on and
+  `BEDTIME_AUTOMATION_PORT` is set). bedtime-ui `accessibility` feature records
+  the AccessKit tree. bed: feature `automation`, unfocused window when driven.
+  `tools/bed.py` client and runner; `tests/automation/settings.py`. See
+  "Step 7" in [docs/foundation.md](docs/foundation.md). Then the Settings
+  panel, reviewed from screenshots: label / control / reset columns at a fixed
+  row height, sections (Appearance, Window, Panels, Startup, Keyboard
+  Shortcuts), reset icon instead of the ↶ glyph Bedfont lacks, toggles for
+  on/off, no "inherited" notes. bedtime-ui toggles and icon buttons now report
+  accessibility info.
 
 ## Decisions
 

@@ -10,7 +10,12 @@ description = "Minimal Bevy application with a Bedtime workbench"
 name = "bed"
 path = "main.rs"
 
+[features]
+# Let scripts drive the app (tools/bed.py).
+automation = ["bedtime-automation/enabled"]
+
 [dependencies]
+bedtime-automation.workspace = true
 bedtime-ui = { workspace = true, features = ["system-fonts"] }
 bedtime-workbench = { workspace = true, features = ["persistence"] }
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }

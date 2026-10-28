@@ -220,6 +220,12 @@ pub(crate) fn draw(world: &mut World) {
     let mut active_animations = 0;
     let text_before = ctx.text_edit_focused();
     let modal_before = ctx.any_popup_open() || ctx.memory(|m| m.top_modal_layer().is_some());
+    #[cfg(feature = "accessibility")]
+    let accessible = world.contains_resource::<AccessibilityTree>();
+    #[cfg(feature = "accessibility")]
+    if accessible {
+        ctx.enable_accesskit();
+    }
     let mut output = ctx.run_ui(raw, |ui| {
         if world.get::<UiBackground>(surface) == Some(&UiBackground::Theme) {
             ui.painter()
@@ -253,6 +259,11 @@ pub(crate) fn draw(world: &mut World) {
         runtime.icons.get_mut().unwrap().clear();
         world.insert_resource(runtime);
         return;
+    }
+    #[cfg(feature = "accessibility")]
+    if accessible {
+        world.resource_mut::<AccessibilityTree>().0 =
+            output.platform_output.accesskit_update.take();
     }
     for command in &output.platform_output.commands {
         if let egui::OutputCommand::CopyText(text) = command {
