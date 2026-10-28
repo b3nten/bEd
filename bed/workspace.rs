@@ -16,6 +16,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod panel;
+pub use panel::{OpenWorkspaces, WorkspacesPanel, WorkspacesPanelPlugin};
+
 const RECENT_ENTRY: &str = "recent";
 const RECENT_LIMIT: usize = 10;
 
@@ -133,9 +136,32 @@ impl RecentWorkspaces {
         self.0.retain(|path| path != root);
         self.0.insert(0, root.to_owned());
         self.0.truncate(RECENT_LIMIT);
+        self.write(store)
+    }
+
+    /// Take `root` off the list and save it.
+    pub fn forget(&mut self, store: &dyn StoreBackend, root: &Path) -> Result<(), String> {
+        self.0.retain(|path| path != root);
+        self.write(store)
+    }
+
+    fn write(&self, store: &dyn StoreBackend) -> Result<(), String> {
         let text = ron::ser::to_string_pretty(&self.0, default()).map_err(|e| e.to_string())?;
         store.write(RECENT_ENTRY, text.as_bytes())
     }
+}
+
+/// Delete `workspace`'s saved layout and settings (never the folder itself),
+/// unless another instance has it open. Its lock is held while deleting, so no
+/// instance opens it halfway through.
+pub fn delete(workspace: &Workspace, config: &Path) -> Result<(), String> {
+    let directory = workspace.store_directory(config);
+    if !directory.exists() {
+        return Ok(());
+    }
+    let _lock = lock(&directory, workspace)?
+        .ok_or_else(|| format!("{} is open in another bEd window.", workspace.name()))?;
+    fs::remove_dir_all(&directory).map_err(|error| format!("{}: {error}", directory.display()))
 }
 
 /// The workspace this instance opened, and how it went.
@@ -367,6 +393,29 @@ mod tests {
         let missing = open(Start::Folder(root.join("deleted")), false);
         assert!(missing.workspace.default);
         drop((skipped, missing));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_workspace_removes_its_store_but_not_the_folder() {
+        let root = scratch("delete");
+        let (config, project) = (root.join("config"), root.join("project"));
+        fs::create_dir_all(&project).unwrap();
+        let recent = RecentWorkspaces::default();
+        let opened = open(Start::Folder(project.clone()), Some(&config), &recent, false);
+        let directory = opened.workspace.store_directory(&config);
+        assert!(directory.is_dir());
+
+        // Open (here or in another window): refused.
+        assert!(delete(&opened.workspace, &config).is_err());
+        assert!(directory.is_dir());
+        drop(opened.lock);
+
+        delete(&opened.workspace, &config).unwrap();
+        assert!(!directory.exists());
+        assert!(project.is_dir());
+        // Already gone is fine.
+        delete(&opened.workspace, &config).unwrap();
         fs::remove_dir_all(root).unwrap();
     }
 

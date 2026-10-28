@@ -2,11 +2,15 @@
 //! ordinary workbench layout saved with the workspace; `LayoutSlot` says which
 //! number it is. A slot's layout is made the first time it's opened, from that
 //! slot's default: a template saved in the global store with "Save Layout as
-//! Default", or a single empty area.
-use crate::settings::GlobalStore;
+//! Default", or a single empty area. The default workspace's layout 1 starts
+//! with the Workspaces panel instead.
+use crate::{
+    settings::GlobalStore,
+    workspace::{Workspace, WorkspacesPanel},
+};
 use bedtime_workbench::{
     CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, Handler,
-    KeyChord, Layout, Workbench, active_layout, layouts,
+    KeyChord, Layout, PanelFactory, Workbench, active_layout, layouts,
     persistence::{
         LayoutTemplate, ReflectPersist, StoreAppExt, capture_layout, instantiate_layout,
     },
@@ -113,7 +117,15 @@ fn create(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
     let layout = match default {
         Some(template) => instantiate_layout(world, &template)
             .map_err(|error| format!("{}'s default can't be used: {error}", slot.name()))?,
-        None => Workbench::new(world).create_layout(slot.name())?,
+        None => {
+            let layout = Workbench::new(world).create_layout(slot.name())?;
+            let default_workspace = world.get_resource::<Workspace>().is_some_and(|w| w.default);
+            if slot == LayoutSlot(0) && default_workspace {
+                let area = Workbench::new(world).destination_area(layout)?;
+                (PanelFactory::of::<WorkspacesPanel>().create)(world, area);
+            }
+            layout
+        }
     };
     world.entity_mut(layout).insert(slot);
     world.get_mut::<Layout>(layout).unwrap().name = slot.name();
@@ -220,7 +232,10 @@ mod tests {
         assert_eq!(current(world), Some(LayoutSlot(2)));
         assert_eq!(layouts(world).len(), 2);
         assert_eq!(settings_panels(world), 0);
-        let name = &world.get::<Layout>(active_layout(world).unwrap()).unwrap().name;
+        let name = &world
+            .get::<Layout>(active_layout(world).unwrap())
+            .unwrap()
+            .name;
         assert_eq!(name, "Layout 3");
 
         run::<UseLayout<0>>(&mut app);

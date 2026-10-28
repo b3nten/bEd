@@ -265,8 +265,9 @@ Each step should produce a usable app. We can reorder at any point.
 - **Step 5.8 (relaunch spike)**, committed 2026-10-27: `vendor/bevy_winit`
   rebuilds the App in the same window. **Step 5.9 (default workspace and
   switching)**, committed 2026-10-27. **Step 5.10 (layout templates and five
-  layouts)**, implemented 2026-10-27 and awaiting review. See "Switching
-  workspace", "Step 8" and "Step 9" in [docs/foundation.md](docs/foundation.md).
+  layouts)**, committed 2026-10-27. **Step 5.11 (Workspaces panel)**,
+  implemented 2026-10-27 and awaiting review. See "Switching workspace",
+  "Step 8", "Step 9" and "Step 10" in [docs/foundation.md](docs/foundation.md).
 
 - **Step 5.7 (automation)**, implemented 2026-10-27 and awaiting review.
   `bedtime-automation` (BRP methods: status, input, ui, screenshot, invoke,

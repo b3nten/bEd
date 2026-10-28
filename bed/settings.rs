@@ -277,9 +277,9 @@ impl Panel for SettingsPanel {
 }
 
 /// The width of the label column, so every section's controls line up.
-const LABEL_WIDTH: f32 = 180.0;
+pub(crate) const LABEL_WIDTH: f32 = 180.0;
 /// The width of combo boxes, sliders and key buttons.
-const CONTROL_WIDTH: f32 = 240.0;
+pub(crate) const CONTROL_WIDTH: f32 = 240.0;
 const ROW_HEIGHT: f32 = 34.0;
 
 /// Where the layer being edited is saved, shown under the layer tabs.
@@ -301,7 +301,7 @@ fn location(world: &World, layer: StoreId) -> String {
     }
 }
 
-fn section(ui: &mut egui::Ui, title: &str) {
+pub(crate) fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(14.0);
     ui.heading(title);
     ui.add_space(2.0);
@@ -309,7 +309,7 @@ fn section(ui: &mut egui::Ui, title: &str) {
 
 /// One row of the panel: a label, a control and then `state`, each in its own
 /// column at a fixed height so rows line up across sections.
-fn columns<R>(
+pub(crate) fn columns<R>(
     ui: &mut egui::Ui,
     label: &str,
     control: impl FnOnce(&mut egui::Ui) -> R,
@@ -406,18 +406,17 @@ fn font_family_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
 
 /// Which layer the panel edits: global, or (with a folder open) the workspace.
 fn choose_layer(ui: &mut egui::Ui, world: &World) -> StoreId {
-    let Some(workspace) = world.get_resource::<Workspace>() else {
+    let Some(workspace) = world
+        .get_resource::<Workspace>()
+        .filter(|workspace| !workspace.default)
+    else {
         return StoreId::of::<GlobalStore>();
     };
     let id = ui.id().with("settings-layer");
     let mut editing_workspace = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
     ui.horizontal(|ui| {
         ui.selectable_value(&mut editing_workspace, false, "Global");
-        let label = if workspace.default {
-            workspace.name()
-        } else {
-            format!("Workspace: {}", workspace.name())
-        };
+        let label = format!("Workspace: {}", workspace.name());
         ui.selectable_value(&mut editing_workspace, true, label);
     });
     ui.data_mut(|data| data.insert_temp(id, editing_workspace));
@@ -429,7 +428,7 @@ fn choose_layer(ui: &mut egui::Ui, world: &World) -> StoreId {
 }
 
 /// One setting's row, showing the resolved value. Changes go to `layer`.
-fn row<S: Setting>(
+pub(crate) fn row<S: Setting>(
     ui: &mut egui::Ui,
     world: &mut World,
     context: &UiContext<'_>,

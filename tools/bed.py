@@ -301,13 +301,13 @@ class Bed:
     def relaunched(self, action, timeout=10):
         """Run `action`, which switches workspace, and wait until the next App
         (rebuilt in the same window) is drawing. Returns the seconds taken."""
-        frame = self.status()["frame"]
+        launch = self.status()["launch"]
         start = time.monotonic()
         action()
         while time.monotonic() - start < timeout:
             try:
                 status = self.status()
-                if status["frame"] < frame and status["frame"] >= 3 and self.widgets():
+                if status["launch"] > launch and status["frame"] >= 3 and self.widgets():
                     return time.monotonic() - start
             except (urllib.error.URLError, ConnectionError, AutomationError):
                 pass

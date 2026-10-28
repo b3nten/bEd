@@ -566,7 +566,26 @@ bed (`bed/layouts.rs`):
 - Layout menu: Layout 1…5, Save Layout as Default, Reset Layout.
 - `tests/automation/layouts.py`: slots keep their panels, and a saved default
   builds layout 1 in another workspace.
-- Next: the Workspaces panel as the default workspace's built-in layout 1.
+
+### Step 10: the Workspaces panel
+
+The default workspace isn't treated as a workspace you manage: it has no
+settings layer (Settings shows only Global there) and isn't listed. Its layout
+is still saved.
+
+`bed/workspace/panel.rs`: `WorkspacesPanel` (View → Workspaces,
+`app.open_workspaces`), a list of folder workspaces: recent folders, then any
+other folder with a saved store (its `path.txt`). Each row: name, path, then
+"This window" / "Open in another window" / "Folder missing" or Open (switches
+this window), and Delete. Delete asks to confirm, then `workspace::delete`
+removes the folder's store (never the folder) while holding its lock, and
+takes it off the recent list; it's unavailable for this window's workspace or
+one open elsewhere. Looked up again about once a second while drawn. The
+default workspace's layout 1, without a saved default, starts with this panel.
+
+- bedtime-automation: `status` reports `launch`, which App of the process this
+  is; `bed.relaunched()` waits for it to change (the frame count alone raced
+  right after startup).
 
 ## Build order
 

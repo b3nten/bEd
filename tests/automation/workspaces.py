@@ -16,7 +16,8 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     # The default workspace has its own layout: Settings isn't open there.
     assert not bed.exists("Appearance")
     bed.invoke("app.open_settings")
-    assert bed.exists("Default workspace")
+    # Only the global layer: the default workspace has no settings of its own.
+    assert bed.exists("Appearance") and not bed.exists(contains="Workspace:")
     stores = sorted(p.name for p in (bed.config / "workspaces").iterdir())
     assert "default" in stores and len(stores) == 2, stores
 

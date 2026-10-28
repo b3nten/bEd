@@ -79,6 +79,7 @@ pub fn app(start: Start) -> App {
         settings::SettingsPlugin,
         menus::MenusPlugin,
         layouts::LayoutsPlugin,
+        workspace::WorkspacesPanelPlugin,
         automation,
     ))
     .insert_resource(recent)
@@ -98,9 +99,12 @@ fn stores(app: &mut App, config: Option<&Path>, global: Option<PathBuf>, opened:
     }
     app.insert_resource(settings::GlobalLocation(global));
     let workspace = opened.workspace;
-    // Workspace settings override global ones. Without a claimed store they
-    // still apply, but only in memory.
-    app.add_settings_layer::<WorkbenchStore>();
+    // A folder's settings override global ones. Without a claimed store they
+    // still apply, but only in memory. The default workspace has none: it's
+    // just where bed is without a project.
+    if !workspace.default {
+        app.add_settings_layer::<WorkbenchStore>();
+    }
     if let (Some(lock), Some(config)) = (opened.lock, config) {
         app.add_store::<WorkbenchStore>(DirectoryStore::new(workspace.store_directory(config)))
             .insert_resource(lock);

@@ -5,7 +5,7 @@
 use crate::{
     layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
     settings::{OpenSettings, SettingsPanel},
-    workspace::{self, RecentWorkspaces, Start, Workspace},
+    workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
 };
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::{
@@ -138,6 +138,7 @@ fn compose_menus(mut commands: Commands) {
         Invokes::of::<OpenSettings>(),
         InMenu(view),
     ));
+    commands.spawn((MenuItem::command::<OpenWorkspaces>(), InMenu(view)));
     commands.spawn((MenuItem::command::<UseLayout<0>>(), InMenu(layout)));
     commands.spawn((MenuItem::command::<UseLayout<1>>(), InMenu(layout)));
     commands.spawn((MenuItem::command::<UseLayout<2>>(), InMenu(layout)));
@@ -250,7 +251,7 @@ fn other_recent(world: &World) -> Option<PathBuf> {
 }
 
 /// Switch this window to `start`'s workspace, or explain why not.
-fn switch(world: &mut World, start: Start) {
+pub fn switch(world: &mut World, start: Start) {
     if let Err(error) = workspace::switch(world, start) {
         request_error_dialog(
             world,
