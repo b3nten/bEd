@@ -96,9 +96,10 @@ class AutomationError(Exception):
 
 class Bed:
     """A running bEd. `folder` opens a workspace; `settings` maps setting keys
-    to RON values written to the global layer before launch."""
+    to RON values written to the global layer before launch; `recent` lists
+    folders for the recent list."""
 
-    def __init__(self, folder=None, *, settings=None, name=None, timeout=30, build_first=True):
+    def __init__(self, folder=None, *, settings=None, recent=None, name=None, timeout=30, build_first=True):
         if build_first:
             build()
         self.name = name or Path(sys.argv[0]).stem or "bed"
@@ -110,6 +111,11 @@ class Bed:
         (global_dir / "settings.ron").write_text(
             "{\n" + "".join(f"    {json.dumps(k)}: {v},\n" for k, v in values.items()) + "}\n"
         )
+        if recent:
+            folders = [str(Path(folder).resolve()) for folder in recent]
+            (global_dir / "recent.ron").write_text(
+                "[\n" + "".join(f"    {json.dumps(f)},\n" for f in folders) + "]\n"
+            )
         self.port = free_port()
         self._id = 0
         self.log_path = OUTPUT / f"{self.name}.log"

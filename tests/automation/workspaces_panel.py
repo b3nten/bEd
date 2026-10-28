@@ -1,5 +1,6 @@
 """The default workspace opens on the Workspaces panel: folder workspaces only,
-to open in this window or delete."""
+one row each; clicking a row opens it in this window, its trash button deletes
+the workspace's saved data after asking."""
 import tempfile
 from pathlib import Path
 from bed import Bed
@@ -20,9 +21,10 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     assert len(folder_stores()) == 1
     bed.key("Primary+1")
     bed.invoke("app.open_workspaces")
-    bed.click("Delete")
+    bed.click(f"Delete {name}")
+    assert bed.exists("Delete its saved layout and settings?")
     bed.screenshot("workspaces-panel-confirm")
-    bed.click("Delete saved layout and settings")
+    bed.click("Delete")
     bed.wait(5)
     assert folder_stores() == [], folder_stores()
     assert Path(folder).is_dir(), "the folder itself must stay"

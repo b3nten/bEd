@@ -3,12 +3,8 @@
 //! folder, never the folder. The default workspace isn't listed: it's where bed
 //! is without a project, not a workspace you manage.
 use super::{RecentWorkspaces, Start, Workspace, available, delete};
-use crate::{
-    menus::switch,
-    panels::PanelPolicy,
-    settings::{CONTROL_WIDTH, GlobalLocation, columns},
-};
-use bedtime_ui::{UiContext, egui};
+use crate::{menus::switch, panels::PanelPolicy, settings::GlobalLocation};
+use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::{
     CommandAppExt, ContextCommand, ContextCommandInvocation, ContextCommandResult, ErrorDialog,
     Handler, Panel, PanelFactory, PanelInstance, persistence::DirectoryStore,
@@ -115,7 +111,7 @@ enum Action {
 impl Panel for WorkspacesPanel {
     const LABEL: &'static str = "Workspaces";
 
-    fn draw(ui: &mut egui::Ui, world: &mut World, _: &UiContext<'_>, _: Entity) {
+    fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, _: Entity) {
         let config = crate::config_directory();
         let stale = world
             .resource::<KnownWorkspaces>()
@@ -132,64 +128,47 @@ impl Panel for WorkspacesPanel {
         let confirming_id = ui.id().with("confirm-delete");
         let mut confirming: Option<PathBuf> = ui.data(|data| data.get_temp(confirming_id));
         let mut action = None;
-        egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
-            if list.is_empty() {
-                ui.weak("No workspaces yet. Open a folder to make one.");
-                return;
-            }
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    for known in &list {
-                        let here = !current.default && known.folder == current.root;
-                        let name = known.folder.file_name().map_or_else(
-                            || known.folder.display().to_string(),
-                            |name| name.to_string_lossy().into_owned(),
-                        );
-                        columns(
-                            ui,
-                            &name,
-                            |ui| {
-                                ui.set_max_width(CONTROL_WIDTH);
-                                let path = egui::RichText::new(abbreviate(&known.folder)).weak();
-                                ui.add(egui::Label::new(path).truncate())
-                                    .on_hover_text(known.folder.display().to_string());
-                            },
-                            |ui| {
-                                if confirming.as_ref() == Some(&known.folder) {
-                                    if ui.button("Delete saved layout and settings").clicked() {
-                                        action = Some(Action::Delete(known.folder.clone()));
-                                        confirming = None;
-                                    }
-                                    if ui.button("Cancel").clicked() {
-                                        confirming = None;
-                                    }
-                                    return;
-                                }
-                                if here {
-                                    ui.weak("This window");
-                                } else if known.open_elsewhere {
-                                    ui.weak("Open in another window");
-                                } else if known.missing {
-                                    ui.weak("Folder missing");
-                                } else if ui.button("Open").clicked() {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(14, 12))
+            .show(ui, |ui| {
+                ui.label(egui::RichText::new("Workspaces").strong());
+                ui.label(
+                    egui::RichText::new(if list.is_empty() {
+                        "None yet. Open a folder (File → Open Folder…) to make one."
+                    } else {
+                        "Click one to open it in this window."
+                    })
+                    .small()
+                    .weak(),
+                );
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        for known in &list {
+                            let row = Row {
+                                known,
+                                here: !current.default && known.folder == current.root,
+                                confirming: confirming.as_ref() == Some(&known.folder),
+                            };
+                            match row.draw(ui, context) {
+                                Some(RowAction::Open) => {
                                     action = Some(Action::Open(known.folder.clone()));
                                 }
-                                let deletable = !here && !known.open_elsewhere;
-                                if ui
-                                    .add_enabled(deletable, egui::Button::new("Delete"))
-                                    .on_hover_text(
-                                        "Forget this workspace: its saved layout and settings",
-                                    )
-                                    .clicked()
-                                {
+                                Some(RowAction::AskToDelete) => {
                                     confirming = Some(known.folder.clone());
                                 }
-                            },
-                        );
-                    }
-                });
-        });
+                                Some(RowAction::Delete) => {
+                                    action = Some(Action::Delete(known.folder.clone()));
+                                    confirming = None;
+                                }
+                                Some(RowAction::Cancel) => confirming = None,
+                                None => {}
+                            }
+                        }
+                    });
+            });
         ui.data_mut(|data| match &confirming {
             Some(folder) => {
                 data.insert_temp(confirming_id, folder.clone());
@@ -201,6 +180,139 @@ impl Panel for WorkspacesPanel {
             Some(Action::Delete(folder)) => forget(world, &folder, config.as_deref()),
             None => {}
         }
+    }
+}
+
+/// One workspace in the list.
+struct Row<'a> {
+    known: &'a Known,
+    /// This window's workspace.
+    here: bool,
+    /// Asking whether to delete it.
+    confirming: bool,
+}
+
+enum RowAction {
+    Open,
+    AskToDelete,
+    Delete,
+    Cancel,
+}
+
+impl Row<'_> {
+    /// A full-width line: folder icon, name, dimmed path; on the right, the
+    /// status and a delete button. Clicking the line opens the workspace.
+    fn draw(&self, ui: &mut egui::Ui, context: &UiContext<'_>) -> Option<RowAction> {
+        let known = self.known;
+        let name = known.folder.file_name().map_or_else(
+            || known.folder.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        let status = if self.here {
+            Some("This window")
+        } else if known.open_elsewhere {
+            Some("Open in another window")
+        } else if known.missing {
+            Some("Folder missing")
+        } else {
+            None
+        };
+        let openable = status.is_none() && !self.confirming;
+        let height = bedtime_ui::theme::control_height(&context.theme.metrics) + 4.0;
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), height),
+            egui::Sense::hover(),
+        );
+        // The line first, so the buttons drawn on it take their own clicks.
+        let line = ui.interact(
+            rect,
+            ui.id().with(("workspace", &known.folder)),
+            if openable {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
+        line.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, openable, &name));
+        // The labels drawn over the line take egui's hover, so ask about the
+        // pointer instead.
+        let hovered = ui.rect_contains_pointer(rect);
+        let palette = &context.theme.palette;
+        // Tints of the text colour show on any background, including the
+        // window's when the panel has none.
+        let tint = |color: bedtime_ui::theme::Rgba, alpha: f32| {
+            let mut color = color;
+            color[3] = alpha;
+            color
+        };
+        let fill = if self.confirming {
+            Some(tint(palette.error, 0.14))
+        } else if openable && hovered {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            Some(tint(palette.text, 0.08))
+        } else if self.here {
+            Some(tint(palette.text, 0.04))
+        } else {
+            None
+        };
+        if let Some(fill) = fill {
+            ui.painter().rect_filled(
+                rect,
+                context.theme.metrics.rounding,
+                bedtime_ui::theme::color(fill),
+            );
+        }
+
+        let mut result = line.clicked().then_some(RowAction::Open);
+        let mut row = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink2(egui::vec2(8.0, 0.0)))
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+        );
+        // Right to left: actions and status, then the name and path take
+        // what's left.
+        if self.confirming {
+            if row.button("Cancel").clicked() {
+                result = Some(RowAction::Cancel);
+            }
+            let delete =
+                egui::RichText::new("Delete").color(bedtime_ui::theme::color(palette.error));
+            if row.button(delete).clicked() {
+                result = Some(RowAction::Delete);
+            }
+            row.weak("Delete its saved layout and settings?");
+        } else {
+            let deletable = !self.here && !known.open_elsewhere;
+            row.add_enabled_ui(deletable, |ui| {
+                let mut frame = context.frame(ui);
+                let button = frame.icon_button_sized(BuiltinIcon::Trash, 14.0);
+                let label = format!("Delete {name}");
+                button.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, deletable, &label)
+                });
+                frame.tooltip(&button, "Delete this workspace's saved layout and settings");
+                if button.clicked() {
+                    result = Some(RowAction::AskToDelete);
+                }
+            });
+            if let Some(status) = status {
+                row.weak(status);
+            }
+        }
+        row.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            let side = 16.0;
+            let (icon, _) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+            context
+                .frame(ui)
+                .icon_at(BuiltinIcon::Folder, [icon.min.x, icon.min.y], side);
+            ui.add_space(4.0);
+            ui.add(egui::Label::new(egui::RichText::new(&name).strong()).selectable(false));
+            // Where it is; the name is already shown.
+            let parent = known.folder.parent().unwrap_or(&known.folder);
+            let path = egui::RichText::new(abbreviate(parent)).small().weak();
+            ui.add(egui::Label::new(path).truncate().selectable(false));
+        });
+        result
     }
 }
 

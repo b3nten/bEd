@@ -11,7 +11,7 @@ def tabs(bed):
 
 with Bed() as bed:
     assert tabs(bed) == {}, "one tab in one area has no tab bar"
-    assert bed.exists("No workspaces yet. Open a folder to make one.")
+    assert bed.exists("Workspaces"), "the Workspaces panel is the only one"
 
     bed.invoke("app.open_settings")
     assert set(tabs(bed)) == {"Workspaces", "Settings"}

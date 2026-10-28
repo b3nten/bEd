@@ -1416,5 +1416,12 @@
     "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
     "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/rotate-ccw.svg",
     "sha256": "622685386ab4017eabfde01cd74550a20b1924df233b353f73b6b155371f2afd"
+  },
+  {
+    "key": "trash",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/trash.svg",
+    "sha256": "27299f69ad7c6272be64b1b8e2d48cbd6dcf0ef0d4f92827a1affa945c91700e"
   }
 ]
