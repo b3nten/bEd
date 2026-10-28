@@ -280,7 +280,6 @@ impl Panel for SettingsPanel {
 pub(crate) const LABEL_WIDTH: f32 = 180.0;
 /// The width of combo boxes, sliders and key buttons.
 pub(crate) const CONTROL_WIDTH: f32 = 240.0;
-const ROW_HEIGHT: f32 = 34.0;
 
 /// Where the layer being edited is saved, shown under the layer tabs.
 fn location(world: &World, layer: StoreId) -> String {
@@ -316,28 +315,28 @@ pub(crate) fn columns<R>(
     state: impl FnOnce(&mut egui::Ui),
 ) -> R {
     let layout = egui::Layout::left_to_right(egui::Align::Center);
-    let row = egui::vec2(ui.available_width(), ROW_HEIGHT);
+    let row_height = ui.spacing().interact_size.y;
+    let row = egui::vec2(ui.available_width(), row_height);
     ui.allocate_ui_with_layout(row, layout, |ui| {
-        ui.set_min_height(ROW_HEIGHT);
-        ui.allocate_ui_with_layout(egui::vec2(LABEL_WIDTH, ROW_HEIGHT), layout, |ui| {
-            ui.set_min_size(egui::vec2(LABEL_WIDTH, ROW_HEIGHT));
+        ui.set_min_height(row_height);
+        ui.allocate_ui_with_layout(egui::vec2(LABEL_WIDTH, row_height), layout, |ui| {
+            ui.set_min_size(egui::vec2(LABEL_WIDTH, row_height));
             ui.add(egui::Label::new(label).truncate());
         });
         let inner = ui
-            .allocate_ui_with_layout(egui::vec2(CONTROL_WIDTH, ROW_HEIGHT), layout, |ui| {
-                ui.set_min_size(egui::vec2(CONTROL_WIDTH, ROW_HEIGHT));
+            .allocate_ui_with_layout(egui::vec2(CONTROL_WIDTH, row_height), layout, |ui| {
+                ui.set_min_size(egui::vec2(CONTROL_WIDTH, row_height));
                 control(ui)
             })
             .inner;
-        let rest = egui::vec2(ui.available_width(), ROW_HEIGHT);
+        let rest = egui::vec2(ui.available_width(), row_height);
         ui.allocate_ui_with_layout(rest, layout, state);
         inner
     })
     .inner
 }
 
-/// A slider and its value box. egui's own value box sits in a nested row
-/// that falls below the row's centre, so they're separate widgets here.
+/// A slider with its value, `decimals` places.
 fn slider(
     ui: &mut egui::Ui,
     value: &mut f32,
@@ -345,29 +344,18 @@ fn slider(
     suffix: &str,
     decimals: usize,
 ) -> bool {
-    let speed = (range.end() - range.start()) / 200.0;
-    let slider = ui.add(egui::Slider::new(value, range.clone()).show_value(false));
-    let typed = ui.add(
-        egui::DragValue::new(value)
-            .range(range)
-            .speed(speed)
-            .suffix(suffix)
-            .fixed_decimals(decimals),
-    );
-    slider.changed() || typed.changed()
+    let slider = egui::Slider::new(value, range)
+        .suffix(suffix)
+        .fixed_decimals(decimals);
+    ui.add(slider).changed()
 }
 
 /// A combo box filling the control column.
 fn combo(ui: &mut egui::Ui, id: &str, selected: String, options: impl FnOnce(&mut egui::Ui)) {
-    ui.scope(|ui| {
-        // egui nests the button in a row that starts at this height; at the
-        // default it grows downward, below the row's centre.
-        ui.spacing_mut().interact_size.y = ROW_HEIGHT - 2.0;
-        egui::ComboBox::from_id_salt(id)
-            .width(CONTROL_WIDTH)
-            .selected_text(selected)
-            .show_ui(ui, options);
-    });
+    egui::ComboBox::from_id_salt(id)
+        .width(CONTROL_WIDTH)
+        .selected_text(selected)
+        .show_ui(ui, options);
 }
 
 /// Bedfont and the installed monospaced families: the editor and terminal

@@ -8,14 +8,22 @@
 //! belongs to the data of one workspace, not to an arrangement.
 use super::*;
 
-/// One layout's arrangement and panels, as RON text.
+/// One layout's arrangement and panels, as RON. Saved inside other RON (an
+/// app's persisted resource), it's written as nested RON, not as a string.
 #[derive(Clone, Debug, PartialEq, Eq, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(opaque, Debug, PartialEq, Clone, Serialize, Deserialize)]
-pub struct LayoutTemplate(pub(super) String);
+pub struct LayoutTemplate(Box<ron::value::RawValue>);
 
 impl LayoutTemplate {
+    /// A template from RON text; it must at least be valid RON.
+    pub fn from_ron(text: String) -> Result<Self, String> {
+        ron::value::RawValue::from_boxed_ron(text.into_boxed_str())
+            .map(Self)
+            .map_err(|error| error.to_string())
+    }
+
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.get_ron()
     }
 }
 
@@ -57,7 +65,7 @@ pub fn capture_layout(world: &mut World, layout: Entity) -> Result<LayoutTemplat
         .collect();
     leave_out_panels(&mut dynamic, &elsewhere);
     check_references(&dynamic, &registry)?;
-    serialize(dynamic, &registry).map(LayoutTemplate)
+    serialize(dynamic, &registry).and_then(LayoutTemplate::from_ron)
 }
 
 /// Build a new layout from `template`, after the existing layouts. It isn't
@@ -65,7 +73,7 @@ pub fn capture_layout(world: &mut World, layout: Entity) -> Result<LayoutTemplat
 pub fn instantiate_layout(world: &mut World, template: &LayoutTemplate) -> Result<Entity, String> {
     let registry = world.resource::<AppTypeRegistry>().clone();
     let registry = registry.read();
-    let dynamic = parse(&template.0, &registry)?;
+    let dynamic = parse(template.as_str(), &registry)?;
     if !dynamic.resources.is_empty() {
         return Err("A layout template can't hold resources".into());
     }

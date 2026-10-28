@@ -116,6 +116,12 @@ faces and egui's Unicode fallbacks for hosts customizing their font definitions.
 font files are unmodified; [provenance and license](assets/fonts/UPSTREAM.md)
 travel with the embedded assets.
 
+Every standard control (button, combo box, slider, toggle) is one height,
+`theme::control_height`: a line of text plus `Metrics::padding`. The theme sets
+egui's `interact_size.y` to it, because egui starts each horizontal row at that
+height and centres widgets on it; with taller controls, widgets that nest a row
+(combo boxes, sliders) sat below the centre of their row.
+
 The theme chooses the font: `Metrics::font_family` names an installed family,
 `None` is Bedfont. The runtime applies fonts itself when a context first draws
 and when the family changes; hosts don't call `set_fonts`. A named family's

@@ -212,6 +212,39 @@ fn a_layout_template_builds_independent_copies_of_one_layout() {
     assert_ne!(panel(copies[0]), panel(copies[1]));
 }
 
+/// An app keeps templates in a persisted resource.
+#[derive(Resource, Reflect, Default)]
+#[reflect(Resource, Persist)]
+struct Defaults(Option<LayoutTemplate>);
+
+#[test]
+fn a_saved_template_is_nested_ron_and_round_trips() {
+    let mut source = app();
+    source.register_type::<Defaults>();
+    let world = source.world_mut();
+    let layout = crate::tests::layout(world);
+    let area = Workbench::new(world).destination_area(layout).unwrap();
+    note(world, area, "kept");
+    let template = capture_layout(world, layout).unwrap();
+    world.insert_resource(Defaults(Some(template.clone())));
+    let saved = capture::<WorkbenchStore>(world).unwrap();
+    // Nested, not an escaped string.
+    assert!(saved.contains("\"kept\""), "{saved}");
+    assert!(!saved.contains("\\\""), "{saved}");
+
+    let mut target = app();
+    target
+        .register_type::<Defaults>()
+        .init_resource::<Defaults>();
+    restore::<WorkbenchStore>(target.world_mut(), &saved).unwrap();
+    let world = target.world_mut();
+    let restored = world.resource::<Defaults>().0.clone().unwrap();
+    assert_eq!(restored, template);
+    let copy = instantiate_layout(world, &restored).unwrap();
+    let area = world.get::<LayoutAreas>(copy).unwrap().entities()[0];
+    assert_eq!(texts(world, area), ["kept"]);
+}
+
 #[test]
 fn a_bad_layout_template_adds_nothing() {
     let mut source = app();
@@ -223,9 +256,12 @@ fn a_bad_layout_template_adds_nothing() {
     let mut target = app();
     let world = target.world_mut();
     // A whole workbench save holds two layouts and a resource.
-    let error = instantiate_layout(world, &LayoutTemplate(whole)).unwrap_err();
+    let whole = LayoutTemplate::from_ron(whole).unwrap();
+    let error = instantiate_layout(world, &whole).unwrap_err();
     assert!(error.contains("resources"), "{error}");
-    assert!(instantiate_layout(world, &LayoutTemplate("not ron".into())).is_err());
+    assert!(LayoutTemplate::from_ron("not ron (".into()).is_err());
+    let not_a_world = LayoutTemplate::from_ron("(1, 2)".into()).unwrap();
+    assert!(instantiate_layout(world, &not_a_world).is_err());
     assert!(layouts(world).is_empty());
     assert_eq!(world.query::<&Area>().iter(world).count(), 0);
 }

@@ -456,20 +456,18 @@ impl<'services> UiFrame<'services> {
     }
 
     pub fn toggle(&mut self, value: &mut bool, label: &str) -> egui::Response {
+        // A control's height, with a track a little inside it.
+        let height = theme::control_height(&self.theme.metrics);
+        let track_size = egui::vec2(height * 1.6, height - 6.0);
+        let knob = track_size.y / 2.0 - 3.0;
+        let font = egui::FontId::proportional(self.theme.metrics.font_size);
+        let text =
+            self.ui
+                .painter()
+                .layout_no_wrap(label.into(), font.clone(), egui::Color32::WHITE);
+        let gap = if label.is_empty() { 0.0 } else { 10.0 };
         let (rect, response) = self.ui.allocate_exact_size(
-            egui::vec2(
-                48.0 + self
-                    .ui
-                    .painter()
-                    .layout_no_wrap(
-                        label.into(),
-                        egui::FontId::proportional(self.theme.metrics.font_size),
-                        egui::Color32::WHITE,
-                    )
-                    .size()
-                    .x,
-                28.0,
-            ),
+            egui::vec2(track_size.x + gap + text.size().x, height),
             egui::Sense::click(),
         );
         let mut response = response;
@@ -488,8 +486,10 @@ impl<'services> UiFrame<'services> {
             if *value { 1.0 } else { 0.0 },
             self.motion,
         );
-        let track =
-            egui::Rect::from_min_size(rect.min + egui::vec2(0.0, 3.0), egui::vec2(38.0, 22.0));
+        let track = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x, rect.center().y - track_size.y / 2.0),
+            track_size,
+        );
         let p = &self.theme.palette;
         let base = if *value { p.accent } else { p.border };
         let fill =
@@ -505,17 +505,23 @@ impl<'services> UiFrame<'services> {
             theme::color(fill),
             self.ui.style().animation_time,
         );
-        self.ui.painter().rect_filled(track, 11.0, fill);
+        self.ui
+            .painter()
+            .rect_filled(track, track_size.y / 2.0, fill);
+        let travel = track_size.x - track_size.y;
         self.ui.painter().circle_filled(
-            egui::pos2(track.min.x + 11.0 + t * 16.0, track.center().y),
-            8.0,
+            egui::pos2(
+                track.min.x + track_size.y / 2.0 + t * travel,
+                track.center().y,
+            ),
+            knob,
             theme::color(self.theme.palette.text),
         );
         self.ui.painter().text(
-            rect.min + egui::vec2(48.0, 4.0),
-            egui::Align2::LEFT_TOP,
+            egui::pos2(track.max.x + gap, rect.center().y),
+            egui::Align2::LEFT_CENTER,
             label,
-            egui::FontId::proportional(self.theme.metrics.font_size),
+            font,
             theme::color(self.theme.palette.text),
         );
         response

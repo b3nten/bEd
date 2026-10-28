@@ -402,7 +402,12 @@ mod tests {
         let (config, project) = (root.join("config"), root.join("project"));
         fs::create_dir_all(&project).unwrap();
         let recent = RecentWorkspaces::default();
-        let opened = open(Start::Folder(project.clone()), Some(&config), &recent, false);
+        let opened = open(
+            Start::Folder(project.clone()),
+            Some(&config),
+            &recent,
+            false,
+        );
         let directory = opened.workspace.store_directory(&config);
         assert!(directory.is_dir());
 

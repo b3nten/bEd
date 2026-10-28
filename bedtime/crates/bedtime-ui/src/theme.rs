@@ -3,6 +3,10 @@ use egui::{Color32, Context};
 
 pub type Rgba = [f32; 4];
 
+/// Line height over font size for the bundled Bedfont; installed monospace
+/// fonts are shorter. Controls are sized for it so every font's text fits.
+const LINE_HEIGHT: f32 = 1.33;
+
 /// The font sizes a theme can use, in points.
 pub const FONT_SIZES: std::ops::RangeInclusive<f32> = 8.0..=72.0;
 
@@ -52,7 +56,7 @@ impl Default for Metrics {
         Self {
             font_size: 15.5,
             font_family: None,
-            padding: [10.0, 6.0],
+            padding: [8.0, 3.0],
             spacing: [10.0, 8.0],
             rounding: 4.0,
             tooltip_padding: [12.0, 10.0],
@@ -122,8 +126,13 @@ impl Theme {
         style.interaction.selectable_labels = false;
         style.spacing.item_spacing = egui::vec2(m.spacing[0], m.spacing[1]);
         style.spacing.button_padding = egui::vec2(m.padding[0], m.padding[1]);
+        // egui starts each row at `interact_size.y` and centres widgets on it.
+        // Make that exactly one control (a line of text plus button padding),
+        // so widgets that nest a row, like combo boxes and sliders, stay
+        // centred beside labels.
+        style.spacing.interact_size.y = control_height(m);
         style.spacing.window_margin =
-            egui::Margin::symmetric(m.padding[0] as i8, m.padding[1] as i8);
+            egui::Margin::symmetric(m.menu_padding[0] as i8, m.menu_padding[1] as i8);
         style.spacing.menu_margin =
             egui::Margin::symmetric(m.menu_padding[0] as i8, m.menu_padding[1] as i8);
         style.spacing.menu_spacing = m.menu_spacing[0];
@@ -166,6 +175,11 @@ impl Theme {
         }
         context.set_global_style(style);
     }
+}
+
+/// The height of a standard control: buttons, combo boxes, sliders, toggles.
+pub fn control_height(metrics: &Metrics) -> f32 {
+    (metrics.font_size * LINE_HEIGHT).ceil() + 2.0 * metrics.padding[1]
 }
 
 pub fn mix(a: Rgba, b: Rgba, amount: f32) -> Rgba {

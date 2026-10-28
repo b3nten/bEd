@@ -26,6 +26,7 @@ pub fn app(start: Start) -> App {
     let global = config.as_ref().map(|config| config.join("global"));
     // Which workspace to open is decided before the app exists, from what the
     // global store holds.
+
     let mut recent = RecentWorkspaces::default();
     let mut reopen_last = <settings::ReopenLastWorkspace as Setting>::default();
     if let Some(global) = &global {
@@ -41,22 +42,25 @@ pub fn app(start: Start) -> App {
     {
         warn!("Couldn't update recent folders: {error}");
     }
-    let title = if workspace.default {
-        "bEd".into()
-    } else {
-        format!("{} — bEd", workspace.name())
-    };
+
     let automation = bedtime_automation::AutomationPlugin::from_env();
+
     let mut app = App::new();
+
     // Logging is set up once per process; a relaunched App leaves it alone.
     let mut defaults = DefaultPlugins.build();
     if bevy::winit::relaunching() {
         defaults = defaults.disable::<bevy::log::LogPlugin>();
     }
+
     app.add_plugins((
         defaults.set(WindowPlugin {
             primary_window: Some(Window {
-                title,
+                title: if workspace.default {
+                    "bEd".into()
+                } else {
+                    format!("{} — bEd", workspace.name())
+                },
                 resolution: (960, 640).into(),
                 // A script is driving: don't take focus from what you're doing.
                 focused: !automation.active(),
@@ -86,7 +90,9 @@ pub fn app(start: Start) -> App {
     // Look for installed fonts now, so Settings can list them when opened.
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     .add_systems(Startup, setup);
+
     stores(&mut app, config.as_deref(), global, opened);
+
     app
 }
 
