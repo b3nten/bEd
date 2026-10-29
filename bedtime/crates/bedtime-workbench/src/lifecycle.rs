@@ -11,21 +11,36 @@ pub enum SessionSystems {
 }
 
 pub(crate) fn install(app: &mut App) {
-    app.init_resource::<ManagedWork>()
-        .init_resource::<crate::layout::LayoutOrder>()
+    if !app.is_plugin_added::<bedtime_work::WorkPlugin>() {
+        app.add_plugins(bedtime_work::WorkPlugin);
+    }
+    app.init_resource::<crate::layout::LayoutOrder>()
         .init_resource::<Notifications>()
         .add_message::<CloseRequested>();
     #[cfg(feature = "ui")]
     app.init_resource::<WorkbenchUi>();
-    actions::install(app);
+    if !app.is_plugin_added::<bedtime_actions::ActionsPlugin>() {
+        app.add_plugins(bedtime_actions::ActionsPlugin);
+    }
+    // Actions run for the focused panel.
+    app.insert_resource(ActionFocus(focused_panel))
+        .configure_sets(
+            PreUpdate,
+            ActionSystems::CollectInput.after(SessionSystems::Prepare),
+        )
+        .add_systems(
+            PreUpdate,
+            report_failed_actions.after(ActionSystems::Dispatch),
+        );
     documents::install(app);
     closing::install(app);
     document_actions::install(app);
     #[cfg(feature = "ui")]
     layout::install(app);
-    #[cfg(feature = "ui")]
-    shortcuts::install(app);
-    app.add_systems(Last, poll_work.in_set(SessionSystems::Close));
+    app.configure_sets(
+        Last,
+        bedtime_work::WorkSystems::Poll.in_set(SessionSystems::Close),
+    );
     #[cfg(debug_assertions)]
     app.add_systems(Last, validate.before(SessionSystems::Close));
     #[cfg(feature = "ui")]
@@ -67,14 +82,32 @@ impl Workbench {
     }
 }
 
-fn poll_work(world: &mut World) {
-    let exiting = world
-        .get_resource::<Messages<AppExit>>()
-        .is_some_and(|m| !m.is_empty());
-    world.resource_scope(|world, mut work: Mut<ManagedWork>| {
-        if exiting {
-            work.shutdown();
-        }
-        work.poll(|owner| world.get_entity(owner).is_ok());
-    });
+/// The selected panel in the focused area of the active layout.
+pub(crate) fn focused_panel(world: &World) -> Option<Entity> {
+    let layout = world.workbench().active_layout()?;
+    let area = world.get::<Layout>(layout)?.focused_area()?;
+    world.get::<Area>(area)?.selected_panel()
+}
+
+/// Not being available isn't a failure (a shortcut pressed where it does
+/// nothing); a handler that fails is, and the user hears about it.
+fn report_failed_actions(
+    world: &mut World,
+    mut cursor: Local<bevy::ecs::message::MessageCursor<ActionFinished>>,
+) {
+    let failed: Vec<_> = cursor
+        .read(world.resource::<Messages<ActionFinished>>())
+        .filter(|finished| finished.ran)
+        .filter_map(|finished| {
+            let error = finished.result.as_ref().err()?;
+            let label = world
+                .resource::<ActionRegistry>()
+                .label(&finished.invocation.action)
+                .unwrap_or(finished.invocation.action.as_str());
+            Some(format!("{label}: {error}"))
+        })
+        .collect();
+    for failure in failed {
+        world.workbench_mut().notify(Notification::error(failure));
+    }
 }

@@ -10,10 +10,10 @@ use crate::{
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult, CloseRequested,
-    ErrorDialog, Handler, InMenu, InvocationContext, Invokes, KeyChord, Menu, MenuBar, MenuEntries,
-    MenuItem, MenuSeparator, NativeMenuBar, PanelFactory, SaveDocument, draw_menu_bar,
-    panel_drag_source,
+    Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
+    ActionsWorldExt, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext, Invokes,
+    KeyChord, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator, NativeMenuBar, PanelFactory,
+    SaveDocument, draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -301,10 +301,10 @@ fn tool<C: Action>(
 ) {
     let command = ActionId::of::<C>();
     let enabled = world
-        .workbench()
-        .action_available(&command, InvocationContext::Focused);
+        .actions()
+        .available(&command, InvocationContext::Focused);
     let tooltip = match world
-        .workbench()
+        .actions()
         .shortcut_for(&command, InvocationContext::Focused)
     {
         Some(chord) => format!("{} ({})", C::LABEL, chord.label()),
@@ -410,8 +410,8 @@ mod tests {
         let open_recent = ActionId::of::<OpenRecent>();
         assert!(
             !world
-                .workbench()
-                .action_available(&open_recent, InvocationContext::Focused)
+                .actions()
+                .available(&open_recent, InvocationContext::Focused)
         );
 
         // In the default workspace there's no folder to close, and every

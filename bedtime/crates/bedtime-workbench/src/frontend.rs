@@ -750,7 +750,7 @@ fn draw(
             .frame(band)
             .show(&mut root, |ui| {
                 if let Err(error) =
-                    crate::ui::draw_menu_bar(&mut frame.for_view(frame.view, ui), world, menu)
+                    crate::menu_ui::draw_menu_bar(&mut frame.for_view(frame.view, ui), world, menu)
                 {
                     world.write_message(bedtime_ui::UiError(error));
                 }

@@ -346,7 +346,10 @@ type LayerFile = (BTreeMap<String, Box<RawValue>>, Option<String>);
 
 /// Read one layer's file. `None` means it doesn't exist yet.
 fn read_layer(world: &World, store: StoreId) -> Result<Option<LayerFile>, String> {
-    let Some(backend) = world.resource::<Stores>().backend(store) else {
+    let Some(backend) = world
+        .get_resource::<Stores>()
+        .and_then(|stores| stores.backend(store))
+    else {
         return Ok(None);
     };
     let version = backend.version(SETTINGS_ENTRY)?;
@@ -401,7 +404,10 @@ pub(crate) fn reload_changed_layers(world: &mut World, mut last: Local<Option<In
         .collect();
     let mut changed = false;
     for (store, known) in candidates {
-        let Some(backend) = world.resource::<Stores>().backend(store) else {
+        let Some(backend) = world
+            .get_resource::<Stores>()
+            .and_then(|stores| stores.backend(store))
+        else {
             continue;
         };
         let Ok(version) = backend.version(SETTINGS_ENTRY) else {
@@ -459,7 +465,10 @@ pub(crate) fn save_layers(world: &mut World, mut last: Local<Option<Instant>>) {
         .map(|layer| layer.store)
         .collect();
     for store in dirty {
-        let Some(backend) = world.resource::<Stores>().backend(store) else {
+        let Some(backend) = world
+            .get_resource::<Stores>()
+            .and_then(|stores| stores.backend(store))
+        else {
             world
                 .resource_mut::<Settings>()
                 .layer_mut(store)

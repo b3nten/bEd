@@ -1,6 +1,5 @@
-use super::*;
-use crate::WorkbenchWorldExt;
-use crate::{WorkbenchCorePlugin, tests::TestPanels};
+use crate::*;
+use bevy::prelude::*;
 
 const CTRL_F: KeyChord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyF);
 
@@ -26,7 +25,7 @@ impl Action for Zoom {
     const REPEATS: bool = true;
 }
 
-/// Who ran: the command, and whether it was the panel's handler.
+/// Who ran: the action, and whether it was the entity's handler.
 #[derive(Resource, Default)]
 struct Calls(Vec<(&'static str, &'static str, Option<Entity>)>);
 
@@ -38,37 +37,47 @@ fn record(world: &mut World, command: &'static str, scope: &'static str, panel: 
 }
 
 fn find_global(world: &mut World, i: ActionInvocation) -> ActionResult {
-    record(world, "find", "global", i.panel);
+    record(world, "find", "global", i.entity);
     Ok(())
 }
 fn find_in_panel(world: &mut World, i: ActionInvocation) -> ActionResult {
-    record(world, "find", "panel", i.panel);
+    record(world, "find", "panel", i.entity);
     Ok(())
 }
 fn toggle_in_panel(world: &mut World, i: ActionInvocation) -> ActionResult {
-    record(world, "toggle", "panel", i.panel);
+    record(world, "toggle", "panel", i.entity);
     Ok(())
 }
 fn zoom(world: &mut World, i: ActionInvocation) -> ActionResult {
-    record(world, "zoom", "global", i.panel);
+    record(world, "zoom", "global", i.entity);
     Ok(())
 }
 
+/// The app's idea of focus: the last entity focused.
+#[derive(Resource, Default)]
+struct Focused(Option<Entity>);
+
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin)
+    app.add_plugins(ActionsPlugin)
         .init_resource::<Calls>()
+        .init_resource::<Focused>()
+        .insert_resource(ActionFocus(|world| world.resource::<Focused>().0))
         .register_action::<Find>()
         .register_action::<ToggleBackfaces>()
         .add_action_handler::<Zoom>(Handler::new(zoom));
-    crate::tests::layout(app.world_mut());
     app
 }
 
+/// A focusable thing, focused.
 fn panel(app: &mut App) -> Entity {
-    let workbench = app.world_mut().workbench_mut();
-    let layout = workbench.active_layout().unwrap();
-    workbench.create_panel(layout, "Panel").unwrap()
+    let entity = app.world_mut().spawn_empty().id();
+    focus(app, entity);
+    entity
+}
+
+fn focus(app: &mut App, entity: Entity) {
+    app.world_mut().resource_mut::<Focused>().0 = Some(entity);
 }
 
 fn press(app: &mut App, chord: KeyChord, repeat: bool) {
@@ -110,19 +119,16 @@ fn a_shared_chord_runs_the_command_handled_in_the_most_specific_scope() {
         )));
     let neither = panel(&mut app);
 
-    app.world_mut().workbench_mut().focus_panel(editor).unwrap();
+    focus(&mut app, editor);
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("find", "panel", Some(editor))]);
 
-    app.world_mut().workbench_mut().focus_panel(viewer).unwrap();
+    focus(&mut app, viewer);
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("toggle", "panel", Some(viewer))]);
 
     // Nothing handles either command here, and there's no global handler.
-    app.world_mut()
-        .workbench_mut()
-        .focus_panel(neither)
-        .unwrap();
+    focus(&mut app, neither);
     press(&mut app, CTRL_F, false);
     assert!(calls(&mut app).is_empty());
 
@@ -133,7 +139,7 @@ fn a_shared_chord_runs_the_command_handled_in_the_most_specific_scope() {
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("find", "global", Some(neither))]);
     // ...but the viewer's own command still beats it.
-    app.world_mut().workbench_mut().focus_panel(viewer).unwrap();
+    focus(&mut app, viewer);
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("toggle", "panel", Some(viewer))]);
 }
@@ -154,7 +160,7 @@ fn a_panel_handling_two_commands_on_one_chord_is_a_conflict() {
         .drain()
         .collect();
     assert_eq!(conflicts.len(), 1);
-    assert_eq!(conflicts[0].commands.len(), 2);
+    assert_eq!(conflicts[0].actions.len(), 2);
 
     // Rebinding one of them resolves it.
     app.world_mut().resource_mut::<Keybindings>().set(
@@ -179,7 +185,7 @@ fn a_panel_handler_wins_and_a_disabled_one_blocks_the_global_handler() {
         app.world_mut()
             .resource_mut::<ActionRequests>()
             .submit(ActionRequest {
-                command: ActionId::of::<Find>(),
+                action: ActionId::of::<Find>(),
                 context,
                 source: None,
             });
@@ -198,16 +204,8 @@ fn a_panel_handler_wins_and_a_disabled_one_blocks_the_global_handler() {
         .handler = Handler::new(find_in_panel).available_when(|_, _| false);
     let world = app.world();
     let find = ActionId::of::<Find>();
-    assert!(
-        !world
-            .workbench()
-            .action_available(&find, InvocationContext::Focused)
-    );
-    assert!(
-        world
-            .workbench()
-            .action_available(&find, InvocationContext::Global)
-    );
+    assert!(!world.actions().available(&find, InvocationContext::Focused));
+    assert!(world.actions().available(&find, InvocationContext::Global));
     invoke(&mut app, InvocationContext::Focused);
     assert!(calls(&mut app).is_empty());
     assert!(results(&mut app).last().unwrap().is_err());
@@ -222,7 +220,7 @@ fn a_panel_handler_wins_and_a_disabled_one_blocks_the_global_handler() {
 #[test]
 fn requests_run_in_order_and_requests_from_handlers_run_next_frame() {
     fn again(world: &mut World, i: ActionInvocation) -> ActionResult {
-        record(world, "find", "global", i.panel);
+        record(world, "find", "global", i.entity);
         world.resource_mut::<ActionRequests>().invoke::<Zoom>();
         Err("Not found".into())
     }
@@ -279,20 +277,20 @@ fn menu_hints_show_the_chord_that_would_run_the_command() {
     // Ctrl+F toggles backfaces in this panel, so Find shows no shortcut here.
     assert_eq!(
         world
-            .workbench()
+            .actions()
             .shortcut_for(&find, InvocationContext::Focused),
         None
     );
     assert_eq!(
         world
-            .workbench()
+            .actions()
             .shortcut_for(&find, InvocationContext::Global),
         Some(CTRL_F)
     );
 }
 
 #[test]
-#[should_panic(expected = "Two commands use the key")]
+#[should_panic(expected = "Two actions use the key")]
 fn two_commands_cannot_share_a_key() {
     struct Impostor;
     impl Action for Impostor {
@@ -302,44 +300,49 @@ fn two_commands_cannot_share_a_key() {
     app().register_action::<Impostor>();
 }
 
-#[cfg(feature = "persistence")]
+#[test]
+fn chords_read_and_write_as_portable_text() {
+    for text in [
+        "Primary+S",
+        "Primary+Shift+Z",
+        "Ctrl+Alt+Enter",
+        "F5",
+        "Meta+1",
+    ] {
+        let chord: KeyChord = text.parse().unwrap();
+        assert_eq!(chord.to_string(), text);
+    }
+    assert_eq!(
+        "cmd+shift+z".parse::<KeyChord>().unwrap(),
+        KeyChord::new(Modifiers::META | Modifiers::SHIFT, KeyCode::KeyZ)
+    );
+    assert!("Primary+".parse::<KeyChord>().is_err());
+    assert!("Hyper+S".parse::<KeyChord>().is_err());
+    assert!("Primary+Banana".parse::<KeyChord>().is_err());
+    assert_eq!(
+        ron::to_string(&KeyChord::primary(KeyCode::KeyS)).unwrap(),
+        "\"Primary+S\""
+    );
+}
+
+#[cfg(feature = "settings")]
 mod keybinding_settings {
     use super::*;
-    use crate::persistence::{StoreId, WorkbenchStore};
-    use crate::settings::{SettingsAppExt, SettingsWorldExt};
+    use bedtime_persistence::{Store, StoreId};
+    use bedtime_settings::{SettingsAppExt, SettingsPlugin, SettingsWorldExt};
 
     struct GlobalStore;
-    impl crate::persistence::Store for GlobalStore {}
-
-    #[test]
-    fn chords_read_and_write_as_portable_text() {
-        for text in [
-            "Primary+S",
-            "Primary+Shift+Z",
-            "Ctrl+Alt+Enter",
-            "F5",
-            "Meta+1",
-        ] {
-            let chord: KeyChord = text.parse().unwrap();
-            assert_eq!(chord.to_string(), text);
-        }
-        assert_eq!(
-            "cmd+shift+z".parse::<KeyChord>().unwrap(),
-            KeyChord::new(Modifiers::META | Modifiers::SHIFT, KeyCode::KeyZ)
-        );
-        assert!("Primary+".parse::<KeyChord>().is_err());
-        assert!("Hyper+S".parse::<KeyChord>().is_err());
-        assert!("Primary+Banana".parse::<KeyChord>().is_err());
-        assert_eq!(
-            ron::to_string(&KeyChord::primary(KeyCode::KeyS)).unwrap(),
-            "\"Primary+S\""
-        );
-    }
+    impl Store for GlobalStore {}
+    struct WorkbenchStore;
+    impl Store for WorkbenchStore {}
 
     #[test]
     fn a_layer_replaces_a_commands_keys_and_an_empty_list_unbinds_it() {
-        let mut app = app();
-        app.add_settings_layer::<GlobalStore>()
+        let mut app = App::new();
+        app.add_plugins((SettingsPlugin, ActionsPlugin))
+            .init_resource::<Calls>()
+            .register_action::<Find>()
+            .add_settings_layer::<GlobalStore>()
             .add_settings_layer::<WorkbenchStore>();
         app.update();
         let (global, workspace) = (
@@ -375,21 +378,21 @@ mod keybinding_settings {
         assert_eq!(keys(&app), [ctrl(KeyCode::KeyB)]);
 
         // The same, for UIs that only have the command's id.
-        assert_eq!(app.world().workbench().keys_in(&find, workspace), None);
+        assert_eq!(app.world().actions().keys_in(&find, workspace), None);
         app.world_mut()
-            .workbench_mut()
+            .actions_mut()
             .set_keys_in(&find, workspace, Some(vec![CTRL_F]))
             .unwrap();
         assert_eq!(
-            app.world().workbench().keys_in(&find, workspace),
+            app.world().actions().keys_in(&find, workspace),
             Some(vec![CTRL_F])
         );
         assert_eq!(keys(&app), [CTRL_F]);
         app.world_mut()
-            .workbench_mut()
+            .actions_mut()
             .set_keys_in(&find, global, None)
             .unwrap();
-        assert_eq!(app.world().workbench().keys_in(&find, global), None);
+        assert_eq!(app.world().actions().keys_in(&find, global), None);
     }
 }
 
@@ -397,7 +400,7 @@ mod keybinding_settings {
 #[test]
 fn requests_made_while_drawing_run_in_the_same_frame() {
     let mut app = App::new();
-    app.add_plugins((WorkbenchCorePlugin, crate::WorkbenchUiPlugin))
+    app.add_plugins(ActionsPlugin)
         .init_resource::<Calls>()
         .add_action_handler::<Zoom>(Handler::new(zoom))
         .add_systems(

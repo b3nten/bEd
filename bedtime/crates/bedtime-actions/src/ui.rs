@@ -1,40 +1,43 @@
-//! Keyboard shortcuts from the workbench's egui context, after widget interaction.
+//! The `ui` feature: keyboard shortcuts from egui, after widgets have had the
+//! keys they want, and the Keyboard Shortcuts section of a settings panel.
 use crate::*;
+#[cfg(feature = "settings")]
+use bedtime_persistence::StoreId;
+#[cfg(feature = "settings")]
+use bedtime_settings::{
+    SettingsWorldExt,
+    ui::{CONTROL_WIDTH, Marks, columns},
+};
+#[cfg(feature = "settings")]
+use bedtime_ui::UiContext;
 use bedtime_ui::{UiCamera, UiCapture, UiSystems, egui};
 use bevy::prelude::*;
 use bevy_egui::{EguiContext, helpers::bevy_to_egui_physical_key};
 use std::{cmp::Reverse, collections::HashSet};
 
 pub(crate) fn install(app: &mut App) {
-    app.add_systems(
+    app.configure_sets(
         PreUpdate,
-        collect
-            .in_set(ActionSystems::CollectInput)
-            .after(UiSystems::Draw),
-    );
+        ActionSystems::CollectInput.after(UiSystems::Draw),
+    )
+    .add_systems(PreUpdate, collect.in_set(ActionSystems::CollectInput));
 }
 
 fn collect(world: &mut World) {
+    // The UI of the focused window.
     let Some((camera, surface)) = world
-        .query_filtered::<(Entity, &UiCamera), With<WorkbenchCamera>>()
+        .query::<(Entity, &UiCamera)>()
         .iter(world)
-        .next()
         .map(|(camera, ui)| (camera, ui.0))
+        .find(|&(_, surface)| world.get::<Window>(surface).is_some_and(|w| w.focused))
     else {
         return;
     };
-    if !world
-        .get::<Window>(surface)
-        .is_some_and(|window| window.focused)
-    {
+    let Some(mut ctx) = world.get_mut::<EguiContext>(camera) else {
         return;
-    }
-    let ctx = world
-        .get_mut::<EguiContext>(camera)
-        .unwrap()
-        .get_mut()
-        .clone();
-    let capture = world.get::<UiCapture>(surface).copied().unwrap();
+    };
+    let ctx = ctx.get_mut().clone();
+    let capture = world.get::<UiCapture>(surface).copied().unwrap_or_default();
     if !ctx.input(|input| input.focused)
         || capture.modal
         || ctx.any_popup_open()
@@ -42,7 +45,7 @@ fn collect(world: &mut World) {
     {
         return;
     }
-    let panel = crate::actions::focused_panel(world);
+    let focus = world.actions().entity(InvocationContext::Focused);
     let text = capture.text || ctx.text_edit_focused();
     let mut seen = HashSet::new();
     let mut chords: Vec<_> = world
@@ -114,8 +117,8 @@ fn collect(world: &mut World) {
                         BindingPress {
                             chord,
                             repeat,
-                            context: panel
-                                .map_or(InvocationContext::Global, InvocationContext::Panel),
+                            context: focus
+                                .map_or(InvocationContext::Global, InvocationContext::Entity),
                         },
                     )
                 }));
@@ -166,6 +169,160 @@ fn conflicts_with_text(key: egui::Key, modifiers: Modifiers) -> bool {
         || control && matches!(key, A | E | B | F | P | N | H | K | U | W)
 }
 
+/// The Keyboard Shortcuts section of a settings panel: every registered action
+/// and its keys in `layer`. Click an action's keys, then press the new ones.
+#[cfg(feature = "settings")]
+pub fn keybindings_section(
+    ui: &mut egui::Ui,
+    world: &mut World,
+    context: &UiContext<'_>,
+    layer: StoreId,
+) {
+    let actions: Vec<_> = world
+        .resource::<ActionRegistry>()
+        .actions()
+        .map(|(action, label)| (action.clone(), label))
+        .collect();
+    let recording_id = ui.id().with("recording-keys");
+    let mut recording: Option<ActionId> = ui.data(|data| data.get_temp(recording_id));
+    for (command, label) in actions {
+        let set_here = world.actions().keys_in(&command, layer).is_some();
+        let overridden = world.actions().keys_overridden_above(&command, layer);
+        let marks = Marks::new(world.settings(), layer, overridden);
+        let shared = world.actions().shared_with(&command);
+        let mut reset = false;
+        columns(
+            ui,
+            label,
+            None,
+            |ui| marks.overridden(ui, context),
+            |ui| {
+                let size = egui::vec2(CONTROL_WIDTH, 0.0);
+                if recording.as_ref() == Some(&command) {
+                    let cancel = ui
+                        .add(egui::Button::new("Press keys…").min_size(size))
+                        .on_hover_text("Escape or click to cancel")
+                        .clicked();
+                    match pressed_chord(world) {
+                        Some(Ok(chord)) => {
+                            let result =
+                                world
+                                    .actions_mut()
+                                    .set_keys_in(&command, layer, Some(vec![chord]));
+                            report(world, &format!("Couldn't change {label}'s keys"), result);
+                            recording = None;
+                        }
+                        Some(Err(())) => recording = None,
+                        None if cancel => recording = None,
+                        None => {}
+                    }
+                } else {
+                    // The layer's own view, without the layers above it.
+                    let keys = world.actions().keys_at(&command, layer);
+                    let text = if keys.is_empty() {
+                        egui::RichText::new("Not set").weak()
+                    } else {
+                        let labels: Vec<_> = keys.iter().map(|chord| chord.label()).collect();
+                        egui::RichText::new(labels.join(", "))
+                    };
+                    let response = ui
+                        .add(egui::Button::new(text).min_size(size))
+                        .on_hover_text("Click, then press the new keys");
+                    if response.clicked() {
+                        recording = Some(command.clone());
+                    }
+                }
+            },
+            |ui| {
+                reset = set_here && marks.reset(ui, context);
+                if let Some(note) = shared {
+                    ui.weak(note);
+                }
+            },
+        );
+        if reset {
+            let result = world.actions_mut().set_keys_in(&command, layer, None);
+            report(world, &format!("Couldn't reset {label}'s keys"), result);
+        }
+    }
+    ui.data_mut(|data| match recording {
+        Some(command) => {
+            data.insert_temp(recording_id, command);
+        }
+        None => data.remove::<ActionId>(recording_id),
+    });
+}
+
+#[cfg(feature = "settings")]
+fn report(world: &mut World, doing: &str, result: Result<(), String>) {
+    if let Err(error) = result {
+        world.write_message(bedtime_settings::SettingsError(format!("{doing}: {error}")));
+    }
+}
+
+/// A key pressed this frame with its modifiers; `Err` for Escape. The
+/// platform's main modifier is recorded as `Primary`, so the binding carries
+/// over to other platforms.
+#[cfg(feature = "settings")]
+fn pressed_chord(world: &World) -> Option<Result<KeyChord, ()>> {
+    let input = world.get_resource::<ButtonInput<KeyCode>>()?;
+    let key = input
+        .get_just_pressed()
+        .copied()
+        .find(|key| !is_modifier(*key))?;
+    if key == KeyCode::Escape {
+        return Some(Err(()));
+    }
+    let held = |left, right| input.any_pressed([left, right]);
+    let (primary, other) = if cfg!(target_os = "macos") {
+        (
+            held(KeyCode::SuperLeft, KeyCode::SuperRight),
+            held(KeyCode::ControlLeft, KeyCode::ControlRight),
+        )
+    } else {
+        (
+            held(KeyCode::ControlLeft, KeyCode::ControlRight),
+            held(KeyCode::SuperLeft, KeyCode::SuperRight),
+        )
+    };
+    let other_flag = if cfg!(target_os = "macos") {
+        Modifiers::CONTROL
+    } else {
+        Modifiers::META
+    };
+    let mut modifiers = Modifiers::default();
+    for (pressed, flag) in [
+        (primary, Modifiers::PRIMARY),
+        (other, other_flag),
+        (held(KeyCode::AltLeft, KeyCode::AltRight), Modifiers::ALT),
+        (
+            held(KeyCode::ShiftLeft, KeyCode::ShiftRight),
+            Modifiers::SHIFT,
+        ),
+    ] {
+        if pressed {
+            modifiers = modifiers | flag;
+        }
+    }
+    Some(Ok(KeyChord::new(modifiers, key)))
+}
+
+#[cfg(feature = "settings")]
+fn is_modifier(key: KeyCode) -> bool {
+    matches!(
+        key,
+        KeyCode::ShiftLeft
+            | KeyCode::ShiftRight
+            | KeyCode::ControlLeft
+            | KeyCode::ControlRight
+            | KeyCode::AltLeft
+            | KeyCode::AltRight
+            | KeyCode::SuperLeft
+            | KeyCode::SuperRight
+            | KeyCode::Fn
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -190,7 +347,7 @@ mod tests {
     struct Calls(Vec<ActionId>);
 
     fn record(world: &mut World, invocation: ActionInvocation) -> ActionResult {
-        world.resource_mut::<Calls>().0.push(invocation.command);
+        world.resource_mut::<Calls>().0.push(invocation.action);
         Ok(())
     }
 
@@ -202,12 +359,11 @@ mod tests {
 
     fn app() -> (App, Entity, egui::Context) {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, WorkbenchUiPlugin))
+        app.add_plugins(ActionsPlugin)
             .init_resource::<Calls>()
             .add_action_handler::<Save>(Handler::new(record))
             .add_action_handler::<Other>(Handler::new(record))
             .add_action_handler::<Repeating>(Handler::new(record));
-        crate::tests::layout(app.world_mut());
         let surface = app
             .world_mut()
             .spawn((
@@ -215,20 +371,22 @@ mod tests {
                     focused: true,
                     ..default()
                 },
-                WorkbenchSurface::default(),
+                UiCapture::default(),
             ))
             .id();
-        let camera = app
-            .world_mut()
-            .spawn((Camera2d, WorkbenchCamera, UiCamera(surface)))
-            .id();
+        let camera = app.world_mut().spawn(UiCamera(surface)).id();
         let ctx = app
             .world_mut()
             .get_mut::<EguiContext>(camera)
             .unwrap()
             .get_mut()
             .clone();
-        ctx.options_mut(|options| options.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+        ctx.options_mut(|options| {
+            options.max_passes = std::num::NonZeroUsize::new(1).unwrap();
+            // egui quits on Cmd+Q by default; apps (workbench) turn that off
+            // so the key can be bound.
+            options.quit_shortcuts.clear();
+        });
         app.update();
         (app, surface, ctx)
     }
@@ -281,10 +439,8 @@ mod tests {
     }
 
     #[test]
-    fn world_shortcut_collection_continues_after_the_last_layout_is_removed() {
+    fn shortcuts_run_without_anything_focused() {
         let (mut app, surface, ctx) = app();
-        let layout = app.world().workbench().active_layout().unwrap();
-        app.world_mut().despawn(layout);
         bind::<Save>(&mut app, KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS));
         frame(
             &mut app,
@@ -460,7 +616,7 @@ mod tests {
     }
 
     #[test]
-    fn modals_and_unfocused_workbench_windows_block_shortcuts() {
+    fn modals_and_unfocused_windows_block_shortcuts() {
         let (mut app, surface, ctx) = app();
         bind::<Save>(&mut app, KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS));
         frame(

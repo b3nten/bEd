@@ -1,5 +1,4 @@
 //! Composable workbench services; the application supplies Bevy's window and renderer.
-mod actions;
 mod closing;
 mod composition;
 mod document_actions;
@@ -22,14 +21,13 @@ pub mod persistence;
 pub mod settings {
     pub use bedtime_settings::*;
 }
-mod work;
-pub use actions::*;
+pub use bedtime_actions::*;
+pub use bedtime_work::*;
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
 pub use layout::*;
 pub use lifecycle::*;
 pub use menus::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
-pub use work::*;
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "clipboard")]
@@ -51,9 +49,7 @@ mod surface;
 #[cfg(feature = "ui")]
 pub use surface::{AreaBackground, TabBarVisibility, WorkbenchCamera, WorkbenchSurface};
 #[cfg(feature = "ui")]
-mod shortcuts;
-#[cfg(feature = "ui")]
-mod ui;
+mod menu_ui;
 use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
 pub use frontend::{
@@ -61,7 +57,7 @@ pub use frontend::{
     WorkbenchUi, panel_drag_source,
 };
 #[cfg(feature = "ui")]
-pub use ui::{MenuPresentation, WorkbenchUiPlugin, draw_menu_bar, draw_popup_menu};
+pub use menu_ui::{MenuPresentation, WorkbenchUiPlugin, draw_menu_bar, draw_popup_menu};
 
 /// A request to quit, from the native window or an application command.
 /// Workbench handles it: unsaved documents are saved or asked about, background
@@ -177,18 +173,6 @@ impl WorkbenchWorldExt for World {
         // SAFETY: Workbench is a repr(transparent) wrapper of World.
         unsafe { &mut *(self as *mut World).cast::<Workbench>() }
     }
-}
-
-fn valid_key(key: &str) -> bool {
-    let mut count = 0;
-    let valid = key.split('.').all(|part| {
-        count += 1;
-        !part.is_empty()
-            && part
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    });
-    valid && count >= 2
 }
 
 #[cfg(test)]

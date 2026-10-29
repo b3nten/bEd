@@ -1,4 +1,5 @@
 use super::*;
+use crate::ActionsWorldExt;
 use crate::WorkbenchWorldExt;
 use crate::*;
 
@@ -126,8 +127,8 @@ fn removing_menu_ownership_keeps_action_definitions_and_handlers() {
     assert!(world.get_entity(item).is_err());
     assert!(
         world
-            .workbench()
-            .action_available(&ActionId::of::<Copy>(), InvocationContext::Global)
+            .actions()
+            .available(&ActionId::of::<Copy>(), InvocationContext::Global)
     );
 }
 

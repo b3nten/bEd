@@ -626,7 +626,10 @@ mod tests {
             app.world()
                 .get::<bedtime_ui::UiView>(root)
                 .is_some_and(|view| {
-                    std::ptr::fn_addr_eq(view.draw, crate::ui::draw_active as bedtime_ui::UiDraw)
+                    std::ptr::fn_addr_eq(
+                        view.draw,
+                        crate::menu_ui::draw_active as bedtime_ui::UiDraw,
+                    )
                 })
         }));
     }

@@ -284,25 +284,24 @@ pub(crate) fn register<S: Setting>(app: &mut App) {
     let Some(section) = S::SECTION else {
         return;
     };
-    let draw: DrawRow =
-        match S::ui().or_else(S::inferred_ui) {
-            Some(SettingUi::Row(row)) => Arc::new(row),
-            Some(SettingUi::Editor(edit)) => Arc::new(
-                move |ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer| {
-                    self::row::<S>(ui, world, context, layer, None, |ui, value| {
-                        edit(ui, context, value)
-                    })
-                },
-            ),
-            None => Arc::new(
-                |ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer| {
-                    self::row::<S>(ui, world, context, layer, None, |ui, _| {
-                        ui.weak("Edit in the settings file");
-                        false
-                    })
-                },
-            ),
-        };
+    let draw: DrawRow = match S::ui().or_else(S::inferred_ui) {
+        Some(SettingUi::Row(row)) => Arc::new(row),
+        Some(SettingUi::Editor(edit)) => Arc::new(
+            move |ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer| {
+                self::row::<S>(ui, world, context, layer, None, |ui, value| {
+                    edit(ui, context, value)
+                })
+            },
+        ),
+        None => Arc::new(
+            |ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer| {
+                self::row::<S>(ui, world, context, layer, None, |ui, _| {
+                    ui.weak("Edit in the settings file");
+                    false
+                })
+            },
+        ),
+    };
     app.world_mut()
         .get_resource_or_init::<SettingsUi>()
         .rows

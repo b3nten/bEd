@@ -449,11 +449,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedtime-actions"
+version = "0.1.0"
+dependencies = [
+ "bedtime-persistence",
+ "bedtime-settings",
+ "bedtime-ui",
+ "bevy",
+ "bevy_egui",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "bedtime-automation"
 version = "0.1.0"
 dependencies = [
+ "bedtime-actions",
  "bedtime-ui",
- "bedtime-workbench",
  "bevy",
  "serde",
  "serde_json",
@@ -523,14 +536,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedtime-work"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+]
+
+[[package]]
 name = "bedtime-workbench"
 version = "0.1.0"
 dependencies = [
+ "bedtime-actions",
  "bedtime-clipboard",
  "bedtime-document",
  "bedtime-persistence",
  "bedtime-settings",
  "bedtime-ui",
+ "bedtime-work",
  "bevy",
  "bevy_egui",
  "bevy_world_serialization",

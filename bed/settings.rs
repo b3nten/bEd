@@ -16,6 +16,7 @@ use bedtime_workbench::{
         Setting, SettingsAppExt, SettingsWorldExt, settings,
         ui::{combo, heading, layer_tabs, row, sections},
     },
+    ui::keybindings_section,
 };
 use bevy::prelude::*;
 use std::{ops::RangeInclusive, path::PathBuf};
@@ -147,8 +148,6 @@ impl Default for AppearanceSettings {
     }
 }
 
-mod keys;
-
 pub struct OpenSettings;
 impl Action for OpenSettings {
     const KEY: &'static str = "app.open_settings";
@@ -266,7 +265,7 @@ impl Panel for SettingsPanel {
                 .show(ui, |ui| {
                     sections(ui, world, context, layer);
                     heading(ui, "Keyboard Shortcuts");
-                    keys::section(ui, world, context, layer);
+                    keybindings_section(ui, world, context, layer);
                 });
         });
     }

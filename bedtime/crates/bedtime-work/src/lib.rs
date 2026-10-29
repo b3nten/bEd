@@ -1,7 +1,8 @@
-//! Background work owned by the session. Tasks run on their own threads and
-//! hand back a value through a `ManagedTask`; they never touch the World.
-//! A task tied to an owner entity is cancelled when the owner goes away, and
-//! shutdown cancels everything and waits for it to stop.
+//! Background work owned by the app. Tasks run on their own threads and hand
+//! back a value through a `ManagedTask`; they never touch the World. A task
+//! tied to an owner entity is cancelled when the owner goes away, and shutdown
+//! (on `AppExit`, or `ManagedWork::shutdown`) cancels everything and waits for
+//! it to stop.
 use bevy::prelude::*;
 use std::{
     collections::BTreeMap,
@@ -238,16 +239,44 @@ impl Drop for ManagedWork {
     }
 }
 
+/// Keeps `ManagedWork` and cancels tasks whose owner is gone. When the app
+/// exits, work is shut down.
+pub struct WorkPlugin;
+
+impl Plugin for WorkPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ManagedWork>()
+            .add_systems(Last, poll.in_set(WorkSystems::Poll));
+    }
+}
+
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum WorkSystems {
+    /// Cancelling orphaned tasks and collecting finished ones, in `Last`.
+    Poll,
+}
+
+fn poll(world: &mut World) {
+    let exiting = world
+        .get_resource::<Messages<AppExit>>()
+        .is_some_and(|m| !m.is_empty());
+    world.resource_scope(|world, mut work: Mut<ManagedWork>| {
+        if exiting {
+            work.shutdown();
+        }
+        work.poll(|owner| world.get_entity(owner).is_ok());
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{WorkbenchCorePlugin, WorkbenchWorldExt};
     use std::time::Instant;
 
     #[test]
     fn tasks_are_cancelled_with_their_owner_and_by_shutdown() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
+        app.add_plugins(WorkPlugin);
         let owner = app.world_mut().spawn_empty().id();
         let mut work = app.world_mut().resource_mut::<ManagedWork>();
         let owned = work
@@ -280,7 +309,7 @@ mod tests {
                 .is_err()
         );
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !app.world().workbench().work_finished() {
+        while !app.world().resource::<ManagedWork>().is_finished() {
             assert!(Instant::now() < deadline);
             app.update();
         }

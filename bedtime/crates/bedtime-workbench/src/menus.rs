@@ -1,6 +1,6 @@
 //! Abstract ordered menus. Native and egui presenters use the same snapshots.
 use crate::{Action, ActionId, ActionRequest, InvocationContext, Invokes, KeyChord};
-use crate::{Workbench, WorkbenchWorldExt};
+use crate::{ActionsWorldExt, Workbench};
 use bevy::prelude::*;
 use std::collections::HashSet;
 
@@ -88,7 +88,7 @@ impl MenuSnapshot {
                     ..
                 } if *entity == source && *enabled && *current == Some(target.clone()) => {
                     Some(ActionRequest {
-                        command: target.clone(),
+                        action: target.clone(),
                         context: *context,
                         source: Some(source),
                     })
@@ -129,8 +129,8 @@ impl Workbench {
 
 fn capture_context(world: &mut World, context: InvocationContext) -> InvocationContext {
     match context {
-        InvocationContext::Focused => crate::actions::focused_panel(world)
-            .map_or(InvocationContext::Global, InvocationContext::Panel),
+        InvocationContext::Focused => crate::lifecycle::focused_panel(world)
+            .map_or(InvocationContext::Global, InvocationContext::Entity),
         explicit => explicit,
     }
 }
@@ -181,10 +181,10 @@ fn read_entries(
                 let target = world.get::<Invokes>(entity).map(|a| a.0.clone());
                 let enabled = target
                     .as_ref()
-                    .is_some_and(|t| world.workbench().action_available(t, context));
+                    .is_some_and(|t| world.actions().available(t, context));
                 let shortcut = target
                     .as_ref()
-                    .and_then(|t| world.workbench().shortcut_for(t, context));
+                    .and_then(|t| world.actions().shortcut_for(t, context));
                 entries.push(MenuNode::Item {
                     entity,
                     label: item.label,

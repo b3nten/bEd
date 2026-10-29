@@ -1,0 +1,10 @@
+[package]
+name = "bedtime-work"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Background work owned by entities, with cancellation and orderly shutdown"
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }

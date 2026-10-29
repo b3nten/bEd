@@ -1,6 +1,6 @@
 //! The remote methods and the systems that carry them out.
+use bedtime_actions::{ActionRegistry, ActionRequest, ActionRequests, InvocationContext};
 use bedtime_ui::{AccessibilityTree, egui::accesskit};
-use bedtime_workbench::{ActionRegistry, ActionRequest, ActionRequests, InvocationContext};
 use bevy::{
     input::{
         ButtonState,
@@ -352,19 +352,20 @@ struct Invoke {
     command: String,
 }
 
-/// Run a command by key, for the focused panel, as its keybinding would.
+/// Run an action by key, for what's focused, as its keybinding would. The
+/// parameter is still called `command`, which scripts use.
 fn invoke(In(request): In<Option<Value>>, world: &mut World) -> BrpResult {
     let Invoke { command } = params(request)?;
     let id = world
         .resource::<ActionRegistry>()
-        .commands()
+        .actions()
         .find(|(id, _)| id.as_str() == command)
         .map(|(id, _)| id.clone())
-        .ok_or_else(|| invalid(format!("No command {command}")))?;
+        .ok_or_else(|| invalid(format!("No action {command}")))?;
     world
         .resource_mut::<ActionRequests>()
         .submit(ActionRequest {
-            command: id,
+            action: id,
             context: InvocationContext::Focused,
             source: None,
         });

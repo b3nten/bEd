@@ -210,7 +210,7 @@ mod tests {
         app.world_mut()
             .resource_mut::<ActionRequests>()
             .submit(ActionRequest {
-                command: ActionId::of::<C>(),
+                action: ActionId::of::<C>(),
                 context: InvocationContext::Focused,
                 source: None,
             });

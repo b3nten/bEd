@@ -66,7 +66,7 @@ fn info(world: &World, panel: Option<Entity>) -> Option<DocumentInfo> {
 }
 
 fn target(world: &World, invocation: &ActionInvocation) -> Result<DocumentId, String> {
-    let panel = invocation.panel.ok_or("No document is focused")?;
+    let panel = invocation.entity.ok_or("No document is focused")?;
     let reference = world
         .get::<DocumentReference>(panel)
         .ok_or("The focused panel has no document")?;

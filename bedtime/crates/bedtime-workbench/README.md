@@ -595,82 +595,19 @@ left the layout, or (for a border resize) if that border no longer exists.
 
 Relationship hooks keep the layout graph consistent as it changes; debug builds
 also validate it once per frame (in `Last`), panicking on a broken graph.
-`ManagedWork` polls in Last. There is one ordinary Bevy plugin lifecycle, clock,
-fixed-update loop and renderer.
-
-Command handlers can run without a selected layout. Application services are
-accessible directly in the same World; there is no scope forwarding.
-
-```rust,ignore
-let task = world.resource_mut::<ManagedWork>().spawn_task(Some(panel), "Search", |cancel| {
-    if cancel.wait(Duration::from_secs(2)) { return None; }
-    Some(compute_result())
-})?;
-```
-
-`ManagedWork` owns workers independently of result/I/O handles. An optional owner
-entity gives work a shorter lifetime: its removal cancels work on the next update.
-Hidden layouts do not suspend workers or polling. `spawn_task` is for disposable
-calculations: cancellation can suppress its returned value. `ManagedTask` reports
-Finished, Cancelled and Failed; cancellation is cooperative.
-
-Quitting through `CloseRequested` performs orderly exit. Headless hosts and tests
-can instead call `shutdown_work()` and keep updating until
-`work_finished()`. New document/work admissions are rejected after shutdown.
-Dropping the World alone is a fallback, not orderly shutdown. Tasks must return
-after cancellation.
+Background work is [`bedtime-work`](../bedtime-work/README.md) (`ManagedWork`,
+re-exported), polled in `Last`. Quitting through `CloseRequested` performs an
+orderly exit; headless hosts and tests can instead call `shutdown_work()` and
+keep updating until `work_finished()`. New document and work admissions are
+rejected after shutdown.
 
 ## Actions, handlers and keybindings
 
-An action (a command the user can run: from a menu, a key, a button) is a
-marker type implementing `Action`, with a stable dotted `KEY`, a `LABEL`, and optional
-`DEFAULT_KEYS` and `REPEATS` (whether held keys run it again).
-
-```rust,ignore
-struct Save;
-impl Action for Save {
-    const KEY: &'static str = "document.save";
-    const LABEL: &'static str = "Save";
-    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyS)];
-}
-
-app.register_action::<Save>(); // known, bindable, listed
-// Also sets its global handler, available only when there's something to save.
-app.add_action_handler::<Save>(Handler::new(save_focused).available_when(can_save));
-// A panel's own handler.
-commands.spawn((MyEditor, ActionHandler::<Save>::new(Handler::new(save_editor))));
-```
-
-There is one handler type, `Handler`: what the command does
-(`fn(&mut World, ActionInvocation) -> ActionResult`) and,
-optionally, whether it can run now (`fn(&World, Option<Entity>) -> bool`, given
-the panel). A command has at most one global handler, kept in `ActionRegistry`
-(`set_global_handler::<C>`), and any panel may carry a `ActionHandler<C>`
-component. When a command runs for a panel, that panel's handler wins;
-otherwise the global handler runs, and is told the panel too. A panel handler
-that isn't available makes the command unavailable in that panel rather than
-falling back. The invocation also names its `source` (e.g. the menu item), so
-a handler can read details from it.
-
-`Keybindings` is a plain table from command to chords, filled with each
-command's defaults on registration. With the `persistence` feature, each
-command's chords are also the setting `keys.<KEY>` (`Keybinding<C>`), so they
-live in settings layers like any other setting: a higher layer's list replaces
-lower ones for that command, and an empty list unbinds it. Chords are written
-portably, e.g. `"Primary+Shift+Z"` (Primary is Cmd on macOS, Ctrl elsewhere).
-`keys_in` and `set_keys_in` read and write one layer's chords by command id, for
-settings UIs.
-
-Commands may share a chord. Pressing it runs the bound command handled in the
-most specific scope: the focused panel, then global. If the same scope handles
-several of them, nothing runs and `BindingConflict` is sent. Modifiers match
-exactly.
-
-`ActionRequests` queues commands (`invoke::<Save>()`, or a request with
-`InvocationContext::{Focused, Global, Panel(entity)}`). Dispatch runs them in
-order in `PreUpdate` and sends `ActionFinished` with each result.
-Requests made by handlers run next frame. `action_available` and
-`shortcut_for` answer the same questions for menus.
+Actions are [`bedtime-actions`](../bedtime-actions/README.md), re-exported.
+Workbench makes `ActionFocus` the focused panel, so a panel's
+`ActionHandler<A>` wins while it's focused, and shows a handler's error as a
+notification (an action that isn't available isn't an error). Document
+actions (Save, Undo, Redo) are workbench's own.
 
 ## Menus
 

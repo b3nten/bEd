@@ -283,6 +283,21 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 3: `bedtime-actions` and `bedtime-work`**, 2026-10-29.
+  Actions, keybindings and shortcut collection moved out of workbench into
+  `bedtime-actions` (features `settings`, `ui`), and managed work into
+  `bedtime-work`; workbench re-exports both. Actions know entities, not
+  panels: `ActionFocus` is a function saying what's focused (workbench: the
+  focused panel), `InvocationContext::Entity`, `ActionInvocation::entity`.
+  Fields and methods say `action` rather than `command`
+  (`ActionRequest::action`, `ActionRegistry::actions`,
+  `Keybindings::actions_for`). `world.actions()` / `world.actions_mut()`
+  replace `action_available`, `shortcut_for` and the keys methods on
+  `Workbench`. `ActionFinished` says whether a handler `ran`; workbench
+  notifies failed handlers from it. The Keyboard Shortcuts section moved from
+  bed into `bedtime_actions::ui::keybindings_section`. bedtime-automation
+  depends on bedtime-actions instead of workbench.
+
 - **Architecture step 2: `bedtime-settings`**, 2026-10-29. Settings moved out
   of workbench into their own crate (workbench re-exports it as `settings`).
   `settings!` declares settings as entry blocks grouped by section (`setting!`

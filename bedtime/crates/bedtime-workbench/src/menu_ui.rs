@@ -160,7 +160,7 @@ fn draw_entries(ui: &mut bedtime_ui::egui::Ui, world: &mut World, entries: &[Men
                 observe_item(world, *entity, &response);
                 if response.clicked() {
                     let request = ActionRequest {
-                        command: target.clone().expect("Enabled menu action"),
+                        action: target.clone().expect("Enabled menu action"),
                         context: *context,
                         source: Some(*entity),
                     };

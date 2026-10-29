@@ -293,7 +293,7 @@ pub(crate) fn configure(world: &mut World) {
     }
 
     if initializing {
-        let root = register_view(world, surface, crate::ui::draw_active);
+        let root = register_view(world, surface, crate::menu_ui::draw_active);
         let binding = SurfaceBinding {
             root,
             camera,
