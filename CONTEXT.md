@@ -372,6 +372,15 @@ Each step should produce a usable app. We can reorder at any point.
   workspace per process; workspace data under the config directory as in bed_old;
   settings and stores live in workbench; last writer wins across instances.
 
+- 2026-10-29: **bedtime is layered: UI toolkit, building blocks, framework**
+  (details in [docs/architecture.md](docs/architecture.md)). `bedtime-ui` gets
+  docking (layouts → areas → panels) and window chrome; persistence, settings,
+  actions and menus become their own crates; `bedtime-workbench` becomes an
+  opinionated document-app framework that owns workspaces and opening. Docking
+  fills the space it's given (status bars are app code) and closing is a
+  request observers can stop. The bevy_winit fork stays required for now.
+  Migration is bottom up, one crate per step.
+
 ## Open questions
 
 - Should viewer switching ("Open with") replace the panel, or should one panel

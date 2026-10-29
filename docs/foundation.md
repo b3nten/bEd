@@ -3,6 +3,10 @@
 Status (2026-10-27): **steps 1–7 built** (stores, persistence, settings,
 workspaces, commands and keybindings, menus and toolbar, fonts, automation). Update this file as decisions change during the build.
 
+The crates are being reorganised into layers (UI toolkit, building blocks,
+framework); see [architecture.md](architecture.md). Names of crates and
+modules below are where things live today.
+
 The goal is a foundation solid enough that everything after it is "bring in a
 plugin": file tree, editor, viewers, terminal. Those plugins should only need to
 mark what they persist, expose config resources, and register commands.
