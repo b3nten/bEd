@@ -1,14 +1,172 @@
-//! ECS owns the tiling. Geometry snapshots are temporary calculations, never a
-//! second live model. This module alone commits membership and topology changes.
+//! Layouts: areas tiling a window, each holding panels as tabs, that users
+//! split, join, resize and rearrange by dragging.
+//!
+//! A `Layout` holds `Area`s (`InLayout`), and an area holds panels (`InArea`)
+//! as tabs. ECS owns the tiling: geometry snapshots are temporary
+//! calculations, never a second live model, and only this module commits
+//! membership and topology changes. `world.layouts()` reads and
+//! `world.layouts_mut()` changes them. On a window, `LayoutSurface` draws the
+//! active layout under the window's chrome (`Titlebar`); an app can draw its
+//! own body around `view::show` instead (a status bar, say).
+//!
+//! Nothing here knows what a panel holds. Apps add rules through hooks:
+//! `check_panel_close` refuses closes, `on_panel_close` takes over closes the
+//! user asks for (to ask about unsaved work, say), `PanelModified` marks tabs,
+//! and `add_layout_validation` checks more of the world.
+mod chrome;
+mod dialogs;
+mod geometry;
+mod membership;
 #[cfg(feature = "persistence")]
-use crate::persistence::ReflectPersist;
-use crate::{Workbench, WorkbenchRef, geometry};
+mod persistence;
+mod surface;
+#[cfg(feature = "persistence")]
+mod templates;
+#[cfg(test)]
+pub(crate) mod tests;
+mod validation;
+pub mod view;
+
+pub use chrome::*;
+pub use dialogs::{ErrorDialog, ErrorDialogWorldExt, ErrorDialogs, ModalAppExt, ModalFn};
+pub use surface::{AreaBackground, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility};
+#[cfg(feature = "persistence")]
+pub use templates::LayoutTemplate;
+pub use validation::PanelTabStyle;
+pub(crate) use validation::validate_layouts;
+pub use view::{
+    PanelFactoryPayload, SurfacePresentation, SurfaceShell, Titlebar, TitlebarOwnership,
+    panel_drag_source,
+};
+
+#[cfg(feature = "persistence")]
+use bedtime_persistence::ReflectPersist;
 #[cfg(feature = "persistence")]
 use bevy::ecs::reflect::ReflectMapEntities;
 use bevy::prelude::*;
 pub use geometry::EXTENT as LAYOUT_EXTENT;
 pub use geometry::Rect as AreaRect;
 use std::collections::HashMap;
+
+/// Reading layouts: `world.layouts()`.
+#[repr(transparent)]
+pub struct LayoutsRef {
+    world: World,
+}
+
+/// Changing layouts: `world.layouts_mut()`. It reads too. Changes made here
+/// are the app's own and skip the user's permissions and close hooks; a user's
+/// edit goes through `user_edit`.
+#[repr(transparent)]
+pub struct Layouts {
+    world: World,
+}
+
+impl LayoutsRef {
+    pub fn world(&self) -> &World {
+        &self.world
+    }
+}
+
+impl Layouts {
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+}
+
+impl std::ops::Deref for Layouts {
+    type Target = LayoutsRef;
+    fn deref(&self) -> &LayoutsRef {
+        view_of(&self.world)
+    }
+}
+
+fn view_of(world: &World) -> &LayoutsRef {
+    // SAFETY: LayoutsRef is a repr(transparent) wrapper of World.
+    unsafe { &*(world as *const World).cast::<LayoutsRef>() }
+}
+
+/// `world.layouts()` and `world.layouts_mut()`.
+pub trait LayoutsWorldExt {
+    fn layouts(&self) -> &LayoutsRef;
+    fn layouts_mut(&mut self) -> &mut Layouts;
+}
+
+impl LayoutsWorldExt for World {
+    fn layouts(&self) -> &LayoutsRef {
+        view_of(self)
+    }
+    fn layouts_mut(&mut self) -> &mut Layouts {
+        // SAFETY: Layouts is a repr(transparent) wrapper of World.
+        unsafe { &mut *(self as *mut World).cast::<Layouts>() }
+    }
+}
+
+/// Refuses closing these panels, for direct and user closes alike (input not
+/// yet committed, say).
+pub type CloseCheck = fn(&World, &[Entity]) -> Result<(), String>;
+
+/// Runs before a user's edit closes `panels` in `layout`. `Ok(true)` takes the
+/// close over: the hook applies the edit later (`layouts_mut().apply_edit`),
+/// or not at all (the user cancelled). `Err` refuses it.
+pub type CloseHook = fn(&mut World, Entity, &LayoutEdit, &[Entity]) -> Result<bool, String>;
+
+#[derive(Resource, Default)]
+pub(crate) struct CloseHooks {
+    checks: Vec<CloseCheck>,
+    hooks: Vec<CloseHook>,
+}
+
+/// Whether a panel's tab shows it's modified (unsaved, say). Not modified
+/// until the app says.
+#[derive(Resource, Clone, Copy)]
+pub struct PanelModified(pub fn(&World, Entity) -> bool);
+
+impl Default for PanelModified {
+    fn default() -> Self {
+        Self(|_, _| false)
+    }
+}
+
+/// More checks of the world, run with the layout validation (in debug builds
+/// every frame, and around persistence).
+pub type ExtraValidation = fn(&mut World) -> Result<(), String>;
+
+#[derive(Resource, Default)]
+pub(crate) struct Validations(pub(crate) Vec<ExtraValidation>);
+
+pub trait LayoutsAppExt {
+    /// Refuse closing panels for which `check` errs.
+    fn check_panel_close(&mut self, check: CloseCheck) -> &mut Self;
+    /// Let `hook` take over closes the user asks for.
+    fn on_panel_close(&mut self, hook: CloseHook) -> &mut Self;
+    /// Check more of the world along with the layouts.
+    fn add_layout_validation(&mut self, validation: ExtraValidation) -> &mut Self;
+}
+
+impl LayoutsAppExt for App {
+    fn check_panel_close(&mut self, check: CloseCheck) -> &mut Self {
+        self.world_mut()
+            .get_resource_or_init::<CloseHooks>()
+            .checks
+            .push(check);
+        self
+    }
+    fn on_panel_close(&mut self, hook: CloseHook) -> &mut Self {
+        self.world_mut()
+            .get_resource_or_init::<CloseHooks>()
+            .hooks
+            .push(hook);
+        self
+    }
+    fn add_layout_validation(&mut self, validation: ExtraValidation) -> &mut Self {
+        self.world_mut()
+            .get_resource_or_init::<Validations>()
+            .0
+            .push(validation);
+        self
+    }
+}
 
 /// Stable layout order. Entity allocation and archetype iteration are not order.
 #[derive(Resource, Default)]
@@ -18,14 +176,14 @@ use std::collections::HashMap;
 )]
 #[cfg_attr(feature = "persistence", reflect(Resource, MapEntities, Persist))]
 pub(crate) struct LayoutOrder(#[cfg_attr(feature = "persistence", entities)] pub Vec<Entity>);
-impl WorkbenchRef {
-    pub fn layouts(&self) -> &[Entity] {
+impl LayoutsRef {
+    pub fn all(&self) -> &[Entity] {
         let world = &self.world;
         &world.resource::<LayoutOrder>().0
     }
 
     /// Find the selected layout from its authoritative marker.
-    pub fn active_layout(&self) -> Option<Entity> {
+    pub fn active(&self) -> Option<Entity> {
         let world = &self.world;
         let mut query = world.try_query_filtered::<Entity, With<ActiveLayout>>()?;
         let mut layouts = query.iter(world);
@@ -53,7 +211,7 @@ pub struct ActiveLayout;
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
 #[cfg_attr(feature = "persistence", reflect(Component, Persist))]
 #[require(LayoutAreas)]
-#[component(on_add = crate::membership::layout_added, on_remove = crate::membership::layout_removed)]
+#[component(on_add = crate::layouts::membership::layout_added, on_remove = crate::layouts::membership::layout_removed)]
 pub struct Layout {
     pub name: String,
     #[cfg_attr(feature = "persistence", entities)]
@@ -110,12 +268,10 @@ pub struct PanelInstance {
     pub title: String,
     pub preview: bool,
     /// Optional ordinary drawing capability, available as soon as composition applies.
-    #[cfg(feature = "ui")]
     pub draw: Option<PanelDraw>,
 }
 
-#[cfg(feature = "ui")]
-pub type PanelDraw = fn(&mut bedtime_ui::egui::Ui, &mut World, &bedtime_ui::UiContext<'_>, Entity);
+pub type PanelDraw = fn(&mut crate::egui::Ui, &mut World, &crate::UiContext<'_>, Entity);
 
 /// Last applied parent, used only to distinguish attachment from reinsertion.
 #[derive(Component, Default)]
@@ -128,7 +284,6 @@ impl PanelInstance {
     pub fn of<P: Panel>() -> Self {
         Self {
             title: P::LABEL.into(),
-            #[cfg(feature = "ui")]
             draw: Some(P::draw),
             ..default()
         }
@@ -138,7 +293,7 @@ impl PanelInstance {
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
 #[cfg_attr(feature = "persistence", reflect(Component, Persist))]
-#[component(on_insert = crate::membership::area_inserted, on_discard = crate::membership::area_replaced, on_remove = crate::membership::area_removed)]
+#[component(on_insert = crate::layouts::membership::area_inserted, on_discard = crate::layouts::membership::area_replaced, on_remove = crate::layouts::membership::area_removed)]
 #[relationship(relationship_target = LayoutAreas)]
 pub struct InLayout(#[cfg_attr(feature = "persistence", entities)] pub Entity);
 
@@ -158,7 +313,7 @@ impl LayoutAreas {
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
 #[cfg_attr(feature = "persistence", reflect(Component, Persist))]
-#[component(on_insert = crate::membership::panel_inserted, on_discard = crate::membership::panel_replaced, on_remove = crate::membership::panel_removed)]
+#[component(on_insert = crate::layouts::membership::panel_inserted, on_discard = crate::layouts::membership::panel_replaced, on_remove = crate::layouts::membership::panel_removed)]
 #[relationship(relationship_target = AreaPanels)]
 pub struct InArea(#[cfg_attr(feature = "persistence", entities)] pub Entity);
 
@@ -291,12 +446,11 @@ pub enum LayoutEdit {
 
 /// Layout edits from user gestures, made while drawing and applied before
 /// keyboard routing in the same frame. Each names the layout it was made in.
-#[cfg(feature = "ui")]
 #[derive(Resource, Default)]
 pub(crate) struct PendingEdits(pub Vec<(Entity, LayoutEdit)>);
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WorkbenchSystems {
+pub enum LayoutSystems {
     Apply,
 }
 
@@ -304,11 +458,10 @@ pub enum WorkbenchSystems {
 /// is installed: require `PanelInstance::of::<Self>` on the concrete component.
 pub trait Panel: Component {
     const LABEL: &'static str;
-    #[cfg(feature = "ui")]
     fn draw(
-        ui: &mut bedtime_ui::egui::Ui,
+        ui: &mut crate::egui::Ui,
         world: &mut World,
-        context: &bedtime_ui::UiContext<'_>,
+        context: &crate::UiContext<'_>,
         panel: Entity,
     );
 }
@@ -345,16 +498,37 @@ impl PanelFactory {
     }
 }
 
-#[cfg(feature = "ui")]
-pub(crate) fn install(app: &mut App) {
-    app.init_resource::<PendingEdits>()
-        .configure_sets(
-            PreUpdate,
-            WorkbenchSystems::Apply
-                .after(bedtime_ui::UiSystems::Draw)
-                .before(crate::ActionSystems::CollectInput),
-        )
-        .add_systems(PreUpdate, apply_edits.in_set(WorkbenchSystems::Apply));
+/// Layouts, and their drawing on `LayoutSurface` windows (which needs
+/// `UiPlugin`). Window chrome is `ChromePlugin`.
+pub struct LayoutsPlugin;
+
+impl Plugin for LayoutsPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<LayoutOrder>()
+            .init_resource::<PendingEdits>()
+            .init_resource::<view::LayoutsUi>()
+            .init_resource::<CloseHooks>()
+            .init_resource::<PanelModified>()
+            .init_resource::<Validations>()
+            .configure_sets(
+                PreUpdate,
+                LayoutSystems::Apply.after(crate::UiSystems::Draw),
+            )
+            .add_systems(PreUpdate, apply_edits.in_set(LayoutSystems::Apply))
+            .add_systems(
+                PreUpdate,
+                surface::configure.before(crate::UiSystems::Configure),
+            );
+        #[cfg(debug_assertions)]
+        app.add_systems(Last, validate);
+        #[cfg(feature = "persistence")]
+        persistence::install(app);
+    }
+}
+
+#[cfg(debug_assertions)]
+fn validate(world: &mut World) {
+    validate_layouts(world).expect("Invalid layout graph");
 }
 
 pub(crate) fn new_layout(world: &mut World, name: String) -> Entity {
@@ -378,19 +552,20 @@ pub(crate) fn new_layout(world: &mut World, name: String) -> Entity {
     layout
 }
 
-/// Uncommitted viewer input must be committed or explicitly cancelled before its
-/// panel is retired. Check a whole batch before making structural changes.
-pub(crate) fn check_panel_drafts(
+/// Whether the app's close checks allow closing `panels`. Check a whole batch
+/// before making structural changes.
+pub(crate) fn check_panel_close(
     world: &World,
     panels: impl IntoIterator<Item = Entity>,
 ) -> Result<(), String> {
-    if panels
-        .into_iter()
-        .any(|panel| world.get::<crate::DocumentDraft>(panel).is_some())
-    {
-        return Err("Commit or cancel document drafts before closing their viewers".into());
-    }
-    Ok(())
+    let Some(hooks) = world.get_resource::<CloseHooks>() else {
+        return Ok(());
+    };
+    let panels: Vec<_> = panels.into_iter().collect();
+    hooks
+        .checks
+        .iter()
+        .try_for_each(|check| check(world, &panels))
 }
 
 /// A short-lived, ordered geometry calculation; IDs are local to this snapshot.
@@ -451,7 +626,7 @@ pub(crate) fn plan_tab_geometry(
     Ok((next, destination))
 }
 
-impl WorkbenchRef {
+impl LayoutsRef {
     pub fn panel_layout(&self, panel: Entity) -> Result<Entity, String> {
         self.world
             .get::<PanelInstance>(panel)
@@ -559,7 +734,7 @@ impl WorkbenchRef {
     /// active and everything it names is still in that layout. A border resize
     /// names a position instead, so that border must still be there.
     pub(crate) fn validate_edit(&self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
-        if self.active_layout() != Some(layout) {
+        if self.active() != Some(layout) {
             return Err("The layout changed during the interaction".into());
         }
         let area_of =
@@ -605,11 +780,8 @@ impl WorkbenchRef {
     /// Submit a close intention for application policy. This never destroys data.
     /// The panels a destructive edit would remove, including those removed by
     /// joins/docks. Uses the same geometry planner as the edit itself.
-    pub(crate) fn close_targets(
-        &self,
-        layout: Entity,
-        edit: &LayoutEdit,
-    ) -> Result<Vec<Entity>, String> {
+    /// The panels `edit` would close.
+    pub fn close_targets(&self, layout: Entity, edit: &LayoutEdit) -> Result<Vec<Entity>, String> {
         self.validate_edit(layout, edit)?;
         match edit {
             LayoutEdit::ClosePanels(panels) => Ok(panels.clone()),
@@ -651,17 +823,17 @@ impl WorkbenchRef {
     }
 }
 
-impl Workbench {
-    pub fn create_layout(&mut self, name: impl Into<String>) -> Result<Entity, String> {
+impl Layouts {
+    pub fn create(&mut self, name: impl Into<String>) -> Result<Entity, String> {
         Ok(new_layout(&mut self.world, name.into()))
     }
 
-    pub fn activate_layout(&mut self, layout: Entity) -> Result<(), String> {
+    pub fn activate(&mut self, layout: Entity) -> Result<(), String> {
         self.world
             .get::<Layout>(layout)
             .ok_or("Layout is unavailable")?;
-        if self.active_layout() != Some(layout) {
-            if let Some(previous) = self.active_layout() {
+        if self.active() != Some(layout) {
+            if let Some(previous) = self.active() {
                 self.world.entity_mut(previous).remove::<ActiveLayout>();
             }
             self.world.entity_mut(layout).insert(ActiveLayout);
@@ -692,7 +864,7 @@ impl Workbench {
 
     pub fn close_panel(&mut self, panel: Entity) -> Result<(), String> {
         self.panel_layout(panel)?;
-        check_panel_drafts(&self.world, [panel])?;
+        check_panel_close(&self.world, [panel])?;
         let area = self.world.get::<InArea>(panel).unwrap().0;
         let index = self
             .panels_in_area(area)
@@ -777,7 +949,7 @@ impl Workbench {
         if !next.close_area(snapshot.id(area)?) {
             return Err("Cannot close the final area".into());
         }
-        check_panel_drafts(&self.world, self.panels_in_area(area).iter().copied())?;
+        check_panel_close(&self.world, self.panels_in_area(area).iter().copied())?;
         self.commit_geometry(layout, &snapshot, next);
         Ok(())
     }
@@ -925,7 +1097,7 @@ impl Workbench {
             self.plan_area_relocation(source, target, placement, minimum)?;
         // A join/dock can replace target areas and their panels. Validate every
         // removed area before changing geometry or focus.
-        check_panel_drafts(
+        check_panel_close(
             &self.world,
             snapshot
                 .entities
@@ -969,17 +1141,17 @@ impl Workbench {
         Ok(())
     }
 
-    pub fn delete_layout(&mut self, layout: Entity) -> Result<(), String> {
+    pub fn delete(&mut self, layout: Entity) -> Result<(), String> {
         self.world
             .get::<Layout>(layout)
             .ok_or("Layout is unavailable")?;
-        check_panel_drafts(&self.world, self.panels(layout))?;
+        check_panel_close(&self.world, self.panels(layout))?;
         let replacement = self
             .world
             .query::<(Entity, &Layout)>()
             .iter(&self.world)
             .find_map(|(e, _)| (e != layout).then_some(e));
-        if self.active_layout() == Some(layout) {
+        if self.active() == Some(layout) {
             if let Some(next) = replacement {
                 self.world.entity_mut(next).insert(ActiveLayout);
             }
@@ -988,7 +1160,9 @@ impl Workbench {
         Ok(())
     }
 
-    pub(crate) fn edit(&mut self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
+    /// Apply `edit` as the app's own change: no permissions or close hooks
+    /// (close checks still apply).
+    pub fn apply_edit(&mut self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
         self.validate_edit(layout, edit)?;
         match edit {
             LayoutEdit::FocusArea(e) => self.focus_area(*e),
@@ -1013,7 +1187,7 @@ impl Workbench {
                 for &e in es {
                     self.panel_layout(e)?;
                 }
-                check_panel_drafts(&self.world, es.iter().copied())?;
+                check_panel_close(&self.world, es.iter().copied())?;
                 for &e in es {
                     self.close_panel(e)?;
                 }
@@ -1094,12 +1268,10 @@ fn valid_minimum(minimum: [i32; 2]) -> Result<(), String> {
     }
 }
 
-#[cfg(feature = "ui")]
 fn apply_edits(world: &mut World) {
-    use crate::WorkbenchWorldExt;
     let edits = std::mem::take(&mut world.resource_mut::<PendingEdits>().0);
     for (layout, edit) in edits {
         // A gesture overtaken by other changes is simply dropped.
-        let _ = world.workbench_mut().user_edit(layout, &edit);
+        let _ = world.layouts_mut().user_edit(layout, &edit);
     }
 }

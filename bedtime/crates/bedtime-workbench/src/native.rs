@@ -1,47 +1,14 @@
-//! Optional platform adapters. Core menus and commands have no native dependency.
+//! The native plugins: window close requests become `CloseRequested` (the quit
+//! flow), plus bedtime-menus' native menu bar. Window chrome is bedtime-ui's.
 use crate::CloseRequested;
-use bevy::{app::PluginGroupBuilder, prelude::*, window::RawHandleWrapper};
+use bevy::{app::PluginGroupBuilder, prelude::*};
 
 #[derive(Message, Clone, Debug)]
 pub struct NativeError(pub String);
 
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct WindowBackground([f32; 4]);
-impl WindowBackground {
-    pub fn new(rgba: [f32; 4]) -> Self {
-        assert!(
-            rgba.into_iter()
-                .all(|v| v.is_finite() && (0.0..=1.0).contains(&v)),
-            "Invalid window background"
-        );
-        Self(rgba)
-    }
-}
-
-/// Observed native titlebar geometry in logical content-view coordinates, with
-/// a top-left origin. Zero for windows whose titlebar is outside their content.
-/// The host converts these measurements to egui points before allocating UI.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq)]
-pub struct WindowTitlebarGeometry {
-    pub height: f32,
-    pub controls: Option<Rect>,
-}
-
-#[cfg(target_os = "macos")]
-#[derive(Component)]
-pub(crate) struct WindowDrag;
-
-/// Opt into a passive macOS material behind the transparent GPU surface.
-/// Attach alongside WindowBackground (supplied by the workbench root).
-#[derive(Component, Clone, Copy, Debug, Default)]
-pub struct WindowBlur(pub bool);
-
-#[cfg(target_os = "macos")]
-mod macos_background;
-
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum NativeSystems {
-    WindowGeometry,
+    /// Forwarding window close requests, in `PreUpdate`.
     Poll,
 }
 
@@ -50,6 +17,7 @@ impl PluginGroup for WorkbenchNativePlugin {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
             .add(WorkbenchNativeWindowPlugin)
+            .add(bedtime_ui::layouts::ChromePlugin)
             .add(bedtime_menus::NativeMenuPlugin)
     }
 }
@@ -64,22 +32,6 @@ impl Plugin for WorkbenchNativeWindowPlugin {
                 PreUpdate,
                 forward_close_requests.in_set(NativeSystems::Poll),
             );
-        #[cfg(target_os = "macos")]
-        app.init_non_send::<macos_background::Backgrounds>()
-            .add_systems(First, macos_background::finish_window_drags)
-            .add_systems(
-                PreUpdate,
-                macos_background::measure_titlebar.in_set(NativeSystems::WindowGeometry),
-            )
-            .add_systems(
-                Last,
-                macos_background::sync.before(bevy::app::OnAppExitSystems),
-            );
-        #[cfg(all(target_os = "macos", feature = "ui"))]
-        app.add_systems(
-            PreUpdate,
-            macos_background::sample_file_drag_cursor.before(bevy_egui::EguiInputSet::FocusContext),
-        );
     }
     fn finish(&self, app: &mut App) {
         let plugins = app.get_added_plugins::<bevy::window::WindowPlugin>();
@@ -91,11 +43,6 @@ impl Plugin for WorkbenchNativeWindowPlugin {
             "Set WindowPlugin::close_when_requested to false: application/workbench close policy owns close decisions"
         );
     }
-}
-
-#[cfg(all(target_os = "macos", feature = "ui"))]
-pub(crate) fn titlebar_double_click(handle: &RawHandleWrapper) {
-    macos_background::double_click(handle);
 }
 
 fn forward_close_requests(

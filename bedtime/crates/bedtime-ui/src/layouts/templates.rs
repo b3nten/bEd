@@ -6,9 +6,11 @@
 //! layout is active and the workbench's layout order, and any panel that
 //! refers to an entity outside the layout (a document, say): such a panel
 //! belongs to the data of one workspace, not to an arrangement.
+use super::persistence::{leave_out_panels, leave_out_unsaved_panels};
 use super::*;
-use crate::{Workbench, WorkbenchWorldExt};
+use bedtime_persistence::{ReflectPersist, snapshot, snapshot::value};
 use bevy_world_serialization::DynamicWorldBuilder;
+use std::collections::HashSet;
 
 /// One layout's arrangement and panels, as RON. Saved inside other RON (an
 /// app's persisted resource), it's written as nested RON, not as a string.
@@ -29,7 +31,7 @@ impl LayoutTemplate {
     }
 }
 
-impl Workbench {
+impl Layouts {
     /// Save `layout`'s areas and panels as a template.
     pub fn capture_layout(&mut self, layout: Entity) -> Result<LayoutTemplate, String> {
         let world = &mut self.world;
@@ -41,7 +43,7 @@ impl Workbench {
             .unwrap_or_default();
         for area in areas {
             entities.push(area);
-            entities.extend_from_slice(world.workbench().panels_in_area(area));
+            entities.extend_from_slice(world.layouts().panels_in_area(area));
         }
         let registry = world.resource::<AppTypeRegistry>().clone();
         let registry = registry.read();

@@ -1,6 +1,7 @@
 use bedtime_ui::UiPlugin;
 use bedtime_workbench::{
-    AreaBackground, TabBarVisibility, Titlebar, WorkbenchCamera, WorkbenchPlugin, WorkbenchSurface,
+    AreaBackground, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility, Titlebar,
+    WorkbenchPlugin,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::PathBuf;
@@ -45,11 +46,10 @@ pub fn app(start: Start) -> App {
         WorkbenchPlugin,
         settings::BedSettingsPlugin,
         menus::MenusPlugin,
-        layouts::LayoutsPlugin,
+        layouts::LayoutSlotsPlugin,
         effects::EffectsPlugin,
         themes::ThemesPlugin,
         workspace::WorkspacesPanelPlugin,
-        status::StatusBarPlugin,
         automation,
     ))
     // Look for installed fonts now, so Settings can list them when opened.
@@ -91,11 +91,13 @@ fn setup(mut commands: Commands, window: Single<Entity, With<PrimaryWindow>>) {
     commands.entity(*window).insert((
         // A layout of one panel is just that panel, drawn onto the window:
         // no tab bar, no background (a terminal looks native this way).
-        WorkbenchSurface {
+        LayoutSurface {
             tab_bar: TabBarVisibility::MultipleTabsOrAreas,
             area_background: AreaBackground::MultipleAreas,
             ..default()
         },
+        // The panels, with the status bar under them.
+        SurfaceBody(status::body),
         Titlebar {
             height: if cfg!(target_os = "macos") {
                 18.0
@@ -105,5 +107,5 @@ fn setup(mut commands: Commands, window: Single<Entity, With<PrimaryWindow>>) {
             draw: menus::draw_titlebar,
         },
     ));
-    commands.spawn((Camera2d, WorkbenchCamera));
+    commands.spawn((Camera2d, LayoutCamera));
 }

@@ -1,6 +1,6 @@
 # Architecture: the bedtime crates
 
-Status (2026-10-29): **migration steps 1–4 built** (persistence, settings, actions and work, menus); the
+Status (2026-10-29): **migration steps 1–5 built** (persistence, settings, actions and work, menus, layouts and chrome); the
 rest still lives in `bedtime-workbench`, and the [migration](#migration) below
 moves it one crate at a time. Update this file as decisions change.
 

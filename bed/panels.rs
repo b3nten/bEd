@@ -3,7 +3,7 @@
 //! new one goes. Drag-and-drop bypasses this on purpose: dragging a panel out
 //! always creates a new one where the user dropped it.
 use crate::layouts::{self, LayoutSlot};
-use bedtime_workbench::WorkbenchWorldExt;
+use bedtime_workbench::LayoutsWorldExt;
 use bedtime_workbench::{Panel, PanelFactory};
 use bevy::prelude::*;
 
@@ -19,11 +19,11 @@ pub fn open_panel<P: PanelPolicy>(
     key: P::Key,
     factory: PanelFactory,
 ) -> Result<Entity, String> {
-    let layout = match world.workbench().active_layout() {
+    let layout = match world.layouts().active() {
         Some(layout) => layout,
         None => layouts::switch(world, LayoutSlot(0))?,
     };
-    let workbench = world.workbench_mut();
+    let workbench = world.layouts_mut();
     let existing = workbench.panels(layout).into_iter().find(|&panel| {
         let world = workbench.world();
         world.get::<P>(panel).is_some() && P::key(world, panel) == key
@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn opening_focuses_an_equivalent_panel_in_the_active_layout() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, layouts::LayoutsPlugin));
+        app.add_plugins((WorkbenchCorePlugin, layouts::LayoutSlotsPlugin));
         let world = app.world_mut();
 
         let first = open_settings(world);
@@ -68,12 +68,12 @@ mod tests {
     #[test]
     fn opening_ignores_panels_in_other_layouts() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, layouts::LayoutsPlugin));
+        app.add_plugins((WorkbenchCorePlugin, layouts::LayoutSlotsPlugin));
         let world = app.world_mut();
 
         let first = open_settings(world);
-        let layout = world.workbench_mut().create_layout("Other").unwrap();
-        world.workbench_mut().activate_layout(layout).unwrap();
+        let layout = world.layouts_mut().create("Other").unwrap();
+        world.layouts_mut().activate(layout).unwrap();
         assert_ne!(open_settings(world), first);
     }
 }

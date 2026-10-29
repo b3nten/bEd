@@ -1,19 +1,19 @@
 //! Default shell wiring, with explicit entities remaining the source of truth.
-use crate::*;
+use super::*;
 #[cfg(test)]
-use bedtime_ui::Theme;
-use bedtime_ui::{UiBackground, UiCamera, UiSurface, register_view};
+use crate::Theme;
+use crate::{UiBackground, UiCamera, UiSurface, register_view};
 use bevy::{camera::RenderTarget, prelude::*, window::WindowRef};
 
-/// Workbench configuration on a window, rendered by an explicit WorkbenchCamera.
-/// Supply a theme or WorkbenchShell alongside this to override their defaults.
-/// Wiring runs in PreUpdate before bedtime_ui::UiSystems::Configure.
+/// Layouts on a window, rendered by an explicit LayoutCamera.
+/// Supply a theme or SurfaceShell alongside this to override their defaults.
+/// Wiring runs in PreUpdate before crate::UiSystems::Configure.
 /// User permissions do not restrict direct application layout operations.
 #[derive(Component, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 #[component(on_remove = teardown)]
-#[require(UiSurface, WorkbenchShell, UiBackground::Transparent)]
-pub struct WorkbenchSurface {
+#[require(UiSurface, SurfaceShell, UiBackground::Transparent)]
+pub struct LayoutSurface {
     pub rounding: f32,
     /// Suggested opt-in content padding; panel hosts provide the complete area.
     pub padding: [f32; 2],
@@ -36,7 +36,7 @@ pub struct WorkbenchSurface {
     pub panel_closure: bool,
 }
 
-impl Default for WorkbenchSurface {
+impl Default for LayoutSurface {
     fn default() -> Self {
         Self {
             rounding: 7.0,
@@ -55,7 +55,7 @@ impl Default for WorkbenchSurface {
     }
 }
 
-impl WorkbenchSurface {
+impl LayoutSurface {
     /// A fixed, edge-to-edge panel without tabs or user layout manipulation.
     pub fn single_panel() -> Self {
         Self {
@@ -98,11 +98,17 @@ pub enum AreaBackground {
     Never,
 }
 
+/// The body of a layout surface's window, under its chrome: by default the
+/// active layout (`view::show`). An app draws its own body to put things
+/// around the panels (a status bar, say), calling `view::show` for them.
+#[derive(Component, Clone, Copy)]
+pub struct SurfaceBody(pub crate::UiDraw);
+
 /// Required application-owned camera. UiCamera (and its EguiContext) is supplied
 /// immediately; surface configuration resolves its initially unbound target.
 #[derive(Component)]
 #[require(UiCamera(Entity::PLACEHOLDER))]
-pub struct WorkbenchCamera;
+pub struct LayoutCamera;
 
 /// Only the resources and camera changes installed by workbench setup.
 #[derive(Component, Clone)]
@@ -111,8 +117,7 @@ struct SurfaceBinding {
     camera: Entity,
     managed_ui_camera: bool,
     original_target: RenderTarget,
-    quit_shortcuts: Vec<bedtime_ui::egui::KeyboardShortcut>,
-    #[cfg(feature = "native")]
+    quit_shortcuts: Vec<crate::egui::KeyboardShortcut>,
     original_background: Option<WindowBackground>,
 }
 
@@ -147,15 +152,14 @@ fn teardown(
         }
         if world.get_entity(surface).is_ok() {
             world.entity_mut(surface).remove::<SurfaceBinding>();
-            if let Some(mut presentation) = world.get_mut::<WorkbenchPresentation>(surface) {
+            if let Some(mut presentation) = world.get_mut::<SurfacePresentation>(surface) {
                 *presentation = default();
             }
             if binding.managed_ui_camera {
-                if let Some(mut capture) = world.get_mut::<bedtime_ui::UiCapture>(surface) {
+                if let Some(mut capture) = world.get_mut::<crate::UiCapture>(surface) {
                     *capture = default();
                 }
             }
-            #[cfg(feature = "native")]
             if let Some(background) = binding.original_background {
                 world.entity_mut(surface).insert(background);
             } else {
@@ -165,7 +169,7 @@ fn teardown(
     });
 }
 
-impl Default for WorkbenchShell {
+impl Default for SurfaceShell {
     fn default() -> Self {
         Self {
             titlebar_ownership: default(),
@@ -179,14 +183,11 @@ impl Default for WorkbenchShell {
 /// Owns surface wiring after application startup and before UI setup/drawing.
 pub(crate) fn configure(world: &mut World) {
     let surfaces: Vec<_> = world
-        .query_filtered::<Entity, With<WorkbenchSurface>>()
+        .query_filtered::<Entity, With<LayoutSurface>>()
         .iter(world)
         .collect();
 
-    assert!(
-        surfaces.len() <= 1,
-        "Only one WorkbenchSurface is supported"
-    );
+    assert!(surfaces.len() <= 1, "Only one LayoutSurface is supported");
 
     let Some(&surface) = surfaces.first() else {
         return;
@@ -194,15 +195,15 @@ pub(crate) fn configure(world: &mut World) {
 
     assert!(
         world.get::<Window>(surface).is_some(),
-        "WorkbenchSurface requires a window"
+        "LayoutSurface requires a window"
     );
-    let settings = world.get::<WorkbenchSurface>(surface).unwrap();
+    let settings = world.get::<LayoutSurface>(surface).unwrap();
     assert!(
         [settings.rounding, settings.hit_size, settings.panel_gap]
             .into_iter()
             .chain(settings.padding)
             .all(|value| value.is_finite() && value >= 0.0),
-        "Workbench surface dimensions must be finite and nonnegative"
+        "Layout surface dimensions must be finite and nonnegative"
     );
     if let Some(titlebar) = world.get::<Titlebar>(surface) {
         assert!(
@@ -212,13 +213,13 @@ pub(crate) fn configure(world: &mut World) {
     }
 
     let marked: Vec<_> = world
-        .query_filtered::<Entity, With<WorkbenchCamera>>()
+        .query_filtered::<Entity, With<LayoutCamera>>()
         .iter(world)
         .collect();
-    assert!(marked.len() <= 1, "Only one WorkbenchCamera is supported");
+    assert!(marked.len() <= 1, "Only one LayoutCamera is supported");
     let camera = *marked
         .first()
-        .expect("WorkbenchSurface requires an explicit WorkbenchCamera");
+        .expect("LayoutSurface requires an explicit LayoutCamera");
     let initializing = world.get::<SurfaceBinding>(surface).is_none();
     let managed_ui_camera = world
         .get::<UiCamera>(camera)
@@ -230,7 +231,7 @@ pub(crate) fn configure(world: &mut World) {
     }
     let original_target = world
         .get::<RenderTarget>(camera)
-        .expect("WorkbenchCamera requires a camera")
+        .expect("LayoutCamera requires a camera")
         .clone();
     let quit_shortcuts = initializing.then(|| {
         world
@@ -253,13 +254,13 @@ pub(crate) fn configure(world: &mut World) {
 
     assert!(
         world.get::<Camera>(camera).is_some(),
-        "WorkbenchCamera requires a camera"
+        "LayoutCamera requires a camera"
     );
 
     if let Some(&existing) = existing.first() {
         assert_eq!(
             camera, existing,
-            "WorkbenchCamera conflicts with the supplied UiCamera"
+            "LayoutCamera conflicts with the supplied UiCamera"
         );
     }
 
@@ -270,9 +271,9 @@ pub(crate) fn configure(world: &mut World) {
     assert_eq!(
         world.get::<UiCamera>(camera).unwrap().0,
         surface,
-        "WorkbenchCamera is associated with another UI surface"
+        "LayoutCamera is associated with another UI surface"
     );
-    // Workbench commands and application close policy own Quit. egui's default
+    // The app's actions and close policy own Quit. egui's default
     // Cmd/Ctrl+Q handling would consume it before command resolution.
     world
         .get_mut::<bevy_egui::EguiContext>(camera)
@@ -282,25 +283,24 @@ pub(crate) fn configure(world: &mut World) {
 
     match world.get::<RenderTarget>(camera).unwrap() {
         RenderTarget::Window(WindowRef::Entity(target)) => {
-            assert_eq!(*target, surface, "Workbench camera targets another window");
+            assert_eq!(*target, surface, "Layout camera targets another window");
         }
         RenderTarget::Window(WindowRef::Primary) => {
             world
                 .entity_mut(camera)
                 .insert(RenderTarget::Window(WindowRef::Entity(surface)));
         }
-        _ => panic!("WorkbenchCamera must target its window"),
+        _ => panic!("LayoutCamera must target its window"),
     }
 
     if initializing {
-        let root = register_view(world, surface, crate::ui_plugin::draw_active);
+        let root = register_view(world, surface, super::dialogs::draw_root);
         let binding = SurfaceBinding {
             root,
             camera,
             managed_ui_camera,
             original_target,
             quit_shortcuts: quit_shortcuts.unwrap(),
-            #[cfg(feature = "native")]
             original_background: world.get::<WindowBackground>(surface).copied(),
         };
         world.entity_mut(surface).insert(binding);
@@ -308,12 +308,12 @@ pub(crate) fn configure(world: &mut World) {
         let binding = world.get::<SurfaceBinding>(surface).unwrap();
         assert_eq!(
             binding.camera, camera,
-            "Workbench camera changed without detaching its surface"
+            "Layout camera changed without detaching its surface"
         );
         let root = binding.root;
         assert!(
-            world.get::<bedtime_ui::UiView>(root).is_some(),
-            "Workbench root was removed"
+            world.get::<crate::UiView>(root).is_some(),
+            "The layout surface root was removed"
         );
     }
 }
@@ -325,26 +325,26 @@ mod tests {
     #[test]
     fn removing_and_reattaching_surface_cleans_owned_resources_and_preserves_application_state() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let surface = app
             .world_mut()
             .spawn((
                 Window::default(),
-                WorkbenchSurface::default(),
+                LayoutSurface::default(),
                 Titlebar {
                     height: 20.0,
                     draw: |_, _, _| {},
                 },
             ))
             .id();
-        let camera = app.world_mut().spawn((Camera2d, WorkbenchCamera)).id();
+        let camera = app.world_mut().spawn((Camera2d, LayoutCamera)).id();
         app.update();
         let root = app.world().get::<SurfaceBinding>(surface).unwrap().root;
         // The surface's theme is the application's; detaching keeps it.
         app.world_mut().entity_mut(surface).insert(Theme::light());
         app.world_mut()
             .entity_mut(surface)
-            .remove::<WorkbenchSurface>();
+            .remove::<LayoutSurface>();
         assert!(app.world().get_entity(root).is_err());
         assert!(app.world().get::<Window>(surface).is_some());
         assert!(app.world().get::<Titlebar>(surface).is_some());
@@ -359,7 +359,7 @@ mod tests {
         app.update();
         app.world_mut()
             .entity_mut(surface)
-            .insert(WorkbenchSurface::default());
+            .insert(LayoutSurface::default());
         app.update();
         assert_ne!(
             app.world().get::<SurfaceBinding>(surface).unwrap().root,
@@ -376,25 +376,21 @@ mod tests {
         assert_eq!(app.world().get::<Theme>(surface), Some(&Theme::light()));
         app.world_mut()
             .entity_mut(surface)
-            .remove::<WorkbenchSurface>();
+            .remove::<LayoutSurface>();
         assert!(app.world().get::<UiCamera>(camera).is_none());
     }
 
     #[test]
     fn removing_surface_preserves_supplied_ui_binding_and_unrelated_views() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let surface = app
             .world_mut()
-            .spawn((
-                Window::default(),
-                WorkbenchSurface::default(),
-                Theme::light(),
-            ))
+            .spawn((Window::default(), LayoutSurface::default(), Theme::light()))
             .id();
         let camera = app
             .world_mut()
-            .spawn((Camera2d, WorkbenchCamera, UiCamera(surface)))
+            .spawn((Camera2d, LayoutCamera, UiCamera(surface)))
             .id();
         let shortcuts = app
             .world_mut()
@@ -407,9 +403,9 @@ mod tests {
         let root = app.world().get::<SurfaceBinding>(surface).unwrap().root;
         app.world_mut()
             .entity_mut(surface)
-            .remove::<WorkbenchSurface>();
+            .remove::<LayoutSurface>();
         assert!(app.world().get_entity(root).is_err());
-        assert!(app.world().get::<bedtime_ui::UiView>(view).is_some());
+        assert!(app.world().get::<crate::UiView>(view).is_some());
         assert_eq!(app.world().get::<UiCamera>(camera).unwrap().0, surface);
         assert_eq!(app.world().get::<Theme>(surface), Some(&Theme::light()));
         assert_eq!(
@@ -426,29 +422,29 @@ mod tests {
     #[test]
     fn startup_components_are_wired_before_ui_setup_and_defaults_retire_with_window() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin)
+        app.add_plugins(super::LayoutsPlugin)
             .add_systems(Startup, |mut commands: Commands| {
-                commands.spawn((Window::default(), WorkbenchSurface::default()));
-                commands.spawn((Camera2d, WorkbenchCamera));
+                commands.spawn((Window::default(), LayoutSurface::default()));
+                commands.spawn((Camera2d, LayoutCamera));
             })
             .add_systems(
                 PreUpdate,
-                (|surfaces: Query<Entity, With<WorkbenchSurface>>,
+                (|surfaces: Query<Entity, With<LayoutSurface>>,
                   themes: Query<&Theme>,
                   cameras: Query<&UiCamera>,
-                  views: Query<&bedtime_ui::InSurface, With<bedtime_ui::UiView>>| {
+                  views: Query<&crate::InSurface, With<crate::UiView>>| {
                     for surface in &surfaces {
                         assert!(themes.get(surface).is_ok());
                         assert_eq!(cameras.single().unwrap().0, surface);
                         assert_eq!(views.single().unwrap().0, surface);
                     }
                 })
-                .in_set(bedtime_ui::UiSystems::Configure),
+                .in_set(crate::UiSystems::Configure),
             );
         app.update();
         let world = app.world_mut();
         let surface = world
-            .query_filtered::<Entity, With<WorkbenchSurface>>()
+            .query_filtered::<Entity, With<LayoutSurface>>()
             .single(world)
             .unwrap();
         let camera = world
@@ -456,7 +452,7 @@ mod tests {
             .single(world)
             .unwrap();
         let root = world
-            .query_filtered::<Entity, With<bedtime_ui::UiView>>()
+            .query_filtered::<Entity, With<crate::UiView>>()
             .single(world)
             .unwrap();
         assert_eq!(
@@ -464,15 +460,15 @@ mod tests {
             UiBackground::Transparent
         );
         assert_eq!(
-            world.get::<WorkbenchSurface>(surface),
-            Some(&WorkbenchSurface::default())
+            world.get::<LayoutSurface>(surface),
+            Some(&LayoutSurface::default())
         );
         app.update();
         let world = app.world_mut();
         assert_eq!(world.query::<&UiCamera>().iter(world).count(), 1);
         assert_eq!(world.get::<UiCamera>(camera).unwrap().0, surface);
         assert_eq!(world.get::<Theme>(surface), Some(&Theme::dark()));
-        assert_eq!(world.query::<&bedtime_ui::UiView>().iter(world).count(), 1);
+        assert_eq!(world.query::<&crate::UiView>().iter(world).count(), 1);
         world.despawn(surface);
         assert!(world.get_entity(camera).is_ok());
         assert!(world.get_entity(root).is_err());
@@ -482,12 +478,12 @@ mod tests {
     #[test]
     fn supplied_theme_camera_and_shell_configuration_are_preserved() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let world = app.world_mut();
-        let settings = WorkbenchSurface {
+        let settings = LayoutSurface {
             rounding: 11.0,
             panel_gap: 8.0,
-            ..WorkbenchSurface::single_panel()
+            ..LayoutSurface::single_panel()
         };
         let surface = world
             .spawn((
@@ -495,7 +491,7 @@ mod tests {
                 settings,
                 Theme::light(),
                 UiBackground::Theme,
-                WorkbenchShell {
+                SurfaceShell {
                     minimum_area_size: Vec2::new(120.0, 90.0),
                     ..default()
                 },
@@ -510,7 +506,7 @@ mod tests {
                     order: 7,
                     ..default()
                 },
-                WorkbenchCamera,
+                LayoutCamera,
             ));
         });
         app.update();
@@ -523,10 +519,10 @@ mod tests {
             *world.get::<UiBackground>(surface).unwrap(),
             UiBackground::Theme
         );
-        assert_eq!(world.get::<WorkbenchSurface>(surface), Some(&settings));
+        assert_eq!(world.get::<LayoutSurface>(surface), Some(&settings));
         assert_eq!(
             world
-                .get::<WorkbenchShell>(surface)
+                .get::<SurfaceShell>(surface)
                 .unwrap()
                 .minimum_area_size,
             Vec2::new(120.0, 90.0)
@@ -538,15 +534,15 @@ mod tests {
     #[test]
     fn a_marked_ui_camera_is_reused() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let world = app.world_mut();
         let surface = world
-            .spawn((Window::default(), WorkbenchSurface::default()))
+            .spawn((Window::default(), LayoutSurface::default()))
             .id();
         let camera = world
             .spawn((
                 Camera2d,
-                WorkbenchCamera,
+                LayoutCamera,
                 UiCamera(surface),
                 RenderTarget::Window(WindowRef::Entity(surface)),
             ))
@@ -567,64 +563,64 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "WorkbenchSurface requires an explicit WorkbenchCamera")]
+    #[should_panic(expected = "LayoutSurface requires an explicit LayoutCamera")]
     fn a_missing_camera_is_rejected() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         app.world_mut()
-            .spawn((Window::default(), WorkbenchSurface::default()));
+            .spawn((Window::default(), LayoutSurface::default()));
         app.update();
     }
 
     #[test]
-    #[should_panic(expected = "WorkbenchSurface requires an explicit WorkbenchCamera")]
+    #[should_panic(expected = "LayoutSurface requires an explicit LayoutCamera")]
     fn an_unmarked_ui_camera_is_rejected() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let world = app.world_mut();
         let surface = world
-            .spawn((Window::default(), WorkbenchSurface::default()))
+            .spawn((Window::default(), LayoutSurface::default()))
             .id();
         world.spawn((Camera2d, UiCamera(surface)));
         app.update();
     }
 
     #[test]
-    #[should_panic(expected = "Only one WorkbenchCamera is supported")]
+    #[should_panic(expected = "Only one LayoutCamera is supported")]
     fn duplicate_marked_cameras_are_rejected() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let world = app.world_mut();
-        world.spawn((Window::default(), WorkbenchSurface::default()));
-        world.spawn((Camera2d, WorkbenchCamera));
-        world.spawn((Camera2d, WorkbenchCamera));
+        world.spawn((Window::default(), LayoutSurface::default()));
+        world.spawn((Camera2d, LayoutCamera));
+        world.spawn((Camera2d, LayoutCamera));
         app.update();
     }
 
     #[test]
-    #[should_panic(expected = "Workbench camera targets another window")]
+    #[should_panic(expected = "Layout camera targets another window")]
     fn a_supplied_camera_targeting_another_window_is_rejected() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let world = app.world_mut();
-        world.spawn((Window::default(), WorkbenchSurface::default()));
+        world.spawn((Window::default(), LayoutSurface::default()));
         let other_window = world.spawn(Window::default()).id();
         world.spawn((
             Camera2d,
-            WorkbenchCamera,
+            LayoutCamera,
             RenderTarget::Window(WindowRef::Entity(other_window)),
         ));
         app.update();
     }
 
     #[test]
-    #[should_panic(expected = "Only one WorkbenchSurface")]
+    #[should_panic(expected = "Only one LayoutSurface")]
     fn duplicate_surfaces_are_rejected() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let world = app.world_mut();
-        world.spawn((Window::default(), WorkbenchSurface::default()));
-        world.spawn((Window::default(), WorkbenchSurface::default()));
+        world.spawn((Window::default(), LayoutSurface::default()));
+        world.spawn((Window::default(), LayoutSurface::default()));
         app.update();
     }
 }

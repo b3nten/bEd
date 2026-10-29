@@ -1,6 +1,6 @@
 //! Immediate layout selection and attachment bookkeeping.
-use crate::WorkbenchWorldExt;
-use crate::*;
+use super::LayoutsWorldExt;
+use super::*;
 use bevy::{
     ecs::{lifecycle::HookContext, world::DeferredWorld},
     prelude::*,
@@ -11,9 +11,9 @@ pub(crate) fn panel_inserted(mut world: DeferredWorld, context: HookContext) {
     let entity = context.entity;
     let area = world.get::<InArea>(entity).unwrap().0;
     let changed = world
-        .get::<crate::layout::PanelLocation>(entity)
+        .get::<crate::layouts::PanelLocation>(entity)
         .is_none_or(|old| old.0 != Some(area));
-    if let Some(mut location) = world.get_mut::<crate::layout::PanelLocation>(entity) {
+    if let Some(mut location) = world.get_mut::<crate::layouts::PanelLocation>(entity) {
         location.0 = Some(area);
     }
     world.commands().queue(move |world: &mut World| {
@@ -29,14 +29,14 @@ pub(crate) fn panel_replaced(mut world: DeferredWorld, context: HookContext) {
     let entity = context.entity;
     let area = world.get::<InArea>(entity).unwrap().0;
     let index = world
-        .workbench()
+        .layouts()
         .panels_in_area(area)
         .iter()
         .position(|&p| p == entity)
         .unwrap_or(0);
     world.commands().queue(move |world: &mut World| {
         if world.get::<InArea>(entity).map(|r| r.0) != Some(area) {
-            let tabs = world.workbench().panels_in_area(area);
+            let tabs = world.layouts().panels_in_area(area);
             let fallback = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
             if let Some(mut state) = world.get_mut::<Area>(area) {
                 if state.selected == Some(entity) {
@@ -48,7 +48,7 @@ pub(crate) fn panel_replaced(mut world: DeferredWorld, context: HookContext) {
 }
 
 pub(crate) fn panel_removed(mut world: DeferredWorld, context: HookContext) {
-    if let Some(mut location) = world.get_mut::<crate::layout::PanelLocation>(context.entity) {
+    if let Some(mut location) = world.get_mut::<crate::layouts::PanelLocation>(context.entity) {
         location.0 = None;
     }
 }
@@ -57,9 +57,9 @@ pub(crate) fn area_inserted(mut world: DeferredWorld, context: HookContext) {
     let entity = context.entity;
     let layout = world.get::<InLayout>(entity).unwrap().0;
     let changed = world
-        .get::<crate::layout::AreaLocation>(entity)
+        .get::<crate::layouts::AreaLocation>(entity)
         .is_none_or(|old| old.0 != Some(layout));
-    if let Some(mut location) = world.get_mut::<crate::layout::AreaLocation>(entity) {
+    if let Some(mut location) = world.get_mut::<crate::layouts::AreaLocation>(entity) {
         location.0 = Some(layout);
     }
     world.commands().queue(move |world: &mut World| {
@@ -91,20 +91,20 @@ pub(crate) fn area_replaced(mut world: DeferredWorld, context: HookContext) {
 }
 
 pub(crate) fn area_removed(mut world: DeferredWorld, context: HookContext) {
-    if let Some(mut location) = world.get_mut::<crate::layout::AreaLocation>(context.entity) {
+    if let Some(mut location) = world.get_mut::<crate::layouts::AreaLocation>(context.entity) {
         location.0 = None;
     }
 }
 
 pub(crate) fn layout_added(mut world: DeferredWorld, context: HookContext) {
     world
-        .resource_mut::<crate::layout::LayoutOrder>()
+        .resource_mut::<crate::layouts::LayoutOrder>()
         .0
         .push(context.entity);
 }
 pub(crate) fn layout_removed(mut world: DeferredWorld, context: HookContext) {
     world
-        .resource_mut::<crate::layout::LayoutOrder>()
+        .resource_mut::<crate::layouts::LayoutOrder>()
         .0
         .retain(|e| *e != context.entity);
 }

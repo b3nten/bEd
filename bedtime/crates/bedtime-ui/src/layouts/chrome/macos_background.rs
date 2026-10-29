@@ -1,10 +1,8 @@
 //! Passive AppKit material behind Winit's unchanged content view and Metal layer.
 use super::{WindowBackground, WindowBlur, WindowDrag, WindowTitlebarGeometry};
-#[cfg(feature = "ui")]
 use bevy::window::{CursorMoved, FileDragAndDrop, WindowClosed, WindowEvent};
 use bevy::{prelude::*, window::RawHandleWrapper};
 use objc2::{MainThreadOnly, Message, define_class, msg_send, rc::Retained};
-#[cfg(feature = "ui")]
 use objc2::{
     runtime::{AnyClass, AnyObject, Bool, ClassBuilder, Sel},
     sel,
@@ -15,7 +13,6 @@ use objc2_app_kit::{
     NSVisualEffectState, NSVisualEffectView, NSWindowButton,
 };
 use objc2_foundation::{MainThreadMarker, NSPoint};
-#[cfg(feature = "ui")]
 use objc2_foundation::{NSRect, NSString, NSUserDefaults};
 use raw_window_handle::RawWindowHandle;
 use std::collections::{HashMap, HashSet};
@@ -38,7 +35,6 @@ struct Background {
     // Some(None) records an inherited appearance, which must be restored as nil.
     original_appearance: Option<Option<Retained<NSAppearance>>>,
     applied_appearance: Option<Retained<NSAppearance>>,
-    #[cfg(feature = "ui")]
     drag_view_classes: Option<(&'static AnyClass, &'static AnyClass)>,
     applied: Option<([f32; 4], bool, bool)>,
 }
@@ -59,7 +55,6 @@ impl Background {
 
 impl Drop for Background {
     fn drop(&mut self) {
-        #[cfg(feature = "ui")]
         if let Some(classes) = self.drag_view_classes.take() {
             restore_automatic_window_drag(&self.content, classes);
         }
@@ -132,7 +127,6 @@ pub(super) fn measure_titlebar(
 /// Winit 0.30.13's NSDraggingDestination emits file hover/drop/cancel, but no
 /// CursorMoved or draggingUpdated:. Observe the pointer on rendered hover frames
 /// and once on the drop frame, before egui reads the ordinary window messages.
-#[cfg(feature = "ui")]
 pub(super) fn sample_file_drag_cursor(
     _main_thread: bevy::ecs::system::NonSendMarker,
     windows: Query<(&Window, &RawHandleWrapper)>,
@@ -218,7 +212,6 @@ pub(super) fn sample_file_drag_cursor(
 /// Convert a point already in NSView coordinates to top-left content coordinates.
 /// Window::size includes Bevy's scale-factor override; AppKit points need not match
 /// those logical pixels. The titlebar remains part of a full-size content view.
-#[cfg(feature = "ui")]
 fn logical_file_drag_position(
     point: NSPoint,
     bounds: NSRect,
@@ -279,8 +272,6 @@ pub(super) fn finish_window_drags(
         commands.entity(window).remove::<WindowDrag>();
     }
 }
-
-#[cfg(feature = "ui")]
 pub(super) fn double_click(handle: &RawHandleWrapper) {
     let RawWindowHandle::AppKit(handle) = handle.get_window_handle() else {
         return;
@@ -307,7 +298,7 @@ pub(super) fn sync(
         &RawHandleWrapper,
         Option<&WindowBlur>,
     )>,
-    #[cfg(feature = "ui")] hosts: Query<(Entity, &crate::WorkbenchShell)>,
+    hosts: Query<(Entity, &crate::layouts::SurfaceShell)>,
     mut backgrounds: NonSendMut<Backgrounds>,
 ) {
     if windows.is_empty() {
@@ -325,18 +316,12 @@ pub(super) fn sync(
         let window = content
             .window()
             .expect("Live AppKit content view has a window");
-        #[cfg(feature = "ui")]
         let titlebar_ownership = hosts
             .iter()
             .find(|(surface, _)| *surface == entity)
             .map(|(_, host)| host.titlebar_ownership);
-        #[cfg(feature = "ui")]
-        let owns_titlebar = titlebar_ownership != Some(crate::TitlebarOwnership::Application);
-        #[cfg(not(feature = "ui"))]
-        let owns_titlebar = {
-            let _ = bevy_window;
-            true
-        };
+        let owns_titlebar =
+            titlebar_ownership != Some(crate::layouts::TitlebarOwnership::Application);
         alive.insert(entity);
         if backgrounds
             .0
@@ -366,15 +351,13 @@ pub(super) fn sync(
                 material,
                 original_appearance: None,
                 applied_appearance: None,
-                #[cfg(feature = "ui")]
                 drag_view_classes: None,
                 applied: None,
             }
         });
-        #[cfg(feature = "ui")]
         {
             let overrides_drag = bevy_window.fullsize_content_view
-                && titlebar_ownership == Some(crate::TitlebarOwnership::Workbench);
+                && titlebar_ownership == Some(crate::layouts::TitlebarOwnership::Surface);
             if overrides_drag && state.drag_view_classes.is_none() {
                 // Transparent NSViews otherwise start a native drag before
                 // egui can decide which widget owns a titlebar press.
@@ -419,8 +402,6 @@ pub(super) fn sync(
     }
     backgrounds.0.retain(|e, _| alive.contains(e));
 }
-
-#[cfg(feature = "ui")]
 fn disable_automatic_window_drag(
     content: &NSView,
 ) -> Option<(&'static AnyClass, &'static AnyClass)> {
@@ -458,8 +439,6 @@ fn disable_automatic_window_drag(
     );
     Some((parent, class))
 }
-
-#[cfg(feature = "ui")]
 fn restore_automatic_window_drag(content: &NSView, (original, installed): (&AnyClass, &AnyClass)) {
     // Undo only our override; another native integration may have changed the
     // class itself. Neither class adds storage, so the original ivars stay valid.
@@ -469,7 +448,7 @@ fn restore_automatic_window_drag(content: &NSView, (original, installed): (&AnyC
     }
 }
 
-#[cfg(all(test, feature = "ui"))]
+#[cfg(test)]
 mod tests {
     use super::logical_file_drag_position;
     use bevy::{prelude::*, window::WindowResolution};

@@ -44,8 +44,8 @@ pub(crate) fn open<M: DocumentModel>(
 }
 
 pub(crate) fn panel(world: &mut World) -> Entity {
-    let workbench = world.workbench_mut();
-    let layout = workbench.active_layout().unwrap();
+    let workbench = world.layouts_mut();
+    let layout = workbench.active().unwrap();
     workbench.create_panel(layout, "Viewer").unwrap()
 }
 

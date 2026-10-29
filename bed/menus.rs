@@ -8,12 +8,12 @@ use crate::{
     workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
 };
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
-use bedtime_workbench::WorkbenchWorldExt;
+use bedtime_workbench::ErrorDialogWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
     ActionsWorldExt, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext, Invokes,
-    KeyChord, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator, NativeMenuBar, PanelFactory,
-    SaveDocument, WorkbenchSurface, draw_menu_bar, panel_drag_source,
+    KeyChord, LayoutSurface, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator, NativeMenuBar,
+    PanelFactory, SaveDocument, draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -253,7 +253,7 @@ fn other_recent(world: &World) -> Option<PathBuf> {
 /// Switch this window to `start`'s workspace, or explain why not.
 pub fn switch(world: &mut World, start: Start) {
     if let Err(error) = workspace::switch(world, start) {
-        world.workbench_mut().request_error_dialog(ErrorDialog {
+        world.request_error_dialog(ErrorDialog {
             title: "Open Folder".into(),
             message: error,
             details: None,
@@ -276,7 +276,7 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
     {
         // Inset like the panels below it.
         let inset = world
-            .get::<WorkbenchSurface>(context.surface)
+            .get::<LayoutSurface>(context.surface)
             .map_or(0.0, |surface| surface.panel_gap);
         let result = draw_menu_bar(&mut context.frame(ui), world, root, inset);
         crate::status::notify_failure(world, "Menu", result);
@@ -359,7 +359,7 @@ mod tests {
         app.add_plugins((
             WorkbenchCorePlugin,
             crate::settings::BedSettingsPlugin,
-            crate::layouts::LayoutsPlugin,
+            crate::layouts::LayoutSlotsPlugin,
             MenusPlugin,
         ))
         .insert_resource(RecentWorkspaces(vec!["/a".into(), "/b".into()]))

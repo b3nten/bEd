@@ -8,7 +8,7 @@
 //! final colour conversion (`UiSystems::PrepareOutput`).
 use bedtime_ui::{UiSystems, egui};
 use bedtime_workbench::{
-    ActiveLayout, WorkbenchCamera,
+    ActiveLayout, LayoutCamera,
     persistence::StoreId,
     settings::{SettingsAppExt, SettingsWorldExt, settings},
 };
@@ -212,7 +212,7 @@ fn prepare_input(
     mut commands: Commands,
     effects: Res<Effects>,
     layouts: Query<Entity, With<ActiveLayout>>,
-    mut cameras: Query<(Entity, &mut EguiInput), With<WorkbenchCamera>>,
+    mut cameras: Query<(Entity, &mut EguiInput), With<LayoutCamera>>,
     time: Res<Time<Real>>,
     mut pointer: Local<PointerState>,
 ) {

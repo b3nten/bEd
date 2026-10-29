@@ -7,6 +7,7 @@ pub mod fonts;
 pub mod gallery;
 mod icon_cache;
 pub mod icons;
+pub mod layouts;
 #[cfg(target_os = "macos")]
 mod macos_output;
 mod motion;

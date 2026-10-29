@@ -31,6 +31,7 @@
 //! assert!(!app.world().workbench().inspect_document(document.id())?.dirty);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+use crate::LayoutsWorldExt;
 use crate::{ManagedWork, PanelInstance, Workbench};
 use crate::{WorkbenchRef, WorkbenchWorldExt};
 use bevy::{
@@ -586,11 +587,7 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
     if !discard && info.dirty {
         return Err(DocumentError::Dirty);
     }
-    #[cfg(feature = "ui")]
-    if world
-        .get_resource::<crate::WorkbenchUi>()
-        .is_some_and(|ui| ui.drawing)
-    {
+    if world.layouts().drawing() {
         return Err(DocumentError::InvalidGraph(
             "Documents can't be closed while the workbench is drawing".into(),
         ));
@@ -603,9 +600,9 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
         .copied()
         .filter(|&holder| world.get::<PanelInstance>(holder).is_some())
         .collect();
-    let workbench = world.workbench_mut();
+    let layouts = world.layouts_mut();
     for panel in panels {
-        workbench
+        layouts
             .close_panel(panel)
             .map_err(DocumentError::InvalidGraph)?;
     }
@@ -614,7 +611,6 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
 }
 
 /// Every draft has a reference, and every reference points at a document.
-#[cfg(any(debug_assertions, feature = "persistence"))]
 pub(crate) fn validate_documents(world: &mut World) -> Result<(), String> {
     for entity in world
         .query_filtered::<Entity, With<DocumentDraft>>()

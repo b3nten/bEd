@@ -1,7 +1,5 @@
-//! Tab styling and workbench graph validation.
-use crate::WorkbenchWorldExt;
-#[cfg(any(debug_assertions, feature = "persistence", test))]
-use crate::*;
+//! Tab styling and layout graph validation.
+use super::*;
 use bevy::prelude::*;
 
 /// Optional, runtime-only tab label appearance on a panel item.
@@ -31,8 +29,7 @@ impl Default for PanelTabStyle {
 /// area rectangles tile their layout, and selections and focus are in range.
 /// Hooks keep all of this true; debug builds check it every frame, and
 /// persistence checks it before capturing or restoring.
-#[cfg(any(debug_assertions, feature = "persistence"))]
-pub(crate) fn validate_workbench(world: &mut World) -> Result<(), String> {
+pub(crate) fn validate_layouts(world: &mut World) -> Result<(), String> {
     world.flush();
     if world
         .query_filtered::<Entity, (With<InLayout>, Without<Area>)>()
@@ -87,11 +84,11 @@ pub(crate) fn validate_workbench(world: &mut World) -> Result<(), String> {
             .get::<LayoutAreas>(layout)
             .map_or(&[][..], |a| a.entities());
         if !areas.is_empty() {
-            crate::geometry::Layout::from_areas(
+            crate::layouts::geometry::Layout::from_areas(
                 areas
                     .iter()
                     .enumerate()
-                    .map(|(i, &e)| crate::geometry::Area {
+                    .map(|(i, &e)| crate::layouts::geometry::Area {
                         id: i as u32 + 1,
                         rect: world.get::<Area>(e).expect("InLayout requires Area").rect,
                     })
@@ -118,11 +115,14 @@ pub(crate) fn validate_workbench(world: &mut World) -> Result<(), String> {
     }
     for area in areas {
         let selected = world.get::<Area>(area).unwrap().selected;
-        let tabs = world.workbench().panels_in_area(area);
+        let tabs = world.layouts().panels_in_area(area);
         if selected.is_some_and(|entity| !tabs.contains(&entity)) {
             return Err("Selected panel belongs to another area or no longer exists".into());
         }
     }
-    crate::documents::validate_documents(world)?;
-    Ok(())
+    let extra = world
+        .get_resource::<Validations>()
+        .map(|validations| validations.0.clone())
+        .unwrap_or_default();
+    extra.into_iter().try_for_each(|validate| validate(world))
 }

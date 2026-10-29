@@ -1,6 +1,7 @@
 //! Autosave. Applications choose the policy with the `DocumentAutosave`
 //! resource; workbench applies it to every document.
 use super::*;
+use crate::LayoutsWorldExt;
 use crate::WorkbenchWorldExt;
 use bevy::ecs::message::MessageCursor;
 use std::{
@@ -60,8 +61,8 @@ pub(crate) fn autosave(
         .collect();
     let now = Instant::now();
     let policy = world.resource::<DocumentAutosave>().0;
-    let current = world.workbench().active_layout().and_then(|layout| {
-        let panel = world.workbench_mut().focused_panel(layout)?;
+    let current = world.layouts().active().and_then(|layout| {
+        let panel = world.layouts().focused_panel(layout)?;
         Some(world.get::<DocumentReference>(panel)?.document())
     });
     let departed = (*focused != current).then_some(*focused).flatten();

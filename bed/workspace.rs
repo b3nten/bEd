@@ -10,6 +10,7 @@
 //! hash of the folder's path, so repositories aren't touched. A lock file
 //! stops two instances from saving the same workspace over each other.
 use crate::settings::{GlobalLocation, GlobalStore, ReopenLastWorkspace};
+use bedtime_workbench::ErrorDialogWorldExt;
 use bedtime_workbench::{
     ErrorDialog, WorkbenchWorldExt,
     persistence::{
@@ -382,7 +383,7 @@ pub struct Unclaimed(pub String);
 
 pub fn report_unclaimed(world: &mut World) {
     if let Some(Unclaimed(details)) = world.remove_resource::<Unclaimed>() {
-        world.workbench_mut().request_error_dialog(ErrorDialog {
+        world.request_error_dialog(ErrorDialog {
             title: "Layout won't be saved".into(),
             message: "This folder is already open in another bEd window, or its saved \
                           layout couldn't be claimed. Changes to this window's layout and \

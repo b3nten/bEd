@@ -14,11 +14,27 @@ pub(crate) fn install(app: &mut App) {
     if !app.is_plugin_added::<bedtime_work::WorkPlugin>() {
         app.add_plugins(bedtime_work::WorkPlugin);
     }
-    app.init_resource::<crate::layout::LayoutOrder>()
-        .init_resource::<Notifications>()
-        .add_message::<CloseRequested>();
-    #[cfg(feature = "ui")]
-    app.init_resource::<WorkbenchUi>();
+    if !app.is_plugin_added::<LayoutsPlugin>() {
+        app.add_plugins(LayoutsPlugin);
+    }
+    app.init_resource::<Notifications>()
+        .add_message::<CloseRequested>()
+        // Uncommitted input must be committed or cancelled before its panel
+        // closes; closes the user asks for check for unsaved work first.
+        .check_panel_close(|world, panels| {
+            if panels
+                .iter()
+                .any(|&panel| world.get::<DocumentDraft>(panel).is_some())
+            {
+                return Err("Commit or cancel document drafts before closing their viewers".into());
+            }
+            Ok(())
+        })
+        .on_panel_close(closing::ask_before_closing)
+        .insert_resource(PanelModified(|world, panel| {
+            world.workbench().holder_unsaved(panel)
+        }))
+        .add_layout_validation(documents::validate_documents);
     // The native menu bar is installed and read while the session prepares,
     // before the frame's layout edits apply.
     #[cfg(feature = "native")]
@@ -29,7 +45,7 @@ pub(crate) fn install(app: &mut App) {
             bedtime_menus::NativeMenuSystems::Poll,
         )
             .after(SessionSystems::Prepare)
-            .before(crate::WorkbenchSystems::Apply),
+            .before(LayoutSystems::Apply),
     );
     if !app.is_plugin_added::<bedtime_actions::ActionsPlugin>() {
         app.add_plugins(bedtime_actions::ActionsPlugin);
@@ -47,23 +63,20 @@ pub(crate) fn install(app: &mut App) {
     documents::install(app);
     closing::install(app);
     document_actions::install(app);
-    #[cfg(feature = "ui")]
-    layout::install(app);
+    // A gesture's layout edit applies before shortcuts are read.
+    app.configure_sets(
+        PreUpdate,
+        LayoutSystems::Apply.before(ActionSystems::CollectInput),
+    );
     app.configure_sets(
         Last,
         bedtime_work::WorkSystems::Poll.in_set(SessionSystems::Close),
     );
-    #[cfg(debug_assertions)]
-    app.add_systems(Last, validate.before(SessionSystems::Close));
     #[cfg(feature = "ui")]
     app.configure_sets(
         PreUpdate,
         SessionSystems::Prepare.before(bedtime_ui::UiSystems::Draw),
     );
-}
-#[cfg(debug_assertions)]
-fn validate(world: &mut World) {
-    validate_workbench(world).expect("Invalid workbench component graph");
 }
 impl WorkbenchRef {
     pub fn work_finished(&self) -> bool {
@@ -96,7 +109,7 @@ impl Workbench {
 
 /// The selected panel in the focused area of the active layout.
 pub(crate) fn focused_panel(world: &World) -> Option<Entity> {
-    let layout = world.workbench().active_layout()?;
+    let layout = world.layouts().active()?;
     let area = world.get::<Layout>(layout)?.focused_area()?;
     world.get::<Area>(area)?.selected_panel()
 }

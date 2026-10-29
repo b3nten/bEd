@@ -1,13 +1,11 @@
 //! Blender-style chrome is a projection of ECS areas. Pointer gestures and
 //! interpolation are local to this drawing system; only completed edits commit.
-use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
-use crate::{
-    geometry,
-    layout::{GeometrySnapshot, plan_tab_geometry},
-    *,
+use super::{Layouts, LayoutsRef, LayoutsWorldExt};
+use super::{
+    geometry, *, {GeometrySnapshot, plan_tab_geometry},
 };
-use bedtime_ui::{
-    UiContext, UiDraw, UiFrame, UiView,
+use crate::{
+    UiContext, UiDraw, UiFrame,
     egui::{self, CursorIcon, Key, PointerButton},
 };
 use bevy::prelude::*;
@@ -15,7 +13,7 @@ use std::{collections::HashMap, sync::Arc};
 
 const PANEL_BORDER_WIDTH: f32 = 1.0;
 
-fn allows_panel_edit(settings: WorkbenchSurface, edit: &LayoutEdit) -> bool {
+fn allows_panel_edit(settings: LayoutSurface, edit: &LayoutEdit) -> bool {
     match edit {
         LayoutEdit::FocusArea(_) | LayoutEdit::FocusPanel(_) | LayoutEdit::KeepPanel(_) => true,
         LayoutEdit::ClosePanels(_) | LayoutEdit::CloseArea(_) => settings.panel_closure,
@@ -28,21 +26,22 @@ fn allows_panel_edit(settings: WorkbenchSurface, edit: &LayoutEdit) -> bool {
 /// still reserved in either mode, so the workbench stays below native chrome.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TitlebarOwnership {
-    /// Render the optional application slot and handle background window moves.
+    /// The surface draws the titlebar band, its `Titlebar` content, and moves the
+    /// window when the band is dragged.
     #[default]
-    Workbench,
+    Surface,
     /// Leave titlebar drawing, native appearance and gestures to the application.
-    /// The Titlebar component is suspended until ownership returns to Workbench.
+    /// The Titlebar component is suspended until ownership returns to the surface.
     Application,
 }
 
-/// The workbench shell required by WorkbenchSurface on a window. This entity
+/// The workbench shell required by LayoutSurface on a window. This entity
 /// lives in the application world and remains stable across layout switches.
 #[derive(Component, Clone)]
-#[require(WorkbenchPresentation)]
-pub struct WorkbenchShell {
+#[require(SurfacePresentation)]
+pub struct SurfaceShell {
     pub titlebar_ownership: TitlebarOwnership,
-    /// Hide the tiled content for a scene underneath, retaining menu and status.
+    /// Hide the tiled content (for a scene underneath), keeping the chrome.
     pub panels_visible: bool,
     /// Outer shell bounds in egui points. Defaults to the parent's available UI.
     pub bounds: Option<Rect>,
@@ -51,20 +50,20 @@ pub struct WorkbenchShell {
 
 /// Observed shell allocations, in egui points. The host alone writes these.
 #[derive(Component, Default, Clone, Copy, Debug)]
-pub struct WorkbenchPresentation {
+pub struct SurfacePresentation {
     pub bounds: Rect,
     pub titlebar: Rect,
     /// Usable titlebar content, after excluding native controls and edge padding.
     pub titlebar_content: Rect,
-    pub menu: Rect,
+    /// Where the panels were drawn: the body, unless the app's body put them
+    /// elsewhere.
     pub panels: Rect,
-    pub status_bar: Rect,
 }
 
-/// Optional titlebar content on the same window as WorkbenchSurface.
+/// Optional titlebar content on the same window as LayoutSurface.
 /// The renderer receives that window as UiContext::view and UiContext::surface.
 #[derive(Component, Clone, Copy)]
-#[require(WorkbenchSurface)]
+#[require(LayoutSurface)]
 pub struct Titlebar {
     /// Requested content height in egui points. The host adds four points above
     /// the content; native chrome may require a taller band. The header fallback
@@ -73,48 +72,47 @@ pub struct Titlebar {
     pub draw: UiDraw,
 }
 
-/// World-owned menu, status renderer and shell system state.
+/// The layout UI's state between frames: gestures, animations.
 #[derive(Resource, Default)]
-pub struct WorkbenchUi {
-    pub menu: Option<Entity>,
-    status_bar: Option<Entity>,
+pub struct LayoutsUi {
     frontend: Frontend,
     pub(crate) drawing: bool,
 }
 
-pub(crate) fn workbench_ui(world: &World) -> &WorkbenchUi {
-    world.resource()
-}
-pub(crate) fn workbench_ui_mut(world: &mut World) -> Mut<'_, WorkbenchUi> {
+pub(crate) fn layouts_ui_mut(world: &mut World) -> Mut<'_, LayoutsUi> {
     world.resource_mut()
 }
 
-impl WorkbenchRef {
+impl LayoutsRef {
+    /// Whether the layout UI is being drawn right now (panels' drawing code
+    /// runs inside it, so structural changes then are refused).
+    pub fn drawing(&self) -> bool {
+        self.world
+            .get_resource::<LayoutsUi>()
+            .is_some_and(|ui| ui.drawing)
+    }
+
     pub fn has_focus(&self, panel: Entity) -> bool {
         self.world
             .get::<PanelPresentation>(panel)
             .is_some_and(|p| p.visible && p.focused)
     }
-
-    /// The optional renderer entity, whose state belongs to the World.
-    pub fn status_bar(&self) -> Option<Entity> {
-        self.world.resource::<WorkbenchUi>().status_bar
-    }
 }
 
-impl Workbench {
+impl Layouts {
     /// Apply a user-originated edit with the surface's configured permissions.
+    /// An edit that closes panels goes through the close checks and hooks.
     /// Direct application operations deliberately bypass this user policy.
     pub fn user_edit(&mut self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
         let settings = self
             .world
-            .query::<&WorkbenchSurface>()
+            .query::<&LayoutSurface>()
             .iter(&self.world)
             .next()
             .copied()
             .unwrap_or_default();
         if !allows_panel_edit(settings, edit) {
-            return Err("User panel editing is disabled by the workbench surface".into());
+            return Err("User panel editing is disabled by the layout surface".into());
         }
         if matches!(
             edit,
@@ -123,71 +121,41 @@ impl Workbench {
                 | LayoutEdit::JoinAreas { .. }
                 | LayoutEdit::DockArea { .. }
         ) {
-            self.request_panel_close(layout, edit.clone())
-        } else {
-            self.edit(layout, edit)
+            let panels = self.close_targets(layout, edit)?;
+            super::check_panel_close(&self.world, panels.iter().copied())?;
+            let hooks = self.world.resource::<super::CloseHooks>().hooks.clone();
+            for hook in hooks {
+                if hook(&mut self.world, layout, edit, &panels)? {
+                    return Ok(());
+                }
+            }
         }
-    }
-
-    /// Install or replace the world session's application-owned status renderer.
-    /// The renderer receives its entity as UiContext::view and owns the row's contents.
-    pub fn register_status_bar(&mut self, draw: UiDraw) -> Entity {
-        self.remove_status_bar();
-        let renderer = self.world.spawn((UiView { draw },)).id();
-        self.world.resource_mut::<WorkbenchUi>().status_bar = Some(renderer);
-        renderer
-    }
-
-    /// Remove the renderer and its state. The shell stops reserving status space.
-    pub fn remove_status_bar(&mut self) {
-        if let Some(renderer) = self.world.resource_mut::<WorkbenchUi>().status_bar.take() {
-            self.world.despawn(renderer);
-        }
-    }
-
-    pub fn set_menu(&mut self, root: Option<Entity>) -> Result<(), String> {
-        if root.is_some_and(|root| self.world.get::<MenuBar>(root).is_none()) {
-            return Err("Menu bar is unavailable".into());
-        }
-        if let Some(root) = root {
-            // Validate the whole tree before changing ownership.
-            self.world
-                .menus()
-                .snapshot(root, InvocationContext::Global)?;
-        }
-        self.world.resource_mut::<WorkbenchUi>().menu = root;
-        Ok(())
+        self.apply_edit(layout, edit)
     }
 }
 
 pub(crate) fn reset(world: &mut World) {
-    for mut menu in world.query::<&mut MenuPresentation>().iter_mut(world) {
-        menu.visible = false;
-    }
     for mut panel in world.query::<&mut PanelPresentation>().iter_mut(world) {
         *panel = default();
     }
     for mut area in world.query::<&mut AreaPresentation>().iter_mut(world) {
         area.visible = false;
     }
-    for mut viewport in world.query::<&mut bedtime_ui::UiViewport>().iter_mut(world) {
+    for mut viewport in world.query::<&mut crate::UiViewport>().iter_mut(world) {
         viewport.visible = false;
         viewport.hovered = false;
     }
 }
 
 pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
-    if world.get::<WorkbenchSurface>(context.surface).is_none() {
+    if world.get::<LayoutSurface>(context.surface).is_none() {
         return;
     }
     reset(world);
     let context = context.for_view(context.surface);
     let frame = context.frame(ui);
-    let mut descriptor = world.get::<WorkbenchShell>(frame.view).unwrap().clone();
+    let descriptor = world.get::<SurfaceShell>(frame.view).unwrap().clone();
     let host_entity = frame.view;
-    let focused = world
-        .get::<bevy::window::Window>(frame.surface)
-        .is_none_or(|w| w.focused);
     #[cfg(feature = "native")]
     let (native_height, controls) = world
         .get::<WindowTitlebarGeometry>(frame.surface)
@@ -207,10 +175,10 @@ pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiCont
         .unwrap_or_else(|| frame.ui.available_rect_before_wrap())
         .intersect(frame.ui.clip_rect());
     if !outer.is_positive() {
-        *world.get_mut::<WorkbenchPresentation>(host_entity).unwrap() = default();
+        *world.get_mut::<SurfacePresentation>(host_entity).unwrap() = default();
         return;
     }
-    let owns_titlebar = descriptor.titlebar_ownership == TitlebarOwnership::Workbench;
+    let owns_titlebar = descriptor.titlebar_ownership == TitlebarOwnership::Surface;
     let background = {
         let titlebar = world
             .get::<Titlebar>(frame.surface)
@@ -234,7 +202,7 @@ pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiCont
             root.painter().rect_filled(
                 band,
                 0.0,
-                bedtime_ui::theme::color(frame.theme.palette.background),
+                crate::theme::color(frame.theme.palette.background),
             );
             // Register the background first: child widgets own presses that begin on
             // them, including drag sources, even after the pointer leaves their bounds.
@@ -262,38 +230,31 @@ pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiCont
                     });
             }
         }
-        if world.get::<WorkbenchSurface>(frame.surface).is_none() {
+        if world.get::<LayoutSurface>(frame.surface).is_none() {
             return;
         }
         let body = egui::Rect::from_min_max(egui::pos2(outer.left(), band.bottom()), outer.max);
-        descriptor.bounds = Some(observed(body));
-        world.resource_mut::<WorkbenchUi>().drawing = true;
         let mut ui = root.new_child(egui::UiBuilder::new().id_salt("session").max_rect(body));
-        let mut state = std::mem::take(&mut workbench_ui_mut(world).frontend);
-        draw(
-            frame.for_view(host_entity, &mut ui),
-            world,
-            &mut state,
-            &descriptor,
-            focused,
-        );
-        workbench_ui_mut(world).frontend = state;
-        workbench_ui_mut(world).drawing = false;
-        let mut presentation = *world.get::<WorkbenchPresentation>(host_entity).unwrap();
-        if world.get::<WorkbenchSurface>(frame.surface).is_none() {
+        let body_view = context.for_view(host_entity);
+        match world.get::<super::SurfaceBody>(frame.surface).copied() {
+            Some(super::SurfaceBody(draw)) => draw(&mut ui, world, &body_view),
+            None => show(&mut ui, world, &body_view),
+        }
+        let mut presentation = *world.get::<SurfacePresentation>(host_entity).unwrap();
+        if world.get::<LayoutSurface>(frame.surface).is_none() {
             return;
         }
         presentation.bounds = observed(outer);
         presentation.titlebar = observed(band);
         presentation.titlebar_content = observed(content);
-        *world.get_mut::<WorkbenchPresentation>(host_entity).unwrap() = presentation;
+        *world.get_mut::<SurfacePresentation>(host_entity).unwrap() = presentation;
         background
     };
     if let Some(background) = background {
         if background.double_clicked() {
             #[cfg(all(feature = "native", target_os = "macos"))]
             if let Some(handle) = world.get::<bevy::window::RawHandleWrapper>(frame.surface) {
-                crate::native::titlebar_double_click(handle);
+                crate::layouts::chrome::titlebar_double_click(handle);
             }
         } else if background.is_pointer_button_down_on()
             && frame
@@ -306,7 +267,7 @@ pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiCont
             #[cfg(all(feature = "native", target_os = "macos"))]
             world
                 .entity_mut(frame.surface)
-                .insert(crate::native::WindowDrag);
+                .insert(crate::layouts::chrome::WindowDrag);
         }
     }
 }
@@ -322,7 +283,7 @@ fn layout_topology(world: &World, layout: Entity) -> Vec<(Entity, AreaRect, Vec<
             Some((
                 area,
                 state.rect,
-                world.workbench().panels_in_area(area).to_vec(),
+                world.layouts().panels_in_area(area).to_vec(),
             ))
         })
         .collect()
@@ -406,7 +367,7 @@ impl ContentFade {
         area: Entity,
         placement: geometry::Rect,
         now: f64,
-        motion: bedtime_ui::MotionPolicy,
+        motion: crate::MotionPolicy,
     ) -> f32 {
         if self.area != area || self.placement != placement {
             self.area = area;
@@ -455,7 +416,7 @@ struct Tab {
     title: String,
     dirty: bool,
     style: PanelTabStyle,
-    icon: Option<bedtime_ui::IconSource>,
+    icon: Option<crate::IconSource>,
 }
 
 impl Tab {
@@ -464,7 +425,9 @@ impl Tab {
         Self {
             entity,
             title: panel.title.clone(),
-            dirty: world.workbench().holder_unsaved(entity),
+            dirty: world
+                .get_resource::<super::PanelModified>()
+                .is_some_and(|modified| (modified.0)(world, entity)),
             style: world
                 .get::<PanelTabStyle>(entity)
                 .copied()
@@ -476,7 +439,7 @@ impl Tab {
                 } else {
                     PanelTabStyle::default()
                 }),
-            icon: world.get::<bedtime_ui::IconSource>(entity).cloned(),
+            icon: world.get::<crate::IconSource>(entity).cloned(),
         }
     }
 
@@ -654,77 +617,41 @@ impl PanelFactoryPayload {
     }
 }
 
-/// Lay out the optional application row once, within the current shell allocation.
-fn draw_status_bar(
-    ui: &mut egui::Ui,
-    band: egui::Frame,
-    draw: Option<impl FnOnce(&mut egui::Ui)>,
-) -> egui::Rect {
-    let Some(draw) = draw else {
-        return egui::Rect::from_min_size(
-            ui.available_rect_before_wrap().left_bottom(),
-            egui::Vec2::ZERO,
-        );
+/// Draw the active layout in the space `ui` has left: areas, tab bars, panels,
+/// and the gestures that rearrange them. A `SurfaceBody` calls this where it
+/// wants the panels.
+pub fn show(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
+    let Some(mut shell) = world.get::<SurfaceShell>(context.surface).cloned() else {
+        return;
     };
-    // Status controls are a compact strip, independent of roomy panel buttons.
-    let button_padding_y = ui.spacing().button_padding.y.min(1.0);
-    let height = (ui
-        .text_style_height(&egui::TextStyle::Body)
-        .max(ui.text_style_height(&egui::TextStyle::Button) + 2.0 * button_padding_y)
-        .max(ui.spacing().interact_size.y)
-        + 4.0)
-        .min(ui.available_height().max(0.0));
-    let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-    egui::Panel::bottom(ui.id().with("status"))
-        .exact_size(height)
-        .show_separator_line(false)
-        .frame(band)
-        .show(ui, |ui| {
-            let bounds = ui.max_rect().intersect(ui.clip_rect());
-            ui.painter()
-                .line_segment([bounds.left_top(), bounds.right_top()], stroke);
-            let content = bounds.shrink2(egui::vec2(10.0, 2.0));
-            if content.is_positive() {
-                let mut row = ui.new_child(
-                    egui::UiBuilder::new()
-                        .id_salt("status-content")
-                        .max_rect(content)
-                        .layout(
-                            egui::Layout::left_to_right(egui::Align::Center)
-                                .with_cross_justify(true),
-                        ),
-                );
-                row.spacing_mut().button_padding.y = button_padding_y;
-                row.set_clip_rect(content);
-                draw(&mut row);
-            }
-        })
-        .response
-        .rect
+    shell.bounds = None;
+    let focused = world
+        .get::<bevy::window::Window>(context.surface)
+        .is_none_or(|w| w.focused);
+    let context = context.for_view(context.surface);
+    world.resource_mut::<LayoutsUi>().drawing = true;
+    let mut state = std::mem::take(&mut layouts_ui_mut(world).frontend);
+    draw(context.frame(ui), world, &mut state, &shell, focused);
+    layouts_ui_mut(world).frontend = state;
+    layouts_ui_mut(world).drawing = false;
 }
 
 fn draw(
     frame: UiFrame,
     world: &mut World,
     state: &mut Frontend,
-    host: &WorkbenchShell,
+    host: &SurfaceShell,
     window_focused: bool,
 ) {
-    let shell = workbench_ui(world);
-    let (panels_visible, menu, status_bar, minimum_area_size) = (
-        host.panels_visible,
-        shell.menu,
-        shell.status_bar,
-        host.minimum_area_size,
-    );
-    let mut settings = *world.get::<WorkbenchSurface>(frame.surface).unwrap();
+    let (panels_visible, minimum_area_size) = (host.panels_visible, host.minimum_area_size);
+    let mut settings = *world.get::<LayoutSurface>(frame.surface).unwrap();
     let outer = host
         .bounds
         .map(er)
         .unwrap_or_else(|| frame.ui.available_rect_before_wrap())
         .intersect(frame.ui.clip_rect());
     if !outer.is_positive() {
-        *world.get_mut::<WorkbenchPresentation>(frame.view).unwrap() = default();
+        *world.get_mut::<SurfacePresentation>(frame.view).unwrap() = default();
         return;
     }
     let mut root = frame.ui.new_child(
@@ -735,63 +662,18 @@ fn draw(
     );
     frame.ui.advance_cursor_after_rect(outer);
     root.set_clip_rect(outer);
-    let background = bedtime_ui::theme::color(frame.theme.palette.background);
+    let background = crate::theme::color(frame.theme.palette.background);
     if panels_visible {
         root.painter().rect_filled(outer, 0.0, background);
     }
-    // Full-window scene mode paints only the shell bands over the scene.
-    let band = egui::Frame::NONE.fill(if panels_visible {
-        egui::Color32::TRANSPARENT
-    } else {
-        background
-    });
-    let menu_rect = if let Some(menu) = menu {
-        egui::Panel::top(root.id().with("menu"))
-            .min_size(0.0)
-            .show_separator_line(false)
-            .frame(band)
-            .show(&mut root, |ui| {
-                let inset = world
-                    .get::<WorkbenchSurface>(frame.surface)
-                    .copied()
-                    .unwrap_or_default()
-                    .panel_gap;
-                if let Err(error) = bedtime_menus::ui::draw_menu_bar(
-                    &mut frame.for_view(frame.view, ui),
-                    world,
-                    menu,
-                    inset,
-                ) {
-                    world.write_message(bedtime_ui::UiError(error));
-                }
-            })
-            .response
-            .rect
-    } else {
-        egui::Rect::from_min_size(root.available_rect_before_wrap().min, egui::Vec2::ZERO)
-    };
-    let status_rect = draw_status_bar(
-        &mut root,
-        band,
-        status_bar.map(|renderer| {
-            let draw = world.get::<UiView>(renderer).expect("Status renderer").draw;
-            let context = frame.context().for_view(renderer);
-            let world = &mut *world;
-            move |ui: &mut egui::Ui| draw(ui, world, &context)
-        }),
-    );
     let content = root.available_rect_before_wrap();
     let observed = |r: egui::Rect| {
         Rect::from_corners(Vec2::new(r.min.x, r.min.y), Vec2::new(r.max.x, r.max.y))
     };
-    *world.get_mut::<WorkbenchPresentation>(frame.view).unwrap() = WorkbenchPresentation {
-        bounds: observed(outer),
-        titlebar: default(),
-        titlebar_content: default(),
-        menu: observed(menu_rect),
-        panels: observed(content),
-        status_bar: observed(status_rect),
-    };
+    world
+        .get_mut::<SurfacePresentation>(frame.view)
+        .unwrap()
+        .panels = observed(content);
     if !panels_visible || !content.is_positive() {
         state.gesture = None;
         state.preview = None;
@@ -808,7 +690,7 @@ fn draw(
             .ceil()
             .clamp(1.0, LAYOUT_EXTENT as f32) as i32,
     ];
-    if world.workbench().active_layout().is_none_or(|layout| {
+    if world.layouts().active().is_none_or(|layout| {
         world
             .get::<LayoutAreas>(layout)
             .is_none_or(|a| a.entities().is_empty())
@@ -818,9 +700,9 @@ fn draw(
         state.layout = None;
         return;
     }
-    let layout = world.workbench().active_layout().unwrap();
+    let layout = world.layouts().active().unwrap();
     let topology = layout_topology(world, layout);
-    let snapshot = world.workbench_mut().snapshot(layout).unwrap();
+    let snapshot = world.layouts_mut().snapshot(layout).unwrap();
     let flush = settings.single_area_edge_to_edge && snapshot.geometry.areas.len() == 1;
     if flush {
         settings.panel_gap = 0.0;
@@ -858,7 +740,7 @@ fn draw(
                 rect: a.rect,
                 selected: info.selected_panel(),
                 tabs: world
-                    .workbench()
+                    .layouts()
                     .panels_in_area(e)
                     .iter()
                     .map(|&entity| Tab::from_world(world, entity))
@@ -1167,7 +1049,7 @@ fn draw(
             painter.rect_filled(
                 er(s),
                 settings.rounding,
-                bedtime_ui::theme::color(p.panel_background),
+                crate::theme::color(p.panel_background),
             );
         }
         if group.tabs.is_empty() {
@@ -1197,7 +1079,7 @@ fn draw(
                 egui::pos2(s.min.x + 1.0, bar.max.y),
                 egui::pos2(s.max.x - 1.0, bar.max.y),
             ],
-            egui::Stroke::new(1.0, bedtime_ui::theme::color(p.border)),
+            egui::Stroke::new(1.0, crate::theme::color(p.border)),
         );
         let tabs_min = bar.min;
         let font = egui::FontId::proportional(frame.metrics.font_size);
@@ -1332,7 +1214,7 @@ fn draw(
                         se: 0,
                         ..egui::CornerRadius::from(settings.rounding)
                     },
-                    bedtime_ui::theme::color(tint),
+                    crate::theme::color(tint),
                 );
             }
             let emphasis = frame.animate_bool_with_duration(
@@ -1340,7 +1222,7 @@ fn draw(
                 selected || hovered || close_hover,
                 hover_seconds,
             );
-            let text = bedtime_ui::theme::color(bedtime_ui::theme::mix(p.muted, p.text, emphasis));
+            let text = crate::theme::color(crate::theme::mix(p.muted, p.text, emphasis));
             let text_x = position.min.x
                 + 8.0
                 + if tab.icon.is_some() {
@@ -1388,7 +1270,7 @@ fn draw(
                 let c = egui::pos2(close.center().x, bar.center().y);
                 let mut fill = p.elevated;
                 fill[3] *= close_tint;
-                tabs_painter.circle_filled(c, 8.0, bedtime_ui::theme::color(fill));
+                tabs_painter.circle_filled(c, 8.0, crate::theme::color(fill));
                 let text = text.gamma_multiply(emphasis);
                 tabs_painter.line_segment(
                     [c - egui::vec2(3.0, 3.0), c + egui::vec2(3.0, 3.0)],
@@ -1546,7 +1428,7 @@ fn draw(
         painter.rect_stroke(
             er(s),
             settings.rounding,
-            egui::Stroke::new(PANEL_BORDER_WIDTH, bedtime_ui::theme::color(border)),
+            egui::Stroke::new(PANEL_BORDER_WIDTH, crate::theme::color(border)),
             egui::StrokeKind::Inside,
         );
     }
@@ -1601,7 +1483,7 @@ fn draw(
         let current = blend_rect(state.preview.unwrap_or(target), target, preview_blend);
         moving |= current != target;
         state.preview = Some(current);
-        bedtime_ui::paint_drop_overlay(&painter, p, er(current), settings.rounding);
+        crate::paint_drop_overlay(&painter, p, er(current), settings.rounding);
     } else {
         state.preview = None;
     }
@@ -1627,7 +1509,7 @@ fn draw(
             continue;
         }
         world
-            .resource_mut::<crate::layout::PendingEdits>()
+            .resource_mut::<crate::layouts::PendingEdits>()
             .0
             .push((layout, edit));
     }
@@ -1955,7 +1837,8 @@ mod tests {
     }
 
     use super::*;
-    use crate::tests::TestPanels;
+    use crate::UiView;
+    use crate::layouts::tests::TestPanels;
 
     #[test]
     fn panel_fade_starts_at_display_and_advances_only_with_elapsed_ui_time() {
@@ -1964,7 +1847,7 @@ mod tests {
             min: [0, 0],
             max: [LAYOUT_EXTENT, LAYOUT_EXTENT],
         };
-        let motion = bedtime_ui::MotionPolicy::default();
+        let motion = crate::MotionPolicy::default();
         // First display follows a long idle. A second layout pass at the same
         // timestamp must paint the same opacity, even partway through the fade.
         let now = 300.0;
@@ -1997,7 +1880,7 @@ mod tests {
             min: [0, 0],
             max: [LAYOUT_EXTENT, LAYOUT_EXTENT],
         };
-        let mut motion = bedtime_ui::MotionPolicy::default();
+        let mut motion = crate::MotionPolicy::default();
         let mut fade = ContentFade {
             area,
             placement,
@@ -2087,13 +1970,13 @@ mod tests {
             ))
             .id();
         for density in [1.0, 1.25, 2.0] {
-            for mut theme in [bedtime_ui::Theme::dark(), bedtime_ui::Theme::light()] {
+            for mut theme in [crate::Theme::dark(), crate::Theme::light()] {
                 // The opacity multiplier must preserve an already-translucent theme.
                 theme.palette.text[3] = 0.8;
                 theme.palette.muted[3] = 0.6;
                 let ctx = egui::Context::default();
                 ctx.set_pixels_per_point(density);
-                ctx.set_fonts(bedtime_ui::fonts::definitions());
+                ctx.set_fonts(crate::fonts::definitions());
                 ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
                 let mut measured = Vec::new();
                 let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
@@ -2134,7 +2017,7 @@ mod tests {
                                 );
                             }
                             for emphasis in [0.0, 0.5, 1.0] {
-                                let themed = bedtime_ui::theme::color(bedtime_ui::theme::mix(
+                                let themed = crate::theme::color(crate::theme::mix(
                                     theme.palette.muted,
                                     theme.palette.text,
                                     emphasis,
@@ -2197,12 +2080,12 @@ mod tests {
     #[test]
     fn free_panel_creation_uses_the_supplied_inactive_layout() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
-        let active = crate::tests::layout(app.world_mut());
-        let other = crate::tests::layout(app.world_mut());
+        app.add_plugins(crate::layouts::LayoutsPlugin);
+        let active = crate::layouts::tests::layout(app.world_mut());
+        let other = crate::layouts::tests::layout(app.world_mut());
         let area = app
             .world_mut()
-            .workbench_mut()
+            .layouts_mut()
             .destination_area(other)
             .unwrap();
         let panel = app
@@ -2217,33 +2100,30 @@ mod tests {
             ))
             .id();
         assert_eq!(
-            app.world_mut().workbench_mut().panel_layout(panel).unwrap(),
+            app.world_mut().layouts_mut().panel_layout(panel).unwrap(),
             other
         );
-        assert_eq!(app.world().workbench().active_layout(), Some(active));
+        assert_eq!(app.world().layouts().active(), Some(active));
     }
 
     #[test]
     fn user_permissions_do_not_restrict_application_layout_operations() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
-        crate::tests::layout(app.world_mut());
+        app.add_plugins(crate::layouts::LayoutsPlugin);
+        crate::layouts::tests::layout(app.world_mut());
         app.world_mut()
-            .spawn((Window::default(), WorkbenchSurface::single_panel()));
-        let w = app.world_mut().workbench_mut();
-        let layout = w.active_layout().unwrap();
+            .spawn((Window::default(), LayoutSurface::single_panel()));
+        let w = app.world_mut().layouts_mut();
+        let layout = w.active().unwrap();
         let area = w.destination_area(layout).unwrap();
         let panel = w.create_panel(layout, "Application content").unwrap();
         assert!(
-            w.user_edit(
-                w.active_layout().unwrap(),
-                &LayoutEdit::ClosePanels(vec![panel])
-            )
-            .is_err()
+            w.user_edit(w.active().unwrap(), &LayoutEdit::ClosePanels(vec![panel]))
+                .is_err()
         );
         assert!(
             w.user_edit(
-                w.active_layout().unwrap(),
+                w.active().unwrap(),
                 &LayoutEdit::DropPanel {
                     area,
                     factory: preview_factory(),
@@ -2256,7 +2136,7 @@ mod tests {
         );
         assert!(
             w.user_edit(
-                w.active_layout().unwrap(),
+                w.active().unwrap(),
                 &LayoutEdit::SplitArea {
                     area,
                     axis: SplitAxis::Horizontal,
@@ -2333,7 +2213,7 @@ mod tests {
     #[test]
     fn replacing_and_removing_the_titlebar_keeps_the_surface_and_root() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchUiPlugin);
+        app.add_plugins(super::LayoutsPlugin);
         let surface = app
             .world_mut()
             .spawn((
@@ -2344,8 +2224,8 @@ mod tests {
                 },
             ))
             .id();
-        assert!(app.world().get::<WorkbenchSurface>(surface).is_some());
-        app.world_mut().spawn((Camera2d, WorkbenchCamera));
+        assert!(app.world().get::<LayoutSurface>(surface).is_some());
+        app.world_mut().spawn((Camera2d, LayoutCamera));
         app.update();
         let root = app
             .world_mut()
@@ -2362,7 +2242,7 @@ mod tests {
         app.world_mut().entity_mut(surface).remove::<Titlebar>();
         app.update();
         assert!(app.world().get::<Titlebar>(surface).is_none());
-        assert!(app.world().get::<WorkbenchSurface>(surface).is_some());
+        assert!(app.world().get::<LayoutSurface>(surface).is_some());
         assert!(app.world().get::<UiView>(root).is_some());
     }
 
@@ -2373,10 +2253,10 @@ mod tests {
                 for split_high in [false, true] {
                     for last_tab in [false, true] {
                         let mut app = App::new();
-                        app.add_plugins(WorkbenchCorePlugin);
-                        crate::tests::layout(app.world_mut());
-                        let w = app.world_mut().workbench_mut();
-                        let layout = w.active_layout().unwrap();
+                        app.add_plugins(crate::layouts::LayoutsPlugin);
+                        crate::layouts::tests::layout(app.world_mut());
+                        let w = app.world_mut().layouts_mut();
+                        let layout = w.active().unwrap();
                         let low = w.destination_area(layout).unwrap();
                         let high = w.split_area(low, original_axis, 5000, [100, 100]).unwrap();
                         let (target, source) = if target_high {
@@ -2454,10 +2334,10 @@ mod tests {
         for direction in [SplitAxis::Horizontal, SplitAxis::Vertical] {
             for offset in [1, 500, 2500, 4500, 4999] {
                 let mut app = App::new();
-                app.add_plugins(WorkbenchCorePlugin);
-                crate::tests::layout(app.world_mut());
-                let w = app.world_mut().workbench_mut();
-                let layout = w.active_layout().unwrap();
+                app.add_plugins(crate::layouts::LayoutsPlugin);
+                crate::layouts::tests::layout(app.world_mut());
+                let w = app.world_mut().layouts_mut();
+                let layout = w.active().unwrap();
                 let root = w.destination_area(layout).unwrap();
                 let right = w
                     .split_area(root, SplitAxis::Horizontal, 5000, minimum)
@@ -2482,7 +2362,7 @@ mod tests {
                     rect.max[index] - minimum[index],
                 );
                 assert_eq!(planned.area(id).rect.max[index], expected);
-                w.edit(w.active_layout().unwrap(), &edit).unwrap();
+                w.apply_edit(w.active().unwrap(), &edit).unwrap();
                 assert_eq!(
                     w.world.get::<Area>(source).unwrap().rect(),
                     planned.area(id).rect
@@ -2524,96 +2404,8 @@ mod tests {
         assert_eq!(large.size(), Vec2::splat(40.0));
     }
 
-    #[test]
-    fn status_space_is_reserved_only_when_an_application_renderer_is_provided() {
-        let ctx = egui::Context::default();
-        ctx.global_style_mut(|style| style.spacing.button_padding = egui::vec2(10.0, 6.0));
-        let bounds = egui::Rect::from_min_max(egui::pos2(40.0, 60.0), egui::pos2(640.0, 460.0));
-        let mut calls = 0;
-        for provided in [false, true, false] {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(800.0, 600.0),
-                    )),
-                    ..default()
-                },
-                |ui| {
-                    let mut root = ui.new_child(egui::UiBuilder::new().max_rect(bounds));
-                    root.set_clip_rect(bounds);
-                    let before = root.available_rect_before_wrap();
-                    let status = draw_status_bar(
-                        &mut root,
-                        egui::Frame::NONE,
-                        provided.then_some(|ui: &mut egui::Ui| {
-                            calls += 1;
-                            assert!(bounds.contains_rect(ui.clip_rect()));
-                            let (icon, _) = ui
-                                .allocate_exact_size(egui::vec2(36.0, 18.0), egui::Sense::click());
-                            let spinner = ui.spinner().rect;
-                            let work = ui
-                                .add_sized(
-                                    egui::vec2(180.0, ui.text_style_height(&egui::TextStyle::Body)),
-                                    egui::Label::new("Checking workspace").truncate(),
-                                )
-                                .rect;
-                            let label = ui.label("1 error").rect;
-                            for rect in [icon, spinner, work, label] {
-                                assert!(ui.clip_rect().contains_rect(rect));
-                                assert!(
-                                    (rect.center().y - ui.clip_rect().center().y).abs() < 0.5,
-                                    "Control {rect:?} is off center in {:?}",
-                                    ui.clip_rect()
-                                );
-                            }
-                            let button = ui.menu_button("LSP ready", |_| {}).response;
-                            assert!(ui.clip_rect().contains_rect(button.rect));
-                            assert!(
-                                (button.rect.center().y - ui.clip_rect().center().y).abs() < 0.5
-                            );
-                        }),
-                    );
-                    let content = root.available_rect_before_wrap();
-                    if provided {
-                        assert!(status.height() > 0.0);
-                        assert!(
-                            status.height() < 32.0,
-                            "Panel padding must not make status controls tall"
-                        );
-                        assert!(bounds.contains_rect(status));
-                        assert_eq!(status.bottom(), before.bottom());
-                        assert_eq!(content.bottom(), status.top());
-                    } else {
-                        assert_eq!(status.height(), 0.0);
-                        assert_eq!(content, before, "The panels retain all available height");
-                    }
-                },
-            );
-            output.textures_delta.clear();
-        }
-        assert_eq!(calls, 1, "Drawing is never replayed for measurement");
-    }
-
-    #[test]
-    fn application_status_renderers_are_optional_and_replaceable_without_a_layout() {
-        let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
-        let w = app.world_mut().workbench_mut();
-        assert_eq!(w.status_bar(), None);
-        let old = w.register_status_bar(|_, _, _| {});
-        let child = w.world_mut().spawn(bedtime_ui::InView(old)).id();
-        let replacement = w.register_status_bar(|_, _, _| {});
-        assert!(w.world().get_entity(old).is_err());
-        assert!(w.world().get_entity(child).is_err());
-        assert_eq!(w.status_bar(), Some(replacement));
-        w.remove_status_bar();
-        assert!(w.world().get_entity(replacement).is_err());
-        assert_eq!(w.status_bar(), None);
-    }
-
     fn projection(
-        w: &Workbench,
+        w: &Layouts,
         layout: Entity,
         bounds: Rect,
         panel_gap: f32,
@@ -2659,10 +2451,10 @@ mod tests {
     #[test]
     fn last_tab_preview_includes_source_gap_and_single_area_border_policy() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
-        crate::tests::layout(app.world_mut());
-        let w = app.world_mut().workbench_mut();
-        let layout = w.active_layout().unwrap();
+        app.add_plugins(crate::layouts::LayoutsPlugin);
+        crate::layouts::tests::layout(app.world_mut());
+        let w = app.world_mut().layouts_mut();
+        let layout = w.active().unwrap();
         let source = w.destination_area(layout).unwrap();
         let target = w
             .split_area(source, SplitAxis::Horizontal, 5000, [100, 100])
@@ -2730,10 +2522,10 @@ mod tests {
                     Vec2::splat(0.5),
                 ] {
                     let mut app = App::new();
-                    app.add_plugins(WorkbenchCorePlugin);
-                    crate::tests::layout(app.world_mut());
-                    let w = app.world_mut().workbench_mut();
-                    let layout = w.active_layout().unwrap();
+                    app.add_plugins(crate::layouts::LayoutsPlugin);
+                    crate::layouts::tests::layout(app.world_mut());
+                    let w = app.world_mut().layouts_mut();
+                    let layout = w.active().unwrap();
                     let left = w.destination_area(layout).unwrap();
                     let target = w
                         .split_area(left, SplitAxis::Horizontal, 5000, [100, 100])
@@ -2767,7 +2559,7 @@ mod tests {
                         panel_gap,
                     )
                     .unwrap();
-                    w.edit(w.active_layout().unwrap(), &edit).unwrap();
+                    w.apply_edit(w.active().unwrap(), &edit).unwrap();
                     let destination = w.world.get::<InArea>(panel).unwrap().0;
                     let rect = w.world.get::<Area>(destination).unwrap().rect();
                     let actual_count = w.world.get::<LayoutAreas>(layout).unwrap().entities().len();

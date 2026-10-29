@@ -158,22 +158,31 @@ impl Workbench {
     }
 }
 
-impl Workbench {
-    /// Close panels on the user's behalf (closing a tab or area, or merging areas).
-    /// Closes immediately unless that would release an unsaved document.
-    pub fn request_panel_close(&mut self, layout: Entity, edit: LayoutEdit) -> Result<(), String> {
-        if self.world.resource::<PendingClose>().0.is_some() {
-            return Err("Another close is waiting for a decision".into());
-        }
-        let panels = self.close_targets(layout, &edit)?;
-        crate::layout::check_panel_drafts(&self.world, panels.iter().copied())?;
-        let documents = released_unsaved(&self.world, &panels);
-        if documents.is_empty() {
-            return self.edit(layout, &edit);
-        }
-        begin(&mut self.world, Target::Panels { layout, edit }, documents);
-        Ok(())
+/// The close hook: a close the user asks for goes ahead now unless it would
+/// release an unsaved document; then it's taken over, saved or asked about
+/// first, and applied once that's settled.
+pub(crate) fn ask_before_closing(
+    world: &mut World,
+    layout: Entity,
+    edit: &LayoutEdit,
+    panels: &[Entity],
+) -> Result<bool, String> {
+    if world.resource::<PendingClose>().0.is_some() {
+        return Err("Another close is waiting for a decision".into());
     }
+    let documents = released_unsaved(world, panels);
+    if documents.is_empty() {
+        return Ok(false);
+    }
+    begin(
+        world,
+        Target::Panels {
+            layout,
+            edit: edit.clone(),
+        },
+        documents,
+    );
+    Ok(true)
 }
 
 /// Documents that would lose unsaved work because only `panels` (or entities
@@ -245,7 +254,7 @@ fn start_saves(world: &mut World, documents: &[DocumentId]) -> Vec<(DocumentId, 
 fn finish(world: &mut World, close: Close) -> Option<Close> {
     match close.target {
         Target::Panels { layout, edit } => {
-            if let Err(error) = world.workbench_mut().edit(layout, &edit) {
+            if let Err(error) = world.layouts_mut().apply_edit(layout, &edit) {
                 report_error(
                     world,
                     "Close panel",
@@ -417,17 +426,11 @@ fn release_unviewed(world: &mut World) {
 
 /// Explain a failure with an error dialog when there is UI, otherwise log it.
 pub(crate) fn report_error(world: &mut World, title: &str, message: &str, details: Option<String>) {
-    #[cfg(feature = "ui")]
-    world.workbench_mut().request_error_dialog(ErrorDialog {
+    world.request_error_dialog(ErrorDialog {
         title: title.into(),
         message: message.into(),
         details,
     });
-    #[cfg(not(feature = "ui"))]
-    {
-        let _ = world;
-        error!("{title}: {message} {}", details.unwrap_or_default());
-    }
 }
 
 #[cfg(test)]
@@ -457,10 +460,10 @@ mod tests {
     }
 
     fn close(app: &mut App, panel: Entity) {
-        let workbench = app.world_mut().workbench_mut();
-        let layout = workbench.active_layout().unwrap();
-        workbench
-            .request_panel_close(layout, LayoutEdit::ClosePanels(vec![panel]))
+        let layouts = app.world_mut().layouts_mut();
+        let layout = layouts.active().unwrap();
+        layouts
+            .user_edit(layout, &LayoutEdit::ClosePanels(vec![panel]))
             .unwrap();
         app.update();
     }

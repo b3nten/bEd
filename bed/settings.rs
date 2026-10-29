@@ -9,8 +9,8 @@ use bedtime_ui::{
     theme::{FONT_SIZES, ThemeFolder},
 };
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Panel, PanelFactory,
-    PanelInstance, WindowBlur, WorkbenchSurface,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, LayoutSurface, Panel,
+    PanelFactory, PanelInstance, WindowBlur,
     persistence::{ReflectPersist, Store, StoreId, Stores, WorkbenchStore},
     settings::{
         Setting, SettingsAppExt, SettingsWorldExt, settings,
@@ -186,7 +186,7 @@ impl Plugin for BedSettingsPlugin {
 fn apply_appearance(
     appearance: Res<AppearanceSettings>,
     folder: Option<Res<ThemeFolder>>,
-    mut surfaces: Query<(Entity, &mut WorkbenchSurface)>,
+    mut surfaces: Query<(Entity, &mut LayoutSurface)>,
     mut commands: Commands,
 ) {
     let folder_changed = folder.as_ref().is_some_and(|folder| folder.is_changed());
@@ -383,7 +383,7 @@ mod tests {
         app.add_plugins((
             WorkbenchCorePlugin,
             BedSettingsPlugin,
-            crate::layouts::LayoutsPlugin,
+            crate::layouts::LayoutSlotsPlugin,
         ));
         app.update();
         let chord = KeyChord::primary(KeyCode::Comma);

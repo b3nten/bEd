@@ -283,6 +283,24 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 5: layouts and window chrome in `bedtime-ui`**,
+  2026-10-29. Layouts, geometry, membership, validation, the layout UI, the
+  surface, window chrome and error dialogs moved from workbench into
+  `bedtime_ui::layouts` (features `persistence` for `Persist` and templates,
+  `native` for macOS chrome). Names lost the Workbench prefix:
+  `world.layouts()` / `layouts_mut()` (`all`, `active`, `create`, `activate`,
+  `delete`), `LayoutSurface`, `LayoutCamera`, `SurfaceShell`,
+  `SurfacePresentation`, `LayoutSystems`, `LayoutsPlugin`, `ChromePlugin`.
+  Workbench's links became hooks: `check_panel_close` (drafts),
+  `on_panel_close` (the unsaved-changes prompt; `request_panel_close` is gone),
+  `PanelModified` (tab dots), `add_layout_validation` (documents), and a modal
+  layer (`add_modal`) the close prompt draws in. The surface draws chrome then
+  its body: the layout, or the app's `SurfaceBody`, which calls `view::show`.
+  The menu and status bar slots are gone; bed's status bar is its body.
+  `request_error_dialog` is a `World` method. bed's `LayoutsPlugin` is
+  `LayoutSlotsPlugin`. `cargo run -p bedtime-ui --example layouts` is a
+  layouts-only app.
+
 - **Architecture step 4: `bedtime-menus`**, 2026-10-29. The menu model, the
   egui menu bar and context menus (`ui`), and the native menu bar (`native`,
   muda) moved out of workbench. `world.menus().snapshot(root, context)`

@@ -1,16 +1,7 @@
 //! Composable workbench services; the application supplies Bevy's window and renderer.
 mod closing;
-mod composition;
 mod document_actions;
 mod documents;
-mod membership;
-pub use composition::PanelTabStyle;
-#[cfg(any(debug_assertions, feature = "persistence"))]
-pub(crate) use composition::validate_workbench;
-pub use document_actions::*;
-pub use documents::*;
-mod geometry;
-mod layout;
 mod lifecycle;
 mod notifications;
 #[cfg(feature = "persistence")]
@@ -21,6 +12,8 @@ pub mod settings {
     pub use bedtime_settings::*;
 }
 pub use bedtime_actions::*;
+pub use bedtime_menus::*;
+pub use bedtime_ui::layouts::*;
 pub use bedtime_work::*;
 /// The `ui` parts of the crates above: drawing menus, collecting shortcuts,
 /// the Keyboard Shortcuts section.
@@ -31,9 +24,9 @@ pub mod ui {
     pub use bedtime_actions::ui::*;
     pub use bedtime_menus::ui::*;
 }
-pub use bedtime_menus::*;
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
-pub use layout::*;
+pub use document_actions::*;
+pub use documents::*;
 pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 #[cfg(feature = "native")]
@@ -41,30 +34,14 @@ mod native;
 #[cfg(feature = "clipboard")]
 pub use bedtime_clipboard::{Clipboard, ClipboardPlugin};
 #[cfg(feature = "native")]
-pub use native::{
-    NativeError, NativeSystems, WindowBackground, WindowBlur, WindowTitlebarGeometry,
-    WorkbenchNativePlugin, WorkbenchNativeWindowPlugin,
-};
+pub use native::{NativeError, NativeSystems, WorkbenchNativePlugin, WorkbenchNativeWindowPlugin};
 #[cfg(feature = "ui")]
 mod dialogs;
-#[cfg(feature = "ui")]
-pub use dialogs::{ErrorDialog, ErrorDialogs};
-#[cfg(feature = "ui")]
-mod frontend;
-#[cfg(feature = "ui")]
-mod surface;
-#[cfg(feature = "ui")]
-pub use surface::{AreaBackground, TabBarVisibility, WorkbenchCamera, WorkbenchSurface};
 #[cfg(feature = "ui")]
 mod ui_plugin;
 #[cfg(feature = "ui")]
 pub use bedtime_menus::ui::{MenuPresentation, draw_menu_bar, draw_popup_menu};
 use bevy::{app::PluginGroupBuilder, prelude::*};
-#[cfg(feature = "ui")]
-pub use frontend::{
-    PanelFactoryPayload, Titlebar, TitlebarOwnership, WorkbenchPresentation, WorkbenchShell,
-    WorkbenchUi, panel_drag_source,
-};
 #[cfg(feature = "ui")]
 pub use ui_plugin::WorkbenchUiPlugin;
 
