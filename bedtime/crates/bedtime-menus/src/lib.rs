@@ -1,6 +1,21 @@
-//! Abstract ordered menus. Native and egui presenters use the same snapshots.
-use crate::{Action, ActionId, ActionRequest, InvocationContext, Invokes, KeyChord};
-use crate::{ActionsWorldExt, Workbench};
+//! Menus as entities: a menu bar or menu holds entries (`InMenu`) that are
+//! submenus, items or separators. An item `Invokes` an action, and is enabled
+//! when the action is available in its context. A snapshot reads a menu tree
+//! with that state filled in; the egui renderer (`ui` feature) and the native
+//! menu bar (`native` feature) both draw snapshots.
+#[cfg(feature = "native")]
+mod native;
+#[cfg(test)]
+mod tests;
+#[cfg(feature = "ui")]
+pub mod ui;
+
+#[cfg(feature = "native")]
+pub use native::{NativeMenuBar, NativeMenuError, NativeMenuPlugin, NativeMenuSystems};
+
+use bedtime_actions::{
+    Action, ActionId, ActionRequest, ActionsWorldExt, InvocationContext, Invokes, KeyChord,
+};
 use bevy::prelude::*;
 use std::collections::HashSet;
 
@@ -12,8 +27,8 @@ pub struct Menu {
     pub label: String,
 }
 
-/// A menu entry. With `Invokes` it runs that command, and is enabled when the
-/// command is available in the menu's context.
+/// A menu entry. With `Invokes` it runs that action, and is enabled when the
+/// action is available in the menu's context.
 #[derive(Component, Clone, Debug)]
 pub struct MenuItem {
     pub label: String,
@@ -26,9 +41,9 @@ impl MenuItem {
         }
     }
 
-    /// An item running command `C`, labelled with the command's label.
-    pub fn action<C: Action>() -> (Self, Invokes) {
-        (Self::new(C::LABEL), Invokes::of::<C>())
+    /// An item running action `A`, labelled with the action's label.
+    pub fn action<A: Action>() -> (Self, Invokes) {
+        (Self::new(A::LABEL), Invokes::of::<A>())
     }
 }
 
@@ -100,15 +115,34 @@ impl MenuSnapshot {
     }
 }
 
-impl Workbench {
-    /// Snapshot a menu bar or contextual menu root. No native window is required.
-    /// InvocationContext components on the root or its entries override `context`.
-    pub fn menu_snapshot(
-        &mut self,
+/// Reading menus: `world.menus()`.
+#[repr(transparent)]
+pub struct Menus {
+    world: World,
+}
+
+/// `world.menus()`.
+pub trait MenusWorldExt {
+    fn menus(&self) -> &Menus;
+}
+
+impl MenusWorldExt for World {
+    fn menus(&self) -> &Menus {
+        // SAFETY: Menus is a repr(transparent) wrapper of World.
+        unsafe { &*(self as *const World).cast::<Menus>() }
+    }
+}
+
+impl Menus {
+    /// Snapshot a menu bar or contextual menu root. No native window is
+    /// required. `InvocationContext` components on the root or its entries
+    /// override `context`.
+    pub fn snapshot(
+        &self,
         root: Entity,
         context: InvocationContext,
     ) -> Result<MenuSnapshot, String> {
-        let world = &mut self.world;
+        let world = &self.world;
         if world.get::<MenuBar>(root).is_none() && world.get::<Menu>(root).is_none() {
             return Err("Menu root is unavailable".into());
         }
@@ -127,16 +161,20 @@ impl Workbench {
     }
 }
 
-fn capture_context(world: &mut World, context: InvocationContext) -> InvocationContext {
+/// The focused context, captured as the entity focused now, so a menu opened
+/// for one panel still acts on it after focus moves.
+fn capture_context(world: &World, context: InvocationContext) -> InvocationContext {
     match context {
-        InvocationContext::Focused => crate::lifecycle::focused_panel(world)
+        InvocationContext::Focused => world
+            .actions()
+            .entity(context)
             .map_or(InvocationContext::Global, InvocationContext::Entity),
         explicit => explicit,
     }
 }
 
 fn read_entries(
-    world: &mut World,
+    world: &World,
     parent: Entity,
     visited: &mut HashSet<Entity>,
     inherited: InvocationContext,
@@ -209,5 +247,3 @@ fn read_entries(
     }
     Ok(entries)
 }
-#[cfg(test)]
-mod tests;

@@ -19,6 +19,18 @@ pub(crate) fn install(app: &mut App) {
         .add_message::<CloseRequested>();
     #[cfg(feature = "ui")]
     app.init_resource::<WorkbenchUi>();
+    // The native menu bar is installed and read while the session prepares,
+    // before the frame's layout edits apply.
+    #[cfg(feature = "native")]
+    app.configure_sets(
+        PreUpdate,
+        (
+            crate::NativeSystems::Poll,
+            bedtime_menus::NativeMenuSystems::Poll,
+        )
+            .after(SessionSystems::Prepare)
+            .before(crate::WorkbenchSystems::Apply),
+    );
     if !app.is_plugin_added::<bedtime_actions::ActionsPlugin>() {
         app.add_plugins(bedtime_actions::ActionsPlugin);
     }

@@ -283,6 +283,17 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 4: `bedtime-menus`**, 2026-10-29. The menu model, the
+  egui menu bar and context menus (`ui`), and the native menu bar (`native`,
+  muda) moved out of workbench. `world.menus().snapshot(root, context)`
+  replaces `Workbench::menu_snapshot`; menus use `ActionFocus` for the focused
+  context. `draw_menu_bar` takes an `inset` (workbench and bed pass the panel
+  gap) instead of reading `WorkbenchSurface`. The native half is
+  `NativeMenuPlugin` (in `WorkbenchNativePlugin`), with `NativeMenuError`;
+  `NativeCapabilities` and `native_menu_installed` are gone. Workbench's
+  `ui` module re-exports the `ui` parts of actions and menus; its own UI
+  plugin file is `ui_plugin.rs`.
+
 - **Architecture step 3: `bedtime-actions` and `bedtime-work`**, 2026-10-29.
   Actions, keybindings and shortcut collection moved out of workbench into
   `bedtime-actions` (features `settings`, `ui`), and managed work into

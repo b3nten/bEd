@@ -13,7 +13,7 @@ application-supplied camera marked `WorkbenchCamera`.
 | WorkbenchCorePlugin | Layouts, panels, world services, commands, documents and orderly shutdown |
 | ClipboardPlugin | Shared text/file clipboard, usable independently |
 | WorkbenchNativeWindowPlugin | Native appearance and application-owned close requests |
-| WorkbenchNativeMenuPlugin | Native presentation of the world menu |
+| NativeMenuPlugin (bedtime-menus) | Native presentation of the world menu |
 | WorkbenchNativePlugin | Group of native window/menu plugins |
 | WorkbenchUiPlugin | Host adapter for workbench egui presentation |
 | WorkbenchPlugin | Group of enabled core, clipboard, native and UI capabilities |
@@ -611,31 +611,10 @@ actions (Save, Undo, Redo) are workbench's own.
 
 ## Menus
 
-Native and egui presenters consume the same abstract menu snapshots. An item
-with `Invokes` is enabled when its command is available in the menu's context;
-`MenuItem::action::<A>()` makes one labelled with the action's label. Shortcut hints show the chord that would run
-the item's command in that context. Roots normally use the focused panel;
-explicit invocation contexts can be attached to roots or descendants.
-Snapshot requests reject removed,
-disabled, detached or retargeted menu items.
-
-`draw_menu_bar(&mut frame, world, root)` renders an egui menu bar with a bottom
-border matching the status bar and horizontal padding from `WorkbenchSurface.panel_gap`
-(the default gap when used without a workbench surface).
-Attach a `bedtime_ui::UiView` to the `MenuBar` entity to draw application controls
-after its abstract menus, including icon-only buttons. Its renderer receives the
-menu root as `UiContext::view`, the surface's normal UI services and the main World.
-These controls are part of the egui bar and are suppressed with it during native
-menu presentation.
-`draw_popup_menu(&mut frame, world, &response, root, context)` associates a menu
-with an egui response. Adding `NativeMenuBar` selects native presentation; removing it returns to egui
-when the application calls `draw_menu_bar`. The egui bar is suppressed while
-that root is successfully natively installed (`native_menu_installed`), rather
-than merely supported by the platform. Global application menu roots also work
-without a selected layout. Native menu clicks and supported physical keyboard
-accelerators enqueue the same revalidated command requests; applications own their
-actions and modal/shutdown gates. Unsupported native key mappings retain a textual
-hint and the ordinary keyboard route.
+Menus are [`bedtime-menus`](../bedtime-menus/README.md), re-exported (its
+egui drawing is under `bedtime_workbench::ui`). Workbench draws the menu bar
+set with `set_menu` inset by `WorkbenchSurface::panel_gap`, and installs the
+native menu bar with `WorkbenchNativePlugin`.
 
 ## Shortcuts and direct panel input
 

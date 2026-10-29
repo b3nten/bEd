@@ -628,7 +628,7 @@ mod tests {
                 .is_some_and(|view| {
                     std::ptr::fn_addr_eq(
                         view.draw,
-                        crate::menu_ui::draw_active as bedtime_ui::UiDraw,
+                        crate::ui_plugin::draw_active as bedtime_ui::UiDraw,
                     )
                 })
         }));

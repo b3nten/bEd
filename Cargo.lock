@@ -490,6 +490,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedtime-menus"
+version = "0.1.0"
+dependencies = [
+ "bedtime-actions",
+ "bedtime-ui",
+ "bevy",
+ "muda",
+]
+
+[[package]]
 name = "bedtime-persistence"
 version = "0.1.0"
 dependencies = [
@@ -549,6 +559,7 @@ dependencies = [
  "bedtime-actions",
  "bedtime-clipboard",
  "bedtime-document",
+ "bedtime-menus",
  "bedtime-persistence",
  "bedtime-settings",
  "bedtime-ui",
@@ -556,7 +567,6 @@ dependencies = [
  "bevy",
  "bevy_egui",
  "bevy_world_serialization",
- "muda",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",

@@ -1,0 +1,20 @@
+[package]
+name = "bedtime-menus"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Menus as entities, drawn with egui or as the native menu bar"
+
+[features]
+default = []
+ui = ["dep:bedtime-ui", "bedtime-actions/ui"]
+native = ["bevy/bevy_window", "dep:muda"]
+
+[dependencies]
+bedtime-actions.workspace = true
+bedtime-ui = { workspace = true, optional = true }
+bevy = { workspace = true, features = ["std"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { workspace = true, optional = true }

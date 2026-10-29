@@ -12,7 +12,6 @@ pub use documents::*;
 mod geometry;
 mod layout;
 mod lifecycle;
-mod menus;
 mod notifications;
 #[cfg(feature = "persistence")]
 pub mod persistence;
@@ -23,10 +22,19 @@ pub mod settings {
 }
 pub use bedtime_actions::*;
 pub use bedtime_work::*;
+/// The `ui` parts of the crates above: drawing menus, collecting shortcuts,
+/// the Keyboard Shortcuts section.
+#[cfg(feature = "ui")]
+pub mod ui {
+    // Its public items need the `settings` feature too.
+    #[allow(unused_imports)]
+    pub use bedtime_actions::ui::*;
+    pub use bedtime_menus::ui::*;
+}
+pub use bedtime_menus::*;
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
 pub use layout::*;
 pub use lifecycle::*;
-pub use menus::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 #[cfg(feature = "native")]
 mod native;
@@ -34,9 +42,8 @@ mod native;
 pub use bedtime_clipboard::{Clipboard, ClipboardPlugin};
 #[cfg(feature = "native")]
 pub use native::{
-    NativeCapabilities, NativeError, NativeMenuBar, NativeSystems, WindowBackground, WindowBlur,
-    WindowTitlebarGeometry, WorkbenchNativeMenuPlugin, WorkbenchNativePlugin,
-    WorkbenchNativeWindowPlugin,
+    NativeError, NativeSystems, WindowBackground, WindowBlur, WindowTitlebarGeometry,
+    WorkbenchNativePlugin, WorkbenchNativeWindowPlugin,
 };
 #[cfg(feature = "ui")]
 mod dialogs;
@@ -49,7 +56,9 @@ mod surface;
 #[cfg(feature = "ui")]
 pub use surface::{AreaBackground, TabBarVisibility, WorkbenchCamera, WorkbenchSurface};
 #[cfg(feature = "ui")]
-mod menu_ui;
+mod ui_plugin;
+#[cfg(feature = "ui")]
+pub use bedtime_menus::ui::{MenuPresentation, draw_menu_bar, draw_popup_menu};
 use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
 pub use frontend::{
@@ -57,7 +66,7 @@ pub use frontend::{
     WorkbenchUi, panel_drag_source,
 };
 #[cfg(feature = "ui")]
-pub use menu_ui::{MenuPresentation, WorkbenchUiPlugin, draw_menu_bar, draw_popup_menu};
+pub use ui_plugin::WorkbenchUiPlugin;
 
 /// A request to quit, from the native window or an application command.
 /// Workbench handles it: unsaved documents are saved or asked about, background

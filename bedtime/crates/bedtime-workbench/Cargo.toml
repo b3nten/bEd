@@ -8,13 +8,14 @@ description = "World sessions, layouts, panels, documents and commands for Bedti
 
 [features]
 default = ["ui", "native", "clipboard"]
-ui = ["dep:bedtime-ui", "dep:bevy_egui", "bedtime-settings?/ui", "bedtime-actions/ui"]
+ui = ["dep:bedtime-ui", "dep:bevy_egui", "bedtime-settings?/ui", "bedtime-actions/ui", "bedtime-menus/ui"]
 clipboard = ["dep:bedtime-clipboard"]
 persistence = ["dep:bedtime-persistence", "dep:bedtime-settings", "bedtime-actions/settings", "dep:bevy_world_serialization", "dep:ron", "bevy/serialize"]
-native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "dep:muda", "dep:raw-window-handle", "dep:objc2", "dep:objc2-quartz-core", "dep:objc2-app-kit", "dep:objc2-foundation"]
+native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "bedtime-menus/native", "dep:raw-window-handle", "dep:objc2", "dep:objc2-quartz-core", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [dependencies]
 bedtime-actions.workspace = true
+bedtime-menus.workspace = true
 bedtime-document.workspace = true
 bedtime-work.workspace = true
 bedtime-persistence = { workspace = true, optional = true }
@@ -28,7 +29,6 @@ bevy_egui = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-muda = { workspace = true, optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 objc2 = { workspace = true, optional = true }
 objc2-quartz-core = {workspace = true, optional = true, features=["objc2-core-foundation"]}

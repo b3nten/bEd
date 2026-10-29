@@ -1,7 +1,5 @@
-use super::*;
-use crate::ActionsWorldExt;
-use crate::WorkbenchWorldExt;
 use crate::*;
+use bedtime_actions::*;
 
 struct Copy;
 impl Action for Copy {
@@ -17,8 +15,7 @@ impl Action for Paste {
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin);
-    crate::tests::layout(app.world_mut());
+    app.add_plugins(ActionsPlugin);
     app.add_action_handler::<Copy>(Handler::new(|_, _| Ok(())))
         .add_action_handler::<Paste>(Handler::new(|_, _| Ok(())));
     app
@@ -33,7 +30,7 @@ fn bind<C: Action>(world: &mut World, chord: KeyChord) {
 #[test]
 fn world_menu_snapshots_remain_enabled_without_workspaces() {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin)
+    app.add_plugins(ActionsPlugin)
         .add_action_handler::<Copy>(Handler::new(|_, _| Ok(())));
     let world = app.world_mut();
     let chord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyC);
@@ -47,8 +44,8 @@ fn world_menu_snapshots_remain_enabled_without_workspaces() {
         .spawn((MenuItem::new("Copy"), InMenu(root), Invokes::of::<Copy>()))
         .id();
     let snapshot = world
-        .workbench_mut()
-        .menu_snapshot(root, InvocationContext::Focused)
+        .menus()
+        .snapshot(root, InvocationContext::Focused)
         .unwrap();
     assert!(
         matches!(&snapshot.entries[0], MenuNode::Item { enabled: true, shortcut: Some(c), context: InvocationContext::Global, .. } if *c == chord)
@@ -99,8 +96,8 @@ fn menus_can_be_edited_reordered_and_reparented_without_native_services() {
     let chord = KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyC);
     bind::<Copy>(world, chord);
     let snapshot = world
-        .workbench_mut()
-        .menu_snapshot(root, InvocationContext::Global)
+        .menus()
+        .snapshot(root, InvocationContext::Global)
         .unwrap();
     assert!(snapshot.request(first, ActionId::of::<Copy>()).is_some());
     let MenuNode::Menu { entries, .. } = &snapshot.entries[1] else {
@@ -151,8 +148,8 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
         .id();
     assert!(
         world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Global)
+            .menus()
+            .snapshot(root, InvocationContext::Global)
             .unwrap()
             .request(item, command.clone())
             .is_some()
@@ -163,8 +160,8 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
         .set_global_handler::<Copy>(Some(unavailable));
     assert!(
         world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Global)
+            .menus()
+            .snapshot(root, InvocationContext::Global)
             .unwrap()
             .request(item, command.clone())
             .is_none()
@@ -175,8 +172,8 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
     world.entity_mut(item).remove::<InMenu>();
     assert!(
         world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Global)
+            .menus()
+            .snapshot(root, InvocationContext::Global)
             .unwrap()
             .request(item, command.clone())
             .is_none()
@@ -185,16 +182,16 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
         .entity_mut(item)
         .insert((InMenu(root), Invokes::of::<Paste>()));
     let snapshot = world
-        .workbench_mut()
-        .menu_snapshot(root, InvocationContext::Global)
+        .menus()
+        .snapshot(root, InvocationContext::Global)
         .unwrap();
     assert!(snapshot.request(item, command.clone()).is_none());
     assert!(snapshot.request(item, ActionId::of::<Paste>()).is_some());
     world.despawn(item);
     assert!(
         world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Global)
+            .menus()
+            .snapshot(root, InvocationContext::Global)
             .unwrap()
             .entries
             .is_empty()
@@ -216,16 +213,16 @@ fn malformed_trees_fail_at_the_snapshot_boundary() {
         .id();
     assert!(
         world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Global)
+            .menus()
+            .snapshot(root, InvocationContext::Global)
             .is_err()
     );
     world.get_mut::<Menu>(menu).unwrap().label = "File".into();
     world.spawn((MenuItem::new("Not a group"), InMenu(root)));
     assert!(
         world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Global)
+            .menus()
+            .snapshot(root, InvocationContext::Global)
             .is_err()
     );
 }

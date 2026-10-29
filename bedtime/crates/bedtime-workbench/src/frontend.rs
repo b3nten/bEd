@@ -151,7 +151,9 @@ impl Workbench {
         }
         if let Some(root) = root {
             // Validate the whole tree before changing ownership.
-            self.menu_snapshot(root, InvocationContext::Global)?;
+            self.world
+                .menus()
+                .snapshot(root, InvocationContext::Global)?;
         }
         self.world.resource_mut::<WorkbenchUi>().menu = root;
         Ok(())
@@ -749,9 +751,17 @@ fn draw(
             .show_separator_line(false)
             .frame(band)
             .show(&mut root, |ui| {
-                if let Err(error) =
-                    crate::menu_ui::draw_menu_bar(&mut frame.for_view(frame.view, ui), world, menu)
-                {
+                let inset = world
+                    .get::<WorkbenchSurface>(frame.surface)
+                    .copied()
+                    .unwrap_or_default()
+                    .panel_gap;
+                if let Err(error) = bedtime_menus::ui::draw_menu_bar(
+                    &mut frame.for_view(frame.view, ui),
+                    world,
+                    menu,
+                    inset,
+                ) {
                     world.write_message(bedtime_ui::UiError(error));
                 }
             })

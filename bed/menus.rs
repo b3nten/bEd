@@ -13,7 +13,7 @@ use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
     ActionsWorldExt, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext, Invokes,
     KeyChord, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator, NativeMenuBar, PanelFactory,
-    SaveDocument, draw_menu_bar, panel_drag_source,
+    SaveDocument, WorkbenchSurface, draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -274,7 +274,11 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
         .query_filtered::<Entity, With<ApplicationMenu>>()
         .single(world)
     {
-        let result = draw_menu_bar(&mut context.frame(ui), world, root);
+        // Inset like the panels below it.
+        let inset = world
+            .get::<WorkbenchSurface>(context.surface)
+            .map_or(0.0, |surface| surface.panel_gap);
+        let result = draw_menu_bar(&mut context.frame(ui), world, root, inset);
         crate::status::notify_failure(world, "Menu", result);
     }
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -326,7 +330,7 @@ fn tool<C: Action>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bedtime_workbench::{MenuNode, WorkbenchCorePlugin};
+    use bedtime_workbench::{MenuNode, MenusWorldExt, WorkbenchCorePlugin};
 
     fn labels(nodes: &[MenuNode]) -> Vec<(String, bool)> {
         nodes
@@ -370,8 +374,8 @@ mod tests {
             .single(world)
             .unwrap();
         let bar = world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Focused)
+            .menus()
+            .snapshot(root, InvocationContext::Focused)
             .unwrap();
         assert_eq!(
             labels(&bar.entries),
@@ -401,8 +405,8 @@ mod tests {
         app.update();
         let world = app.world_mut();
         let bar = world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Focused)
+            .menus()
+            .snapshot(root, InvocationContext::Focused)
             .unwrap();
         let recent = menu(menu(&bar.entries, "File"), "Open Recent");
         assert_eq!(labels(recent), [("No Recent Folders".into(), false)]);
@@ -425,8 +429,8 @@ mod tests {
         app.update();
         let world = app.world_mut();
         let bar = world
-            .workbench_mut()
-            .menu_snapshot(root, InvocationContext::Focused)
+            .menus()
+            .snapshot(root, InvocationContext::Focused)
             .unwrap();
         let file = menu(&bar.entries, "File");
         assert!(labels(file).contains(&("Close Folder".into(), false)));
