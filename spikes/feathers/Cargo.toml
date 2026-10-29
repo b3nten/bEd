@@ -1,0 +1,28 @@
+[package]
+name = "feathers-spike"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Experiment: the workbench shell and a Settings panel on bevy_ui, feathers and bevy_immediate"
+
+[[bin]]
+name = "feathers-spike"
+path = "main.rs"
+
+[dependencies]
+# Only the workbench model (layouts, areas, tabs); none of its egui frontend.
+bedtime-workbench = { path = "../../bedtime/crates/bedtime-workbench", default-features = false }
+# Only for `Theme` (bed's palettes); its egui runtime is not added.
+bedtime-ui.workspace = true
+bevy = { workspace = true, features = [
+    "ui",
+    "bevy_feathers",
+    "bevy_log",
+    "default_font",
+    "png",
+    "custom_cursor",
+    "keyboard",
+    "mouse",
+] }
+bevy_immediate = "=0.9.0"

@@ -6,6 +6,7 @@ members = [
     "bedtime/crates/bedtime-ui",
     "bedtime/crates/bedtime-automation",
     "bedtime/crates/bedtime-workbench",
+    "spikes/feathers",
 ]
 default-members = ["bed"]
 # bed_old and bedtime_old are kept as reference source only; they no longer build.
