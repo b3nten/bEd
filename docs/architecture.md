@@ -57,17 +57,47 @@ Parenthesised dependencies are optional, behind a feature of the same name.
 
 ## `bedtime-persistence`
 
-From workbench's `persistence.rs` and `persistence/`:
+From workbench's `persistence.rs` and `persistence/`. Three concepts:
 
-- `Store`, `StoreId`, `Stores`, `StoreAppExt::add_store`, `StoreSystems`.
-- `StoreBackend` and `DirectoryStore`.
-- The `Persist` marker, routing persisted types to stores, reflected
-  capture/restore with entity mapping, `capture`/`restore`.
-- `config_directory(app)`: `$XDG_CONFIG_HOME/<app>`, `~/.config/<app>`, and an
-  override variable (bed's `BED_CONFIG_DIR`).
-- Store failures become a `StoreError` message.
+- **Stores** are places, each with a backend: `Store`, `StoreId`,
+  `add_store::<S>(backend)`, `StoreBackend`, `DirectoryStore`. A store holds
+  named entries; `DirectoryStore` writes each as `<dir>/<entry>.ron`.
+- **The world snapshot.** Components and resources marked
+  `#[reflect(Persist)]`, entities included, are saved together as one
+  reflected snapshot in the store the app picks:
+  `app.persist_world::<WorkspaceStore>()` writes `world.ron` there. Only one
+  store gets it. Entity references are mapped on restore, both sides of every
+  relationship are written back, and a snapshot that can't be restored blocks
+  its store so it isn't saved over.
+- **Persisted resources.** `app.persist::<T, S>()` saves one serde resource
+  as its own entry in store `S`: loaded at startup, written when it changes,
+  failing on its own. The entry's name comes from a key on the type, so
+  renaming the type doesn't orphan the file:
 
-`WorkbenchStore` stays in workbench: it's the framework's per-workspace store.
+  ```rust
+  #[derive(Resource, Serialize, Deserialize, Persisted)]
+  #[persisted(key = "layout_defaults")]
+  struct LayoutDefaults(/* … */);
+
+  app.persist::<LayoutDefaults, GlobalStore>(); // → global/layout_defaults.ron
+  ```
+
+Settings layers sit on top (`settings.rs` in `bedtime-settings`), as one more
+entry in a store. Also here:
+
+- `config_directory(app)`: an override variable (bed's `BED_CONFIG_DIR`), else
+  `$XDG_CONFIG_HOME/<app>`, else `~/.config/<app>`.
+- Failures (a store that couldn't be read, restored or written) are a
+  `StoreError` message.
+- `world.persistence()` / `world.persistence_mut()` for capturing and
+  restoring the snapshot directly (layout templates and tests use it).
+
+There's no routing: today's `persist_in` and the rule that only
+`WorkbenchStore` collects entities go away. Data that belongs somewhere other
+than the world snapshot is a persisted resource.
+
+`WorkbenchStore` stays in workbench, which calls `persist_world::<WorkbenchStore>()`;
+with workspaces it's the workspace's store.
 
 There's no separate config crate. "Config" so far is the config directory and
 the convention of a global store, which fit here. Revisit if something bigger
@@ -152,6 +182,13 @@ From workbench's `actions.rs` and `shortcuts.rs`:
   `set_keys_in`). Without it, bindings are just the defaults.
 - A failing handler's `Err` stays in `ActionFinished`; workbench turns it
   into a notification.
+- **Actions don't know about panels.** They know a focused entity, from an
+  `ActionFocus(Option<Entity>)` resource. Handlers are global, or registered
+  for a component. An action runs the handler for a component on the focused
+  entity if there is one, else the global handler; shortcut conflicts resolve
+  the same way. Layouts keep `ActionFocus` on the focused panel. An app
+  without panels registers global handlers and leaves it empty, or sets it to
+  its own idea of focus.
 
 Document actions (Save, Undo, Redo) stay in workbench.
 
@@ -209,8 +246,19 @@ the window half of `native.rs`, `dialogs.rs`).
 
 ### Dialogs
 
-`ErrorDialog` and its queue move here; they're presentation. The
-unsaved-changes prompt stays in workbench.
+bedtime-ui owns a **modal layer**, drawn after the app's root view on every
+window, so nothing draws on top of a dialog and apps can't forget to draw
+them. `ErrorDialog` and its queue move here; workbench's unsaved-changes
+prompt goes through the same layer.
+
+- Each modal belongs to a window: by default the one the request came from (a
+  panel's or an action's), else the focused window. It's drawn on that window
+  and blocks only that window.
+- If its window closes, it moves to another, as error dialogs do today.
+- App-wide questions (the exit prompt) go to the focused window.
+
+**The app supplies each window's root view**: its titlebar content, its own
+bars, and `layouts::show(ui, world)` for the space that's left.
 
 ## `bedtime-work`
 
@@ -376,9 +424,11 @@ One crate per step, bottom up. After each step every test and automation
 script passes, workbench re-exports what moved so bed changes as little as
 possible, and the step is reviewed before the next.
 
-1. **Persistence.** Move stores, backends and reflected persistence into
-   `bedtime-persistence`, with `config_directory`. Store failures become
-   messages.
+1. **Persistence.** Move stores, backends and the world snapshot into
+   `bedtime-persistence`, with `persist_world`, `persist::<T, S>` and the
+   `Persisted` derive, and `config_directory`. Store failures become
+   messages. bed's `LayoutDefaults` and recent list become persisted
+   resources.
 2. **Settings.** Move settings into `bedtime-settings`; bed's row helpers move
    into its `ui` feature.
 3. **Actions and work.** Move actions, keybindings and shortcuts into
