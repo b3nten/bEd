@@ -1,0 +1,34 @@
+[package]
+name = "bedtime"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Desktop apps with Bevy: a UI toolkit, building blocks and a framework, re-exported by feature"
+
+[features]
+default = ["workbench"]
+# The framework: documents, unsaved work, layouts, actions, menus, work, with
+# native window and menus and the UI.
+workbench = ["dep:bedtime-workbench", "persistence", "settings", "actions", "menus", "work"]
+# Workspaces: folders with their own store and settings. Needs the bevy_winit
+# fork's `relaunch` (see vendor/bevy_winit/BED_PATCHES.md).
+workspaces = ["workbench", "bedtime-workbench/workspaces"]
+persistence = ["dep:bedtime-persistence", "bedtime-ui/persistence"]
+settings = ["dep:bedtime-settings", "persistence", "bedtime-settings/ui"]
+actions = ["dep:bedtime-actions", "bedtime-actions/ui"]
+menus = ["dep:bedtime-menus", "actions", "bedtime-menus/ui"]
+work = ["dep:bedtime-work"]
+documents = ["dep:bedtime-document"]
+# macOS window chrome and the native menu bar.
+native = ["bedtime-ui/native", "bedtime-menus?/native"]
+
+[dependencies]
+bedtime-ui.workspace = true
+bedtime-actions = { workspace = true, optional = true }
+bedtime-document = { workspace = true, optional = true }
+bedtime-menus = { workspace = true, optional = true }
+bedtime-persistence = { workspace = true, optional = true }
+bedtime-settings = { workspace = true, optional = true }
+bedtime-work = { workspace = true, optional = true }
+bedtime-workbench = { workspace = true, optional = true, features = ["persistence"] }

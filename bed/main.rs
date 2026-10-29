@@ -1,7 +1,7 @@
 use bedtime_ui::UiPlugin;
 use bedtime_workbench::{
     AreaBackground, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility, Titlebar,
-    WorkbenchPlugin,
+    WorkbenchPlugins,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::PathBuf;
@@ -24,10 +24,11 @@ fn main() -> AppExit {
 /// The App for one workspace. Switching workspace drops it and builds another
 /// in the same window (`bevy::winit::relaunch`).
 pub fn app(start: Start) -> App {
-    let launch = workspace::launch(start);
+    let config = config_directory();
+    let workspaces = workspace::WorkspacesPlugin::new(start, config.clone(), app);
     let automation = bedtime_automation::AutomationPlugin::from_env();
     // A script is driving: don't take focus from what you're doing.
-    let window = window(&launch.opened.workspace, !automation.active());
+    let window = window(workspaces.workspace(), !automation.active());
 
     // Logging is set up once per process; a relaunched App leaves it alone.
     let mut defaults = DefaultPlugins.build();
@@ -43,7 +44,8 @@ pub fn app(start: Start) -> App {
             ..default()
         }),
         UiPlugin,
-        WorkbenchPlugin,
+        WorkbenchPlugins,
+        workspaces,
         settings::BedSettingsPlugin,
         menus::MenusPlugin,
         layouts::LayoutSlotsPlugin,
@@ -54,8 +56,10 @@ pub fn app(start: Start) -> App {
     ))
     // Look for installed fonts now, so Settings can list them when opened.
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
+    .insert_resource(settings::GlobalLocation(
+        config.map(|config| config.join("global")),
+    ))
     .add_systems(Startup, setup);
-    launch.install(&mut app);
     app
 }
 

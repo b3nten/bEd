@@ -11,12 +11,6 @@ pub enum SessionSystems {
 }
 
 pub(crate) fn install(app: &mut App) {
-    if !app.is_plugin_added::<bedtime_work::WorkPlugin>() {
-        app.add_plugins(bedtime_work::WorkPlugin);
-    }
-    if !app.is_plugin_added::<LayoutsPlugin>() {
-        app.add_plugins(LayoutsPlugin);
-    }
     app.init_resource::<Notifications>()
         .add_message::<CloseRequested>()
         // Uncommitted input must be committed or cancelled before its panel
@@ -47,9 +41,6 @@ pub(crate) fn install(app: &mut App) {
             .after(SessionSystems::Prepare)
             .before(LayoutSystems::Apply),
     );
-    if !app.is_plugin_added::<bedtime_actions::ActionsPlugin>() {
-        app.add_plugins(bedtime_actions::ActionsPlugin);
-    }
     // Actions run for the focused panel.
     app.insert_resource(ActionFocus(focused_panel))
         .configure_sets(

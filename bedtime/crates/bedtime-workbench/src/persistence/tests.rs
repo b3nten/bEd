@@ -29,7 +29,7 @@ struct Pointer(#[entities] Entity);
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin)
+    app.add_plugins(WorkbenchCorePlugins)
         .register_type::<Note>()
         .register_type::<Counter>()
         .register_type::<Pointer>()

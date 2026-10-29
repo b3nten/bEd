@@ -6,7 +6,7 @@ struct Draft(String);
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin);
+    app.add_plugins(WorkbenchCorePlugins);
     layout(app.world_mut());
     app
 }

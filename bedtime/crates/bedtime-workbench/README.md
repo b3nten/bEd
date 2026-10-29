@@ -1,7 +1,7 @@
 # bedtime-workbench
 
 One editing session per Bevy World, with optional native and egui presentation.
-Add WorkbenchPlugin and UI's UiPlugin after the application's normal Bevy setup,
+Add WorkbenchPlugins and UI's UiPlugin after the application's normal Bevy setup,
 in either order. Applications compose concrete layout and panel entities;
 an empty workbench is valid. Workbench never installs
 DefaultPlugins or creates a window or GPU device. Layouts,
@@ -13,26 +13,61 @@ tabs of unsaved documents show it (`PanelModified`).
 
 | Plugin | Responsibility |
 | --- | --- |
-| WorkbenchCorePlugin | Documents, unsaved work, layouts (`LayoutsPlugin`), actions, work and orderly shutdown |
+| WorkbenchCorePlugins | Group without windows: persistence and settings (`persistence` feature), work, actions, layouts, documents |
+| DocumentsPlugin | Documents, unsaved work, closing and quitting, notifications; checks at startup that the parts it needs are installed |
 | ClipboardPlugin | Shared text/file clipboard, usable independently |
 | WorkbenchNativeWindowPlugin | Window close requests into the quit flow |
 | ChromePlugin (bedtime-ui) | Native window chrome: titlebar, background, blur |
 | NativeMenuPlugin (bedtime-menus) | Native presentation of the world menu |
-| WorkbenchNativePlugin | Group of native window/menu plugins |
+| WorkbenchNativePlugin | Group of native window/chrome/menu plugins |
 | WorkbenchUiPlugin | The unsaved-changes prompt, in the modal layer |
-| WorkbenchPlugin | Group of enabled core, clipboard, native and UI capabilities |
+| WorkbenchPlugins | `WorkbenchCorePlugins` plus clipboard, native and UI, by feature |
+| WorkspacesPlugin (`workspaces` feature) | Workspaces; added by the app, which says how to rebuild itself |
 
 Default features are ui, native and clipboard. With defaults disabled, the core
 compiles without a renderer, window backend, native menu library or OS clipboard.
 Features control compiled dependencies; plugins control installed systems.
+Both groups work like Bevy's `DefaultPlugins`: replace a part with `.set()`,
+drop one with `.disable()`.
 
 ~~~rust,ignore
-app.add_plugins(WorkbenchPlugin).add_plugins(UiPlugin);
-// Or compose:
-app.add_plugins((WorkbenchCorePlugin, ClipboardPlugin, WorkbenchUiPlugin, UiPlugin));
-
-// No panel-type registration is needed.
+app.add_plugins((WorkbenchPlugins, UiPlugin));
+// Headless (a server, tests):
+app.add_plugins(WorkbenchCorePlugins);
 ~~~
+
+## Workspaces (`workspaces` feature)
+
+A workspace is a folder with its own store (`WorkbenchStore`, under
+`<config>/workspaces/<hash>/`) and settings layer, over the app-wide
+`GlobalStore` (`<config>/global/`, with the global settings layer and the
+recent list). There's always one: the folder the app was opened at, or the
+default workspace (the home folder). A lock stops two instances saving the
+same workspace.
+
+~~~rust,ignore
+fn app(start: Start) -> App {
+    let workspaces = WorkspacesPlugin::new(start, config_directory, app);
+    let title = workspaces.workspace().name(); // for the window
+    let mut app = App::new();
+    app.add_plugins((/* DefaultPlugins with the title */, UiPlugin, WorkbenchPlugins, workspaces));
+    app
+}
+~~~
+
+`WorkspacesPlugin::new` reads the global store (the recent list, whether to
+reopen the last workspace: the `ReopenLastWorkspace` setting), chooses and
+claims the workspace, and remembers it. Adding it installs the stores and
+layers, and the `Workspace`, `Root` and `RecentWorkspaces` resources.
+`workspaces::switch(world, start)` ends the session the way quitting does
+(`request_exit`), then rebuilds the App in the same window with the function
+the plugin was given; that's `bevy::winit::relaunch`, from the bevy_winit fork,
+so apps using this feature need the same `[patch.crates-io]` entry.
+
+`Root` is the folder plugins work in (a file tree's start, a terminal's
+directory). The workspaces plugin sets it; an app without workspaces sets its
+own or leaves it unset.
+
 
 On macOS with `ui`, the native window adapter also supplies live file-drag
 coordinates. Winit 0.30.13's `HoveredFile`/`DroppedFile` events carry paths but no

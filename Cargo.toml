@@ -11,6 +11,7 @@ members = [
     "bedtime/crates/bedtime-actions",
     "bedtime/crates/bedtime-menus",
     "bedtime/crates/bedtime-work",
+    "bedtime/crates/bedtime",
     "bedtime/crates/bedtime-workbench",
 ]
 default-members = ["bed"]

@@ -11,6 +11,9 @@ default = ["ui", "native", "clipboard"]
 ui = ["dep:bevy_egui", "bedtime-settings?/ui", "bedtime-actions/ui", "bedtime-menus/ui"]
 clipboard = ["dep:bedtime-clipboard"]
 persistence = ["dep:bedtime-persistence", "dep:bedtime-settings", "bedtime-actions/settings", "bedtime-ui/persistence", "dep:bevy_world_serialization", "bevy/serialize"]
+# Workspaces: folders with their own store and settings, switched by
+# rebuilding the App (needs the bevy_winit fork's `relaunch`).
+workspaces = ["persistence", "bevy/bevy_winit"]
 native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "bedtime-menus/native", "bedtime-ui/native"]
 
 [dependencies]

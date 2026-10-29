@@ -4,10 +4,7 @@
 //! slot's default: a template saved in the global store with "Save Layout as
 //! Default", or a single empty area. The default workspace's layout 1 starts
 //! with the Workspaces panel instead.
-use crate::{
-    settings::GlobalStore,
-    workspace::{Workspace, WorkspacesPanel},
-};
+use crate::workspace::{GlobalStore, Workspace, WorkspacesPanel};
 use bedtime_workbench::LayoutsWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout, PanelFactory,
@@ -189,12 +186,12 @@ mod tests {
     use crate::{panels::open_panel, settings::SettingsPanel};
     use bedtime_workbench::{
         ActionId, ActionRequest, ActionRequests, InvocationContext, PanelFactory,
-        WorkbenchCorePlugin,
+        WorkbenchCorePlugins,
     };
 
     fn app() -> App {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, LayoutSlotsPlugin))
+        app.add_plugins((WorkbenchCorePlugins, LayoutSlotsPlugin))
             .register_type::<SettingsPanel>();
         app.update();
         app
@@ -258,7 +255,7 @@ mod tests {
         // Another workspace (another App) shares the defaults.
         let mut other = App::new();
         other
-            .add_plugins((WorkbenchCorePlugin, LayoutSlotsPlugin))
+            .add_plugins((WorkbenchCorePlugins, LayoutSlotsPlugin))
             .register_type::<SettingsPanel>()
             .insert_resource(defaults);
         other.update();
@@ -281,7 +278,7 @@ mod tests {
     #[test]
     fn a_workbench_saved_before_slots_keeps_its_layout_as_layout_1() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, LayoutSlotsPlugin));
+        app.add_plugins((WorkbenchCorePlugins, LayoutSlotsPlugin));
         let world = app.world_mut();
         let layout = world.layouts_mut().create("Old").unwrap();
         world.layouts_mut().activate(layout).unwrap();

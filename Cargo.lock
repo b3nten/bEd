@@ -449,6 +449,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedtime"
+version = "0.1.0"
+dependencies = [
+ "bedtime-actions",
+ "bedtime-document",
+ "bedtime-menus",
+ "bedtime-persistence",
+ "bedtime-settings",
+ "bedtime-ui",
+ "bedtime-work",
+ "bedtime-workbench",
+]
+
+[[package]]
 name = "bedtime-actions"
 version = "0.1.0"
 dependencies = [

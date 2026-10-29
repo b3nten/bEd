@@ -93,12 +93,12 @@ impl Workbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{WorkbenchCorePlugin, WorkbenchWorldExt};
+    use crate::{WorkbenchCorePlugins, WorkbenchWorldExt};
 
     #[test]
     fn repeats_refresh_the_latest_and_old_ones_fall_off() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugin);
+        app.add_plugins(WorkbenchCorePlugins);
         let workbench = app.world_mut().workbench_mut();
         workbench.notify(Notification::error("disk full"));
         let first = workbench

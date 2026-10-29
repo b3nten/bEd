@@ -2,7 +2,10 @@
 //!
 //! Each setting writes into `AppearanceSettings` when its value changes; one system
 //! applies `AppearanceSettings` to the theme and workbench surface.
-use crate::{panels::PanelPolicy, workspace::Workspace};
+use crate::{
+    panels::PanelPolicy,
+    workspace::{GlobalStore, Workspace},
+};
 use bedtime_ui::{
     Metrics, UiContext, egui,
     fonts::{DEFAULT_FAMILY, InstalledFonts},
@@ -11,10 +14,10 @@ use bedtime_ui::{
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, LayoutSurface, Panel,
     PanelFactory, PanelInstance, WindowBlur,
-    persistence::{ReflectPersist, Store, StoreId, Stores, WorkbenchStore},
+    persistence::{ReflectPersist, StoreId, Stores, WorkbenchStore},
     settings::{
         Setting, SettingsAppExt, SettingsWorldExt, settings,
-        ui::{combo, heading, layer_tabs, row, sections},
+        ui::{SettingsUiAppExt, combo, heading, layer_tabs, row, sections},
     },
     ui::keybindings_section,
 };
@@ -24,10 +27,6 @@ use std::{ops::RangeInclusive, path::PathBuf};
 const OPACITY: RangeInclusive<f32> = 0.0..=1.0;
 const PANEL_RADIUS: RangeInclusive<f32> = 0.0..=32.0;
 const PANEL_GAP: RangeInclusive<f32> = 0.0..=32.0;
-
-/// Settings and data shared by every workspace.
-pub struct GlobalStore;
-impl Store for GlobalStore {}
 
 /// Where the global store lives, if anywhere; shown in the Settings panel.
 #[derive(Resource)]
@@ -98,17 +97,6 @@ settings! {
             apply: |world, gap| world.resource_mut::<AppearanceSettings>().panel_gap = limit(*gap, PANEL_GAP, 5.0),
         }
     }
-    "Startup" {
-        /// Started without a folder, reopen the last one rather than the
-        /// default workspace.
-        pub ReopenLastWorkspace: bool {
-            default: false,
-            key: "startup.reopen_last",
-            label: "Reopen last folder",
-            description: "When bEd is started without a folder",
-            only_in: [GlobalStore],
-        }
-    }
 }
 
 /// Hand-edited files can hold anything; bring numbers into range before use.
@@ -166,7 +154,8 @@ impl Plugin for BedSettingsPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<SettingsPanel>()
             .init_resource::<AppearanceSettings>()
-            .add_settings_layer::<GlobalStore>()
+            // Startup is workbench's (reopening the last workspace).
+            .settings_sections(["Appearance", "Window", "Panels", "Startup", "Effects"])
             .register_setting::<ColorTheme>()
             .register_setting::<FontFamily>()
             .register_setting::<FontSize>()
@@ -175,7 +164,6 @@ impl Plugin for BedSettingsPlugin {
             .register_setting::<PanelOpacity>()
             .register_setting::<PanelRadius>()
             .register_setting::<PanelGap>()
-            .register_setting::<ReopenLastWorkspace>()
             .add_action_handler::<OpenSettings>(Handler::new(open_settings))
             .add_systems(Update, apply_appearance);
     }
@@ -327,12 +315,13 @@ fn font_family_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bedtime_workbench::WorkbenchCorePlugin;
+    use bedtime_workbench::WorkbenchCorePlugins;
 
     #[test]
     fn appearance_follows_the_settings_and_stays_in_range() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, BedSettingsPlugin))
+        app.add_plugins((WorkbenchCorePlugins, BedSettingsPlugin))
+            .add_settings_layer::<GlobalStore>()
             .add_settings_layer::<WorkbenchStore>();
         app.update();
         let global = StoreId::of::<GlobalStore>();
@@ -381,7 +370,7 @@ mod tests {
         use bedtime_workbench::{BindingInput, BindingPress, InvocationContext};
         let mut app = App::new();
         app.add_plugins((
-            WorkbenchCorePlugin,
+            WorkbenchCorePlugins,
             BedSettingsPlugin,
             crate::layouts::LayoutSlotsPlugin,
         ));

@@ -1,6 +1,6 @@
 # Architecture: the bedtime crates
 
-Status (2026-10-29): **migration steps 1–5 built** (persistence, settings, actions and work, menus, layouts and chrome); the
+Status (2026-10-29): **migration steps 1–6 built** (persistence, settings, actions and work, menus, layouts and chrome, the framework); step 7 (opening) is next; the
 rest still lives in `bedtime-workbench`, and the [migration](#migration) below
 moves it one crate at a time. Update this file as decisions change.
 
@@ -297,7 +297,7 @@ app.add_plugins(
     WorkbenchPlugins
         .build()
         .set(SettingsPlugin::with_layers(...))
-        .disable::<WorkspacesPlugin>(),
+        .disable::<WorkbenchUiPlugin>(),
 );
 ```
 
@@ -313,7 +313,9 @@ depends on the order plugins are added, and hides what's installed.
 
 ### Workspaces are optional
 
-`WorkspacesPlugin` is part of the group and a cargo feature (`workspaces`).
+`WorkspacesPlugin` is a cargo feature (`workspaces`). It isn't in the default
+group: it's built before the App (the window title needs the workspace) and is
+given the App's constructor, for switching.
 Without the feature nothing needs the bevy_winit fork, because relaunching
 only exists to switch workspace.
 

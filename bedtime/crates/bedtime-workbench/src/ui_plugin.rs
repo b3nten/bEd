@@ -4,7 +4,7 @@ use bedtime_ui::UiPlugin;
 use bevy::prelude::*;
 
 /// The unsaved-changes prompt in bedtime-ui's modal layer. Layouts and their
-/// drawing are `LayoutsPlugin` (installed by `WorkbenchCorePlugin`).
+/// drawing are `LayoutsPlugin` (installed by `WorkbenchCorePlugins`).
 pub struct WorkbenchUiPlugin;
 impl Plugin for WorkbenchUiPlugin {
     fn build(&self, app: &mut App) {
@@ -16,8 +16,8 @@ impl Plugin for WorkbenchUiPlugin {
             "WorkbenchUiPlugin requires UiPlugin (either registration order)"
         );
         assert!(
-            app.is_plugin_added::<WorkbenchCorePlugin>(),
-            "WorkbenchUiPlugin requires WorkbenchCorePlugin"
+            app.is_plugin_added::<DocumentsPlugin>(),
+            "WorkbenchUiPlugin requires DocumentsPlugin (part of WorkbenchCorePlugins)"
         );
     }
 }

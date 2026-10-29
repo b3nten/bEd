@@ -283,6 +283,20 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 6: plugin groups, workspaces in workbench, the
+  umbrella crate**, 2026-10-29. `WorkbenchCorePlugin` is `DocumentsPlugin`,
+  which checks at startup for the parts it needs instead of adding them;
+  `WorkbenchCorePlugins` (headless: persistence, settings, work, actions,
+  layouts, documents) and `WorkbenchPlugins` (plus clipboard, native, UI)
+  replace `WorkbenchPlugin`. Workspaces moved from bed into
+  `bedtime_workbench::workspaces` (feature `workspaces`): `Workspace`,
+  `GlobalStore`, `RecentWorkspaces`, `ReopenLastWorkspace`, `Start`,
+  `WorkspacesPlugin::new(start, config, app)` (built before the App, for the
+  window title; it isn't in the default group because it needs the App's
+  constructor), `switch`. A `Root` resource is the folder plugins work in.
+  bed keeps its Workspaces panel; its Settings sections are ordered with
+  `settings_sections`. `bedtime` re-exports the crates behind features.
+
 - **Architecture step 5: layouts and window chrome in `bedtime-ui`**,
   2026-10-29. Layouts, geometry, membership, validation, the layout UI, the
   surface, window chrome and error dialogs moved from workbench into

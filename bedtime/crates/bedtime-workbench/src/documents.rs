@@ -19,7 +19,7 @@
 //! use bedtime_workbench::*;
 //!
 //! let mut app = App::new();
-//! app.add_plugins(WorkbenchCorePlugin);
+//! app.add_plugins(WorkbenchCorePlugins);
 //! let document = app.world_mut().workbench_mut().open_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
 //! while app.world().workbench().inspect_document(document.id())?.status == DocumentStatus::Loading {
 //!     app.update();

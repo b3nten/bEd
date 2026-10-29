@@ -330,7 +330,7 @@ fn tool<C: Action>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bedtime_workbench::{MenuNode, MenusWorldExt, WorkbenchCorePlugin};
+    use bedtime_workbench::{MenuNode, MenusWorldExt, WorkbenchCorePlugins};
 
     fn labels(nodes: &[MenuNode]) -> Vec<(String, bool)> {
         nodes
@@ -357,7 +357,7 @@ mod tests {
     fn open_recent_lists_other_folders_and_items_follow_their_commands() {
         let mut app = App::new();
         app.add_plugins((
-            WorkbenchCorePlugin,
+            WorkbenchCorePlugins,
             crate::settings::BedSettingsPlugin,
             crate::layouts::LayoutSlotsPlugin,
             MenusPlugin,

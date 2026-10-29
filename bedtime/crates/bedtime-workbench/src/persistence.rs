@@ -20,9 +20,6 @@ pub struct WorkbenchStore;
 impl Store for WorkbenchStore {}
 
 pub(crate) fn register(app: &mut App) {
-    if !app.is_plugin_added::<PersistencePlugin>() {
-        app.add_plugins(PersistencePlugin);
-    }
     app.persist_world::<WorkbenchStore>()
         .configure_sets(Last, StoreSystems::Save.before(SessionSystems::Close))
         .add_systems(Update, report_store_errors);

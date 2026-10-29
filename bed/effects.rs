@@ -682,15 +682,15 @@ mod tests {
 
     #[test]
     fn effects_follow_their_settings_and_stay_in_range() {
-        use bedtime_workbench::{WorkbenchCorePlugin, settings::SettingsAppExt};
+        use bedtime_workbench::{WorkbenchCorePlugins, settings::SettingsAppExt};
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, EffectsPlugin))
+        app.add_plugins((WorkbenchCorePlugins, EffectsPlugin))
             .init_resource::<Time<Real>>()
-            .add_settings_layer::<crate::settings::GlobalStore>();
+            .add_settings_layer::<crate::workspace::GlobalStore>();
         app.update();
         let world = app.world_mut();
         assert!(!world.resource::<Effects>().enabled);
-        let global = StoreId::of::<crate::settings::GlobalStore>();
+        let global = StoreId::of::<crate::workspace::GlobalStore>();
         world
             .settings_mut()
             .set::<EffectsEnabled>(global, true)

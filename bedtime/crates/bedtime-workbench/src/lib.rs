@@ -6,6 +6,8 @@ mod lifecycle;
 mod notifications;
 #[cfg(feature = "persistence")]
 pub mod persistence;
+#[cfg(feature = "workspaces")]
+pub mod workspaces;
 /// Settings: [`bedtime-settings`](bedtime_settings), re-exported.
 #[cfg(feature = "persistence")]
 pub mod settings {
@@ -45,6 +47,12 @@ use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
 pub use ui_plugin::WorkbenchUiPlugin;
 
+/// The folder the app works in: where a file tree starts, a terminal opens,
+/// relative paths resolve. `WorkspacesPlugin` sets it to the workspace's
+/// folder; without workspaces the app sets its own, or leaves it unset.
+#[derive(Resource, Clone, Debug, PartialEq, Eq)]
+pub struct Root(pub std::path::PathBuf);
+
 /// A request to quit, from the native window or an application command.
 /// Workbench handles it: unsaved documents are saved or asked about, background
 /// work finishes, then `AppExit` is sent.
@@ -56,18 +64,50 @@ pub struct CloseRequested {
 /// Session resources, layout selection, requests and orderly shutdown in the main
 /// application world. Empty workbenches are valid; applications compose or restore
 /// their layout/panel graphs. Installs no window or renderer.
-pub struct WorkbenchCorePlugin;
-impl Plugin for WorkbenchCorePlugin {
+pub struct DocumentsPlugin;
+impl Plugin for DocumentsPlugin {
     fn build(&self, app: &mut App) {
         lifecycle::install(app);
         #[cfg(feature = "persistence")]
         {
             persistence::register(app);
-            if !app.is_plugin_added::<bedtime_settings::SettingsPlugin>() {
-                app.add_plugins(bedtime_settings::SettingsPlugin);
-            }
             app.add_systems(Update, report_settings_errors);
         }
+    }
+    fn finish(&self, app: &mut App) {
+        fn needs<P: Plugin>(app: &App, name: &str) {
+            assert!(
+                app.is_plugin_added::<P>(),
+                "DocumentsPlugin needs {name}, part of WorkbenchCorePlugins"
+            );
+        }
+        needs::<WorkPlugin>(app, "WorkPlugin");
+        needs::<ActionsPlugin>(app, "ActionsPlugin");
+        needs::<LayoutsPlugin>(app, "LayoutsPlugin");
+        #[cfg(feature = "persistence")]
+        {
+            needs::<persistence::PersistencePlugin>(app, "PersistencePlugin");
+            needs::<bedtime_settings::SettingsPlugin>(app, "SettingsPlugin");
+        }
+    }
+}
+
+/// Workbench without windows: persistence and settings (`persistence`
+/// feature), work, actions, layouts and documents. Replace a part with
+/// `.set()` or drop one with `.disable()`, as with Bevy's `DefaultPlugins`.
+pub struct WorkbenchCorePlugins;
+impl PluginGroup for WorkbenchCorePlugins {
+    fn build(self) -> PluginGroupBuilder {
+        let group = PluginGroupBuilder::start::<Self>();
+        #[cfg(feature = "persistence")]
+        let group = group
+            .add(persistence::PersistencePlugin)
+            .add(bedtime_settings::SettingsPlugin);
+        group
+            .add(WorkPlugin)
+            .add(ActionsPlugin)
+            .add(LayoutsPlugin)
+            .add(DocumentsPlugin)
     }
 }
 
@@ -86,13 +126,13 @@ fn report_settings_errors(
     }
 }
 
-/// The usual workbench setup. Features select compiled capabilities; this group
-/// can also be customized with Bevy's PluginGroupBuilder::disable.
-/// UiPlugin remains application-owned and may be registered in either order.
-pub struct WorkbenchPlugin;
-impl PluginGroup for WorkbenchPlugin {
+/// The usual workbench: `WorkbenchCorePlugins`, plus the clipboard, native
+/// window and menus, and the UI (by feature). `UiPlugin` remains the app's and
+/// may be added in either order.
+pub struct WorkbenchPlugins;
+impl PluginGroup for WorkbenchPlugins {
     fn build(self) -> PluginGroupBuilder {
-        let group = PluginGroupBuilder::start::<Self>().add(WorkbenchCorePlugin);
+        let group = PluginGroupBuilder::start::<Self>().add_group(WorkbenchCorePlugins);
         #[cfg(feature = "clipboard")]
         let group = group.add(ClipboardPlugin);
         #[cfg(feature = "native")]

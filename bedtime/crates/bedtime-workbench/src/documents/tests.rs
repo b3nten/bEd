@@ -1,5 +1,5 @@
 use super::*;
-use crate::WorkbenchCorePlugin;
+use crate::WorkbenchCorePlugins;
 use crate::WorkbenchWorldExt;
 use crate::tests::TestPanels;
 use std::{
@@ -9,7 +9,7 @@ use std::{
 
 pub(crate) fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugin);
+    app.add_plugins(WorkbenchCorePlugins);
     crate::tests::layout(app.world_mut());
     app
 }

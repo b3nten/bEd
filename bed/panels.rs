@@ -43,7 +43,7 @@ pub fn open_panel<P: PanelPolicy>(
 mod tests {
     use super::*;
     use crate::settings::SettingsPanel;
-    use bedtime_workbench::{InArea, WorkbenchCorePlugin};
+    use bedtime_workbench::{InArea, WorkbenchCorePlugins};
 
     fn open_settings(world: &mut World) -> Entity {
         open_panel::<SettingsPanel>(world, (), PanelFactory::of::<SettingsPanel>()).unwrap()
@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn opening_focuses_an_equivalent_panel_in_the_active_layout() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, layouts::LayoutSlotsPlugin));
+        app.add_plugins((WorkbenchCorePlugins, layouts::LayoutSlotsPlugin));
         let world = app.world_mut();
 
         let first = open_settings(world);
@@ -68,7 +68,7 @@ mod tests {
     #[test]
     fn opening_ignores_panels_in_other_layouts() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugin, layouts::LayoutSlotsPlugin));
+        app.add_plugins((WorkbenchCorePlugins, layouts::LayoutSlotsPlugin));
         let world = app.world_mut();
 
         let first = open_settings(world);
