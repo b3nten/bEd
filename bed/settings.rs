@@ -8,12 +8,13 @@ use bedtime_ui::{
     fonts::{DEFAULT_FAMILY, InstalledFonts},
     theme::{FONT_SIZES, ThemeFolder},
 };
+use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Panel, PanelFactory,
     PanelInstance, WindowBlur, WorkbenchSurface,
     persistence::{ReflectPersist, Store, StoreId, Stores, WorkbenchStore},
     setting,
-    settings::{Setting, Settings, SettingsAppExt, clear_setting, set_setting},
+    settings::{Setting, Settings, SettingsAppExt},
 };
 use bevy::prelude::*;
 use std::{ops::RangeInclusive, path::PathBuf};
@@ -464,10 +465,12 @@ fn row_with_note<S: Setting>(
         },
     );
     if changed {
-        let _ = set_setting::<S>(world, layer, value);
+        let result = world.workbench_mut().set_setting::<S>(layer, value);
+        crate::status::notify_failure(world, &format!("Couldn't change {label}"), result);
     }
     if reset {
-        let _ = clear_setting::<S>(world, layer);
+        let result = world.workbench_mut().clear_setting::<S>(layer);
+        crate::status::notify_failure(world, &format!("Couldn't reset {label}"), result);
     }
 }
 
@@ -531,19 +534,37 @@ mod tests {
         app.update();
         let global = StoreId::of::<GlobalStore>();
         let world = app.world_mut();
-        set_setting::<FontSize>(world, global, 20.0).unwrap();
-        set_setting::<ColorTheme>(world, global, "tokyo".into()).unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<FontSize>(global, 20.0)
+            .unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<ColorTheme>(global, "tokyo".into())
+            .unwrap();
         assert_eq!(world.resource::<AppearanceSettings>().font_size, 20.0);
         assert_eq!(world.resource::<AppearanceSettings>().theme, "tokyo");
         // As if hand-edited: the value is kept, but what's applied is in range.
-        set_setting::<FontSize>(world, global, 500.0).unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<FontSize>(global, 500.0)
+            .unwrap();
         assert_eq!(world.resource::<AppearanceSettings>().font_size, 72.0);
-        clear_setting::<FontSize>(world, global).unwrap();
+        world
+            .workbench_mut()
+            .clear_setting::<FontSize>(global)
+            .unwrap();
         assert_eq!(world.resource::<AppearanceSettings>().font_size, 15.5);
         // A workspace can choose its own font.
         let workspace = StoreId::of::<WorkbenchStore>();
-        set_setting::<FontFamily>(world, global, Some("Menlo".into())).unwrap();
-        set_setting::<FontFamily>(world, workspace, Some("PT Mono".into())).unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<FontFamily>(global, Some("Menlo".into()))
+            .unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<FontFamily>(workspace, Some("PT Mono".into()))
+            .unwrap();
         assert_eq!(
             world
                 .resource::<AppearanceSettings>()
@@ -551,7 +572,10 @@ mod tests {
                 .as_deref(),
             Some("PT Mono")
         );
-        clear_setting::<FontFamily>(world, workspace).unwrap();
+        world
+            .workbench_mut()
+            .clear_setting::<FontFamily>(workspace)
+            .unwrap();
         assert_eq!(
             world
                 .resource::<AppearanceSettings>()

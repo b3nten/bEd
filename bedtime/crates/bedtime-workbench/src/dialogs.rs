@@ -1,5 +1,6 @@
 //! A small application-wide queue of human-readable error dialogs.
 use crate::WorkbenchSurface;
+use crate::{Workbench, WorkbenchWorldExt};
 use bedtime_ui::egui;
 use bevy::prelude::*;
 use std::collections::VecDeque;
@@ -111,15 +112,18 @@ impl ErrorDialogs {
     }
 }
 
-/// Queue an error independently of its originating panel.
-///
-/// Identical active/pending dialogs are deduplicated. After dismissal an
-/// identical request is accepted again, so callers must edge-detect persistent
-/// errors rather than submitting them every frame. Overflow is coalesced into
-/// a bounded summary counting omitted requests, not distinct error identities.
-pub fn request_error_dialog(world: &mut World, dialog: ErrorDialog) {
-    world.init_resource::<ErrorDialogs>();
-    world.resource_mut::<ErrorDialogs>().request(dialog);
+impl Workbench {
+    /// Queue an error independently of its originating panel.
+    ///
+    /// Identical active/pending dialogs are deduplicated. After dismissal an
+    /// identical request is accepted again, so callers must edge-detect persistent
+    /// errors rather than submitting them every frame. Overflow is coalesced into
+    /// a bounded summary counting omitted requests, not distinct error identities.
+    pub fn request_error_dialog(&mut self, dialog: ErrorDialog) {
+        let world = &mut self.world;
+        world.init_resource::<ErrorDialogs>();
+        world.resource_mut::<ErrorDialogs>().request(dialog);
+    }
 }
 
 /// Called by the workbench root before drawing panels, including empty/hidden
@@ -205,7 +209,7 @@ pub(crate) fn draw(ctx: &egui::Context, world: &mut World, surface: Entity) -> b
 /// Ask what to do with unsaved documents before a close or quit goes ahead.
 /// Drawn on the first workbench window, like error dialogs. Escape cancels.
 pub(crate) fn draw_close_prompt(ctx: &egui::Context, world: &mut World, surface: Entity) -> bool {
-    let Some(prompt) = crate::close_prompt(world) else {
+    let Some(prompt) = world.workbench().close_prompt() else {
         return false;
     };
     let owner = world
@@ -223,11 +227,10 @@ pub(crate) fn draw_close_prompt(ctx: &egui::Context, world: &mut World, surface:
     let response =
         egui::Modal::new(egui::Id::new(("workbench-close-prompt", surface))).show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 48.0).clamp(0.0, 460.0));
-            ui.heading(if prompt.quitting {
-                "Quit with unsaved changes?"
-            } else {
-                "Close with unsaved changes?"
-            });
+            ui.heading(format!(
+                "{} with unsaved changes?",
+                prompt.exit.as_deref().unwrap_or("Close")
+            ));
             ui.label(if failed {
                 "Some changes couldn't be saved."
             } else if many {
@@ -283,7 +286,10 @@ pub(crate) fn draw_close_prompt(ctx: &egui::Context, world: &mut World, surface:
         .inner
         .or(escape.then_some(crate::CloseChoice::Cancel))
     {
-        crate::resolve_close(world, choice).expect("A prompt was showing");
+        world
+            .workbench_mut()
+            .resolve_close(choice)
+            .expect("A prompt was showing");
     }
     true
 }
@@ -347,7 +353,9 @@ mod tests {
         assert!(!world.contains_resource::<ErrorDialogs>());
 
         let origin = world.spawn_empty().id();
-        request_error_dialog(&mut world, error("Refresh Files and try again."));
+        world
+            .workbench_mut()
+            .request_error_dialog(error("Refresh Files and try again."));
         world.despawn(origin);
         let mut output = ctx.run_ui(input(vec![]), |ui| {
             assert!(!draw(ui.ctx(), &mut world, Entity::PLACEHOLDER));
@@ -371,18 +379,18 @@ mod tests {
         let ctx = egui::Context::default();
         let first = error("First operation failed.");
         let second = error("Second operation failed.");
-        request_error_dialog(&mut world, first.clone());
-        request_error_dialog(&mut world, first.clone());
-        request_error_dialog(&mut world, second.clone());
-        request_error_dialog(&mut world, second.clone());
+        world.workbench_mut().request_error_dialog(first.clone());
+        world.workbench_mut().request_error_dialog(first.clone());
+        world.workbench_mut().request_error_dialog(second.clone());
+        world.workbench_mut().request_error_dialog(second.clone());
         let _ = render(&ctx, &mut world, surface, vec![]);
-        request_error_dialog(&mut world, first.clone()); // Also deduplicate the active dialog.
+        world.workbench_mut().request_error_dialog(first.clone()); // Also deduplicate the active dialog.
         assert_eq!(world.resource::<ErrorDialogs>().len(), 2);
         assert_eq!(world.resource::<ErrorDialogs>().front(), Some(&first));
 
         let _ = render(&ctx, &mut world, surface, vec![key(egui::Key::Enter)]);
         assert_eq!(world.resource::<ErrorDialogs>().front(), Some(&second));
-        request_error_dialog(&mut world, first.clone());
+        world.workbench_mut().request_error_dialog(first.clone());
         assert_eq!(world.resource::<ErrorDialogs>().len(), 2);
         let _ = render(&ctx, &mut world, surface, vec![key(egui::Key::Escape)]);
         assert_eq!(world.resource::<ErrorDialogs>().front(), Some(&first));
@@ -396,8 +404,8 @@ mod tests {
         let first = error("Could not save the file.");
         let mut second = first.clone();
         second.details = Some("A different file or cause".into());
-        request_error_dialog(&mut world, first.clone());
-        request_error_dialog(&mut world, second.clone());
+        world.workbench_mut().request_error_dialog(first.clone());
+        world.workbench_mut().request_error_dialog(second.clone());
         assert_eq!(world.resource::<ErrorDialogs>().len(), 2);
         world.resource_mut::<ErrorDialogs>().dismiss();
         assert_eq!(world.resource::<ErrorDialogs>().front(), Some(&second));
@@ -407,14 +415,18 @@ mod tests {
     fn overflow_stays_bounded_and_counts_displaced_and_later_requests_honestly() {
         let mut world = World::new();
         for index in 0..200 {
-            request_error_dialog(&mut world, error(&format!("Error {index}")));
+            world
+                .workbench_mut()
+                .request_error_dialog(error(&format!("Error {index}")));
             assert!(world.resource::<ErrorDialogs>().len() <= MAX_ERROR_DIALOGS);
         }
         assert_eq!(world.resource::<ErrorDialogs>().len(), 16);
-        request_error_dialog(&mut world, error("Error 0"));
+        world.workbench_mut().request_error_dialog(error("Error 0"));
         world.resource_mut::<ErrorDialogs>().dismiss();
         // Freed slots do not restart collecting details while overflow remains.
-        request_error_dialog(&mut world, error("Another attempt"));
+        world
+            .workbench_mut()
+            .request_error_dialog(error("Another attempt"));
         assert_eq!(world.resource::<ErrorDialogs>().len(), 15);
         for index in 1..15 {
             assert_eq!(
@@ -431,7 +443,9 @@ mod tests {
         assert_eq!(summary.details, None);
         assert!(summary.message.len() < 256);
         world.resource_mut::<ErrorDialogs>().dismiss();
-        request_error_dialog(&mut world, error("Another attempt"));
+        world
+            .workbench_mut()
+            .request_error_dialog(error("Another attempt"));
         assert_eq!(
             world.resource::<ErrorDialogs>().front(),
             Some(&error("Another attempt"))
@@ -464,7 +478,9 @@ mod tests {
                 .spawn((Window::default(), WorkbenchSurface::default()))
                 .id();
             let ctx = egui::Context::default();
-            request_error_dialog(&mut world, error("The operation failed."));
+            world
+                .workbench_mut()
+                .request_error_dialog(error("The operation failed."));
             let mut output = ctx.run_ui(input(vec![key(dismiss)]), |ui| {
                 assert!(draw(ui.ctx(), &mut world, surface));
                 assert!(!ui.input(|input| input.key_pressed(egui::Key::Enter)));
@@ -483,8 +499,12 @@ mod tests {
             .spawn((Window::default(), WorkbenchSurface::default()))
             .id();
         let ctx = egui::Context::default();
-        request_error_dialog(&mut world, error("First failure"));
-        request_error_dialog(&mut world, error("Second failure"));
+        world
+            .workbench_mut()
+            .request_error_dialog(error("First failure"));
+        world
+            .workbench_mut()
+            .request_error_dialog(error("Second failure"));
         let _ = render(
             &ctx,
             &mut world,
@@ -508,7 +528,9 @@ mod tests {
             .spawn((Window::default(), WorkbenchSurface::default()))
             .id();
         let ctx = egui::Context::default();
-        request_error_dialog(&mut world, error("The operation failed."));
+        world
+            .workbench_mut()
+            .request_error_dialog(error("The operation failed."));
         let mut output = ctx.run_ui(input(vec![]), |ui| {
             assert!(!draw(ui.ctx(), &mut world, second));
             assert!(draw(ui.ctx(), &mut world, first));
@@ -559,7 +581,9 @@ mod tests {
             .spawn((Window::default(), WorkbenchSurface::default()))
             .id();
         let ctx = egui::Context::default();
-        request_error_dialog(&mut world, error("Refresh Files and try again."));
+        world
+            .workbench_mut()
+            .request_error_dialog(error("Refresh Files and try again."));
         let _ = render(&ctx, &mut world, surface, vec![]); // egui area sizing pass.
         let text = painted_text(&render(&ctx, &mut world, surface, vec![]));
         assert!(
@@ -570,14 +594,11 @@ mod tests {
         assert!(!text.iter().any(|text| text.contains("diagnostic for")));
 
         let _ = render(&ctx, &mut world, surface, vec![key(egui::Key::Enter)]);
-        request_error_dialog(
-            &mut world,
-            ErrorDialog {
-                title: "Could not open the file".into(),
-                message: "Choose an existing file and try again.".into(),
-                details: None,
-            },
-        );
+        world.workbench_mut().request_error_dialog(ErrorDialog {
+            title: "Could not open the file".into(),
+            message: "Choose an existing file and try again.".into(),
+            details: None,
+        });
         let _ = render(&ctx, &mut world, surface, vec![]);
         let text = painted_text(&render(&ctx, &mut world, surface, vec![]));
         assert!(

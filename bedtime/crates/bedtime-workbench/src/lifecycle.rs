@@ -1,5 +1,6 @@
 //! Single-session scheduling and orderly managed-work shutdown.
 use crate::*;
+use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
 use bevy::prelude::*;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -12,6 +13,7 @@ pub enum SessionSystems {
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<ManagedWork>()
         .init_resource::<crate::layout::LayoutOrder>()
+        .init_resource::<Notifications>()
         .add_message::<CloseRequested>();
     #[cfg(feature = "ui")]
     app.init_resource::<WorkbenchUi>();
@@ -36,24 +38,35 @@ pub(crate) fn install(app: &mut App) {
 fn validate(world: &mut World) {
     validate_workbench(world).expect("Invalid workbench component graph");
 }
-pub fn shutdown_work(world: &mut World) -> Result<(), String> {
-    // Saves in flight would be cancelled, and drafts lost. The quit flow waits
-    // for both; this is the direct path for headless hosts and tests.
-    for id in document_ids(world) {
-        let info = inspect_document(world, id).map_err(|e| e.to_string())?;
-        if info.saving || info.has_drafts {
-            return Err(format!(
-                "{:?} is still saving or being typed in",
-                info.title
-            ));
-        }
+impl WorkbenchRef {
+    pub fn work_finished(&self) -> bool {
+        let world = &self.world;
+        world.resource::<ManagedWork>().is_finished()
     }
-    world.resource_mut::<ManagedWork>().shutdown();
-    Ok(())
 }
-pub fn work_finished(world: &World) -> bool {
-    world.resource::<ManagedWork>().is_finished()
+
+impl Workbench {
+    pub fn shutdown_work(&mut self) -> Result<(), String> {
+        let world = &mut self.world;
+        // Saves in flight would be cancelled, and drafts lost. The quit flow waits
+        // for both; this is the direct path for headless hosts and tests.
+        for id in world.workbench().document_ids() {
+            let info = world
+                .workbench()
+                .inspect_document(id)
+                .map_err(|e| e.to_string())?;
+            if info.saving || info.has_drafts {
+                return Err(format!(
+                    "{:?} is still saving or being typed in",
+                    info.title
+                ));
+            }
+        }
+        world.resource_mut::<ManagedWork>().shutdown();
+        Ok(())
+    }
 }
+
 fn poll_work(world: &mut World) {
     let exiting = world
         .get_resource::<Messages<AppExit>>()

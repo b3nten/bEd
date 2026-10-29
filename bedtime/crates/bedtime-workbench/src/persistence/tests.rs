@@ -1,4 +1,5 @@
 use super::*;
+use crate::WorkbenchWorldExt;
 use crate::tests::TestPanels;
 use std::{
     collections::HashMap,
@@ -49,7 +50,9 @@ fn note(world: &mut World, area: Entity, text: &str) -> Entity {
 }
 
 fn texts(world: &World, area: Entity) -> Vec<String> {
-    panels_in_area(world, area)
+    world
+        .workbench()
+        .panels_in_area(area)
         .iter()
         .map(|&panel| world.get::<Note>(panel).unwrap().text.clone())
         .collect()
@@ -60,7 +63,7 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
     let mut source = app();
     let world = source.world_mut();
     let layout = crate::tests::layout(world);
-    let mut workbench = Workbench::new(world);
+    let workbench = world.workbench_mut();
     let left = workbench.destination_area(layout).unwrap();
     let right = workbench
         .split_area(left, SplitAxis::Horizontal, 6000, [100, 100])
@@ -72,22 +75,28 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
     note(world, left, "c");
     note(world, right, "d");
     // A panel with nothing persisted can't be rebuilt, so it's left out.
-    Workbench::new(world)
+    world
+        .workbench_mut()
         .create_panel_in_area(left, "Bare")
         .unwrap();
     world.get_mut::<Area>(left).unwrap().selected = Some(b);
     world.get_mut::<Layout>(layout).unwrap().focused_area = Some(right);
-    let saved = capture::<WorkbenchStore>(world).unwrap();
+    let saved = world.workbench_mut().capture::<WorkbenchStore>().unwrap();
 
     let mut target = app();
     let world = target.world_mut();
-    restore::<WorkbenchStore>(world, &saved).unwrap();
-    let names: Vec<_> = layouts(world)
+    world
+        .workbench_mut()
+        .restore::<WorkbenchStore>(&saved)
+        .unwrap();
+    let names: Vec<_> = world
+        .workbench()
+        .layouts()
         .iter()
         .map(|&l| world.get::<Layout>(l).unwrap().name.clone())
         .collect();
     assert_eq!(names, ["Test", "Second"]);
-    let layout = active_layout(world).unwrap();
+    let layout = world.workbench().active_layout().unwrap();
     assert_eq!(world.get::<Layout>(layout).unwrap().name, "Test");
     let areas = world
         .get::<LayoutAreas>(layout)
@@ -104,7 +113,7 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
         Some(right)
     );
     assert_eq!(world.get::<Area>(right).unwrap().rect().min[0], 6000);
-    let restored = panels_in_area(world, left)[0];
+    let restored = world.workbench().panels_in_area(left)[0];
     assert!(world.get::<Runtime>(restored).is_some());
     assert_eq!(world.get::<PanelInstance>(restored).unwrap().title, "Note");
 }
@@ -113,10 +122,20 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
 fn layouts_are_only_restored_into_an_empty_workbench() {
     let mut source = app();
     crate::tests::layout(source.world_mut());
-    let saved = capture::<WorkbenchStore>(source.world_mut()).unwrap();
+    let saved = source
+        .world_mut()
+        .workbench_mut()
+        .capture::<WorkbenchStore>()
+        .unwrap();
     let mut target = app();
     crate::tests::layout(target.world_mut());
-    assert!(restore::<WorkbenchStore>(target.world_mut(), &saved).is_err());
+    assert!(
+        target
+            .world_mut()
+            .workbench_mut()
+            .restore::<WorkbenchStore>(&saved)
+            .is_err()
+    );
 }
 
 #[test]
@@ -124,7 +143,10 @@ fn resources_are_saved_in_their_store() {
     let mut source = app();
     source.world_mut().insert_resource(Counter(7));
     assert!(
-        capture::<WorkbenchStore>(source.world_mut())
+        source
+            .world_mut()
+            .workbench_mut()
+            .capture::<WorkbenchStore>()
             .unwrap()
             .contains("Counter")
     );
@@ -132,16 +154,28 @@ fn resources_are_saved_in_their_store() {
     source.persist_in::<Counter, OtherStore>();
     let world = source.world_mut();
     assert!(
-        !capture::<WorkbenchStore>(world)
+        !world
+            .workbench_mut()
+            .capture::<WorkbenchStore>()
             .unwrap()
             .contains("Counter")
     );
-    let saved = capture::<OtherStore>(world).unwrap();
+    let saved = world.workbench_mut().capture::<OtherStore>().unwrap();
 
     let mut target = app();
     target.persist_in::<Counter, OtherStore>();
-    assert!(restore::<WorkbenchStore>(target.world_mut(), &saved).is_err());
-    restore::<OtherStore>(target.world_mut(), &saved).unwrap();
+    assert!(
+        target
+            .world_mut()
+            .workbench_mut()
+            .restore::<WorkbenchStore>(&saved)
+            .is_err()
+    );
+    target
+        .world_mut()
+        .workbench_mut()
+        .restore::<OtherStore>(&saved)
+        .unwrap();
     assert_eq!(target.world().resource::<Counter>(), &Counter(7));
 }
 
@@ -151,7 +185,10 @@ fn references_to_entities_that_arent_saved_are_refused() {
     let world = app.world_mut();
     let runtime_only = world.spawn_empty().id();
     world.spawn(Pointer(runtime_only));
-    let error = capture::<WorkbenchStore>(world).unwrap_err();
+    let error = world
+        .workbench_mut()
+        .capture::<WorkbenchStore>()
+        .unwrap_err();
     assert!(error.contains("Pointer"));
 }
 
@@ -160,7 +197,7 @@ fn a_layout_template_builds_independent_copies_of_one_layout() {
     let mut source = app();
     let world = source.world_mut();
     let layout = crate::tests::layout(world);
-    let mut workbench = Workbench::new(world);
+    let workbench = world.workbench_mut();
     let left = workbench.destination_area(layout).unwrap();
     let right = workbench
         .split_area(left, SplitAxis::Horizontal, 6000, [100, 100])
@@ -179,20 +216,23 @@ fn a_layout_template_builds_independent_copies_of_one_layout() {
     world.entity_mut(tied).insert(Pointer(outside));
     world.get_mut::<Area>(left).unwrap().selected = Some(b);
     world.get_mut::<Layout>(layout).unwrap().focused_area = Some(right);
-    let template = capture_layout(world, layout).unwrap();
+    let template = world.workbench_mut().capture_layout(layout).unwrap();
     assert!(!template.as_str().contains("ActiveLayout"));
-    assert!(capture_layout(world, left).is_err());
+    assert!(world.workbench_mut().capture_layout(left).is_err());
 
     // Into another workbench, after its layouts, and not made active.
     let mut target = app();
     let world = target.world_mut();
     let existing = crate::tests::layout(world);
     let copies = [
-        instantiate_layout(world, &template).unwrap(),
-        instantiate_layout(world, &template).unwrap(),
+        world.workbench_mut().instantiate_layout(&template).unwrap(),
+        world.workbench_mut().instantiate_layout(&template).unwrap(),
     ];
-    assert_eq!(layouts(world), [existing, copies[0], copies[1]]);
-    assert_eq!(active_layout(world), Some(existing));
+    assert_eq!(
+        world.workbench().layouts(),
+        [existing, copies[0], copies[1]]
+    );
+    assert_eq!(world.workbench().active_layout(), Some(existing));
     for copy in copies {
         assert_eq!(world.get::<Layout>(copy).unwrap().name, "Test");
         let areas = world.get::<LayoutAreas>(copy).unwrap().entities().to_vec();
@@ -203,12 +243,15 @@ fn a_layout_template_builds_independent_copies_of_one_layout() {
         let selected = world.get::<Area>(left).unwrap().selected.unwrap();
         assert_eq!(world.get::<Note>(selected).unwrap().text, "b");
         assert_eq!(world.get::<Layout>(copy).unwrap().focused_area, Some(right));
-        let d = panels_in_area(world, right)[0];
+        let d = world.workbench().panels_in_area(right)[0];
         assert_eq!(world.get::<Pointer>(d).unwrap().0, selected);
     }
     // The copies don't share panels.
-    let panel =
-        |copy| panels_in_area(world, world.get::<LayoutAreas>(copy).unwrap().entities()[0])[0];
+    let panel = |copy| {
+        world
+            .workbench()
+            .panels_in_area(world.get::<LayoutAreas>(copy).unwrap().entities()[0])[0]
+    };
     assert_ne!(panel(copies[0]), panel(copies[1]));
 }
 
@@ -223,11 +266,11 @@ fn a_saved_template_is_nested_ron_and_round_trips() {
     source.register_type::<Defaults>();
     let world = source.world_mut();
     let layout = crate::tests::layout(world);
-    let area = Workbench::new(world).destination_area(layout).unwrap();
+    let area = world.workbench_mut().destination_area(layout).unwrap();
     note(world, area, "kept");
-    let template = capture_layout(world, layout).unwrap();
+    let template = world.workbench_mut().capture_layout(layout).unwrap();
     world.insert_resource(Defaults(Some(template.clone())));
-    let saved = capture::<WorkbenchStore>(world).unwrap();
+    let saved = world.workbench_mut().capture::<WorkbenchStore>().unwrap();
     // Nested, not an escaped string.
     assert!(saved.contains("\"kept\""), "{saved}");
     assert!(!saved.contains("\\\""), "{saved}");
@@ -236,11 +279,15 @@ fn a_saved_template_is_nested_ron_and_round_trips() {
     target
         .register_type::<Defaults>()
         .init_resource::<Defaults>();
-    restore::<WorkbenchStore>(target.world_mut(), &saved).unwrap();
+    target
+        .world_mut()
+        .workbench_mut()
+        .restore::<WorkbenchStore>(&saved)
+        .unwrap();
     let world = target.world_mut();
     let restored = world.resource::<Defaults>().0.clone().unwrap();
     assert_eq!(restored, template);
-    let copy = instantiate_layout(world, &restored).unwrap();
+    let copy = world.workbench_mut().instantiate_layout(&restored).unwrap();
     let area = world.get::<LayoutAreas>(copy).unwrap().entities()[0];
     assert_eq!(texts(world, area), ["kept"]);
 }
@@ -250,19 +297,27 @@ fn a_bad_layout_template_adds_nothing() {
     let mut source = app();
     let world = source.world_mut();
     crate::tests::layout(world);
-    Workbench::new(world).create_layout("Second").unwrap();
-    let whole = capture::<WorkbenchStore>(world).unwrap();
+    world.workbench_mut().create_layout("Second").unwrap();
+    let whole = world.workbench_mut().capture::<WorkbenchStore>().unwrap();
 
     let mut target = app();
     let world = target.world_mut();
     // A whole workbench save holds two layouts and a resource.
     let whole = LayoutTemplate::from_ron(whole).unwrap();
-    let error = instantiate_layout(world, &whole).unwrap_err();
+    let error = world
+        .workbench_mut()
+        .instantiate_layout(&whole)
+        .unwrap_err();
     assert!(error.contains("resources"), "{error}");
     assert!(LayoutTemplate::from_ron("not ron (".into()).is_err());
     let not_a_world = LayoutTemplate::from_ron("(1, 2)".into()).unwrap();
-    assert!(instantiate_layout(world, &not_a_world).is_err());
-    assert!(layouts(world).is_empty());
+    assert!(
+        world
+            .workbench_mut()
+            .instantiate_layout(&not_a_world)
+            .is_err()
+    );
+    assert!(world.workbench().layouts().is_empty());
     assert_eq!(world.query::<&Area>().iter(world).count(), 0);
 }
 
@@ -336,7 +391,9 @@ fn stores_save_changes_and_restore_them_at_startup() {
     first.add_store::<WorkbenchStore>(backend.clone());
     first.update();
     let layout = crate::tests::layout(first.world_mut());
-    let area = Workbench::new(first.world_mut())
+    let area = first
+        .world_mut()
+        .workbench_mut()
         .destination_area(layout)
         .unwrap();
     note(first.world_mut(), area, "kept");
@@ -350,7 +407,7 @@ fn stores_save_changes_and_restore_them_at_startup() {
     second.add_store::<WorkbenchStore>(backend.clone());
     second.update();
     let world = second.world_mut();
-    let layout = active_layout(world).unwrap();
+    let layout = world.workbench().active_layout().unwrap();
     let area = world.get::<LayoutAreas>(layout).unwrap().entities()[0];
     assert_eq!(texts(world, area), ["kept"]);
 }

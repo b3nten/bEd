@@ -1,4 +1,5 @@
 //! Optional UI presentation and input observations. UI has no workbench dependency.
+use crate::WorkbenchWorldExt;
 use crate::*;
 use bedtime_ui::{UiFrame, UiPlugin, UiSystems};
 use bevy::prelude::*;
@@ -71,10 +72,12 @@ fn observe_item(world: &mut World, entity: Entity, response: &bedtime_ui::egui::
 /// UiView on the MenuBar entity. The renderer receives the menu root as its view.
 pub fn draw_menu_bar(frame: &mut UiFrame, world: &mut World, root: Entity) -> Result<(), String> {
     #[cfg(feature = "native")]
-    if world.get::<NativeMenuBar>(root).is_some() && native_menu_installed(world, root) {
+    if world.get::<NativeMenuBar>(root).is_some() && world.workbench().native_menu_installed(root) {
         return Ok(());
     }
-    let menu = menu_snapshot(world, root, InvocationContext::Focused)?;
+    let menu = world
+        .workbench_mut()
+        .menu_snapshot(root, InvocationContext::Focused)?;
     use bedtime_ui::egui;
     let available = frame.ui.available_rect_before_wrap();
     let padding = world
@@ -115,7 +118,7 @@ pub fn draw_popup_menu(
     root: Entity,
     context: InvocationContext,
 ) -> Result<(), String> {
-    let menu = menu_snapshot(world, root, context)?;
+    let menu = world.workbench_mut().menu_snapshot(root, context)?;
     response.context_menu(|ui| {
         draw_entries(ui, world, &menu.entries);
     });

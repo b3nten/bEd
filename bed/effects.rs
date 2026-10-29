@@ -53,6 +53,7 @@ setting! {
     pub EffectsEnabled: bool = false, key = "effects.enabled",
     apply = |world, enabled| world.resource_mut::<Effects>().enabled = *enabled,
 }
+
 effect_settings! {
     Scanlines: 0.06, "effects.scanlines", scanlines;
     Vignette: 0.04, "effects.vignette", vignette;
@@ -694,10 +695,7 @@ mod tests {
 
     #[test]
     fn effects_follow_their_settings_and_stay_in_range() {
-        use bedtime_workbench::{
-            WorkbenchCorePlugin,
-            settings::{SettingsAppExt, set_setting},
-        };
+        use bedtime_workbench::{WorkbenchCorePlugin, WorkbenchWorldExt, settings::SettingsAppExt};
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, EffectsPlugin))
             .init_resource::<Time<Real>>()
@@ -706,8 +704,14 @@ mod tests {
         let world = app.world_mut();
         assert!(!world.resource::<Effects>().enabled);
         let global = StoreId::of::<crate::settings::GlobalStore>();
-        set_setting::<EffectsEnabled>(world, global, true).unwrap();
-        set_setting::<Curvature>(world, global, 3.0).unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<EffectsEnabled>(global, true)
+            .unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<Curvature>(global, 3.0)
+            .unwrap();
         let effects = world.resource::<Effects>();
         assert!(effects.enabled);
         assert_eq!(effects.curvature, 1.0);

@@ -5,10 +5,10 @@
 use super::{RecentWorkspaces, Start, Workspace, available, delete};
 use crate::{menus::switch, panels::PanelPolicy, settings::GlobalLocation};
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
+use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, ErrorDialog, Handler, Panel,
     PanelFactory, PanelInstance, persistence::DirectoryStore, persistence::ReflectPersist,
-    request_error_dialog,
 };
 use bevy::prelude::*;
 use std::{
@@ -331,14 +331,11 @@ fn forget(world: &mut World, folder: &Path, config: Option<&Path>) {
     })();
     world.resource_mut::<KnownWorkspaces>().checked = None;
     if let Err(error) = result {
-        request_error_dialog(
-            world,
-            ErrorDialog {
-                title: "Delete Workspace".into(),
-                message: format!("Couldn't delete the workspace for {}.", folder.display()),
-                details: Some(error),
-            },
-        );
+        world.workbench_mut().request_error_dialog(ErrorDialog {
+            title: "Delete Workspace".into(),
+            message: format!("Couldn't delete the workspace for {}.", folder.display()),
+            details: Some(error),
+        });
     }
 }
 

@@ -1,8 +1,6 @@
 //! Abstract ordered menus. Native and egui presenters use the same snapshots.
-use crate::{
-    Action, ActionId, ActionRequest, InvocationContext, Invokes, KeyChord, action_available,
-    shortcut_for,
-};
+use crate::{Action, ActionId, ActionRequest, InvocationContext, Invokes, KeyChord};
+use crate::{Workbench, WorkbenchWorldExt};
 use bevy::prelude::*;
 use std::collections::HashSet;
 
@@ -102,28 +100,31 @@ impl MenuSnapshot {
     }
 }
 
-/// Snapshot a menu bar or contextual menu root. No native window is required.
-/// InvocationContext components on the root or its entries override `context`.
-pub fn menu_snapshot(
-    world: &mut World,
-    root: Entity,
-    context: InvocationContext,
-) -> Result<MenuSnapshot, String> {
-    if world.get::<MenuBar>(root).is_none() && world.get::<Menu>(root).is_none() {
-        return Err("Menu root is unavailable".into());
+impl Workbench {
+    /// Snapshot a menu bar or contextual menu root. No native window is required.
+    /// InvocationContext components on the root or its entries override `context`.
+    pub fn menu_snapshot(
+        &mut self,
+        root: Entity,
+        context: InvocationContext,
+    ) -> Result<MenuSnapshot, String> {
+        let world = &mut self.world;
+        if world.get::<MenuBar>(root).is_none() && world.get::<Menu>(root).is_none() {
+            return Err("Menu root is unavailable".into());
+        }
+        let context = capture_context(world, context);
+        let mut visited = HashSet::from([root]);
+        let entries = read_entries(world, root, &mut visited, context)?;
+        if world.get::<MenuBar>(root).is_some()
+            && entries.iter().any(|e| !matches!(e, MenuNode::Menu { .. }))
+        {
+            return Err("MenuBar entries must be menus".into());
+        }
+        Ok(MenuSnapshot {
+            root: Some(root),
+            entries,
+        })
     }
-    let context = capture_context(world, context);
-    let mut visited = HashSet::from([root]);
-    let entries = read_entries(world, root, &mut visited, context)?;
-    if world.get::<MenuBar>(root).is_some()
-        && entries.iter().any(|e| !matches!(e, MenuNode::Menu { .. }))
-    {
-        return Err("MenuBar entries must be menus".into());
-    }
-    Ok(MenuSnapshot {
-        root: Some(root),
-        entries,
-    })
 }
 
 fn capture_context(world: &mut World, context: InvocationContext) -> InvocationContext {
@@ -180,10 +181,10 @@ fn read_entries(
                 let target = world.get::<Invokes>(entity).map(|a| a.0.clone());
                 let enabled = target
                     .as_ref()
-                    .is_some_and(|t| action_available(world, t, context));
+                    .is_some_and(|t| world.workbench().action_available(t, context));
                 let shortcut = target
                     .as_ref()
-                    .and_then(|t| shortcut_for(world, t, context));
+                    .and_then(|t| world.workbench().shortcut_for(t, context));
                 entries.push(MenuNode::Item {
                     entity,
                     label: item.label,

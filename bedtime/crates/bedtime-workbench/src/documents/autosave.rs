@@ -1,6 +1,7 @@
 //! Autosave. Applications choose the policy with the `DocumentAutosave`
 //! resource; workbench applies it to every document.
 use super::*;
+use crate::WorkbenchWorldExt;
 use bevy::ecs::message::MessageCursor;
 use std::{
     collections::BTreeMap,
@@ -59,16 +60,18 @@ pub(crate) fn autosave(
         .collect();
     let now = Instant::now();
     let policy = world.resource::<DocumentAutosave>().0;
-    let current = crate::active_layout(world).and_then(|layout| {
-        let panel = Workbench::new(world).focused_panel(layout)?;
+    let current = world.workbench().active_layout().and_then(|layout| {
+        let panel = world.workbench_mut().focused_panel(layout)?;
         Some(world.get::<DocumentReference>(panel)?.document())
     });
     let departed = (*focused != current).then_some(*focused).flatten();
     *focused = current;
 
-    let infos: Vec<_> = document_ids(world)
+    let infos: Vec<_> = world
+        .workbench()
+        .document_ids()
         .into_iter()
-        .filter_map(|id| inspect_document(world, id).ok())
+        .filter_map(|id| world.workbench().inspect_document(id).ok())
         .collect();
     pending.retain(|id, _| infos.iter().any(|info| info.id == *id));
     for info in infos {
@@ -104,7 +107,7 @@ pub(crate) fn autosave(
         }
         p.attempted = Some(info.revision);
         p.focus_left = false;
-        match save_document(world, info.id) {
+        match world.workbench_mut().save_document(info.id) {
             Ok(()) => p.saving = true,
             Err(error) => errors.push(error.to_string()),
         }
@@ -114,7 +117,7 @@ pub(crate) fn autosave(
             world,
             "Autosave failed",
             "A document couldn't be saved automatically.",
-            error,
+            Some(error),
         );
     }
 }

@@ -1,4 +1,5 @@
 //! Immediate layout selection and attachment bookkeeping.
+use crate::WorkbenchWorldExt;
 use crate::*;
 use bevy::{
     ecs::{lifecycle::HookContext, world::DeferredWorld},
@@ -27,13 +28,15 @@ pub(crate) fn panel_inserted(mut world: DeferredWorld, context: HookContext) {
 pub(crate) fn panel_replaced(mut world: DeferredWorld, context: HookContext) {
     let entity = context.entity;
     let area = world.get::<InArea>(entity).unwrap().0;
-    let index = panels_in_area(&world, area)
+    let index = world
+        .workbench()
+        .panels_in_area(area)
         .iter()
         .position(|&p| p == entity)
         .unwrap_or(0);
     world.commands().queue(move |world: &mut World| {
         if world.get::<InArea>(entity).map(|r| r.0) != Some(area) {
-            let tabs = panels_in_area(world, area);
+            let tabs = world.workbench().panels_in_area(area);
             let fallback = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
             if let Some(mut state) = world.get_mut::<Area>(area) {
                 if state.selected == Some(entity) {

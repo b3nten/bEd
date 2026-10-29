@@ -241,7 +241,7 @@ impl Drop for ManagedWork {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{WorkbenchCorePlugin, work_finished};
+    use crate::{WorkbenchCorePlugin, WorkbenchWorldExt};
     use std::time::Instant;
 
     #[test]
@@ -280,7 +280,7 @@ mod tests {
                 .is_err()
         );
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !work_finished(app.world()) {
+        while !app.world().workbench().work_finished() {
             assert!(Instant::now() < deadline);
             app.update();
         }

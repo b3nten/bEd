@@ -2,9 +2,9 @@
 //! the layer being edited. Click a command's keys, then press the new ones.
 use super::{CONTROL_WIDTH, columns, overridden_marker, reset_button};
 use bedtime_ui::{UiContext, egui};
+use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
-    ActionId, ActionRegistry, KeyChord, Keybindings, Modifiers, keys_at, keys_in,
-    keys_overridden_above, persistence::StoreId, set_keys_in,
+    ActionId, ActionRegistry, KeyChord, Keybindings, Modifiers, persistence::StoreId,
 };
 use bevy::prelude::*;
 
@@ -22,8 +22,8 @@ pub(super) fn section(
     let recording_id = ui.id().with("recording-keys");
     let mut recording: Option<ActionId> = ui.data(|data| data.get_temp(recording_id));
     for (command, label) in commands {
-        let set_here = keys_in(world, &command, layer).is_some();
-        let overridden = keys_overridden_above(world, &command, layer);
+        let set_here = world.workbench().keys_in(&command, layer).is_some();
+        let overridden = world.workbench().keys_overridden_above(&command, layer);
         let shared = shared_with(world, &command);
         let mut reset = false;
         columns(
@@ -39,7 +39,16 @@ pub(super) fn section(
                         .clicked();
                     match pressed_chord(world) {
                         Some(Ok(chord)) => {
-                            let _ = set_keys_in(world, &command, layer, Some(vec![chord]));
+                            let result = world.workbench_mut().set_keys_in(
+                                &command,
+                                layer,
+                                Some(vec![chord]),
+                            );
+                            crate::status::notify_failure(
+                                world,
+                                &format!("Couldn't change {label}'s keys"),
+                                result,
+                            );
                             recording = None;
                         }
                         Some(Err(())) => recording = None,
@@ -48,7 +57,7 @@ pub(super) fn section(
                     }
                 } else {
                     // The layer's own view, without the layers above it.
-                    let keys = keys_at(world, &command, layer);
+                    let keys = world.workbench().keys_at(&command, layer);
                     let text = if keys.is_empty() {
                         egui::RichText::new("Not set").weak()
                     } else {
@@ -71,7 +80,8 @@ pub(super) fn section(
             },
         );
         if reset {
-            let _ = set_keys_in(world, &command, layer, None);
+            let result = world.workbench_mut().set_keys_in(&command, layer, None);
+            crate::status::notify_failure(world, &format!("Couldn't reset {label}'s keys"), result);
         }
     }
     ui.data_mut(|data| match recording {

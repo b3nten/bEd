@@ -3,7 +3,8 @@
 //! new one goes. Drag-and-drop bypasses this on purpose: dragging a panel out
 //! always creates a new one where the user dropped it.
 use crate::layouts::{self, LayoutSlot};
-use bedtime_workbench::{Panel, PanelFactory, Workbench, active_layout};
+use bedtime_workbench::WorkbenchWorldExt;
+use bedtime_workbench::{Panel, PanelFactory};
 use bevy::prelude::*;
 
 /// What makes two panels of one type show the same thing.
@@ -18,11 +19,11 @@ pub fn open_panel<P: PanelPolicy>(
     key: P::Key,
     factory: PanelFactory,
 ) -> Result<Entity, String> {
-    let layout = match active_layout(world) {
+    let layout = match world.workbench().active_layout() {
         Some(layout) => layout,
         None => layouts::switch(world, LayoutSlot(0))?,
     };
-    let mut workbench = Workbench::new(world);
+    let workbench = world.workbench_mut();
     let existing = workbench.panels(layout).into_iter().find(|&panel| {
         let world = workbench.world();
         world.get::<P>(panel).is_some() && P::key(world, panel) == key
@@ -71,8 +72,8 @@ mod tests {
         let world = app.world_mut();
 
         let first = open_settings(world);
-        let layout = Workbench::new(world).create_layout("Other").unwrap();
-        Workbench::new(world).activate_layout(layout).unwrap();
+        let layout = world.workbench_mut().create_layout("Other").unwrap();
+        world.workbench_mut().activate_layout(layout).unwrap();
         assert_ne!(open_settings(world), first);
     }
 }

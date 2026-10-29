@@ -1,5 +1,6 @@
 //! Blender-style chrome is a projection of ECS areas. Pointer gestures and
 //! interpolation are local to this drawing system; only completed edits commit.
+use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
 use crate::{
     geometry,
     layout::{GeometrySnapshot, plan_tab_geometry},
@@ -88,20 +89,27 @@ pub(crate) fn workbench_ui_mut(world: &mut World) -> Mut<'_, WorkbenchUi> {
     world.resource_mut()
 }
 
-impl Workbench<'_> {
+impl WorkbenchRef {
     pub fn has_focus(&self, panel: Entity) -> bool {
         self.world
             .get::<PanelPresentation>(panel)
             .is_some_and(|p| p.visible && p.focused)
     }
 
+    /// The optional renderer entity, whose state belongs to the World.
+    pub fn status_bar(&self) -> Option<Entity> {
+        self.world.resource::<WorkbenchUi>().status_bar
+    }
+}
+
+impl Workbench {
     /// Apply a user-originated edit with the surface's configured permissions.
     /// Direct application operations deliberately bypass this user policy.
     pub fn user_edit(&mut self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
         let settings = self
             .world
             .query::<&WorkbenchSurface>()
-            .iter(self.world)
+            .iter(&self.world)
             .next()
             .copied()
             .unwrap_or_default();
@@ -130,11 +138,6 @@ impl Workbench<'_> {
         renderer
     }
 
-    /// The optional renderer entity, whose state belongs to the World.
-    pub fn status_bar(&self) -> Option<Entity> {
-        self.world.resource::<WorkbenchUi>().status_bar
-    }
-
     /// Remove the renderer and its state. The shell stops reserving status space.
     pub fn remove_status_bar(&mut self) {
         if let Some(renderer) = self.world.resource_mut::<WorkbenchUi>().status_bar.take() {
@@ -148,7 +151,7 @@ impl Workbench<'_> {
         }
         if let Some(root) = root {
             // Validate the whole tree before changing ownership.
-            menu_snapshot(self.world, root, InvocationContext::Global)?;
+            self.menu_snapshot(root, InvocationContext::Global)?;
         }
         self.world.resource_mut::<WorkbenchUi>().menu = root;
         Ok(())
@@ -314,7 +317,11 @@ fn layout_topology(world: &World, layout: Entity) -> Vec<(Entity, AreaRect, Vec<
         .iter()
         .filter_map(|&area| {
             let state = world.get::<Area>(area)?;
-            Some((area, state.rect, panels_in_area(world, area).to_vec()))
+            Some((
+                area,
+                state.rect,
+                world.workbench().panels_in_area(area).to_vec(),
+            ))
         })
         .collect()
 }
@@ -455,7 +462,7 @@ impl Tab {
         Self {
             entity,
             title: panel.title.clone(),
-            dirty: crate::holder_unsaved(world, entity),
+            dirty: world.workbench().holder_unsaved(entity),
             style: world
                 .get::<PanelTabStyle>(entity)
                 .copied()
@@ -791,7 +798,7 @@ fn draw(
             .ceil()
             .clamp(1.0, LAYOUT_EXTENT as f32) as i32,
     ];
-    if crate::active_layout(world).is_none_or(|layout| {
+    if world.workbench().active_layout().is_none_or(|layout| {
         world
             .get::<LayoutAreas>(layout)
             .is_none_or(|a| a.entities().is_empty())
@@ -801,9 +808,9 @@ fn draw(
         state.layout = None;
         return;
     }
-    let layout = crate::active_layout(world).unwrap();
+    let layout = world.workbench().active_layout().unwrap();
     let topology = layout_topology(world, layout);
-    let snapshot = Workbench::new(world).snapshot(layout).unwrap();
+    let snapshot = world.workbench_mut().snapshot(layout).unwrap();
     let flush = settings.single_area_edge_to_edge && snapshot.geometry.areas.len() == 1;
     if flush {
         settings.panel_gap = 0.0;
@@ -840,7 +847,9 @@ fn draw(
                 entity: e,
                 rect: a.rect,
                 selected: info.selected_panel(),
-                tabs: panels_in_area(world, e)
+                tabs: world
+                    .workbench()
+                    .panels_in_area(e)
                     .iter()
                     .map(|&entity| Tab::from_world(world, entity))
                     .collect(),
@@ -2181,7 +2190,9 @@ mod tests {
         app.add_plugins(WorkbenchCorePlugin);
         let active = crate::tests::layout(app.world_mut());
         let other = crate::tests::layout(app.world_mut());
-        let area = Workbench::new(app.world_mut())
+        let area = app
+            .world_mut()
+            .workbench_mut()
             .destination_area(other)
             .unwrap();
         let panel = app
@@ -2196,10 +2207,10 @@ mod tests {
             ))
             .id();
         assert_eq!(
-            Workbench::new(app.world_mut()).panel_layout(panel).unwrap(),
+            app.world_mut().workbench_mut().panel_layout(panel).unwrap(),
             other
         );
-        assert_eq!(active_layout(app.world()), Some(active));
+        assert_eq!(app.world().workbench().active_layout(), Some(active));
     }
 
     #[test]
@@ -2209,17 +2220,20 @@ mod tests {
         crate::tests::layout(app.world_mut());
         app.world_mut()
             .spawn((Window::default(), WorkbenchSurface::single_panel()));
-        let mut w = Workbench::new(app.world_mut());
-        let layout = w.active_layout();
+        let w = app.world_mut().workbench_mut();
+        let layout = w.active_layout().unwrap();
         let area = w.destination_area(layout).unwrap();
         let panel = w.create_panel(layout, "Application content").unwrap();
         assert!(
-            w.user_edit(w.active_layout(), &LayoutEdit::ClosePanels(vec![panel]))
-                .is_err()
+            w.user_edit(
+                w.active_layout().unwrap(),
+                &LayoutEdit::ClosePanels(vec![panel])
+            )
+            .is_err()
         );
         assert!(
             w.user_edit(
-                w.active_layout(),
+                w.active_layout().unwrap(),
                 &LayoutEdit::DropPanel {
                     area,
                     factory: preview_factory(),
@@ -2232,7 +2246,7 @@ mod tests {
         );
         assert!(
             w.user_edit(
-                w.active_layout(),
+                w.active_layout().unwrap(),
                 &LayoutEdit::SplitArea {
                     area,
                     axis: SplitAxis::Horizontal,
@@ -2351,8 +2365,8 @@ mod tests {
                         let mut app = App::new();
                         app.add_plugins(WorkbenchCorePlugin);
                         crate::tests::layout(app.world_mut());
-                        let mut w = Workbench::new(app.world_mut());
-                        let layout = w.active_layout();
+                        let w = app.world_mut().workbench_mut();
+                        let layout = w.active_layout().unwrap();
                         let low = w.destination_area(layout).unwrap();
                         let high = w.split_area(low, original_axis, 5000, [100, 100]).unwrap();
                         let (target, source) = if target_high {
@@ -2432,8 +2446,8 @@ mod tests {
                 let mut app = App::new();
                 app.add_plugins(WorkbenchCorePlugin);
                 crate::tests::layout(app.world_mut());
-                let mut w = Workbench::new(app.world_mut());
-                let layout = w.active_layout();
+                let w = app.world_mut().workbench_mut();
+                let layout = w.active_layout().unwrap();
                 let root = w.destination_area(layout).unwrap();
                 let right = w
                     .split_area(root, SplitAxis::Horizontal, 5000, minimum)
@@ -2458,7 +2472,7 @@ mod tests {
                     rect.max[index] - minimum[index],
                 );
                 assert_eq!(planned.area(id).rect.max[index], expected);
-                w.edit(w.active_layout(), &edit).unwrap();
+                w.edit(w.active_layout().unwrap(), &edit).unwrap();
                 assert_eq!(
                     w.world.get::<Area>(source).unwrap().rect(),
                     planned.area(id).rect
@@ -2575,7 +2589,7 @@ mod tests {
     fn application_status_renderers_are_optional_and_replaceable_without_a_layout() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
-        let mut w = Workbench::new(app.world_mut());
+        let w = app.world_mut().workbench_mut();
         assert_eq!(w.status_bar(), None);
         let old = w.register_status_bar(|_, _, _| {});
         let child = w.world_mut().spawn(bedtime_ui::InView(old)).id();
@@ -2614,7 +2628,8 @@ mod tests {
                 Group {
                     entity,
                     rect,
-                    tabs: panels_in_area(w.world, entity)
+                    tabs: w
+                        .panels_in_area(entity)
                         .iter()
                         .map(|&entity| Tab {
                             entity,
@@ -2636,8 +2651,8 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugin);
         crate::tests::layout(app.world_mut());
-        let mut w = Workbench::new(app.world_mut());
-        let layout = w.active_layout();
+        let w = app.world_mut().workbench_mut();
+        let layout = w.active_layout().unwrap();
         let source = w.destination_area(layout).unwrap();
         let target = w
             .split_area(source, SplitAxis::Horizontal, 5000, [100, 100])
@@ -2646,7 +2661,7 @@ mod tests {
         let bounds = Rect::from_corners(Vec2::new(50.0, 75.0), Vec2::new(1250.0, 875.0));
         let snapshot = w.snapshot(layout).unwrap();
         let panel_gap = 7.2;
-        let (groups, state) = projection(&w, layout, bounds, panel_gap);
+        let (groups, state) = projection(w, layout, bounds, panel_gap);
         let target_rect = screen(w.world.get::<Area>(target).unwrap().rect(), bounds);
 
         let (_, preview, count) = tab_target(
@@ -2707,8 +2722,8 @@ mod tests {
                     let mut app = App::new();
                     app.add_plugins(WorkbenchCorePlugin);
                     crate::tests::layout(app.world_mut());
-                    let mut w = Workbench::new(app.world_mut());
-                    let layout = w.active_layout();
+                    let w = app.world_mut().workbench_mut();
+                    let layout = w.active_layout().unwrap();
                     let left = w.destination_area(layout).unwrap();
                     let target = w
                         .split_area(left, SplitAxis::Horizontal, 5000, [100, 100])
@@ -2728,7 +2743,7 @@ mod tests {
                         Rect::from_corners(Vec2::new(50.0, 75.0), Vec2::new(1250.0, 875.0));
                     let snapshot = w.snapshot(layout).unwrap();
                     let panel_gap = 16.0;
-                    let (groups, state) = projection(&w, layout, bounds, panel_gap);
+                    let (groups, state) = projection(w, layout, bounds, panel_gap);
                     let r = screen(w.world.get::<Area>(target).unwrap().rect(), bounds);
                     let mouse = r.min + relative * r.size();
                     let (edit, preview, count) = tab_target(
@@ -2742,7 +2757,7 @@ mod tests {
                         panel_gap,
                     )
                     .unwrap();
-                    w.edit(w.active_layout(), &edit).unwrap();
+                    w.edit(w.active_layout().unwrap(), &edit).unwrap();
                     let destination = w.world.get::<InArea>(panel).unwrap().0;
                     let rect = w.world.get::<Area>(destination).unwrap().rect();
                     let actual_count = w.world.get::<LayoutAreas>(layout).unwrap().entities().len();

@@ -1,5 +1,6 @@
 use super::*;
-use crate::{Workbench, WorkbenchCorePlugin, tests::TestPanels};
+use crate::WorkbenchWorldExt;
+use crate::{WorkbenchCorePlugin, tests::TestPanels};
 
 const CTRL_F: KeyChord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyF);
 
@@ -65,8 +66,8 @@ fn app() -> App {
 }
 
 fn panel(app: &mut App) -> Entity {
-    let mut workbench = Workbench::new(app.world_mut());
-    let layout = workbench.active_layout();
+    let workbench = app.world_mut().workbench_mut();
+    let layout = workbench.active_layout().unwrap();
     workbench.create_panel(layout, "Panel").unwrap()
 }
 
@@ -109,16 +110,17 @@ fn a_shared_chord_runs_the_command_handled_in_the_most_specific_scope() {
         )));
     let neither = panel(&mut app);
 
-    Workbench::new(app.world_mut()).focus_panel(editor).unwrap();
+    app.world_mut().workbench_mut().focus_panel(editor).unwrap();
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("find", "panel", Some(editor))]);
 
-    Workbench::new(app.world_mut()).focus_panel(viewer).unwrap();
+    app.world_mut().workbench_mut().focus_panel(viewer).unwrap();
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("toggle", "panel", Some(viewer))]);
 
     // Nothing handles either command here, and there's no global handler.
-    Workbench::new(app.world_mut())
+    app.world_mut()
+        .workbench_mut()
         .focus_panel(neither)
         .unwrap();
     press(&mut app, CTRL_F, false);
@@ -131,7 +133,7 @@ fn a_shared_chord_runs_the_command_handled_in_the_most_specific_scope() {
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("find", "global", Some(neither))]);
     // ...but the viewer's own command still beats it.
-    Workbench::new(app.world_mut()).focus_panel(viewer).unwrap();
+    app.world_mut().workbench_mut().focus_panel(viewer).unwrap();
     press(&mut app, CTRL_F, false);
     assert_eq!(calls(&mut app), [("toggle", "panel", Some(viewer))]);
 }
@@ -196,8 +198,16 @@ fn a_panel_handler_wins_and_a_disabled_one_blocks_the_global_handler() {
         .handler = Handler::new(find_in_panel).available_when(|_, _| false);
     let world = app.world();
     let find = ActionId::of::<Find>();
-    assert!(!action_available(world, &find, InvocationContext::Focused));
-    assert!(action_available(world, &find, InvocationContext::Global));
+    assert!(
+        !world
+            .workbench()
+            .action_available(&find, InvocationContext::Focused)
+    );
+    assert!(
+        world
+            .workbench()
+            .action_available(&find, InvocationContext::Global)
+    );
     invoke(&mut app, InvocationContext::Focused);
     assert!(calls(&mut app).is_empty());
     assert!(results(&mut app).last().unwrap().is_err());
@@ -267,9 +277,16 @@ fn menu_hints_show_the_chord_that_would_run_the_command() {
     let world = app.world();
     let find = ActionId::of::<Find>();
     // Ctrl+F toggles backfaces in this panel, so Find shows no shortcut here.
-    assert_eq!(shortcut_for(world, &find, InvocationContext::Focused), None);
     assert_eq!(
-        shortcut_for(world, &find, InvocationContext::Global),
+        world
+            .workbench()
+            .shortcut_for(&find, InvocationContext::Focused),
+        None
+    );
+    assert_eq!(
+        world
+            .workbench()
+            .shortcut_for(&find, InvocationContext::Global),
         Some(CTRL_F)
     );
 }
@@ -289,7 +306,7 @@ fn two_commands_cannot_share_a_key() {
 mod keybinding_settings {
     use super::*;
     use crate::persistence::{StoreId, WorkbenchStore};
-    use crate::settings::{SettingsAppExt, clear_setting, set_setting};
+    use crate::settings::SettingsAppExt;
 
     struct GlobalStore;
     impl crate::persistence::Store for GlobalStore {}
@@ -335,23 +352,44 @@ mod keybinding_settings {
         assert_eq!(keys(&app), [CTRL_F]);
 
         let world = app.world_mut();
-        set_setting::<Keybinding<Find>>(world, global, vec![ctrl(KeyCode::KeyB)]).unwrap();
-        set_setting::<Keybinding<Find>>(world, workspace, vec![ctrl(KeyCode::KeyD)]).unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<Keybinding<Find>>(global, vec![ctrl(KeyCode::KeyB)])
+            .unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<Keybinding<Find>>(workspace, vec![ctrl(KeyCode::KeyD)])
+            .unwrap();
         assert_eq!(keys(&app), [ctrl(KeyCode::KeyD)], "not both");
 
         let world = app.world_mut();
-        set_setting::<Keybinding<Find>>(world, workspace, vec![]).unwrap();
+        world
+            .workbench_mut()
+            .set_setting::<Keybinding<Find>>(workspace, vec![])
+            .unwrap();
         assert!(keys(&app).is_empty());
-        clear_setting::<Keybinding<Find>>(app.world_mut(), workspace).unwrap();
+        app.world_mut()
+            .workbench_mut()
+            .clear_setting::<Keybinding<Find>>(workspace)
+            .unwrap();
         assert_eq!(keys(&app), [ctrl(KeyCode::KeyB)]);
 
         // The same, for UIs that only have the command's id.
-        assert_eq!(keys_in(app.world(), &find, workspace), None);
-        set_keys_in(app.world_mut(), &find, workspace, Some(vec![CTRL_F])).unwrap();
-        assert_eq!(keys_in(app.world(), &find, workspace), Some(vec![CTRL_F]));
+        assert_eq!(app.world().workbench().keys_in(&find, workspace), None);
+        app.world_mut()
+            .workbench_mut()
+            .set_keys_in(&find, workspace, Some(vec![CTRL_F]))
+            .unwrap();
+        assert_eq!(
+            app.world().workbench().keys_in(&find, workspace),
+            Some(vec![CTRL_F])
+        );
         assert_eq!(keys(&app), [CTRL_F]);
-        set_keys_in(app.world_mut(), &find, global, None).unwrap();
-        assert_eq!(keys_in(app.world(), &find, global), None);
+        app.world_mut()
+            .workbench_mut()
+            .set_keys_in(&find, global, None)
+            .unwrap();
+        assert_eq!(app.world().workbench().keys_in(&find, global), None);
     }
 }
 

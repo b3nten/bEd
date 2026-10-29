@@ -20,18 +20,19 @@
 //!
 //! let mut app = App::new();
 //! app.add_plugins(WorkbenchCorePlugin);
-//! let document = open_document(app.world_mut(), MemorySource::new("Notes", TextBuffer::from("hello")))?;
-//! while inspect_document(app.world(), document.id())?.status == DocumentStatus::Loading {
+//! let document = app.world_mut().workbench_mut().open_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
+//! while app.world().workbench().inspect_document(document.id())?.status == DocumentStatus::Loading {
 //!     app.update();
 //! }
-//! edit_document(app.world_mut(), document, 0, BufferEdit::new(5..5, " world"), EditOptions::new("Append"))?;
-//! assert_eq!(read_document(app.world(), document)?.to_string(), "hello world");
-//! assert!(inspect_document(app.world(), document.id())?.dirty);
-//! undo_document(app.world_mut(), document.id())?;
-//! assert!(!inspect_document(app.world(), document.id())?.dirty);
+//! app.world_mut().workbench_mut().edit_document(document, 0, BufferEdit::new(5..5, " world"), EditOptions::new("Append"))?;
+//! assert_eq!(app.world().workbench().read_document(document)?.to_string(), "hello world");
+//! assert!(app.world().workbench().inspect_document(document.id())?.dirty);
+//! app.world_mut().workbench_mut().undo_document(document.id())?;
+//! assert!(!app.world().workbench().inspect_document(document.id())?.dirty);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 use crate::{ManagedWork, PanelInstance, Workbench};
+use crate::{WorkbenchRef, WorkbenchWorldExt};
 use bevy::{
     ecs::lifecycle::{Discard, Insert},
     prelude::*,
@@ -328,202 +329,251 @@ pub enum DocumentConflictResolution<M: DocumentModel> {
     Merged(M),
 }
 
-/// Open the document for `source`, or return the one already open for it.
-/// Loading happens on a worker; `inspect_document` reports when it's ready.
-pub fn open_document<M: DocumentModel>(
-    world: &mut World,
-    source: impl DocumentSource<M>,
-) -> Result<DocumentHandle<M>, DocumentError> {
-    validate_session(world)?;
-    let source_id = source.id();
-    let existing = world
-        .query::<(Entity, &Document)>()
-        .iter(world)
-        .find(|(_, document)| document.store.source_id() == source_id)
-        .map(|(entity, _)| DocumentId(entity));
-    if let Some(id) = existing {
-        return cast_document(world, id);
+impl WorkbenchRef {
+    pub fn cast_document<M: DocumentModel>(
+        &self,
+        id: DocumentId,
+    ) -> Result<DocumentHandle<M>, DocumentError> {
+        let world = &self.world;
+        let document = get_document(world, id)?;
+        if document.model_type != TypeId::of::<M>() {
+            return Err(DocumentError::WrongModel {
+                expected: type_name::<M>(),
+                actual: document.model_name,
+            });
+        }
+        Ok(DocumentHandle::new(id))
     }
-    let entity = world
-        .spawn(Document {
-            model_type: TypeId::of::<M>(),
-            model_name: type_name::<M>(),
-            store: Box::new(Typed::new(source)),
+
+    pub fn read_document<M: DocumentModel>(
+        &self,
+        handle: DocumentHandle<M>,
+    ) -> Result<&M, DocumentError> {
+        let world = &self.world;
+        Ok(session::<M>(world, handle.id)?.history.content())
+    }
+
+    pub fn document_ids(&self) -> Vec<DocumentId> {
+        let world = &self.world;
+        let Some(mut query) = world.try_query_filtered::<Entity, With<Document>>() else {
+            return Vec::new();
+        };
+        let mut ids: Vec<_> = query.iter(world).map(DocumentId).collect();
+        ids.sort();
+        ids
+    }
+
+    pub fn inspect_document(&self, id: DocumentId) -> Result<DocumentInfo, DocumentError> {
+        let world = &self.world;
+        let document = get_document(world, id)?;
+        let info = document.store.info();
+        Ok(DocumentInfo {
+            id,
+            title: document.title(),
+            model_type_name: document.model_name,
+            status: info.status,
+            revision: info.revision,
+            dirty: info.dirty,
+            saving: info.saving,
+            conflict: info.conflict,
+            missing: info.missing,
+            writable: info.writable,
+            error: info.error,
+            has_drafts: world.workbench().document_has_drafts(id),
+            undo_label: info.undo_label,
+            redo_label: info.redo_label,
         })
-        .id();
-    Ok(DocumentHandle::new(DocumentId(entity)))
-}
-
-pub fn cast_document<M: DocumentModel>(
-    world: &World,
-    id: DocumentId,
-) -> Result<DocumentHandle<M>, DocumentError> {
-    let document = get_document(world, id)?;
-    if document.model_type != TypeId::of::<M>() {
-        return Err(DocumentError::WrongModel {
-            expected: type_name::<M>(),
-            actual: document.model_name,
-        });
     }
-    Ok(DocumentHandle::new(id))
-}
 
-pub fn read_document<M: DocumentModel>(
-    world: &World,
-    handle: DocumentHandle<M>,
-) -> Result<&M, DocumentError> {
-    Ok(session::<M>(world, handle.id)?.history.content())
-}
-
-pub fn document_ids(world: &World) -> Vec<DocumentId> {
-    let Some(mut query) = world.try_query_filtered::<Entity, With<Document>>() else {
-        return Vec::new();
-    };
-    let mut ids: Vec<_> = query.iter(world).map(DocumentId).collect();
-    ids.sort();
-    ids
-}
-
-pub fn inspect_document(world: &World, id: DocumentId) -> Result<DocumentInfo, DocumentError> {
-    let document = get_document(world, id)?;
-    let info = document.store.info();
-    Ok(DocumentInfo {
-        id,
-        title: document.title(),
-        model_type_name: document.model_name,
-        status: info.status,
-        revision: info.revision,
-        dirty: info.dirty,
-        saving: info.saving,
-        conflict: info.conflict,
-        missing: info.missing,
-        writable: info.writable,
-        error: info.error,
-        has_drafts: document_has_drafts(world, id),
-        undo_label: info.undo_label,
-        redo_label: info.redo_label,
-    })
-}
-
-/// The changes committed after `revision`. `None` means they're no longer
-/// retained, so derived state should be rebuilt from the current content.
-pub fn document_changes_since<M: DocumentModel>(
-    world: &World,
-    handle: DocumentHandle<M>,
-    revision: u64,
-) -> Result<Option<Vec<DocumentCommit<M::Change>>>, DocumentError> {
-    let history = &session::<M>(world, handle.id)?.history;
-    if revision > history.revision() {
-        return Err(DocumentError::StaleRevision {
-            expected: revision,
-            actual: history.revision(),
-        });
+    /// The changes committed after `revision`. `None` means they're no longer
+    /// retained, so derived state should be rebuilt from the current content.
+    pub fn document_changes_since<M: DocumentModel>(
+        &self,
+        handle: DocumentHandle<M>,
+        revision: u64,
+    ) -> Result<Option<Vec<DocumentCommit<M::Change>>>, DocumentError> {
+        let world = &self.world;
+        let history = &session::<M>(world, handle.id)?.history;
+        if revision > history.revision() {
+            return Err(DocumentError::StaleRevision {
+                expected: revision,
+                actual: history.revision(),
+            });
+        }
+        Ok(history.changes_since(revision))
     }
-    Ok(history.changes_since(revision))
-}
 
-pub fn edit_document<M: DocumentModel>(
-    world: &mut World,
-    handle: DocumentHandle<M>,
-    expected_revision: u64,
-    change: M::Change,
-    options: EditOptions,
-) -> Result<u64, DocumentError> {
-    edit_document_transaction(world, handle, expected_revision, [change], options)
-}
-
-/// Apply the changes as one undoable step, or none of them.
-pub fn edit_document_transaction<M: DocumentModel>(
-    world: &mut World,
-    handle: DocumentHandle<M>,
-    expected_revision: u64,
-    changes: impl IntoIterator<Item = M::Change>,
-    options: EditOptions,
-) -> Result<u64, DocumentError> {
-    validate_session(world)?;
-    if let Some(viewer) = options.viewer {
-        validate_holder(world, viewer, handle.id)?;
+    pub fn document_conflict<M: DocumentModel>(
+        &self,
+        handle: DocumentHandle<M>,
+    ) -> Result<Option<DocumentConflict<M>>, DocumentError> {
+        let world = &self.world;
+        Ok(session::<M>(world, handle.id)?.conflict())
     }
-    session_mut::<M>(world, handle.id)?.edit(handle.id, expected_revision, changes, options)
+
+    pub fn document_has_drafts(&self, id: DocumentId) -> bool {
+        let world = &self.world;
+        let Some(mut query) = world.try_query_filtered::<&DocumentReference, With<DocumentDraft>>()
+        else {
+            return false;
+        };
+        query
+            .iter(world)
+            .any(|reference| reference.document() == id)
+    }
+
+    /// Whether a panel (or other holder) shows unsaved work: its document is
+    /// unsaved, or it has uncommitted input.
+    pub fn holder_unsaved(&self, holder: Entity) -> bool {
+        let world = &self.world;
+        world.get::<DocumentDraft>(holder).is_some()
+            || world
+                .get::<DocumentReference>(holder)
+                .and_then(|reference| world.get::<Document>(reference.0))
+                .is_some_and(|document| document.store.info().dirty)
+    }
 }
 
-pub fn begin_document_undo_group(
-    world: &mut World,
-    id: DocumentId,
-    viewer: Entity,
-) -> Result<DocumentUndoGroup, DocumentError> {
-    validate_session(world)?;
-    validate_holder(world, viewer, id)?;
-    store_mut(world, id)?.begin_group(id, viewer)
-}
+impl Workbench {
+    /// Open the document for `source`, or return the one already open for it.
+    /// Loading happens on a worker; `inspect_document` reports when it's ready.
+    pub fn open_document<M: DocumentModel>(
+        &mut self,
+        source: impl DocumentSource<M>,
+    ) -> Result<DocumentHandle<M>, DocumentError> {
+        let world = &mut self.world;
+        validate_session(world)?;
+        let source_id = source.id();
+        let existing = world
+            .query::<(Entity, &Document)>()
+            .iter(world)
+            .find(|(_, document)| document.store.source_id() == source_id)
+            .map(|(entity, _)| DocumentId(entity));
+        if let Some(id) = existing {
+            return world.workbench().cast_document(id);
+        }
+        let entity = world
+            .spawn(Document {
+                model_type: TypeId::of::<M>(),
+                model_name: type_name::<M>(),
+                store: Box::new(Typed::new(source)),
+            })
+            .id();
+        Ok(DocumentHandle::new(DocumentId(entity)))
+    }
 
-pub fn end_document_undo_group(
-    world: &mut World,
-    id: DocumentId,
-    group: DocumentUndoGroup,
-) -> Result<(), DocumentError> {
-    store_mut(world, id)?.end_group(group)
-}
+    pub fn edit_document<M: DocumentModel>(
+        &mut self,
+        handle: DocumentHandle<M>,
+        expected_revision: u64,
+        change: M::Change,
+        options: EditOptions,
+    ) -> Result<u64, DocumentError> {
+        let world = &mut self.world;
+        world.workbench_mut().edit_document_transaction(
+            handle,
+            expected_revision,
+            [change],
+            options,
+        )
+    }
 
-pub fn undo_document(world: &mut World, id: DocumentId) -> Result<u64, DocumentError> {
-    validate_session(world)?;
-    reject_drafts(world, id)?;
-    store_mut(world, id)?.undo(false)
-}
+    /// Apply the changes as one undoable step, or none of them.
+    pub fn edit_document_transaction<M: DocumentModel>(
+        &mut self,
+        handle: DocumentHandle<M>,
+        expected_revision: u64,
+        changes: impl IntoIterator<Item = M::Change>,
+        options: EditOptions,
+    ) -> Result<u64, DocumentError> {
+        let world = &mut self.world;
+        validate_session(world)?;
+        if let Some(viewer) = options.viewer {
+            validate_holder(world, viewer, handle.id)?;
+        }
+        session_mut::<M>(world, handle.id)?.edit(handle.id, expected_revision, changes, options)
+    }
 
-pub fn redo_document(world: &mut World, id: DocumentId) -> Result<u64, DocumentError> {
-    validate_session(world)?;
-    reject_drafts(world, id)?;
-    store_mut(world, id)?.undo(true)
-}
+    pub fn begin_document_undo_group(
+        &mut self,
+        id: DocumentId,
+        viewer: Entity,
+    ) -> Result<DocumentUndoGroup, DocumentError> {
+        let world = &mut self.world;
+        validate_session(world)?;
+        validate_holder(world, viewer, id)?;
+        store_mut(world, id)?.begin_group(id, viewer)
+    }
 
-/// Start saving the current content. `DocumentSaveFinished` reports the outcome.
-pub fn save_document(world: &mut World, id: DocumentId) -> Result<(), DocumentError> {
-    validate_session(world)?;
-    reject_drafts(world, id)?;
-    world.resource_scope(|world, mut work: Mut<ManagedWork>| {
-        store_mut(world, id)?.start_save(&mut work, id.0)
-    })
-}
+    pub fn end_document_undo_group(
+        &mut self,
+        id: DocumentId,
+        group: DocumentUndoGroup,
+    ) -> Result<(), DocumentError> {
+        let world = &mut self.world;
+        store_mut(world, id)?.end_group(group)
+    }
 
-/// Read the source again soon, picking up outside changes. Retries a failed load.
-pub fn refresh_document(world: &mut World, id: DocumentId) -> Result<(), DocumentError> {
-    store_mut(world, id)?.refresh();
-    Ok(())
-}
+    pub fn undo_document(&mut self, id: DocumentId) -> Result<u64, DocumentError> {
+        let world = &mut self.world;
+        validate_session(world)?;
+        reject_drafts(world, id)?;
+        store_mut(world, id)?.undo(false)
+    }
 
-pub fn document_conflict<M: DocumentModel>(
-    world: &World,
-    handle: DocumentHandle<M>,
-) -> Result<Option<DocumentConflict<M>>, DocumentError> {
-    Ok(session::<M>(world, handle.id)?.conflict())
-}
+    pub fn redo_document(&mut self, id: DocumentId) -> Result<u64, DocumentError> {
+        let world = &mut self.world;
+        validate_session(world)?;
+        reject_drafts(world, id)?;
+        store_mut(world, id)?.undo(true)
+    }
 
-/// Settle a conflict. `expected_revision` guards against resolving against
-/// local content the user hasn't seen.
-pub fn resolve_document_conflict<M: DocumentModel>(
-    world: &mut World,
-    handle: DocumentHandle<M>,
-    expected_revision: u64,
-    resolution: DocumentConflictResolution<M>,
-) -> Result<u64, DocumentError> {
-    validate_session(world)?;
-    session_mut::<M>(world, handle.id)?.resolve(expected_revision, resolution)
-}
+    /// Start saving the current content. `DocumentSaveFinished` reports the outcome.
+    pub fn save_document(&mut self, id: DocumentId) -> Result<(), DocumentError> {
+        let world = &mut self.world;
+        validate_session(world)?;
+        reject_drafts(world, id)?;
+        world.resource_scope(|world, mut work: Mut<ManagedWork>| {
+            store_mut(world, id)?.start_save(&mut work, id.0)
+        })
+    }
 
-/// Close a document and the panels showing it. Refused with unsaved changes.
-pub fn close_document(world: &mut World, id: DocumentId) -> Result<(), DocumentError> {
-    retire_document(world, id, false)
-}
+    /// Read the source again soon, picking up outside changes. Retries a failed load.
+    pub fn refresh_document(&mut self, id: DocumentId) -> Result<(), DocumentError> {
+        let world = &mut self.world;
+        store_mut(world, id)?.refresh();
+        Ok(())
+    }
 
-/// Close a document and the panels showing it, dropping unsaved changes.
-pub fn discard_document(world: &mut World, id: DocumentId) -> Result<(), DocumentError> {
-    retire_document(world, id, true)
+    /// Settle a conflict. `expected_revision` guards against resolving against
+    /// local content the user hasn't seen.
+    pub fn resolve_document_conflict<M: DocumentModel>(
+        &mut self,
+        handle: DocumentHandle<M>,
+        expected_revision: u64,
+        resolution: DocumentConflictResolution<M>,
+    ) -> Result<u64, DocumentError> {
+        let world = &mut self.world;
+        validate_session(world)?;
+        session_mut::<M>(world, handle.id)?.resolve(expected_revision, resolution)
+    }
+
+    /// Close a document and the panels showing it. Refused with unsaved changes.
+    pub fn close_document(&mut self, id: DocumentId) -> Result<(), DocumentError> {
+        let world = &mut self.world;
+        retire_document(world, id, false)
+    }
+
+    /// Close a document and the panels showing it, dropping unsaved changes.
+    pub fn discard_document(&mut self, id: DocumentId) -> Result<(), DocumentError> {
+        let world = &mut self.world;
+        retire_document(world, id, true)
+    }
 }
 
 fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(), DocumentError> {
     validate_session(world)?;
-    let info = inspect_document(world, id)?;
+    let info = world.workbench().inspect_document(id)?;
     if info.has_drafts {
         return Err(DocumentError::Drafts);
     }
@@ -553,7 +603,7 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
         .copied()
         .filter(|&holder| world.get::<PanelInstance>(holder).is_some())
         .collect();
-    let mut workbench = Workbench::new(world);
+    let workbench = world.workbench_mut();
     for panel in panels {
         workbench
             .close_panel(panel)
@@ -561,26 +611,6 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
     }
     world.despawn(id.0);
     Ok(())
-}
-
-pub fn document_has_drafts(world: &World, id: DocumentId) -> bool {
-    let Some(mut query) = world.try_query_filtered::<&DocumentReference, With<DocumentDraft>>()
-    else {
-        return false;
-    };
-    query
-        .iter(world)
-        .any(|reference| reference.document() == id)
-}
-
-/// Whether a panel (or other holder) shows unsaved work: its document is
-/// unsaved, or it has uncommitted input.
-pub fn holder_unsaved(world: &World, holder: Entity) -> bool {
-    world.get::<DocumentDraft>(holder).is_some()
-        || world
-            .get::<DocumentReference>(holder)
-            .and_then(|reference| world.get::<Document>(reference.0))
-            .is_some_and(|document| document.store.info().dirty)
 }
 
 /// Every draft has a reference, and every reference points at a document.
@@ -730,7 +760,7 @@ fn validate_holder(world: &World, holder: Entity, id: DocumentId) -> Result<(), 
 }
 
 fn reject_drafts(world: &World, id: DocumentId) -> Result<(), DocumentError> {
-    if document_has_drafts(world, id) {
+    if world.workbench().document_has_drafts(id) {
         Err(DocumentError::Drafts)
     } else {
         Ok(())

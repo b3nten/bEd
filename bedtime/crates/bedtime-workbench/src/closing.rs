@@ -1,14 +1,17 @@
-//! Closing panels and quitting without losing unsaved work.
+//! Closing panels and ending the session without losing unsaved work.
 //!
 //! A referenced document lives while something holds a `DocumentReference` to it.
 //! Closing panels that would release an unsaved document either saves it first
-//! (autosave on) or asks the user: Save, Discard or Cancel. Quitting asks the same about every
-//! unsaved document, then finishes background work and sends `AppExit`.
+//! (autosave on) or asks the user: Save, Discard or Cancel. Exiting (quitting, or
+//! an application's own exit such as switching project) asks the same about
+//! every unsaved document, then finishes background work and runs the exit's
+//! last step: `AppExit` for a quit.
 //! A failed save never closes anything; the prompt shows the error instead.
 //!
-//! The flow is driven headlessly through [`close_prompt`] and [`resolve_close`];
+//! The flow is driven headlessly through `close_prompt` and `resolve_close`;
 //! the `ui` feature draws the prompt.
 use crate::*;
+use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
 use bevy::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,9 +33,15 @@ pub struct UnsavedDocument {
 /// What the user is being asked, while a close waits on a decision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ClosePrompt {
-    pub quitting: bool,
+    /// The exit being asked about ("Quit", "Switch workspace"), or `None` when
+    /// closing panels.
+    pub exit: Option<String>,
     pub documents: Vec<UnsavedDocument>,
 }
+
+/// An exit's last step, once unsaved work is settled and background work has
+/// finished.
+type ExitStep = Box<dyn FnOnce(&mut World) + Send + Sync>;
 
 /// The close in progress, if any. There is at most one at a time.
 #[derive(Resource, Default)]
@@ -45,15 +54,22 @@ struct Close {
 }
 
 enum Target {
-    Panels { layout: Entity, edit: LayoutEdit },
-    Quit,
+    Panels {
+        layout: Entity,
+        edit: LayoutEdit,
+    },
+    Exit {
+        name: String,
+        /// Taken when it runs.
+        then: Option<ExitStep>,
+    },
 }
 
 enum Stage {
     /// Saves are running. Errors from saves that couldn't even start are kept here.
     Saving(Vec<(DocumentId, String)>),
     Asking(Vec<(DocumentId, String)>),
-    /// Quit only: waiting for in-flight saves, then for managed work to finish.
+    /// Exit only: waiting for in-flight saves, then for managed work to finish.
     ShuttingDown,
 }
 
@@ -71,69 +87,78 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(Last, release_unviewed.before(SessionSystems::Close));
 }
 
-/// The question waiting on the user, if any.
-pub fn close_prompt(world: &World) -> Option<ClosePrompt> {
-    let close = world.resource::<PendingClose>().0.as_ref()?;
-    let Stage::Asking(errors) = &close.stage else {
-        return None;
-    };
-    let documents = close
-        .documents
-        .iter()
-        .filter_map(|&id| {
-            Some(UnsavedDocument {
-                id,
-                title: inspect_document(world, id).ok()?.title,
-                error: errors
-                    .iter()
-                    .find(|(e, _)| *e == id)
-                    .map(|(_, e)| e.clone()),
+impl WorkbenchRef {
+    /// The question waiting on the user, if any.
+    pub fn close_prompt(&self) -> Option<ClosePrompt> {
+        let world = &self.world;
+        let close = world.resource::<PendingClose>().0.as_ref()?;
+        let Stage::Asking(errors) = &close.stage else {
+            return None;
+        };
+        let documents = close
+            .documents
+            .iter()
+            .filter_map(|&id| {
+                Some(UnsavedDocument {
+                    id,
+                    title: world.workbench().inspect_document(id).ok()?.title,
+                    error: errors
+                        .iter()
+                        .find(|(e, _)| *e == id)
+                        .map(|(_, e)| e.clone()),
+                })
             })
+            .collect();
+        Some(ClosePrompt {
+            exit: match &close.target {
+                Target::Exit { name, .. } => Some(name.clone()),
+                Target::Panels { .. } => None,
+            },
+            documents,
         })
-        .collect();
-    Some(ClosePrompt {
-        quitting: matches!(close.target, Target::Quit),
-        documents,
-    })
+    }
 }
 
-/// Answer the current prompt.
-pub fn resolve_close(world: &mut World, choice: CloseChoice) -> Result<(), String> {
-    let mut pending = world.resource_mut::<PendingClose>();
-    if !matches!(
-        pending.0,
-        Some(Close {
-            stage: Stage::Asking(_),
-            ..
-        })
-    ) {
-        return Err("No close is waiting for a decision".into());
-    }
-    let mut close = pending.0.take().unwrap();
-    match choice {
-        CloseChoice::Cancel => {}
-        CloseChoice::Save => {
-            close.stage = Stage::Saving(start_saves(world, &close.documents));
-            world.resource_mut::<PendingClose>().0 = Some(close);
+impl Workbench {
+    /// Answer the current prompt.
+    pub fn resolve_close(&mut self, choice: CloseChoice) -> Result<(), String> {
+        let world = &mut self.world;
+        let mut pending = world.resource_mut::<PendingClose>();
+        if !matches!(
+            pending.0,
+            Some(Close {
+                stage: Stage::Asking(_),
+                ..
+            })
+        ) {
+            return Err("No close is waiting for a decision".into());
         }
-        CloseChoice::Discard => {
-            let documents = close.documents.clone();
-            if let Some(close) = finish(world, close) {
+        let mut close = pending.0.take().unwrap();
+        match choice {
+            CloseChoice::Cancel => {}
+            CloseChoice::Save => {
+                close.stage = Stage::Saving(start_saves(world, &close.documents));
                 world.resource_mut::<PendingClose>().0 = Some(close);
             }
-            // Mark only after the close went through, so a refused close can't
-            // leave still-viewed documents silently discardable later.
-            for id in documents {
-                if world.get_entity(id.0).is_ok() {
-                    world.entity_mut(id.0).insert(Discarded);
+            CloseChoice::Discard => {
+                let documents = close.documents.clone();
+                if let Some(close) = finish(world, close) {
+                    world.resource_mut::<PendingClose>().0 = Some(close);
+                }
+                // Mark only after the close went through, so a refused close can't
+                // leave still-viewed documents silently discardable later.
+                for id in documents {
+                    if world.get_entity(id.0).is_ok() {
+                        world.entity_mut(id.0).insert(Discarded);
+                    }
                 }
             }
         }
+        Ok(())
     }
-    Ok(())
 }
 
-impl Workbench<'_> {
+impl Workbench {
     /// Close panels on the user's behalf (closing a tab or area, or merging areas).
     /// Closes immediately unless that would release an unsaved document.
     pub fn request_panel_close(&mut self, layout: Entity, edit: LayoutEdit) -> Result<(), String> {
@@ -141,12 +166,12 @@ impl Workbench<'_> {
             return Err("Another close is waiting for a decision".into());
         }
         let panels = self.close_targets(layout, &edit)?;
-        crate::layout::check_panel_drafts(self.world, panels.iter().copied())?;
-        let documents = released_unsaved(self.world, &panels);
+        crate::layout::check_panel_drafts(&self.world, panels.iter().copied())?;
+        let documents = released_unsaved(&self.world, &panels);
         if documents.is_empty() {
             return self.edit(layout, &edit);
         }
-        begin(self.world, Target::Panels { layout, edit }, documents);
+        begin(&mut self.world, Target::Panels { layout, edit }, documents);
         Ok(())
     }
 }
@@ -179,7 +204,10 @@ fn released_unsaved(world: &World, panels: &[Entity]) -> Vec<DocumentId> {
 }
 
 fn needs_decision(world: &World, id: DocumentId) -> bool {
-    inspect_document(world, id).is_ok_and(|info| info.dirty || info.conflict)
+    world
+        .workbench()
+        .inspect_document(id)
+        .is_ok_and(|info| info.dirty || info.conflict)
 }
 
 fn begin(world: &mut World, target: Target, documents: Vec<DocumentId>) {
@@ -198,10 +226,14 @@ fn begin(world: &mut World, target: Target, documents: Vec<DocumentId>) {
 fn start_saves(world: &mut World, documents: &[DocumentId]) -> Vec<(DocumentId, String)> {
     let mut errors = Vec::new();
     for &id in documents {
-        if inspect_document(world, id).is_ok_and(|info| info.saving) {
+        if world
+            .workbench()
+            .inspect_document(id)
+            .is_ok_and(|info| info.saving)
+        {
             continue;
         }
-        if let Err(error) = save_document(world, id) {
+        if let Err(error) = world.workbench_mut().save_document(id) {
             errors.push((id, error.to_string()));
         }
     }
@@ -213,17 +245,17 @@ fn start_saves(world: &mut World, documents: &[DocumentId]) -> Vec<(DocumentId, 
 fn finish(world: &mut World, close: Close) -> Option<Close> {
     match close.target {
         Target::Panels { layout, edit } => {
-            if let Err(error) = Workbench::new(world).edit(layout, &edit) {
+            if let Err(error) = world.workbench_mut().edit(layout, &edit) {
                 report_error(
                     world,
                     "Close panel",
                     "The layout changed before the close finished, so nothing was closed.",
-                    error,
+                    Some(error),
                 );
             }
             None
         }
-        Target::Quit => Some(Close {
+        Target::Exit { .. } => Some(Close {
             stage: Stage::ShuttingDown,
             ..close
         }),
@@ -238,42 +270,68 @@ fn request_quit(
         .read(world.resource::<Messages<CloseRequested>>())
         .count()
         > 0;
-    let pending = &world.resource::<PendingClose>().0;
-    if !requested
-        || pending
-            .as_ref()
-            .is_some_and(|close| matches!(close.target, Target::Quit))
-    {
+    if !requested || exiting(world) {
         return;
     }
-    // Quitting supersedes a pending panel close.
-    world.resource_mut::<PendingClose>().0 = None;
-    let ids = document_ids(world);
-    if let Some(info) = ids
-        .iter()
-        .filter_map(|&id| inspect_document(world, id).ok())
-        .find(|info| info.has_drafts)
-    {
-        report_error(
-            world,
-            "Quit",
-            "Finish typing in the editor before quitting.",
-            format!("{:?} has uncommitted input", info.title),
-        );
-        return;
+    if let Err(error) = world.workbench_mut().request_exit("Quit", |world| {
+        world.write_message(AppExit::Success);
+    }) {
+        report_error(world, "Quit", &error, None);
     }
-    let documents: Vec<_> = ids
-        .into_iter()
-        .filter(|&id| needs_decision(world, id))
-        .collect();
-    if documents.is_empty() {
-        world.resource_mut::<PendingClose>().0 = Some(Close {
-            target: Target::Quit,
-            documents,
-            stage: Stage::ShuttingDown,
-        });
-    } else {
-        begin(world, Target::Quit, documents);
+}
+
+fn exiting(world: &World) -> bool {
+    world
+        .resource::<PendingClose>()
+        .0
+        .as_ref()
+        .is_some_and(|close| matches!(close.target, Target::Exit { .. }))
+}
+
+impl Workbench {
+    /// End the session, as quitting does: unsaved documents are saved or asked
+    /// about (`name` titles the prompt, "Quit" or "Switch workspace"), background
+    /// work finishes, then `then` runs. Quitting's `then` sends `AppExit`. If the
+    /// user cancels, nothing happens and the session goes on. Refused while
+    /// another exit is under way, or while an editor has uncommitted input.
+    pub fn request_exit(
+        &mut self,
+        name: impl Into<String>,
+        then: impl FnOnce(&mut World) + Send + Sync + 'static,
+    ) -> Result<(), String> {
+        let name = name.into();
+        let world = &mut self.world;
+        if exiting(world) {
+            return Err("Already exiting".into());
+        }
+        let ids = world.workbench().document_ids();
+        if let Some(info) = ids
+            .iter()
+            .filter_map(|&id| world.workbench().inspect_document(id).ok())
+            .find(|info| info.has_drafts)
+        {
+            return Err(format!("Finish typing in {:?} first.", info.title));
+        }
+        // Exiting supersedes a pending panel close.
+        world.resource_mut::<PendingClose>().0 = None;
+        let documents: Vec<_> = ids
+            .into_iter()
+            .filter(|&id| needs_decision(world, id))
+            .collect();
+        let target = Target::Exit {
+            name,
+            then: Some(Box::new(then)),
+        };
+        if documents.is_empty() {
+            world.resource_mut::<PendingClose>().0 = Some(Close {
+                target,
+                documents,
+                stage: Stage::ShuttingDown,
+            });
+        } else {
+            begin(world, target, documents);
+        }
+        Ok(())
     }
 }
 
@@ -282,8 +340,12 @@ fn advance(world: &mut World) {
         return;
     };
     let saving = |world: &World, ids: &[DocumentId]| {
-        ids.iter()
-            .any(|&id| inspect_document(world, id).is_ok_and(|info| info.saving))
+        ids.iter().any(|&id| {
+            world
+                .workbench()
+                .inspect_document(id)
+                .is_ok_and(|info| info.saving)
+        })
     };
     match &mut close.stage {
         Stage::Asking(_) => {}
@@ -292,7 +354,11 @@ fn advance(world: &mut World) {
                 let mut errors = std::mem::take(errors);
                 close.documents.retain(|&id| needs_decision(world, id));
                 for &id in &close.documents {
-                    let failed = inspect_document(world, id).ok().and_then(|info| info.error);
+                    let failed = world
+                        .workbench()
+                        .inspect_document(id)
+                        .ok()
+                        .and_then(|info| info.error);
                     if let Some(error) = failed
                         && !errors.iter().any(|(e, _)| *e == id)
                     {
@@ -311,14 +377,16 @@ fn advance(world: &mut World) {
             }
         }
         Stage::ShuttingDown => {
-            let ids = document_ids(world);
+            let ids = world.workbench().document_ids();
             if !world.resource::<ManagedWork>().is_closing() && !saving(world, &ids) {
                 world.resource_mut::<ManagedWork>().shutdown();
             }
             if world.resource::<ManagedWork>().is_closing()
                 && world.resource::<ManagedWork>().is_finished()
+                && let Target::Exit { then, .. } = &mut close.target
+                && let Some(then) = then.take()
             {
-                world.write_message(AppExit::Success);
+                then(world);
             }
         }
     }
@@ -337,7 +405,7 @@ fn release_unviewed(world: &mut World) {
         .map(|(entity, _)| DocumentId(entity))
         .collect();
     for id in candidates {
-        let Ok(info) = inspect_document(world, id) else {
+        let Ok(info) = world.workbench().inspect_document(id) else {
             continue;
         };
         let discarded = world.get::<Discarded>(id.0).is_some();
@@ -348,20 +416,17 @@ fn release_unviewed(world: &mut World) {
 }
 
 /// Explain a failure with an error dialog when there is UI, otherwise log it.
-pub(crate) fn report_error(world: &mut World, title: &str, message: &str, details: String) {
+pub(crate) fn report_error(world: &mut World, title: &str, message: &str, details: Option<String>) {
     #[cfg(feature = "ui")]
-    request_error_dialog(
-        world,
-        ErrorDialog {
-            title: title.into(),
-            message: message.into(),
-            details: Some(details),
-        },
-    );
+    world.workbench_mut().request_error_dialog(ErrorDialog {
+        title: title.into(),
+        message: message.into(),
+        details,
+    });
     #[cfg(not(feature = "ui"))]
     {
         let _ = world;
-        eprintln!("{title}: {message} ({details})");
+        error!("{title}: {message} {}", details.unwrap_or_default());
     }
 }
 
@@ -392,8 +457,8 @@ mod tests {
     }
 
     fn close(app: &mut App, panel: Entity) {
-        let mut workbench = Workbench::new(app.world_mut());
-        let layout = workbench.active_layout();
+        let workbench = app.world_mut().workbench_mut();
+        let layout = workbench.active_layout().unwrap();
         workbench
             .request_panel_close(layout, LayoutEdit::ClosePanels(vec![panel]))
             .unwrap();
@@ -423,7 +488,7 @@ mod tests {
             .insert(DocumentReference::new(document.id()));
         close(&mut app, first);
         assert!(!exists(&app, first));
-        assert!(close_prompt(app.world()).is_none());
+        assert!(app.world().workbench().close_prompt().is_none());
         assert!(exists(&app, document.id().entity()));
     }
 
@@ -432,13 +497,22 @@ mod tests {
         let mut app = app();
         let (document, viewer) = unsaved(&mut app, true);
         close(&mut app, viewer);
-        let prompt = close_prompt(app.world()).unwrap();
-        assert!(!prompt.quitting);
+        let prompt = app.world().workbench().close_prompt().unwrap();
+        assert_eq!(prompt.exit, None);
         assert_eq!(prompt.documents[0].title, "notes.txt");
-        resolve_close(app.world_mut(), CloseChoice::Cancel).unwrap();
+        app.world_mut()
+            .workbench_mut()
+            .resolve_close(CloseChoice::Cancel)
+            .unwrap();
         app.update();
         assert!(exists(&app, viewer));
-        assert!(inspect_document(app.world(), document.id()).unwrap().dirty);
+        assert!(
+            app.world()
+                .workbench()
+                .inspect_document(document.id())
+                .unwrap()
+                .dirty
+        );
     }
 
     #[test]
@@ -446,7 +520,10 @@ mod tests {
         let mut app = app();
         let (document, viewer) = unsaved(&mut app, true);
         close(&mut app, viewer);
-        resolve_close(app.world_mut(), CloseChoice::Discard).unwrap();
+        app.world_mut()
+            .workbench_mut()
+            .resolve_close(CloseChoice::Discard)
+            .unwrap();
         app.update();
         assert!(!exists(&app, viewer));
         assert!(!exists(&app, document.id().entity()));
@@ -457,7 +534,10 @@ mod tests {
         let mut app = app();
         let (document, viewer) = unsaved(&mut app, true);
         close(&mut app, viewer);
-        resolve_close(app.world_mut(), CloseChoice::Save).unwrap();
+        app.world_mut()
+            .workbench_mut()
+            .resolve_close(CloseChoice::Save)
+            .unwrap();
         update_until(&mut app, |app| !exists(app, viewer));
         app.update();
         assert!(!exists(&app, document.id().entity()));
@@ -469,7 +549,7 @@ mod tests {
         app.insert_resource(DocumentAutosave(DocumentAutosavePolicy::OnFocusChange));
         let (document, viewer) = unsaved(&mut app, true);
         close(&mut app, viewer);
-        assert!(close_prompt(app.world()).is_none());
+        assert!(app.world().workbench().close_prompt().is_none());
         update_until(&mut app, |app| !exists(app, viewer));
         app.update();
         assert!(!exists(&app, document.id().entity()));
@@ -481,8 +561,10 @@ mod tests {
         app.insert_resource(DocumentAutosave(DocumentAutosavePolicy::OnFocusChange));
         let (_, viewer) = unsaved(&mut app, false);
         close(&mut app, viewer);
-        update_until(&mut app, |app| close_prompt(app.world()).is_some());
-        let prompt = close_prompt(app.world()).unwrap();
+        update_until(&mut app, |app| {
+            app.world().workbench().close_prompt().is_some()
+        });
+        let prompt = app.world().workbench().close_prompt().unwrap();
         assert!(
             prompt.documents[0]
                 .error
@@ -550,7 +632,7 @@ mod tests {
         world.spawn((DocumentReference::new(document.id()), ChildOf(host)));
         close(&mut app, host);
         assert_eq!(
-            close_prompt(app.world()).unwrap().documents[0].id,
+            app.world().workbench().close_prompt().unwrap().documents[0].id,
             document.id()
         );
     }
@@ -562,10 +644,65 @@ mod tests {
         app.world_mut()
             .write_message(CloseRequested { window: None });
         app.update();
-        assert!(close_prompt(app.world()).unwrap().quitting);
+        assert_eq!(
+            app.world()
+                .workbench()
+                .close_prompt()
+                .unwrap()
+                .exit
+                .as_deref(),
+            Some("Quit")
+        );
         assert!(app.should_exit().is_none());
-        resolve_close(app.world_mut(), CloseChoice::Discard).unwrap();
+        app.world_mut()
+            .workbench_mut()
+            .resolve_close(CloseChoice::Discard)
+            .unwrap();
         update_until(&mut app, |app| app.should_exit().is_some());
+    }
+
+    #[test]
+    fn an_application_exit_asks_like_quit_then_runs_its_last_step() {
+        #[derive(Resource)]
+        struct Switched;
+        let mut app = app();
+        unsaved(&mut app, true);
+        let switch = |world: &mut World| {
+            world
+                .workbench_mut()
+                .request_exit("Switch workspace", |world| world.insert_resource(Switched))
+        };
+        switch(app.world_mut()).unwrap();
+        app.update();
+        assert_eq!(
+            app.world()
+                .workbench()
+                .close_prompt()
+                .unwrap()
+                .exit
+                .as_deref(),
+            Some("Switch workspace")
+        );
+        assert!(switch(app.world_mut()).is_err(), "one exit at a time");
+        // Cancelling leaves the session as it was, and a later exit can go ahead.
+        app.world_mut()
+            .workbench_mut()
+            .resolve_close(CloseChoice::Cancel)
+            .unwrap();
+        app.update();
+        assert!(app.world().workbench().close_prompt().is_none());
+        assert!(!app.world().resource::<ManagedWork>().is_closing());
+        switch(app.world_mut()).unwrap();
+        app.update();
+        app.world_mut()
+            .workbench_mut()
+            .resolve_close(CloseChoice::Save)
+            .unwrap();
+        update_until(&mut app, |app| app.world().contains_resource::<Switched>());
+        assert!(
+            app.should_exit().is_none(),
+            "the last step replaces AppExit"
+        );
     }
 
     #[test]

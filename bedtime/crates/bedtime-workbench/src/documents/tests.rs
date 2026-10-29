@@ -1,5 +1,6 @@
 use super::*;
 use crate::WorkbenchCorePlugin;
+use crate::WorkbenchWorldExt;
 use crate::tests::TestPanels;
 use std::{
     sync::{Arc, Mutex, mpsc},
@@ -23,7 +24,7 @@ pub(crate) fn update_until(app: &mut App, done: impl Fn(&World) -> bool) {
 }
 
 fn info(world: &World, id: DocumentId) -> DocumentInfo {
-    inspect_document(world, id).unwrap()
+    world.workbench().inspect_document(id).unwrap()
 }
 
 /// Open a document and wait for it to load.
@@ -31,7 +32,11 @@ pub(crate) fn open<M: DocumentModel>(
     app: &mut App,
     source: impl DocumentSource<M>,
 ) -> DocumentHandle<M> {
-    let document = open_document(app.world_mut(), source).unwrap();
+    let document = app
+        .world_mut()
+        .workbench_mut()
+        .open_document(source)
+        .unwrap();
     update_until(app, |world| {
         info(world, document.id()).status != DocumentStatus::Loading
     });
@@ -39,8 +44,8 @@ pub(crate) fn open<M: DocumentModel>(
 }
 
 pub(crate) fn panel(world: &mut World) -> Entity {
-    let mut workbench = Workbench::new(world);
-    let layout = workbench.active_layout();
+    let workbench = world.workbench_mut();
+    let layout = workbench.active_layout().unwrap();
     workbench.create_panel(layout, "Viewer").unwrap()
 }
 
@@ -52,28 +57,36 @@ pub(crate) fn type_text(
     text: &str,
 ) {
     let revision = info(world, document.id()).revision;
-    edit_document(
-        world,
-        document,
-        revision,
-        BufferEdit::new(at..at, text),
-        EditOptions::new("Type"),
-    )
-    .unwrap();
+    world
+        .workbench_mut()
+        .edit_document(
+            document,
+            revision,
+            BufferEdit::new(at..at, text),
+            EditOptions::new("Type"),
+        )
+        .unwrap();
 }
 
 fn content(world: &World, document: DocumentHandle<TextBuffer>) -> String {
-    read_document(world, document).unwrap().to_string()
+    world
+        .workbench()
+        .read_document(document)
+        .unwrap()
+        .to_string()
 }
 
 fn save_and_wait(app: &mut App, id: DocumentId) -> Result<(), String> {
-    save_document(app.world_mut(), id).unwrap();
+    app.world_mut().workbench_mut().save_document(id).unwrap();
     update_until(app, |world| !info(world, id).saving);
     info(app.world(), id).error.map_or(Ok(()), Err)
 }
 
 fn refresh_and_wait(app: &mut App, id: DocumentId) {
-    refresh_document(app.world_mut(), id).unwrap();
+    app.world_mut()
+        .workbench_mut()
+        .refresh_document(id)
+        .unwrap();
     app.update();
     update_until(app, |world| {
         world
@@ -171,10 +184,18 @@ impl DocumentSource<TextBuffer> for TestSource {
 fn opening_a_source_twice_returns_the_same_document() {
     let mut app = app();
     let source = MemorySource::new("a", TextBuffer::from("text"));
-    let first = open_document(app.world_mut(), source.clone()).unwrap();
-    let second = open_document(app.world_mut(), source).unwrap();
+    let first = app
+        .world_mut()
+        .workbench_mut()
+        .open_document(source.clone())
+        .unwrap();
+    let second = app
+        .world_mut()
+        .workbench_mut()
+        .open_document(source)
+        .unwrap();
     assert_eq!(first, second);
-    assert_eq!(document_ids(app.world()), [first.id()]);
+    assert_eq!(app.world().workbench().document_ids(), [first.id()]);
     #[derive(Clone, PartialEq)]
     struct Other;
     impl DocumentModel for Other {
@@ -184,7 +205,7 @@ fn opening_a_source_twice_returns_the_same_document() {
         }
     }
     assert!(matches!(
-        cast_document::<Other>(app.world(), first.id()),
+        app.world().workbench().cast_document::<Other>(first.id()),
         Err(DocumentError::WrongModel { .. })
     ));
 }
@@ -200,7 +221,7 @@ fn a_failed_load_is_reported_and_refresh_tries_again() {
         DocumentStatus::Failed(_)
     ));
     assert!(matches!(
-        read_document(app.world(), document),
+        app.world().workbench().read_document(document),
         Err(DocumentError::LoadFailed(_))
     ));
 
@@ -228,13 +249,19 @@ fn edits_undo_and_redo_and_dirty_follows_the_saved_content() {
         Some("Type")
     );
 
-    undo_document(world, document.id()).unwrap();
+    world.workbench_mut().undo_document(document.id()).unwrap();
     assert!(!info(world, document.id()).dirty);
-    redo_document(world, document.id()).unwrap();
+    world.workbench_mut().redo_document(document.id()).unwrap();
     assert_eq!(content(world, document), "abcd");
-    assert_eq!(undo_document(world, document.id()).map(|_| ()), Ok(()));
     assert_eq!(
-        undo_document(world, document.id()),
+        world
+            .workbench_mut()
+            .undo_document(document.id())
+            .map(|_| ()),
+        Ok(())
+    );
+    assert_eq!(
+        world.workbench_mut().undo_document(document.id()),
         Err(DocumentError::NothingToUndo)
     );
 }
@@ -245,8 +272,7 @@ fn stale_and_invalid_edits_change_nothing() {
     let document = open(&mut app, MemorySource::new("a", TextBuffer::from("abc")));
     let world = app.world_mut();
     let edit = |world: &mut World, revision, range: std::ops::Range<usize>| {
-        edit_document(
-            world,
+        world.workbench_mut().edit_document(
             document,
             revision,
             BufferEdit::new(range, "x"),
@@ -262,8 +288,7 @@ fn stale_and_invalid_edits_change_nothing() {
         Err(DocumentError::InvalidChange(_))
     ));
     // A transaction applies entirely or not at all.
-    let result = edit_document_transaction(
-        world,
+    let result = world.workbench_mut().edit_document_transaction(
         document,
         0,
         [BufferEdit::new(0..0, "x"), BufferEdit::new(50..50, "y")],
@@ -282,28 +307,44 @@ fn grouped_edits_undo_together_and_groups_belong_to_their_viewer() {
     let viewer = panel(world);
     let stranger = panel(world);
     assert_eq!(
-        begin_document_undo_group(world, document.id(), stranger),
+        world
+            .workbench_mut()
+            .begin_document_undo_group(document.id(), stranger),
         Err(DocumentError::NotReferenced(stranger))
     );
     world
         .entity_mut(viewer)
         .insert(DocumentReference::new(document.id()));
-    let group = begin_document_undo_group(world, document.id(), viewer).unwrap();
+    let group = world
+        .workbench_mut()
+        .begin_document_undo_group(document.id(), viewer)
+        .unwrap();
     for (revision, letter) in ["a", "b", "c"].into_iter().enumerate() {
         let options = EditOptions::grouped("Typing", group);
         let edit = BufferEdit::new(revision..revision, letter);
-        edit_document(world, document, revision as u64, edit, options).unwrap();
+        world
+            .workbench_mut()
+            .edit_document(document, revision as u64, edit, options)
+            .unwrap();
     }
-    end_document_undo_group(world, document.id(), group).unwrap();
-    undo_document(world, document.id()).unwrap();
+    world
+        .workbench_mut()
+        .end_document_undo_group(document.id(), group)
+        .unwrap();
+    world.workbench_mut().undo_document(document.id()).unwrap();
     assert_eq!(content(world, document), "");
 
     // Removing the viewer's reference ends its group.
-    redo_document(world, document.id()).unwrap();
-    let group = begin_document_undo_group(world, document.id(), viewer).unwrap();
+    world.workbench_mut().redo_document(document.id()).unwrap();
+    let group = world
+        .workbench_mut()
+        .begin_document_undo_group(document.id(), viewer)
+        .unwrap();
     world.entity_mut(viewer).remove::<DocumentReference>();
     assert_eq!(
-        end_document_undo_group(world, document.id(), group),
+        world
+            .workbench_mut()
+            .end_document_undo_group(document.id(), group),
         Err(DocumentError::StaleUndoGroup)
     );
 }
@@ -315,18 +356,29 @@ fn changes_since_reports_each_commit() {
     let world = app.world_mut();
     type_text(world, document, 0, "a");
     type_text(world, document, 1, "b");
-    let commits = document_changes_since(world, document, 0).unwrap().unwrap();
+    let commits = world
+        .workbench()
+        .document_changes_since(document, 0)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         commits.iter().map(|c| c.revision).collect::<Vec<_>>(),
         [1, 2]
     );
     assert!(
-        document_changes_since(world, document, 2)
+        world
+            .workbench()
+            .document_changes_since(document, 2)
             .unwrap()
             .unwrap()
             .is_empty()
     );
-    assert!(document_changes_since(world, document, 3).is_err());
+    assert!(
+        world
+            .workbench()
+            .document_changes_since(document, 3)
+            .is_err()
+    );
 }
 
 #[test]
@@ -347,9 +399,12 @@ fn a_save_writes_its_snapshot_and_later_edits_stay_unsaved() {
     let document = open(&mut app, source.clone());
     type_text(app.world_mut(), document, 1, "b");
     let release = source.hold_next_save();
-    save_document(app.world_mut(), document.id()).unwrap();
+    app.world_mut()
+        .workbench_mut()
+        .save_document(document.id())
+        .unwrap();
     assert_eq!(
-        save_document(app.world_mut(), document.id()),
+        app.world_mut().workbench_mut().save_document(document.id()),
         Err(DocumentError::Saving)
     );
     type_text(app.world_mut(), document, 2, "c");
@@ -359,7 +414,10 @@ fn a_save_writes_its_snapshot_and_later_edits_stay_unsaved() {
     assert_eq!(source.memory.get().unwrap().to_string(), "ab");
     assert_eq!(content(app.world(), document), "abc");
     assert!(info(app.world(), document.id()).dirty);
-    undo_document(app.world_mut(), document.id()).unwrap();
+    app.world_mut()
+        .workbench_mut()
+        .undo_document(document.id())
+        .unwrap();
     assert!(!info(app.world(), document.id()).dirty);
 }
 
@@ -400,7 +458,7 @@ fn read_only_sources_refuse_to_save() {
     let document = open(&mut app, source);
     type_text(app.world_mut(), document, 1, "b");
     assert_eq!(
-        save_document(app.world_mut(), document.id()),
+        app.world_mut().workbench_mut().save_document(document.id()),
         Err(DocumentError::ReadOnly)
     );
 }
@@ -416,7 +474,10 @@ fn outside_changes_apply_to_a_clean_document_as_an_undoable_edit() {
     assert!(!info(app.world(), document.id()).dirty);
 
     // Undo brings back the old content, which is now an unsaved change.
-    undo_document(app.world_mut(), document.id()).unwrap();
+    app.world_mut()
+        .workbench_mut()
+        .undo_document(document.id())
+        .unwrap();
     assert_eq!(content(app.world(), document), "mine");
     assert!(info(app.world(), document.id()).dirty);
 }
@@ -433,23 +494,24 @@ fn outside_changes_with_unsaved_edits_conflict_and_block_saving() {
     let world = app.world_mut();
     assert!(info(world, document.id()).conflict);
     assert_eq!(content(world, document), "base mine");
-    let conflict = document_conflict(world, document).unwrap().unwrap();
+    let conflict = world
+        .workbench()
+        .document_conflict(document)
+        .unwrap()
+        .unwrap();
     assert_eq!(conflict.base.unwrap().to_string(), "base");
     assert_eq!(conflict.incoming.to_string(), "base theirs");
     assert_eq!(
-        save_document(world, document.id()),
+        world.workbench_mut().save_document(document.id()),
         Err(DocumentError::Conflict)
     );
 
     // Keeping ours makes the next save expect what came in, so it succeeds.
     let revision = info(world, document.id()).revision;
-    resolve_document_conflict(
-        world,
-        document,
-        revision,
-        DocumentConflictResolution::KeepLocal,
-    )
-    .unwrap();
+    world
+        .workbench_mut()
+        .resolve_document_conflict(document, revision, DocumentConflictResolution::KeepLocal)
+        .unwrap();
     assert!(info(world, document.id()).dirty);
     save_and_wait(&mut app, document.id()).unwrap();
     assert_eq!(source.get().unwrap().to_string(), "base mine");
@@ -472,13 +534,18 @@ fn conflicts_resolve_to_the_incoming_or_a_merged_version() {
         refresh_and_wait(&mut app, document.id());
         let world = app.world_mut();
         assert_eq!(
-            resolve_document_conflict(world, document, 0, resolution.clone()),
+            world
+                .workbench_mut()
+                .resolve_document_conflict(document, 0, resolution.clone()),
             Err(DocumentError::StaleRevision {
                 expected: 0,
                 actual: 1
             })
         );
-        resolve_document_conflict(world, document, 1, resolution).unwrap();
+        world
+            .workbench_mut()
+            .resolve_document_conflict(document, 1, resolution)
+            .unwrap();
         assert_eq!(content(world, document), expected);
         assert!(!info(world, document.id()).conflict);
         assert_eq!(info(world, document.id()).dirty, expected != "theirs");
@@ -504,7 +571,10 @@ fn a_read_still_running_when_a_save_starts_is_dropped() {
     let document = open(&mut app, source.clone());
     // The read loads "old" now, but reports it only after the save.
     let (has_loaded, release) = source.hold_next_read();
-    refresh_document(app.world_mut(), document.id()).unwrap();
+    app.world_mut()
+        .workbench_mut()
+        .refresh_document(document.id())
+        .unwrap();
     app.update();
     has_loaded.recv_timeout(Duration::from_secs(5)).unwrap();
     type_text(app.world_mut(), document, 3, " new");
@@ -528,7 +598,7 @@ fn a_missing_source_keeps_the_content_and_refuses_saves() {
     assert_eq!(content(app.world(), document), "text");
     type_text(app.world_mut(), document, 0, "more ");
     assert_eq!(
-        save_document(app.world_mut(), document.id()),
+        app.world_mut().workbench_mut().save_document(document.id()),
         Err(DocumentError::Missing)
     );
 
@@ -558,19 +628,19 @@ fn drafts_block_saving_undo_and_closing() {
         .entity_mut(viewer)
         .insert((DocumentReference::new(document.id()), DocumentDraft));
     assert_eq!(
-        save_document(world, document.id()),
+        world.workbench_mut().save_document(document.id()),
         Err(DocumentError::Drafts)
     );
     assert_eq!(
-        undo_document(world, document.id()),
+        world.workbench_mut().undo_document(document.id()),
         Err(DocumentError::Drafts)
     );
     assert_eq!(
-        discard_document(world, document.id()),
+        world.workbench_mut().discard_document(document.id()),
         Err(DocumentError::Drafts)
     );
     world.entity_mut(viewer).remove::<DocumentDraft>();
-    undo_document(world, document.id()).unwrap();
+    world.workbench_mut().undo_document(document.id()).unwrap();
 }
 
 #[test]
@@ -591,18 +661,21 @@ fn closing_a_document_closes_its_panels_and_is_refused_while_unsaved() {
         .insert(DocumentReference::new(other.id()));
     type_text(world, document, 1, "b");
     assert_eq!(
-        close_document(world, document.id()),
+        world.workbench_mut().close_document(document.id()),
         Err(DocumentError::Dirty)
     );
 
-    discard_document(world, document.id()).unwrap();
+    world
+        .workbench_mut()
+        .discard_document(document.id())
+        .unwrap();
     assert!(
         viewers
             .iter()
             .all(|&viewer| world.get_entity(viewer).is_err())
     );
     assert!(world.get_entity(unrelated).is_ok());
-    assert_eq!(document_ids(world), [other.id()]);
+    assert_eq!(world.workbench().document_ids(), [other.id()]);
 }
 
 #[test]
@@ -615,11 +688,11 @@ fn panels_look_dirty_while_showing_an_unsaved_document() {
         .insert(DocumentReference::new(document.id()));
     type_text(app.world_mut(), document, 1, "b");
     app.update();
-    assert!(holder_unsaved(app.world(), viewer));
+    assert!(app.world().workbench().holder_unsaved(viewer));
     app.world_mut()
         .entity_mut(viewer)
         .remove::<DocumentReference>();
-    assert!(!holder_unsaved(app.world(), viewer));
+    assert!(!app.world().workbench().holder_unsaved(viewer));
 }
 
 #[test]
@@ -629,15 +702,18 @@ fn shutting_down_waits_for_saves_in_flight() {
     let document = open(&mut app, source.clone());
     type_text(app.world_mut(), document, 1, "b");
     let release = source.hold_next_save();
-    save_document(app.world_mut(), document.id()).unwrap();
-    assert!(crate::shutdown_work(app.world_mut()).is_err());
+    app.world_mut()
+        .workbench_mut()
+        .save_document(document.id())
+        .unwrap();
+    assert!(app.world_mut().workbench_mut().shutdown_work().is_err());
     release.send(()).unwrap();
     update_until(&mut app, |world| !info(world, document.id()).saving);
-    crate::shutdown_work(app.world_mut()).unwrap();
-    update_until(&mut app, crate::work_finished);
+    app.world_mut().workbench_mut().shutdown_work().unwrap();
+    update_until(&mut app, |world| world.workbench().work_finished());
     assert_eq!(source.memory.get().unwrap().to_string(), "ab");
     assert_eq!(
-        save_document(app.world_mut(), document.id()),
+        app.world_mut().workbench_mut().save_document(document.id()),
         Err(DocumentError::SessionClosing)
     );
 }

@@ -1,4 +1,5 @@
 //! Tab styling and workbench graph validation.
+use crate::WorkbenchWorldExt;
 #[cfg(any(debug_assertions, feature = "persistence", test))]
 use crate::*;
 use bevy::prelude::*;
@@ -117,7 +118,7 @@ pub(crate) fn validate_workbench(world: &mut World) -> Result<(), String> {
     }
     for area in areas {
         let selected = world.get::<Area>(area).unwrap().selected;
-        let tabs = panels_in_area(world, area);
+        let tabs = world.workbench().panels_in_area(area);
         if selected.is_some_and(|entity| !tabs.contains(&entity)) {
             return Err("Selected panel belongs to another area or no longer exists".into());
         }

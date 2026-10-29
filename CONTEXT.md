@@ -283,6 +283,26 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Workbench API, exits and notifications**, 2026-10-28:
+  - Every workbench operation is a method on one of two views of the `World`
+    (`WorkbenchWorldExt`): `world.workbench()` (`&WorkbenchRef`, reads) and
+    `world.workbench_mut()` (`&mut Workbench`, changes; it derefs to the
+    reads). The free functions taking a `World` (documents, settings writes,
+    keys, menus, close prompt, templates, `request_error_dialog`, shutdown)
+    and `Workbench::new` are gone. `active_layout()` returns an `Option`.
+  - `Workbench::request_exit(name, then)` ends the session like quit (saves or
+    asks about unsaved documents, finishes work) and then runs `then`; quit is
+    `request_exit("Quit", AppExit)`. bed's workspace switch uses it, so it asks
+    before dropping unsaved work and can be cancelled. `ClosePrompt::quitting`
+    became `exit: Option<String>`.
+  - `Workbench::notify(Notification)` and the `Notifications` resource, for
+    things that need no answer. Store and settings failures go there instead of
+    error dialogs, and so does any action handler's `Err` (not "not available").
+    bed has a status bar (`bed/status.rs`): the latest notification for 8 s,
+    recent ones in its tooltip, and the workspace's name. bed's dropped
+    `let _ =` results and `warn!`s report there (`notify_failure`).
+    `tests/automation/status_bar.py`.
+
 - **Themes**, implemented 2026-10-28: a surface carries `Theme` (colors) and
   `Metrics` (sizes) components directly (`UsesTheme` is gone); a theme file is
   a `Theme` in RON. bedtime-ui bundles Everforest Medium light/dark and

@@ -321,6 +321,8 @@ workspaces. So each workspace gets a fresh App, and only the window survives:
 - bed: `app(Start) -> App` builds the App for one workspace; `main` runs it.
   `workspace::switch(world, Start)` relaunches into another workspace, refusing
   a folder another window has open (`workspace::available` probes its lock).
+  It goes through `Workbench::request_exit`, so unsaved documents are saved or
+  asked about first, as when quitting.
 - bedtime-automation keeps its HTTP server across relaunches (the server lives
   on Bevy's global task pool); the next App takes over its request mailbox.
 - Result: the next App draws about 0.08 s after the request, the window keeps
@@ -611,5 +613,5 @@ Each step depends on the one before.
   layer, e.g. `app.set_default::<Keybinding<C>>(chords)`.
 - Format versioning: how stored world data and settings handle renamed types or
   fields (reflected type paths are part of the format today).
-- Where errors from stores and settings are reported (error dialog, a settings
-  panel status line, or both).
+- ~~Where errors from stores and settings are reported~~: as notifications
+  (`Workbench::notify`), which bed shows in its status bar.

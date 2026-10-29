@@ -13,6 +13,7 @@
 //! The unit of override is the setting. Anything that should be overridable per
 //! entry is split into one setting per entry with a derived key.
 use crate::persistence::{Store, StoreBackend, StoreId, StoreSystems, Stores};
+use crate::{Notification, Workbench, WorkbenchWorldExt};
 use bevy::prelude::*;
 use ron::value::RawValue;
 use serde::{Serialize, de::DeserializeOwned};
@@ -223,39 +224,43 @@ fn encode<T: Serialize>(value: &T) -> Result<Box<RawValue>, String> {
     RawValue::from_rust(value).map_err(|e| e.to_string())
 }
 
-/// Set a setting in one layer.
-pub fn set_setting<S: Setting>(
-    world: &mut World,
-    store: StoreId,
-    value: S::Value,
-) -> Result<(), String> {
-    if !S::allowed_in(store) {
-        return Err(format!("{} can't be set in {}", S::key(), store.name()));
-    }
-    // Setting what the layer would inherit anyway stores nothing, so it keeps
-    // following the layers below (a workspace set back to the global value
-    // follows later global changes).
-    if value == world.resource::<Settings>().inherited::<S>(store) {
-        return clear_setting::<S>(world, store);
-    }
-    let encoded = encode(&value)?;
-    let mut settings = world.resource_mut::<Settings>();
-    let layer = settings.layer_mut(store)?;
-    layer.values.insert(S::key().into_owned(), encoded);
-    layer.dirty = true;
-    apply_changed(world);
-    Ok(())
-}
-
-/// Remove a setting from one layer, so it inherits from the layers below.
-pub fn clear_setting<S: Setting>(world: &mut World, store: StoreId) -> Result<(), String> {
-    let mut settings = world.resource_mut::<Settings>();
-    let layer = settings.layer_mut(store)?;
-    if layer.values.remove(S::key().as_ref()).is_some() {
+impl Workbench {
+    /// Set a setting in one layer.
+    pub fn set_setting<S: Setting>(
+        &mut self,
+        store: StoreId,
+        value: S::Value,
+    ) -> Result<(), String> {
+        let world = &mut self.world;
+        if !S::allowed_in(store) {
+            return Err(format!("{} can't be set in {}", S::key(), store.name()));
+        }
+        // Setting what the layer would inherit anyway stores nothing, so it keeps
+        // following the layers below (a workspace set back to the global value
+        // follows later global changes).
+        if value == world.resource::<Settings>().inherited::<S>(store) {
+            return world.workbench_mut().clear_setting::<S>(store);
+        }
+        let encoded = encode(&value)?;
+        let mut settings = world.resource_mut::<Settings>();
+        let layer = settings.layer_mut(store)?;
+        layer.values.insert(S::key().into_owned(), encoded);
         layer.dirty = true;
         apply_changed(world);
+        Ok(())
     }
-    Ok(())
+
+    /// Remove a setting from one layer, so it inherits from the layers below.
+    pub fn clear_setting<S: Setting>(&mut self, store: StoreId) -> Result<(), String> {
+        let world = &mut self.world;
+        let mut settings = world.resource_mut::<Settings>();
+        let layer = settings.layer_mut(store)?;
+        if layer.values.remove(S::key().as_ref()).is_some() {
+            layer.dirty = true;
+            apply_changed(world);
+        }
+        Ok(())
+    }
 }
 
 /// Run `apply` for every registered setting whose resolved value changed.
@@ -289,12 +294,10 @@ fn check_values(world: &mut World) {
         setting.invalid = invalid;
     }
     if !found.is_empty() {
-        crate::closing::report_error(
-            world,
-            "Invalid settings",
-            "Some settings have values that can't be used; their defaults apply instead.",
-            found.join("\n"),
-        );
+        world.workbench_mut().notify(Notification::warning(format!(
+            "Some settings can't be used, so their defaults apply: {}",
+            found.join(", ")
+        )));
     }
 }
 
@@ -407,12 +410,9 @@ fn load_layers(world: &mut World) {
             Ok(None) => {}
             Err(error) => {
                 layer.blocked = Some(error.clone());
-                crate::closing::report_error(
-                    world,
-                    "Couldn't load settings",
-                    "Settings couldn't be read, so they won't be saved over.",
-                    format!("{}: {error}", store.name()),
-                );
+                world.workbench_mut().notify(Notification::error(format!(
+                    "Couldn't read settings, so they won't be saved over ({error})"
+                )));
             }
         }
     }
@@ -461,12 +461,7 @@ fn reload_changed_layers(world: &mut World, mut last: Local<Option<Instant>>) {
                 layer.version = version;
                 if layer.blocked.is_none() {
                     layer.blocked = Some(error.clone());
-                    crate::closing::report_error(
-                        world,
-                        "Couldn't load settings",
-                        "Settings changed on disk but couldn't be read; they won't be saved over.",
-                        format!("{}: {error}", store.name()),
-                    );
+                    world.workbench_mut().notify(Notification::error(format!("Settings changed on disk but couldn't be read, so they won't be saved over ({error})")));
                 }
             }
         }
@@ -524,12 +519,9 @@ fn save_layers(world: &mut World, mut last: Local<Option<Instant>>) {
                     continue;
                 }
                 layer.save_error = Some(error.clone());
-                crate::closing::report_error(
-                    world,
-                    "Couldn't save settings",
-                    "Settings couldn't be saved. Saving will keep retrying.",
-                    format!("{}: {error}", store.name()),
-                );
+                world.workbench_mut().notify(Notification::error(format!(
+                    "Couldn't save settings; retrying ({error})"
+                )));
             }
         }
     }

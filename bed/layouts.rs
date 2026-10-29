@@ -8,12 +8,10 @@ use crate::{
     settings::GlobalStore,
     workspace::{Workspace, WorkspacesPanel},
 };
+use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout, PanelFactory,
-    Workbench, active_layout, layouts,
-    persistence::{
-        LayoutTemplate, ReflectPersist, StoreAppExt, capture_layout, instantiate_layout,
-    },
+    persistence::{LayoutTemplate, ReflectPersist, StoreAppExt},
 };
 use bevy::prelude::*;
 
@@ -91,11 +89,16 @@ impl Plugin for LayoutsPlugin {
 
 /// The active layout's slot.
 pub fn current(world: &World) -> Option<LayoutSlot> {
-    active_layout(world).and_then(|layout| world.get::<LayoutSlot>(layout).copied())
+    world
+        .workbench()
+        .active_layout()
+        .and_then(|layout| world.get::<LayoutSlot>(layout).copied())
 }
 
 fn layout_in(world: &World, slot: LayoutSlot) -> Option<Entity> {
-    layouts(world)
+    world
+        .workbench()
+        .layouts()
         .iter()
         .copied()
         .find(|&layout| world.get::<LayoutSlot>(layout) == Some(&slot))
@@ -107,7 +110,7 @@ pub fn switch(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
         Some(layout) => layout,
         None => create(world, slot)?,
     };
-    Workbench::new(world).activate_layout(layout)?;
+    world.workbench_mut().activate_layout(layout)?;
     Ok(layout)
 }
 
@@ -115,13 +118,15 @@ pub fn switch(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
 fn create(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
     let default = world.resource::<LayoutDefaults>().0[slot.0].clone();
     let layout = match default {
-        Some(template) => instantiate_layout(world, &template)
+        Some(template) => world
+            .workbench_mut()
+            .instantiate_layout(&template)
             .map_err(|error| format!("{}'s default can't be used: {error}", slot.name()))?,
         None => {
-            let layout = Workbench::new(world).create_layout(slot.name())?;
+            let layout = world.workbench_mut().create_layout(slot.name())?;
             let default_workspace = world.get_resource::<Workspace>().is_some_and(|w| w.default);
             if slot == LayoutSlot(0) && default_workspace {
-                let area = Workbench::new(world).destination_area(layout)?;
+                let area = world.workbench_mut().destination_area(layout)?;
                 (PanelFactory::of::<WorkspacesPanel>().create)(world, area);
             }
             layout
@@ -135,17 +140,18 @@ fn create(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
 /// At startup: the workspace's saved active layout, or layout 1. A workbench
 /// saved before slots existed gets its active layout as layout 1.
 fn open_first(world: &mut World) {
-    if layouts(world)
+    if world
+        .workbench()
+        .layouts()
         .iter()
         .all(|&layout| world.get::<LayoutSlot>(layout).is_none())
-        && let Some(layout) = active_layout(world)
+        && let Some(layout) = world.workbench().active_layout()
     {
         world.entity_mut(layout).insert(LayoutSlot(0));
     }
-    if active_layout(world).is_none()
-        && let Err(error) = switch(world, LayoutSlot(0))
-    {
-        warn!("{error}");
+    if world.workbench().active_layout().is_none() {
+        let result = switch(world, LayoutSlot(0));
+        crate::status::notify_failure(world, "Couldn't open a layout", result);
     }
 }
 
@@ -155,8 +161,11 @@ fn use_layout<const N: usize>(world: &mut World, _: ActionInvocation) -> ActionR
 
 fn save_as_default(world: &mut World, _: ActionInvocation) -> ActionResult {
     let slot = current(world).ok_or("This layout has no number")?;
-    let layout = active_layout(world).ok_or("No layout is open")?;
-    let template = capture_layout(world, layout)?;
+    let layout = world
+        .workbench()
+        .active_layout()
+        .ok_or("No layout is open")?;
+    let template = world.workbench_mut().capture_layout(layout)?;
     world.resource_mut::<LayoutDefaults>().0[slot.0] = Some(template);
     Ok(())
 }
@@ -165,9 +174,12 @@ fn save_as_default(world: &mut World, _: ActionInvocation) -> ActionResult {
 /// current layout alone.
 fn reset(world: &mut World, _: ActionInvocation) -> ActionResult {
     let slot = current(world).ok_or("This layout has no number")?;
-    let old = active_layout(world).ok_or("No layout is open")?;
+    let old = world
+        .workbench()
+        .active_layout()
+        .ok_or("No layout is open")?;
     let new = create(world, slot)?;
-    let mut workbench = Workbench::new(world);
+    let workbench = world.workbench_mut();
     workbench.activate_layout(new)?;
     if let Err(error) = workbench.delete_layout(old) {
         workbench.activate_layout(old)?;
@@ -206,8 +218,9 @@ mod tests {
     }
 
     fn settings_panels(world: &mut World) -> usize {
-        let layout = active_layout(world).unwrap();
-        Workbench::new(world)
+        let layout = world.workbench().active_layout().unwrap();
+        world
+            .workbench_mut()
             .panels(layout)
             .into_iter()
             .filter(|&panel| world.get::<SettingsPanel>(panel).is_some())
@@ -227,17 +240,17 @@ mod tests {
         run::<UseLayout<2>>(&mut app);
         let world = app.world_mut();
         assert_eq!(current(world), Some(LayoutSlot(2)));
-        assert_eq!(layouts(world).len(), 2);
+        assert_eq!(world.workbench().layouts().len(), 2);
         assert_eq!(settings_panels(world), 0);
         let name = &world
-            .get::<Layout>(active_layout(world).unwrap())
+            .get::<Layout>(world.workbench().active_layout().unwrap())
             .unwrap()
             .name;
         assert_eq!(name, "Layout 3");
 
         run::<UseLayout<0>>(&mut app);
         assert_eq!(settings_panels(app.world_mut()), 1);
-        assert_eq!(layouts(app.world()).len(), 2);
+        assert_eq!(app.world().workbench().layouts().len(), 2);
     }
 
     #[test]
@@ -259,16 +272,16 @@ mod tests {
 
         // Reset puts back the default: Settings returns once closed.
         let world = other.world_mut();
-        let layout = active_layout(world).unwrap();
-        for panel in Workbench::new(world).panels(layout) {
-            Workbench::new(world).close_panel(panel).unwrap();
+        let layout = world.workbench().active_layout().unwrap();
+        for panel in world.workbench_mut().panels(layout) {
+            world.workbench_mut().close_panel(panel).unwrap();
         }
         assert_eq!(settings_panels(world), 0);
         run::<ResetLayout>(&mut other);
         let world = other.world_mut();
         assert_eq!(settings_panels(world), 1);
         assert_eq!(current(world), Some(LayoutSlot(0)));
-        assert_eq!(layouts(world).len(), 1);
+        assert_eq!(world.workbench().layouts().len(), 1);
     }
 
     #[test]
@@ -276,10 +289,10 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, LayoutsPlugin));
         let world = app.world_mut();
-        let layout = Workbench::new(world).create_layout("Old").unwrap();
-        Workbench::new(world).activate_layout(layout).unwrap();
+        let layout = world.workbench_mut().create_layout("Old").unwrap();
+        world.workbench_mut().activate_layout(layout).unwrap();
         app.update();
         assert_eq!(app.world().get::<LayoutSlot>(layout), Some(&LayoutSlot(0)));
-        assert_eq!(layouts(app.world()).len(), 1);
+        assert_eq!(app.world().workbench().layouts().len(), 1);
     }
 }

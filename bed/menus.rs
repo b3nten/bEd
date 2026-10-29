@@ -8,11 +8,12 @@ use crate::{
     workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
 };
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
+use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult, CloseRequested,
     ErrorDialog, Handler, InMenu, InvocationContext, Invokes, KeyChord, Menu, MenuBar, MenuEntries,
-    MenuItem, MenuSeparator, NativeMenuBar, PanelFactory, SaveDocument, action_available,
-    draw_menu_bar, panel_drag_source, request_error_dialog, shortcut_for,
+    MenuItem, MenuSeparator, NativeMenuBar, PanelFactory, SaveDocument, draw_menu_bar,
+    panel_drag_source,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -252,14 +253,11 @@ fn other_recent(world: &World) -> Option<PathBuf> {
 /// Switch this window to `start`'s workspace, or explain why not.
 pub fn switch(world: &mut World, start: Start) {
     if let Err(error) = workspace::switch(world, start) {
-        request_error_dialog(
-            world,
-            ErrorDialog {
-                title: "Open Folder".into(),
-                message: error,
-                details: None,
-            },
-        );
+        world.workbench_mut().request_error_dialog(ErrorDialog {
+            title: "Open Folder".into(),
+            message: error,
+            details: None,
+        });
     }
 }
 
@@ -275,9 +273,9 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
     if let Ok(root) = world
         .query_filtered::<Entity, With<ApplicationMenu>>()
         .single(world)
-        && let Err(error) = draw_menu_bar(&mut context.frame(ui), world, root)
     {
-        warn!("Menu: {error}");
+        let result = draw_menu_bar(&mut context.frame(ui), world, root);
+        crate::status::notify_failure(world, "Menu", result);
     }
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.add_space(4.0);
@@ -302,8 +300,13 @@ fn tool<C: Action>(
     factory: PanelFactory,
 ) {
     let command = ActionId::of::<C>();
-    let enabled = action_available(world, &command, InvocationContext::Focused);
-    let tooltip = match shortcut_for(world, &command, InvocationContext::Focused) {
+    let enabled = world
+        .workbench()
+        .action_available(&command, InvocationContext::Focused);
+    let tooltip = match world
+        .workbench()
+        .shortcut_for(&command, InvocationContext::Focused)
+    {
         Some(chord) => format!("{} ({})", C::LABEL, chord.label()),
         None => C::LABEL.to_owned(),
     };
@@ -323,7 +326,7 @@ fn tool<C: Action>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bedtime_workbench::{MenuNode, WorkbenchCorePlugin, menu_snapshot};
+    use bedtime_workbench::{MenuNode, WorkbenchCorePlugin};
 
     fn labels(nodes: &[MenuNode]) -> Vec<(String, bool)> {
         nodes
@@ -366,7 +369,10 @@ mod tests {
             .query_filtered::<Entity, With<ApplicationMenu>>()
             .single(world)
             .unwrap();
-        let bar = menu_snapshot(world, root, InvocationContext::Focused).unwrap();
+        let bar = world
+            .workbench_mut()
+            .menu_snapshot(root, InvocationContext::Focused)
+            .unwrap();
         assert_eq!(
             labels(&bar.entries),
             [
@@ -394,16 +400,19 @@ mod tests {
         world.resource_mut::<RecentWorkspaces>().0 = vec!["/a".into()];
         app.update();
         let world = app.world_mut();
-        let bar = menu_snapshot(world, root, InvocationContext::Focused).unwrap();
+        let bar = world
+            .workbench_mut()
+            .menu_snapshot(root, InvocationContext::Focused)
+            .unwrap();
         let recent = menu(menu(&bar.entries, "File"), "Open Recent");
         assert_eq!(labels(recent), [("No Recent Folders".into(), false)]);
 
         let open_recent = ActionId::of::<OpenRecent>();
-        assert!(!action_available(
-            world,
-            &open_recent,
-            InvocationContext::Focused
-        ));
+        assert!(
+            !world
+                .workbench()
+                .action_available(&open_recent, InvocationContext::Focused)
+        );
 
         // In the default workspace there's no folder to close, and every
         // recent folder can be opened.
@@ -415,7 +424,10 @@ mod tests {
         world.resource_mut::<RecentWorkspaces>().set_changed();
         app.update();
         let world = app.world_mut();
-        let bar = menu_snapshot(world, root, InvocationContext::Focused).unwrap();
+        let bar = world
+            .workbench_mut()
+            .menu_snapshot(root, InvocationContext::Focused)
+            .unwrap();
         let file = menu(&bar.entries, "File");
         assert!(labels(file).contains(&("Close Folder".into(), false)));
         assert_eq!(labels(menu(file, "Open Recent")), [("/a".into(), true)]);

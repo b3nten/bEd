@@ -2,7 +2,7 @@
 //! second live model. This module alone commits membership and topology changes.
 #[cfg(feature = "persistence")]
 use crate::persistence::ReflectPersist;
-use crate::{Workbench, geometry};
+use crate::{Workbench, WorkbenchRef, geometry};
 #[cfg(feature = "persistence")]
 use bevy::ecs::reflect::ReflectMapEntities;
 use bevy::prelude::*;
@@ -18,8 +18,28 @@ use std::collections::HashMap;
 )]
 #[cfg_attr(feature = "persistence", reflect(Resource, MapEntities, Persist))]
 pub(crate) struct LayoutOrder(#[cfg_attr(feature = "persistence", entities)] pub Vec<Entity>);
-pub fn layouts(world: &World) -> &[Entity] {
-    &world.resource::<LayoutOrder>().0
+impl WorkbenchRef {
+    pub fn layouts(&self) -> &[Entity] {
+        let world = &self.world;
+        &world.resource::<LayoutOrder>().0
+    }
+
+    /// Find the selected layout from its authoritative marker.
+    pub fn active_layout(&self) -> Option<Entity> {
+        let world = &self.world;
+        let mut query = world.try_query_filtered::<Entity, With<ActiveLayout>>()?;
+        let mut layouts = query.iter(world);
+        let selected = layouts.next();
+        assert!(layouts.next().is_none(), "Multiple ActiveLayout entities");
+        selected
+    }
+
+    /// Bevy removes a relationship target when its last source is detached. An
+    /// absent target is the ordinary representation of an empty area's tab list.
+    pub fn panels_in_area(&self, area: Entity) -> &[Entity] {
+        let world = &self.world;
+        world.get::<AreaPanels>(area).map_or(&[], |p| p.entities())
+    }
 }
 
 /// Selected layout in this World. Zero or one may be selected.
@@ -115,15 +135,6 @@ impl PanelInstance {
     }
 }
 
-/// Find the selected layout from its authoritative marker.
-pub fn active_layout(world: &World) -> Option<Entity> {
-    let mut query = world.try_query_filtered::<Entity, With<ActiveLayout>>()?;
-    let mut layouts = query.iter(world);
-    let selected = layouts.next();
-    assert!(layouts.next().is_none(), "Multiple ActiveLayout entities");
-    selected
-}
-
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
 #[cfg_attr(feature = "persistence", reflect(Component, Persist))]
@@ -162,12 +173,6 @@ impl AreaPanels {
     pub fn entities(&self) -> &[Entity] {
         &self.0
     }
-}
-
-/// Bevy removes a relationship target when its last source is detached. An
-/// absent target is the ordinary representation of an empty area's tab list.
-pub fn panels_in_area(world: &World, area: Entity) -> &[Entity] {
-    world.get::<AreaPanels>(area).map_or(&[], |p| p.entities())
 }
 
 #[derive(Component, Debug, Default, Clone, Copy)]
@@ -446,28 +451,7 @@ pub(crate) fn plan_tab_geometry(
     Ok((next, destination))
 }
 
-impl Workbench<'_> {
-    pub fn active_layout(&self) -> Entity {
-        active_layout(self.world).expect("No active layout")
-    }
-
-    pub fn create_layout(&mut self, name: impl Into<String>) -> Result<Entity, String> {
-        Ok(new_layout(self.world, name.into()))
-    }
-
-    pub fn activate_layout(&mut self, layout: Entity) -> Result<(), String> {
-        self.world
-            .get::<Layout>(layout)
-            .ok_or("Layout is unavailable")?;
-        if active_layout(self.world) != Some(layout) {
-            if let Some(previous) = active_layout(self.world) {
-                self.world.entity_mut(previous).remove::<ActiveLayout>();
-            }
-            self.world.entity_mut(layout).insert(ActiveLayout);
-        }
-        Ok(())
-    }
-
+impl WorkbenchRef {
     pub fn panel_layout(&self, panel: Entity) -> Result<Entity, String> {
         self.world
             .get::<PanelInstance>(panel)
@@ -484,7 +468,7 @@ impl Workbench<'_> {
             .get::<LayoutAreas>(layout)
             .map_or(&[][..], |a| a.entities())
             .iter()
-            .flat_map(|&area| panels_in_area(self.world, area).iter().copied())
+            .flat_map(|&area| self.panels_in_area(area).iter().copied())
             .collect()
     }
 
@@ -510,44 +494,6 @@ impl Workbench<'_> {
             .ok_or("Layout has no areas")?)
     }
 
-    pub fn focus_area(&mut self, area: Entity) -> Result<(), String> {
-        self.world.get::<Area>(area).ok_or("Area is unavailable")?;
-        let layout = self.world.get::<InLayout>(area).unwrap().0;
-        self.world.get_mut::<Layout>(layout).unwrap().focused_area = Some(area);
-        Ok(())
-    }
-
-    /// Select a tab without changing the layout's focused area.
-    pub fn select_panel(&mut self, panel: Entity) -> Result<(), String> {
-        self.panel_layout(panel)?;
-        let area = self.world.get::<InArea>(panel).unwrap().0;
-        self.world.get_mut::<Area>(area).unwrap().selected = Some(panel);
-        Ok(())
-    }
-
-    /// Explicit convenience for selecting a tab and focusing its area.
-    pub fn focus_panel(&mut self, panel: Entity) -> Result<(), String> {
-        self.select_panel(panel)?;
-        self.focus_area(self.world.get::<InArea>(panel).unwrap().0)
-    }
-
-    pub fn close_panel(&mut self, panel: Entity) -> Result<(), String> {
-        self.panel_layout(panel)?;
-        check_panel_drafts(self.world, [panel])?;
-        let area = self.world.get::<InArea>(panel).unwrap().0;
-        let index = panels_in_area(self.world, area)
-            .iter()
-            .position(|&p| p == panel)
-            .unwrap();
-        self.world.despawn(panel);
-        let tabs = panels_in_area(self.world, area);
-        let next = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
-        if self.world.get::<Area>(area).unwrap().selected == Some(panel) {
-            self.world.get_mut::<Area>(area).unwrap().selected = next;
-        }
-        Ok(())
-    }
-
     pub(crate) fn snapshot(&self, layout: Entity) -> Result<GeometrySnapshot, String> {
         self.world
             .get::<Layout>(layout)
@@ -571,6 +517,195 @@ impl Workbench<'_> {
                 .collect(),
         );
         Ok(GeometrySnapshot { geometry, entities })
+    }
+
+    fn plan_area_relocation(
+        &self,
+        source: Entity,
+        target: Entity,
+        placement: Option<AreaPlacement>,
+        minimum: [i32; 2],
+    ) -> Result<(Entity, GeometrySnapshot, geometry::DockPlan), String> {
+        valid_minimum(minimum)?;
+        let layout = self
+            .world
+            .get::<InLayout>(source)
+            .ok_or("Source area is unavailable")?
+            .0;
+        if self
+            .world
+            .get::<InLayout>(target)
+            .ok_or("Target area is unavailable")?
+            .0
+            != layout
+        {
+            return Err("Areas belong to different layouts".into());
+        }
+        let snapshot = self.snapshot(layout)?;
+        let a = snapshot.id(source)?;
+        let b = snapshot.id(target)?;
+        let plan = if let Some(placement) = placement {
+            snapshot
+                .geometry
+                .plan_dock(a, b, placement.geometry()?, minimum)
+        } else {
+            snapshot.geometry.plan_join(a, b, minimum)
+        }
+        .ok_or("Area placement cannot satisfy the tiling/minimum sizes")?;
+        Ok((layout, snapshot, plan))
+    }
+
+    /// A deferred edit still applies if the layout it was made in is still
+    /// active and everything it names is still in that layout. A border resize
+    /// names a position instead, so that border must still be there.
+    pub(crate) fn validate_edit(&self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
+        if self.active_layout() != Some(layout) {
+            return Err("The layout changed during the interaction".into());
+        }
+        let area_of =
+            |world: &World, entity: Entity| world.get::<InArea>(entity).map_or(entity, |p| p.0);
+        let targets: Vec<Entity> = match edit {
+            LayoutEdit::FocusArea(e)
+            | LayoutEdit::FocusPanel(e)
+            | LayoutEdit::KeepPanel(e)
+            | LayoutEdit::CloseArea(e) => vec![*e],
+            LayoutEdit::ClosePanels(es) => es.clone(),
+            LayoutEdit::MoveTab { panel, area, .. } | LayoutEdit::SplitTab { panel, area, .. } => {
+                vec![*panel, *area]
+            }
+            LayoutEdit::SplitArea { area, .. } | LayoutEdit::DropPanel { area, .. } => vec![*area],
+            LayoutEdit::JoinAreas { source, target, .. }
+            | LayoutEdit::DockArea { source, target, .. } => vec![*source, *target],
+            LayoutEdit::ResizeBorder { axis, at, span, .. } => {
+                let a = axis.index();
+                let border = self.snapshot(layout)?.geometry.areas.iter().any(|area| {
+                    (area.rect.min[a] == *at || area.rect.max[a] == *at)
+                        && area.rect.min[a ^ 1] < span[1]
+                        && area.rect.max[a ^ 1] > span[0]
+                });
+                if !border {
+                    return Err("The border moved during the interaction".into());
+                }
+                Vec::new()
+            }
+        };
+        for e in targets {
+            if self
+                .world
+                .get::<InLayout>(area_of(&self.world, e))
+                .map(|r| r.0)
+                != Some(layout)
+            {
+                return Err("The interaction's target is no longer in this layout".into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Submit a close intention for application policy. This never destroys data.
+    /// The panels a destructive edit would remove, including those removed by
+    /// joins/docks. Uses the same geometry planner as the edit itself.
+    pub(crate) fn close_targets(
+        &self,
+        layout: Entity,
+        edit: &LayoutEdit,
+    ) -> Result<Vec<Entity>, String> {
+        self.validate_edit(layout, edit)?;
+        match edit {
+            LayoutEdit::ClosePanels(panels) => Ok(panels.clone()),
+            LayoutEdit::CloseArea(area) => Ok(self.panels_in_area(*area).to_vec()),
+            LayoutEdit::JoinAreas {
+                source,
+                target,
+                minimum,
+            }
+            | LayoutEdit::DockArea {
+                source,
+                target,
+                minimum,
+                ..
+            } => {
+                let placement = if let LayoutEdit::DockArea { placement, .. } = edit {
+                    Some(*placement)
+                } else {
+                    None
+                };
+                let (_, snapshot, plan) =
+                    self.plan_area_relocation(*source, *target, placement, *minimum)?;
+                Ok(snapshot
+                    .entities
+                    .iter()
+                    .enumerate()
+                    .filter(|(index, _)| {
+                        !plan
+                            .layout
+                            .areas
+                            .iter()
+                            .any(|area| area.id == *index as u32 + 1)
+                    })
+                    .flat_map(|(_, &area)| self.panels_in_area(area).iter().copied())
+                    .collect())
+            }
+            _ => Err("Not a destructive layout edit".into()),
+        }
+    }
+}
+
+impl Workbench {
+    pub fn create_layout(&mut self, name: impl Into<String>) -> Result<Entity, String> {
+        Ok(new_layout(&mut self.world, name.into()))
+    }
+
+    pub fn activate_layout(&mut self, layout: Entity) -> Result<(), String> {
+        self.world
+            .get::<Layout>(layout)
+            .ok_or("Layout is unavailable")?;
+        if self.active_layout() != Some(layout) {
+            if let Some(previous) = self.active_layout() {
+                self.world.entity_mut(previous).remove::<ActiveLayout>();
+            }
+            self.world.entity_mut(layout).insert(ActiveLayout);
+        }
+        Ok(())
+    }
+
+    pub fn focus_area(&mut self, area: Entity) -> Result<(), String> {
+        self.world.get::<Area>(area).ok_or("Area is unavailable")?;
+        let layout = self.world.get::<InLayout>(area).unwrap().0;
+        self.world.get_mut::<Layout>(layout).unwrap().focused_area = Some(area);
+        Ok(())
+    }
+
+    /// Select a tab without changing the layout's focused area.
+    pub fn select_panel(&mut self, panel: Entity) -> Result<(), String> {
+        self.panel_layout(panel)?;
+        let area = self.world.get::<InArea>(panel).unwrap().0;
+        self.world.get_mut::<Area>(area).unwrap().selected = Some(panel);
+        Ok(())
+    }
+
+    /// Explicit convenience for selecting a tab and focusing its area.
+    pub fn focus_panel(&mut self, panel: Entity) -> Result<(), String> {
+        self.select_panel(panel)?;
+        self.focus_area(self.world.get::<InArea>(panel).unwrap().0)
+    }
+
+    pub fn close_panel(&mut self, panel: Entity) -> Result<(), String> {
+        self.panel_layout(panel)?;
+        check_panel_drafts(&self.world, [panel])?;
+        let area = self.world.get::<InArea>(panel).unwrap().0;
+        let index = self
+            .panels_in_area(area)
+            .iter()
+            .position(|&p| p == panel)
+            .unwrap();
+        self.world.despawn(panel);
+        let tabs = self.panels_in_area(area);
+        let next = tabs.get(index.min(tabs.len().saturating_sub(1))).copied();
+        if self.world.get::<Area>(area).unwrap().selected == Some(panel) {
+            self.world.get_mut::<Area>(area).unwrap().selected = next;
+        }
+        Ok(())
     }
 
     fn commit_geometry(
@@ -642,7 +777,7 @@ impl Workbench<'_> {
         if !next.close_area(snapshot.id(area)?) {
             return Err("Cannot close the final area".into());
         }
-        check_panel_drafts(self.world, panels_in_area(self.world, area).iter().copied())?;
+        check_panel_drafts(&self.world, self.panels_in_area(area).iter().copied())?;
         self.commit_geometry(layout, &snapshot, next);
         Ok(())
     }
@@ -703,7 +838,7 @@ impl Workbench<'_> {
         let source = self.world.get::<InArea>(panel).unwrap().0;
         if source == area && split.is_none() {
             // Reordering is not attachment: preserve the open tab and area focus.
-            let mut tabs = panels_in_area(self.world, area).to_vec();
+            let mut tabs = self.panels_in_area(area).to_vec();
             tabs.retain(|&tab| tab != panel);
             tabs.insert(index.min(tabs.len()), panel);
             self.world.entity_mut(area).replace_related::<InArea>(&tabs);
@@ -715,7 +850,7 @@ impl Workbench<'_> {
             &snapshot.geometry,
             snapshot.id(source)?,
             snapshot.id(area)?,
-            panels_in_area(self.world, source).len() == 1,
+            self.panels_in_area(source).len() == 1,
             split,
             minimum,
         )?;
@@ -724,12 +859,12 @@ impl Workbench<'_> {
         // This synchronous transition restores ownership before returning.
         self.world.entity_mut(panel).remove::<InArea>();
         if self.world.get::<Area>(source).unwrap().selected == Some(panel) {
-            let first = panels_in_area(self.world, source).first().copied();
+            let first = self.panels_in_area(source).first().copied();
             self.world.get_mut::<Area>(source).unwrap().selected = first;
         }
         let mapping = self.commit_geometry(layout, &snapshot, next);
         let destination = mapping[&id];
-        let mut tabs = panels_in_area(self.world, destination).to_vec();
+        let mut tabs = self.panels_in_area(destination).to_vec();
         tabs.insert(index.min(tabs.len()), panel);
         self.world.entity_mut(panel).insert(InArea(destination));
         self.world
@@ -754,7 +889,7 @@ impl Workbench<'_> {
         if let Some(axis) = split {
             self.split_tab(panel, area, axis, true, [1, 1])?;
         } else {
-            let index = panels_in_area(self.world, area).len();
+            let index = self.panels_in_area(area).len();
             self.move_tab(panel, area, index)?;
         }
         Ok(())
@@ -779,42 +914,6 @@ impl Workbench<'_> {
         self.relocate_area(source, target, Some(placement), minimum)
     }
 
-    fn plan_area_relocation(
-        &self,
-        source: Entity,
-        target: Entity,
-        placement: Option<AreaPlacement>,
-        minimum: [i32; 2],
-    ) -> Result<(Entity, GeometrySnapshot, geometry::DockPlan), String> {
-        valid_minimum(minimum)?;
-        let layout = self
-            .world
-            .get::<InLayout>(source)
-            .ok_or("Source area is unavailable")?
-            .0;
-        if self
-            .world
-            .get::<InLayout>(target)
-            .ok_or("Target area is unavailable")?
-            .0
-            != layout
-        {
-            return Err("Areas belong to different layouts".into());
-        }
-        let snapshot = self.snapshot(layout)?;
-        let a = snapshot.id(source)?;
-        let b = snapshot.id(target)?;
-        let plan = if let Some(placement) = placement {
-            snapshot
-                .geometry
-                .plan_dock(a, b, placement.geometry()?, minimum)
-        } else {
-            snapshot.geometry.plan_join(a, b, minimum)
-        }
-        .ok_or("Area placement cannot satisfy the tiling/minimum sizes")?;
-        Ok((layout, snapshot, plan))
-    }
-
     fn relocate_area(
         &mut self,
         source: Entity,
@@ -827,7 +926,7 @@ impl Workbench<'_> {
         // A join/dock can replace target areas and their panels. Validate every
         // removed area before changing geometry or focus.
         check_panel_drafts(
-            self.world,
+            &self.world,
             snapshot
                 .entities
                 .iter()
@@ -839,7 +938,7 @@ impl Workbench<'_> {
                         .iter()
                         .any(|area| area.id == *index as u32 + 1)
                 })
-                .flat_map(|(_, &area)| panels_in_area(self.world, area).iter().copied()),
+                .flat_map(|(_, &area)| self.panels_in_area(area).iter().copied()),
         )?;
         self.commit_geometry(layout, &snapshot, plan.layout);
         self.focus_area(source)
@@ -874,114 +973,19 @@ impl Workbench<'_> {
         self.world
             .get::<Layout>(layout)
             .ok_or("Layout is unavailable")?;
-        check_panel_drafts(self.world, self.panels(layout))?;
+        check_panel_drafts(&self.world, self.panels(layout))?;
         let replacement = self
             .world
             .query::<(Entity, &Layout)>()
-            .iter(self.world)
+            .iter(&self.world)
             .find_map(|(e, _)| (e != layout).then_some(e));
-        if active_layout(self.world) == Some(layout) {
+        if self.active_layout() == Some(layout) {
             if let Some(next) = replacement {
                 self.world.entity_mut(next).insert(ActiveLayout);
             }
         }
         self.world.despawn(layout);
         Ok(())
-    }
-
-    /// A deferred edit still applies if the layout it was made in is still
-    /// active and everything it names is still in that layout. A border resize
-    /// names a position instead, so that border must still be there.
-    pub(crate) fn validate_edit(&self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
-        if active_layout(self.world) != Some(layout) {
-            return Err("The layout changed during the interaction".into());
-        }
-        let area_of =
-            |world: &World, entity: Entity| world.get::<InArea>(entity).map_or(entity, |p| p.0);
-        let targets: Vec<Entity> = match edit {
-            LayoutEdit::FocusArea(e)
-            | LayoutEdit::FocusPanel(e)
-            | LayoutEdit::KeepPanel(e)
-            | LayoutEdit::CloseArea(e) => vec![*e],
-            LayoutEdit::ClosePanels(es) => es.clone(),
-            LayoutEdit::MoveTab { panel, area, .. } | LayoutEdit::SplitTab { panel, area, .. } => {
-                vec![*panel, *area]
-            }
-            LayoutEdit::SplitArea { area, .. } | LayoutEdit::DropPanel { area, .. } => vec![*area],
-            LayoutEdit::JoinAreas { source, target, .. }
-            | LayoutEdit::DockArea { source, target, .. } => vec![*source, *target],
-            LayoutEdit::ResizeBorder { axis, at, span, .. } => {
-                let a = axis.index();
-                let border = self.snapshot(layout)?.geometry.areas.iter().any(|area| {
-                    (area.rect.min[a] == *at || area.rect.max[a] == *at)
-                        && area.rect.min[a ^ 1] < span[1]
-                        && area.rect.max[a ^ 1] > span[0]
-                });
-                if !border {
-                    return Err("The border moved during the interaction".into());
-                }
-                Vec::new()
-            }
-        };
-        for e in targets {
-            if self
-                .world
-                .get::<InLayout>(area_of(self.world, e))
-                .map(|r| r.0)
-                != Some(layout)
-            {
-                return Err("The interaction's target is no longer in this layout".into());
-            }
-        }
-        Ok(())
-    }
-
-    /// Submit a close intention for application policy. This never destroys data.
-    /// The panels a destructive edit would remove, including those removed by
-    /// joins/docks. Uses the same geometry planner as the edit itself.
-    pub(crate) fn close_targets(
-        &self,
-        layout: Entity,
-        edit: &LayoutEdit,
-    ) -> Result<Vec<Entity>, String> {
-        self.validate_edit(layout, edit)?;
-        match edit {
-            LayoutEdit::ClosePanels(panels) => Ok(panels.clone()),
-            LayoutEdit::CloseArea(area) => Ok(panels_in_area(self.world, *area).to_vec()),
-            LayoutEdit::JoinAreas {
-                source,
-                target,
-                minimum,
-            }
-            | LayoutEdit::DockArea {
-                source,
-                target,
-                minimum,
-                ..
-            } => {
-                let placement = if let LayoutEdit::DockArea { placement, .. } = edit {
-                    Some(*placement)
-                } else {
-                    None
-                };
-                let (_, snapshot, plan) =
-                    self.plan_area_relocation(*source, *target, placement, *minimum)?;
-                Ok(snapshot
-                    .entities
-                    .iter()
-                    .enumerate()
-                    .filter(|(index, _)| {
-                        !plan
-                            .layout
-                            .areas
-                            .iter()
-                            .any(|area| area.id == *index as u32 + 1)
-                    })
-                    .flat_map(|(_, &area)| panels_in_area(self.world, area).iter().copied())
-                    .collect())
-            }
-            _ => Err("Not a destructive layout edit".into()),
-        }
     }
 
     pub(crate) fn edit(&mut self, layout: Entity, edit: &LayoutEdit) -> Result<(), String> {
@@ -1009,7 +1013,7 @@ impl Workbench<'_> {
                 for &e in es {
                     self.panel_layout(e)?;
                 }
-                check_panel_drafts(self.world, es.iter().copied())?;
+                check_panel_drafts(&self.world, es.iter().copied())?;
                 for &e in es {
                     self.close_panel(e)?;
                 }
@@ -1065,7 +1069,7 @@ impl Workbench<'_> {
                     }
                 }
                 // Geometry is validated before invoking the infallible app factory.
-                let panel = (factory.create)(self.world, *area);
+                let panel = (factory.create)(&mut self.world, *area);
                 assert!(
                     self.world.get::<PanelInstance>(panel).is_some()
                         && self.world.get::<InArea>(panel).map(|owner| owner.0) == Some(*area),
@@ -1092,9 +1096,10 @@ fn valid_minimum(minimum: [i32; 2]) -> Result<(), String> {
 
 #[cfg(feature = "ui")]
 fn apply_edits(world: &mut World) {
+    use crate::WorkbenchWorldExt;
     let edits = std::mem::take(&mut world.resource_mut::<PendingEdits>().0);
     for (layout, edit) in edits {
         // A gesture overtaken by other changes is simply dropped.
-        let _ = Workbench::new(world).user_edit(layout, &edit);
+        let _ = world.workbench_mut().user_edit(layout, &edit);
     }
 }

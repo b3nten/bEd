@@ -9,7 +9,12 @@
 //! A workspace's store lives under the config directory, keyed by a stable
 //! hash of the folder's path, so repositories aren't touched. A lock file
 //! stops two instances from saving the same workspace over each other.
-use bedtime_workbench::{ErrorDialog, persistence::StoreBackend, request_error_dialog};
+use crate::settings::{GlobalLocation, GlobalStore, ReopenLastWorkspace};
+use bedtime_workbench::{
+    ErrorDialog, WorkbenchWorldExt,
+    persistence::{DirectoryStore, StoreAppExt, StoreBackend, WorkbenchStore},
+    settings::{Setting, SettingsAppExt, read_setting},
+};
 use bevy::prelude::*;
 use std::{
     fs::{self, File, TryLockError},
@@ -184,10 +189,89 @@ pub enum Start {
     Default,
 }
 
+/// Where an App starts, worked out before it's built: the window's title
+/// needs the workspace.
+pub struct Launch {
+    pub opened: Opened,
+    config: Option<PathBuf>,
+    recent: RecentWorkspaces,
+    /// Couldn't update the recent list.
+    remembered: Result<(), String>,
+}
+
+/// Open `start`'s workspace: read what the global store remembers (recent
+/// folders, whether to reopen the last), choose and claim the workspace, and
+/// put it first on the recent list.
+pub fn launch(start: Start) -> Launch {
+    let config = crate::config_directory();
+    let global = config
+        .as_ref()
+        .map(|config| DirectoryStore::new(config.join("global")));
+    let mut recent = RecentWorkspaces::default();
+    let mut reopen_last = <ReopenLastWorkspace as Setting>::default();
+    if let Some(global) = &global {
+        recent = RecentWorkspaces::read(global);
+        reopen_last = read_setting::<ReopenLastWorkspace>(global).unwrap_or(reopen_last);
+    }
+    let opened = choose(start, config.as_deref(), &recent, reopen_last);
+    let remembered = match &global {
+        Some(global) if !opened.workspace.default => {
+            recent.remember(global, &opened.workspace.root)
+        }
+        _ => Ok(()),
+    };
+    Launch {
+        opened,
+        config,
+        recent,
+        remembered,
+    }
+}
+
+impl Launch {
+    /// Add the stores (global, and the workspace's if it was claimed), the
+    /// workspace's settings layer and the workspace's resources to `app`.
+    /// Global settings and data go in `<config>/global`; the layout, panels and
+    /// workspace settings go in the workspace's store.
+    pub fn install(self, app: &mut App) {
+        let global = self.config.as_ref().map(|config| config.join("global"));
+        if let Some(global) = &global {
+            app.add_store::<GlobalStore>(DirectoryStore::new(global));
+        }
+        app.insert_resource(GlobalLocation(global));
+        let Opened {
+            workspace,
+            lock,
+            unclaimed,
+        } = self.opened;
+        // A folder's settings override global ones. Without a claimed store
+        // they still apply, but only in memory. The default workspace has none:
+        // it's just where bed is without a project.
+        if !workspace.default {
+            app.add_settings_layer::<WorkbenchStore>();
+        }
+        if let (Some(lock), Some(config)) = (lock, &self.config) {
+            app.add_store::<WorkbenchStore>(DirectoryStore::new(workspace.store_directory(config)))
+                .insert_resource(lock);
+        }
+        if let Some(unclaimed) = unclaimed {
+            app.insert_resource(Unclaimed(unclaimed));
+        }
+        app.insert_resource(workspace)
+            .insert_resource(self.recent)
+            .add_systems(Update, report_unclaimed);
+        crate::status::notify_failure(
+            app.world_mut(),
+            "Couldn't update recent folders",
+            self.remembered,
+        );
+    }
+}
+
 /// Decide which workspace to open and claim its store. A folder named
 /// explicitly opens even if another instance has it, but isn't saved; one
 /// only reopened from the recent list is skipped instead.
-pub fn open(
+pub fn choose(
     start: Start,
     config: Option<&Path>,
     recent: &RecentWorkspaces,
@@ -253,8 +337,9 @@ pub fn open(
     }
 }
 
-/// Switch this window to `start`'s workspace: the App is rebuilt in the same
-/// window once this update finishes, after saving. A folder another instance
+/// Switch this window to `start`'s workspace. This ends the session the way
+/// quitting does (unsaved documents are saved or asked about, and the user can
+/// cancel), then rebuilds the App in the same window. A folder another instance
 /// has open is refused rather than opened unsaved; the default workspace opens
 /// unsaved, as in any other window.
 pub fn switch(world: &mut World, start: Start) -> Result<(), String> {
@@ -273,8 +358,11 @@ pub fn switch(world: &mut World, start: Start) -> Result<(), String> {
     {
         return Err(format!("{} is open in another bEd window.", next.name()));
     }
-    bevy::winit::relaunch(world, move || crate::app(start));
-    Ok(())
+    world
+        .workbench_mut()
+        .request_exit("Switch workspace", move |world| {
+            bevy::winit::relaunch(world, move || crate::app(start));
+        })
 }
 
 /// Whether no other instance has the workspace whose store is `directory`.
@@ -296,17 +384,14 @@ pub struct Unclaimed(pub String);
 
 pub fn report_unclaimed(world: &mut World) {
     if let Some(Unclaimed(details)) = world.remove_resource::<Unclaimed>() {
-        request_error_dialog(
-            world,
-            ErrorDialog {
-                title: "Layout won't be saved".into(),
-                message: "This folder is already open in another bEd window, or its saved \
+        world.workbench_mut().request_error_dialog(ErrorDialog {
+            title: "Layout won't be saved".into(),
+            message: "This folder is already open in another bEd window, or its saved \
                           layout couldn't be claimed. Changes to this window's layout and \
                           workspace settings won't be saved."
-                    .into(),
-                details: Some(details),
-            },
-        );
+                .into(),
+            details: Some(details),
+        });
     }
 }
 
@@ -361,7 +446,7 @@ mod tests {
         let (config, project) = (root.join("config"), root.join("project"));
         fs::create_dir_all(&project).unwrap();
         let recent = RecentWorkspaces(vec![root.join("deleted"), project.clone()]);
-        let open = |start, reopen| open(start, Some(&config), &recent, reopen);
+        let open = |start, reopen| choose(start, Some(&config), &recent, reopen);
 
         let default = open(Start::CommandLine(None), false);
         assert!(default.workspace.default && default.lock.is_some());
@@ -402,7 +487,7 @@ mod tests {
         let (config, project) = (root.join("config"), root.join("project"));
         fs::create_dir_all(&project).unwrap();
         let recent = RecentWorkspaces::default();
-        let opened = open(
+        let opened = choose(
             Start::Folder(project.clone()),
             Some(&config),
             &recent,

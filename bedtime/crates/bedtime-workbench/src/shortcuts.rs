@@ -283,7 +283,7 @@ mod tests {
     #[test]
     fn world_shortcut_collection_continues_after_the_last_layout_is_removed() {
         let (mut app, surface, ctx) = app();
-        let layout = active_layout(app.world()).unwrap();
+        let layout = app.world().workbench().active_layout().unwrap();
         app.world_mut().despawn(layout);
         bind::<Save>(&mut app, KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyS));
         frame(

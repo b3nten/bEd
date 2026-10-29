@@ -14,7 +14,8 @@
 //! fills the table; without, the table holds each command's defaults.
 #[cfg(feature = "persistence")]
 use crate::persistence::StoreId;
-use crate::{Area, Layout, PanelInstance};
+use crate::{Area, Layout, Notification, PanelInstance};
+use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
 use bevy::prelude::*;
 use std::{any::TypeId, borrow::Cow, collections::VecDeque, fmt, ops::BitOr};
 
@@ -493,8 +494,10 @@ impl ActionAppExt for App {
             },
             #[cfg(feature = "persistence")]
             set_keys_in: |world, store, chords| match chords {
-                Some(chords) => crate::settings::set_setting::<Keybinding<C>>(world, store, chords),
-                None => crate::settings::clear_setting::<Keybinding<C>>(world, store),
+                Some(chords) => world
+                    .workbench_mut()
+                    .set_setting::<Keybinding<C>>(store, chords),
+                None => world.workbench_mut().clear_setting::<Keybinding<C>>(store),
             },
         });
         world
@@ -535,44 +538,72 @@ impl<C: Action> crate::settings::Setting for Keybinding<C> {
     }
 }
 
-/// The keys `command` has in one settings layer, if that layer sets them.
-#[cfg(feature = "persistence")]
-pub fn keys_in(world: &World, command: &ActionId, store: StoreId) -> Option<Vec<KeyChord>> {
-    let registered = world.resource::<ActionRegistry>().get(command)?;
-    (registered.keys_in)(world, store)
+impl WorkbenchRef {
+    /// The keys `command` has in one settings layer, if that layer sets them.
+    #[cfg(feature = "persistence")]
+    pub fn keys_in(&self, command: &ActionId, store: StoreId) -> Option<Vec<KeyChord>> {
+        let world = &self.world;
+        let registered = world.resource::<ActionRegistry>().get(command)?;
+        (registered.keys_in)(world, store)
+    }
+
+    /// `command`'s keys as one settings layer and those below it give them.
+    #[cfg(feature = "persistence")]
+    pub fn keys_at(&self, command: &ActionId, store: StoreId) -> Vec<KeyChord> {
+        let world = &self.world;
+        world
+            .resource::<ActionRegistry>()
+            .get(command)
+            .map(|registered| (registered.keys_at)(world, store))
+            .unwrap_or_default()
+    }
+
+    /// The nearest settings layer above `store` that sets `command`'s keys.
+    #[cfg(feature = "persistence")]
+    pub fn keys_overridden_above(&self, command: &ActionId, store: StoreId) -> Option<StoreId> {
+        let world = &self.world;
+        let registered = world.resource::<ActionRegistry>().get(command)?;
+        (registered.keys_overridden_above)(world, store)
+    }
+
+    /// Whether `command` would run in `context` right now.
+    pub fn action_available(&self, command: &ActionId, context: InvocationContext) -> bool {
+        let world = &self.world;
+        resolve(world, command, context_panel(world, context)).is_ok()
+    }
+
+    /// The chord that runs `command` in `context`, for menu hints. Resolved for
+    /// this platform.
+    pub fn shortcut_for(&self, command: &ActionId, context: InvocationContext) -> Option<KeyChord> {
+        let world = &self.world;
+        let panel = context_panel(world, context);
+        let runs =
+            |chord| chord_target(world, chord, panel).is_ok_and(|c| c.as_ref() == Some(command));
+        let keys = world.resource::<Keybindings>().keys(command);
+        keys.iter()
+            .copied()
+            .find(|&chord| runs(chord))
+            .map(KeyChord::resolved)
+    }
 }
 
-/// `command`'s keys as one settings layer and those below it give them.
-#[cfg(feature = "persistence")]
-pub fn keys_at(world: &World, command: &ActionId, store: StoreId) -> Vec<KeyChord> {
-    world
-        .resource::<ActionRegistry>()
-        .get(command)
-        .map(|registered| (registered.keys_at)(world, store))
-        .unwrap_or_default()
-}
-
-/// The nearest settings layer above `store` that sets `command`'s keys.
-#[cfg(feature = "persistence")]
-pub fn keys_overridden_above(world: &World, command: &ActionId, store: StoreId) -> Option<StoreId> {
-    let registered = world.resource::<ActionRegistry>().get(command)?;
-    (registered.keys_overridden_above)(world, store)
-}
-
-/// Set `command`'s keys in one settings layer, or with `None` clear them there.
-#[cfg(feature = "persistence")]
-pub fn set_keys_in(
-    world: &mut World,
-    command: &ActionId,
-    store: StoreId,
-    chords: Option<Vec<KeyChord>>,
-) -> Result<(), String> {
-    let set = world
-        .resource::<ActionRegistry>()
-        .get(command)
-        .ok_or("Unknown command")?
-        .set_keys_in;
-    set(world, store, chords)
+impl Workbench {
+    /// Set `command`'s keys in one settings layer, or with `None` clear them there.
+    #[cfg(feature = "persistence")]
+    pub fn set_keys_in(
+        &mut self,
+        command: &ActionId,
+        store: StoreId,
+        chords: Option<Vec<KeyChord>>,
+    ) -> Result<(), String> {
+        let world = &mut self.world;
+        let set = world
+            .resource::<ActionRegistry>()
+            .get(command)
+            .ok_or("Unknown command")?
+            .set_keys_in;
+        set(world, store, chords)
+    }
 }
 
 pub(crate) fn install(app: &mut App) {
@@ -601,7 +632,7 @@ pub(crate) fn install(app: &mut App) {
 }
 
 pub(crate) fn focused_panel(world: &World) -> Option<Entity> {
-    let layout = crate::active_layout(world)?;
+    let layout = world.workbench().active_layout()?;
     let area = world.get::<Layout>(layout)?.focused_area()?;
     world.get::<Area>(area)?.selected_panel()
 }
@@ -630,11 +661,6 @@ fn resolve(world: &World, command: &ActionId, panel: Option<Entity>) -> Result<A
     } else {
         Err("Not available now".into())
     }
-}
-
-/// Whether `command` would run in `context` right now.
-pub fn action_available(world: &World, command: &ActionId, context: InvocationContext) -> bool {
-    resolve(world, command, context_panel(world, context)).is_ok()
 }
 
 /// Which command `chord` runs for `panel`: among the commands bound to it,
@@ -670,22 +696,6 @@ fn chord_target(
         Err(candidates) if candidates.is_empty() => Ok(None),
         Err(candidates) => Err(candidates),
     }
-}
-
-/// The chord that runs `command` in `context`, for menu hints. Resolved for
-/// this platform.
-pub fn shortcut_for(
-    world: &World,
-    command: &ActionId,
-    context: InvocationContext,
-) -> Option<KeyChord> {
-    let panel = context_panel(world, context);
-    let runs = |chord| chord_target(world, chord, panel).is_ok_and(|c| c.as_ref() == Some(command));
-    let keys = world.resource::<Keybindings>().keys(command);
-    keys.iter()
-        .copied()
-        .find(|&chord| runs(chord))
-        .map(KeyChord::resolved)
 }
 
 fn shortcuts(world: &mut World) {
@@ -729,8 +739,20 @@ fn dispatch(world: &mut World) {
             command: request.command,
             source: request.source,
         };
-        let result = resolve(world, &invocation.command, invocation.panel)
-            .and_then(|call| call(world, invocation.clone()));
+        // Not being available isn't a failure (a shortcut pressed where it
+        // does nothing); a handler that fails is, and the user hears about it.
+        let result = resolve(world, &invocation.command, invocation.panel).and_then(|call| {
+            call(world, invocation.clone()).inspect_err(|error| {
+                let label = world
+                    .resource::<ActionRegistry>()
+                    .label(&invocation.command)
+                    .unwrap_or(invocation.command.as_str())
+                    .to_owned();
+                world
+                    .workbench_mut()
+                    .notify(Notification::error(format!("{label}: {error}")));
+            })
+        });
         world.write_message(ActionFinished { invocation, result });
     }
 }

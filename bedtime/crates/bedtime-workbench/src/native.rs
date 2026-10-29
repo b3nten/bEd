@@ -1,5 +1,6 @@
 //! Optional platform adapters. Core menus and commands have no native dependency.
-use crate::{CloseRequested, InvocationContext, MenuSnapshot, menu_snapshot};
+use crate::{CloseRequested, InvocationContext, MenuSnapshot};
+use crate::{WorkbenchRef, WorkbenchWorldExt};
 use bevy::{
     app::PluginGroupBuilder,
     prelude::*,
@@ -172,12 +173,15 @@ impl Drop for NativeState {
     }
 }
 
-/// Whether this abstract root currently has an installed operating-system menu.
-/// Capability alone is not installation success (for example before a window exists).
-pub fn native_menu_installed(world: &World, root: Entity) -> bool {
-    world
-        .get_non_send::<NativeState>()
-        .is_some_and(|state| state.installed_root == Some(root))
+impl WorkbenchRef {
+    /// Whether this abstract root currently has an installed operating-system menu.
+    /// Capability alone is not installation success (for example before a window exists).
+    pub fn native_menu_installed(&self, root: Entity) -> bool {
+        let world = &self.world;
+        world
+            .get_non_send::<NativeState>()
+            .is_some_and(|state| state.installed_root == Some(root))
+    }
 }
 
 pub(crate) fn poll(world: &mut World) {
@@ -201,9 +205,9 @@ fn requested_menu(world: &mut World) -> Result<MenuSnapshot, String> {
         .collect();
     match roots.as_slice() {
         [] => Ok(MenuSnapshot::default()),
-        [root] if world.get::<crate::MenuBar>(*root).is_some() => {
-            menu_snapshot(world, *root, InvocationContext::Focused)
-        }
+        [root] if world.get::<crate::MenuBar>(*root).is_some() => world
+            .workbench_mut()
+            .menu_snapshot(*root, InvocationContext::Focused),
         [_] => Err("NativeMenuBar must select an abstract MenuBar".into()),
         _ => Err("Only one native menu bar can be selected".into()),
     }
@@ -223,7 +227,7 @@ fn poll_menus(world: &mut World) {
                 .as_ref()
                 .ok()
                 .and_then(|snapshot| snapshot.root)
-                .and_then(|root| menu_snapshot(world, root, context).ok())
+                .and_then(|root| world.workbench_mut().menu_snapshot(root, context).ok())
                 .and_then(|snapshot| snapshot.request(source, target))
                 .filter(|request| request.context == context)
             {

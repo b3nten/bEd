@@ -7,6 +7,7 @@
 //! comparison with what was last written. A store whose saved data couldn't be
 //! read or restored is never written, so a damaged file isn't overwritten.
 use super::*;
+use crate::WorkbenchWorldExt;
 use std::{
     any::TypeId,
     collections::HashMap,
@@ -141,7 +142,6 @@ pub struct Stores(Vec<StoreState>);
 
 struct StoreState {
     id: TypeId,
-    name: &'static str,
     backend: Arc<dyn StoreBackend>,
     capture: fn(&mut World) -> Result<String, String>,
     restore: fn(&mut World, &str) -> Result<(), String>,
@@ -187,10 +187,9 @@ impl StoreAppExt for App {
         );
         stores.0.push(StoreState {
             id: TypeId::of::<S>(),
-            name: type_name::<S>(),
             backend: Arc::new(backend),
-            capture: capture::<S>,
-            restore: restore::<S>,
+            capture: |world| world.workbench_mut().capture::<S>(),
+            restore: |world, text| world.workbench_mut().restore::<S>(text),
             written: None,
             blocked: None,
             error: None,
@@ -228,9 +227,9 @@ pub(super) fn install(app: &mut App) {
 fn load_stores(world: &mut World) {
     let count = world.resource::<Stores>().0.len();
     for index in 0..count {
-        let (backend, restore, name) = {
+        let (backend, restore) = {
             let store = &world.resource::<Stores>().0[index];
-            (store.backend.clone(), store.restore, store.name)
+            (store.backend.clone(), store.restore)
         };
         let result = backend.read(WORLD_ENTRY).and_then(|bytes| {
             let Some(bytes) = bytes else {
@@ -245,12 +244,9 @@ fn load_stores(world: &mut World) {
             Ok(written) => store.written = written,
             Err(error) => {
                 store.blocked = Some(error.clone());
-                crate::closing::report_error(
-                    world,
-                    "Couldn't restore",
-                    "Saved state couldn't be restored, so it won't be saved over.",
-                    format!("{name}: {error}"),
-                );
+                world.workbench_mut().notify(Notification::error(format!(
+                    "Couldn't restore saved state, so it won't be saved over ({error})"
+                )));
             }
         }
     }
@@ -292,14 +288,10 @@ fn save_stores(world: &mut World, mut last: Local<Option<Instant>>) {
                 store.error = None;
             }
             Err(error) if store.error.as_ref() != Some(&error) => {
-                let name = store.name;
                 store.error = Some(error.clone());
-                crate::closing::report_error(
-                    world,
-                    "Couldn't save",
-                    "Changes couldn't be saved. Saving will keep retrying.",
-                    format!("{name}: {error}"),
-                );
+                world.workbench_mut().notify(Notification::error(format!(
+                    "Couldn't save; retrying ({error})"
+                )));
             }
             Err(_) => {}
         }

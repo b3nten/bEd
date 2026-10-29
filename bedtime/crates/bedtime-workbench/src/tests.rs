@@ -1,4 +1,5 @@
 use super::*;
+use crate::{Workbench, WorkbenchWorldExt};
 
 fn app() -> App {
     let mut app = App::new();
@@ -10,11 +11,12 @@ fn app() -> App {
 #[test]
 fn last_layout_can_be_deleted() {
     let mut app = app();
-    let layout = Workbench::new(app.world_mut()).active_layout();
-    Workbench::new(app.world_mut())
+    let layout = app.world_mut().workbench_mut().active_layout().unwrap();
+    app.world_mut()
+        .workbench_mut()
         .delete_layout(layout)
         .unwrap();
-    assert_eq!(active_layout(app.world()), None);
+    assert_eq!(app.world().workbench().active_layout(), None);
     app.update();
 }
 
@@ -24,15 +26,15 @@ struct Draft(String);
 #[test]
 fn switching_layouts_retains_panel_instances_and_their_state() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let first = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let first = w.active_layout().unwrap();
     let panel = w.create_panel(first, "Notes").unwrap();
     let second = w.create_layout("Other").unwrap();
     w.world
         .entity_mut(panel)
         .insert(Draft("keep this draft".into()));
     w.activate_layout(second).unwrap();
-    assert_eq!(w.active_layout(), second);
+    assert_eq!(w.active_layout().unwrap(), second);
     w.activate_layout(first).unwrap();
     assert_eq!(
         w.world.get::<Draft>(panel),
@@ -44,8 +46,8 @@ fn switching_layouts_retains_panel_instances_and_their_state() {
 #[test]
 fn panels_can_split_regroup_and_close_without_retiring_other_panels() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let first = w.create_panel(layout, "First").unwrap();
     let second = w.create_panel(layout, "Second").unwrap();
     let third = w.create_panel(layout, "Third").unwrap();
@@ -68,20 +70,20 @@ fn panels_can_split_regroup_and_close_without_retiring_other_panels() {
 #[test]
 fn deletion_retires_owned_panels_and_selects_a_surviving_layout() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let first = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let first = w.active_layout().unwrap();
     let panel = w.create_panel(first, "Disposable").unwrap();
     let second = w.create_layout("Survives").unwrap();
     w.delete_layout(first).unwrap();
-    assert_eq!(w.active_layout(), second);
+    assert_eq!(w.active_layout().unwrap(), second);
     assert!(w.world.get_entity(panel).is_err());
 }
 
 #[test]
 fn rejected_moves_preserve_layouts() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let first = w.create_panel(layout, "First").unwrap();
     let other = w.create_layout("Other").unwrap();
     let second = w.create_panel(other, "Second").unwrap();
@@ -93,8 +95,8 @@ fn rejected_moves_preserve_layouts() {
 #[test]
 fn a_border_resize_is_refused_once_that_border_is_gone() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let first = w.create_panel(layout, "First").unwrap();
     let second = w.create_panel(layout, "Second").unwrap();
     w.move_panel(second, first, Some(SplitAxis::Horizontal))
@@ -134,8 +136,8 @@ fn a_border_resize_is_refused_once_that_border_is_gone() {
 #[test]
 fn closing_content_retains_its_area_but_moving_the_last_tab_closes_its_footprint() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let first = w.destination_area(layout).unwrap();
     let second = w
         .split_area(first, SplitAxis::Horizontal, 5000, [100, 100])
@@ -144,7 +146,7 @@ fn closing_content_retains_its_area_but_moving_the_last_tab_closes_its_footprint
     let rect = w.world.get::<Area>(second).unwrap().rect();
     w.close_panel(panel).unwrap();
     assert_eq!(w.world.get::<Area>(second).unwrap().rect(), rect);
-    assert!(panels_in_area(w.world, second).is_empty());
+    assert!(w.panels_in_area(second).is_empty());
     let panel = w.create_panel_in_area(second, "Moved").unwrap();
     w.world.entity_mut(panel).insert(Draft("retained".into()));
     w.move_tab(panel, first, 0).unwrap();
@@ -163,8 +165,8 @@ fn closing_content_retains_its_area_but_moving_the_last_tab_closes_its_footprint
 #[test]
 fn per_item_tab_style_does_not_change_preview_keep_or_move_semantics() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let area = w.destination_area(layout).unwrap();
     let preview = w.create_panel_in_area(area, "Preview").unwrap();
     let permanent = w.create_panel_in_area(area, "Permanent").unwrap();
@@ -184,7 +186,7 @@ fn per_item_tab_style_does_not_change_preview_keep_or_move_semantics() {
     // A normal-looking preview remains a preview; an italic permanent tab does not become one.
     w.world.entity_mut(preview).insert(PanelTabStyle::default());
     w.world.entity_mut(permanent).insert(permanent_style);
-    validate_workbench(w.world).unwrap();
+    validate_workbench(w.world_mut()).unwrap();
     assert!(w.world.get::<PanelInstance>(preview).unwrap().preview);
     assert!(!w.world.get::<PanelInstance>(permanent).unwrap().preview);
 
@@ -201,11 +203,11 @@ fn per_item_tab_style_does_not_change_preview_keep_or_move_semantics() {
         w.world.get::<PanelTabStyle>(permanent),
         Some(&permanent_style)
     );
-    assert_eq!(panels_in_area(w.world, area), &[permanent, preview]);
+    assert_eq!(w.panels_in_area(area), &[permanent, preview]);
 
     w.world.get_mut::<PanelInstance>(preview).unwrap().preview = true;
     w.world.entity_mut(preview).remove::<PanelTabStyle>();
-    validate_workbench(w.world).unwrap();
+    validate_workbench(w.world_mut()).unwrap();
     assert!(w.world.get::<PanelInstance>(preview).unwrap().preview);
     assert!(w.world.get::<PanelTabStyle>(preview).is_none());
     assert_eq!(
@@ -217,18 +219,18 @@ fn per_item_tab_style_does_not_change_preview_keep_or_move_semantics() {
 #[test]
 fn tab_reordering_uses_destination_order_after_removing_the_source() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let area = w.destination_area(layout).unwrap();
     let a = w.create_panel_in_area(area, "A").unwrap();
     let b = w.create_panel_in_area(area, "B").unwrap();
     let c = w.create_panel_in_area(area, "C").unwrap();
     w.world.get_mut::<PanelInstance>(a).unwrap().preview = true;
     w.move_tab(a, area, 2).unwrap();
-    assert_eq!(panels_in_area(w.world, area), &[b, c, a]);
+    assert_eq!(w.panels_in_area(area), &[b, c, a]);
     assert!(!w.world.get::<PanelInstance>(a).unwrap().preview);
     w.move_tab(c, area, 0).unwrap();
-    assert_eq!(panels_in_area(w.world, area), &[c, b, a]);
+    assert_eq!(w.panels_in_area(area), &[c, b, a]);
     assert_eq!(w.focused_panel(layout), Some(c));
 }
 
@@ -237,8 +239,8 @@ fn all_four_tab_edges_split_without_recreating_the_panel_and_keep_an_empty_sourc
     for axis in [SplitAxis::Horizontal, SplitAxis::Vertical] {
         for high in [false, true] {
             let mut app = app();
-            let mut w = Workbench::new(app.world_mut());
-            let layout = w.active_layout();
+            let w = app.world_mut().workbench_mut();
+            let layout = w.active_layout().unwrap();
             let original = w.destination_area(layout).unwrap();
             let panel = w.create_panel_in_area(original, "One").unwrap();
             w.world.entity_mut(panel).insert(Draft("canonical".into()));
@@ -249,7 +251,7 @@ fn all_four_tab_edges_split_without_recreating_the_panel_and_keep_an_empty_sourc
                 w.world.get::<LayoutAreas>(layout).unwrap().entities().len(),
                 2
             );
-            assert!(panels_in_area(w.world, original).is_empty());
+            assert!(w.panels_in_area(original).is_empty());
             assert_eq!(w.world.get::<InArea>(panel).unwrap().0, destination);
             assert_eq!(
                 w.world.get::<Draft>(panel),
@@ -265,8 +267,8 @@ fn all_four_tab_edges_split_without_recreating_the_panel_and_keep_an_empty_sourc
 #[test]
 fn partial_area_join_preserves_the_target_tail_and_its_live_content() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let left = w.destination_area(layout).unwrap();
     let right = w
         .split_area(left, SplitAxis::Horizontal, 5000, [100, 100])
@@ -299,8 +301,8 @@ fn partial_area_join_preserves_the_target_tail_and_its_live_content() {
 #[test]
 fn an_edit_for_a_layout_that_is_no_longer_active_is_refused() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let area = w.destination_area(layout).unwrap();
     let other = w.create_layout("Other").unwrap();
     w.activate_layout(other).unwrap();
@@ -323,8 +325,8 @@ fn an_edit_for_a_layout_that_is_no_longer_active_is_refused() {
 #[test]
 fn invalid_creation_drop_does_not_call_the_application_factory_or_modify_geometry() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let area = w.destination_area(layout).unwrap();
     let factory = PanelFactory::new("Must not run", |_, _| {
         panic!("Invalid drop invoked factory")
@@ -351,8 +353,8 @@ fn invalid_creation_drop_does_not_call_the_application_factory_or_modify_geometr
 #[test]
 fn user_closure_without_unsaved_documents_closes_immediately() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let layout = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let layout = w.active_layout().unwrap();
     let panel = w.create_panel(layout, "Nothing to save").unwrap();
     w.user_edit(layout, &LayoutEdit::ClosePanels(vec![panel]))
         .unwrap();
@@ -372,14 +374,14 @@ fn user_closure_without_unsaved_documents_closes_immediately() {
 #[test]
 fn moving_between_layouts_preserves_shared_document_and_local_state() {
     let mut app = app();
-    let mut w = Workbench::new(app.world_mut());
-    let first = w.active_layout();
+    let w = app.world_mut().workbench_mut();
+    let first = w.active_layout().unwrap();
     let panel = w.create_panel(first, "Viewer").unwrap();
-    let document = open_document(
-        w.world_mut(),
-        MemorySource::new("File", TextBuffer::from("text")),
-    )
-    .unwrap();
+    let document = w
+        .world_mut()
+        .workbench_mut()
+        .open_document(MemorySource::new("File", TextBuffer::from("text")))
+        .unwrap();
     w.world_mut()
         .entity_mut(panel)
         .insert(DocumentReference::new(document.id()));
@@ -408,7 +410,7 @@ pub(crate) trait TestPanels {
     fn create_panel_in_area(&mut self, area: Entity, title: &str) -> Result<Entity, String>;
 }
 
-impl TestPanels for Workbench<'_> {
+impl TestPanels for Workbench {
     fn create_panel(&mut self, layout: Entity, title: &str) -> Result<Entity, String> {
         let area = self.destination_area(layout)?;
         self.create_panel_in_area(area, title)
@@ -428,7 +430,7 @@ impl TestPanels for Workbench<'_> {
 /// A layout fixture; core installation itself deliberately creates no layout.
 pub(crate) fn layout(world: &mut World) -> Entity {
     let layout = crate::layout::new_layout(world, "Test".into());
-    if active_layout(world).is_none() {
+    if world.workbench().active_layout().is_none() {
         world.entity_mut(layout).insert(ActiveLayout);
     }
     layout

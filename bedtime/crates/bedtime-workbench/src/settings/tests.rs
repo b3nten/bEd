@@ -1,4 +1,5 @@
 use super::*;
+use crate::WorkbenchWorldExt;
 use crate::{
     WorkbenchCorePlugin,
     persistence::{
@@ -67,16 +68,28 @@ fn later_layers_override_earlier_ones_and_clearing_inherits() {
     assert_eq!(applied(&app), [16.0], "apply runs once at startup");
     let world = app.world_mut();
 
-    set_setting::<Indent>(world, global(), 18.0).unwrap();
-    set_setting::<Indent>(world, workspace(), 12.0).unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(global(), 18.0)
+        .unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(workspace(), 12.0)
+        .unwrap();
     // The workspace still overrides it, so nothing changes.
-    set_setting::<Indent>(world, global(), 20.0).unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(global(), 20.0)
+        .unwrap();
     let settings = world.resource::<Settings>();
     assert_eq!(settings.get::<Indent>(), 12.0);
     assert_eq!(settings.source::<Indent>(), Some(workspace()));
     assert_eq!(settings.get_in::<Indent>(global()), Some(20.0));
 
-    clear_setting::<Indent>(world, workspace()).unwrap();
+    world
+        .workbench_mut()
+        .clear_setting::<Indent>(workspace())
+        .unwrap();
     assert_eq!(world.resource::<Settings>().get::<Indent>(), 20.0);
     assert_eq!(applied(&app), [16.0, 18.0, 12.0, 20.0]);
 }
@@ -89,12 +102,18 @@ fn each_layer_has_its_own_view_and_knows_what_overrides_it() {
     assert_eq!(settings.get_at::<Indent>(global()), 16.0);
     assert_eq!(settings.overridden_above::<Indent>(global()), None);
 
-    set_setting::<Indent>(world, global(), 18.0).unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(global(), 18.0)
+        .unwrap();
     let settings = world.resource::<Settings>();
     // The workspace inherits the global value.
     assert_eq!(settings.get_at::<Indent>(workspace()), 18.0);
 
-    set_setting::<Indent>(world, workspace(), 12.0).unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(workspace(), 12.0)
+        .unwrap();
     let settings = world.resource::<Settings>();
     assert_eq!(settings.get::<Indent>(), 12.0);
     // Editing the global layer starts from its own value, not the workspace's.
@@ -110,19 +129,34 @@ fn each_layer_has_its_own_view_and_knows_what_overrides_it() {
 fn setting_the_inherited_value_clears_the_layer() {
     let mut app = app(&MemoryBackend::default(), &MemoryBackend::default());
     let world = app.world_mut();
-    set_setting::<Indent>(world, global(), 18.0).unwrap();
-    set_setting::<Indent>(world, workspace(), 12.0).unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(global(), 18.0)
+        .unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(workspace(), 12.0)
+        .unwrap();
     // Set back to what the global layer gives: the workspace stops holding a
     // value, so it follows later global changes.
-    set_setting::<Indent>(world, workspace(), 18.0).unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(workspace(), 18.0)
+        .unwrap();
     assert_eq!(
         world.resource::<Settings>().get_in::<Indent>(workspace()),
         None
     );
-    set_setting::<Indent>(world, global(), 20.0).unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(global(), 20.0)
+        .unwrap();
     assert_eq!(world.resource::<Settings>().get::<Indent>(), 20.0);
     // The global layer at the default holds nothing either.
-    set_setting::<Indent>(world, global(), 16.0).unwrap();
+    world
+        .workbench_mut()
+        .set_setting::<Indent>(global(), 16.0)
+        .unwrap();
     assert_eq!(
         world.resource::<Settings>().get_in::<Indent>(global()),
         None
@@ -133,8 +167,16 @@ fn setting_the_inherited_value_clears_the_layer() {
 fn settings_can_be_limited_to_some_layers() {
     let mut app = app(&MemoryBackend::default(), &MemoryBackend::default());
     let world = app.world_mut();
-    assert!(set_setting::<RestoreLast>(world, workspace(), false).is_err());
-    set_setting::<RestoreLast>(world, global(), false).unwrap();
+    assert!(
+        world
+            .workbench_mut()
+            .set_setting::<RestoreLast>(workspace(), false)
+            .is_err()
+    );
+    world
+        .workbench_mut()
+        .set_setting::<RestoreLast>(global(), false)
+        .unwrap();
     assert!(!world.resource::<Settings>().get::<RestoreLast>());
 }
 
@@ -159,7 +201,10 @@ fn layers_load_at_startup_save_changes_and_keep_unknown_keys() {
         "unchanged layers aren't rewritten"
     );
 
-    set_setting::<Indent>(app.world_mut(), global(), 19.0).unwrap();
+    app.world_mut()
+        .workbench_mut()
+        .set_setting::<Indent>(global(), 19.0)
+        .unwrap();
     save_now(&mut app);
     let saved = global_backend.text("settings").unwrap();
     assert!(saved.contains("19.0") && saved.contains("some.plugin"));
@@ -198,7 +243,10 @@ fn an_unreadable_layer_is_never_saved_over() {
     global_backend.write("settings", b"not settings").unwrap();
     let mut app = app(&global_backend, &MemoryBackend::default());
     assert!(app.world().resource::<Settings>().error(global()).is_some());
-    set_setting::<Indent>(app.world_mut(), global(), 30.0).unwrap();
+    app.world_mut()
+        .workbench_mut()
+        .set_setting::<Indent>(global(), 30.0)
+        .unwrap();
     save_now(&mut app);
     assert_eq!(global_backend.text("settings").unwrap(), "not settings");
 }
@@ -220,7 +268,11 @@ fn a_layer_changed_outside_the_app_is_reloaded() {
 fn enum_values_round_trip_through_a_saved_layer() {
     let global_backend = MemoryBackend::default();
     let mut first = app(&global_backend, &MemoryBackend::default());
-    set_setting::<ShadeSetting>(first.world_mut(), global(), Shade::Light).unwrap();
+    first
+        .world_mut()
+        .workbench_mut()
+        .set_setting::<ShadeSetting>(global(), Shade::Light)
+        .unwrap();
     assert_eq!(
         first.world().resource::<Settings>().get::<ShadeSetting>(),
         Shade::Light

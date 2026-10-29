@@ -18,6 +18,7 @@ pub use stores::*;
 pub use templates::*;
 
 use crate::*;
+use crate::{Workbench, WorkbenchWorldExt};
 use bevy::{
     ecs::{
         entity::{EntityHashMap, EntityMapper},
@@ -58,54 +59,110 @@ pub(crate) fn register(app: &mut App) {
     stores::install(app);
 }
 
-/// Everything persisted that belongs in store `S`, as RON text.
-pub fn capture<S: Store>(world: &mut World) -> Result<String, String> {
-    let registry = world.resource::<AppTypeRegistry>().clone();
-    let registry = registry.read();
-    let routing = world.resource::<PersistRouting>();
-    let with_entities = TypeId::of::<S>() == TypeId::of::<WorkbenchStore>();
-    let components = if with_entities {
-        persisted_components(&registry)
-    } else {
-        WorldFilter::deny_all()
-    };
-    let mut resources = WorldFilter::deny_all();
-    for registration in registry.iter() {
-        let id = registration.type_id();
-        if registration.data::<ReflectPersist>().is_some()
-            && registration.data::<ReflectResource>().is_some()
-            && routing.store_of(id) == TypeId::of::<S>()
-        {
-            resources = resources.allow_by_id(id);
+impl Workbench {
+    /// Everything persisted that belongs in store `S`, as RON text.
+    pub fn capture<S: Store>(&mut self) -> Result<String, String> {
+        let world = &mut self.world;
+        let registry = world.resource::<AppTypeRegistry>().clone();
+        let registry = registry.read();
+        let routing = world.resource::<PersistRouting>();
+        let with_entities = TypeId::of::<S>() == TypeId::of::<WorkbenchStore>();
+        let components = if with_entities {
+            persisted_components(&registry)
+        } else {
+            WorldFilter::deny_all()
+        };
+        let mut resources = WorldFilter::deny_all();
+        for registration in registry.iter() {
+            let id = registration.type_id();
+            if registration.data::<ReflectPersist>().is_some()
+                && registration.data::<ReflectResource>().is_some()
+                && routing.store_of(id) == TypeId::of::<S>()
+            {
+                resources = resources.allow_by_id(id);
+            }
         }
+        let entities: Vec<_> = if with_entities {
+            world
+                .archetypes()
+                .iter()
+                .flat_map(|archetype| archetype.entities())
+                .map(|entity| entity.id())
+                .filter(|&entity| {
+                    world
+                        .get::<bevy::ecs::resource::IsResource>(entity)
+                        .is_none()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut dynamic = DynamicWorldBuilder::from_world(world, &registry)
+            .with_component_filter(components)
+            .with_resource_filter(resources)
+            .extract_entities(entities.into_iter())
+            .extract_resources()
+            .build();
+        dynamic
+            .entities
+            .retain(|entity| !entity.components.is_empty());
+        leave_out_unsaved_panels(&mut dynamic);
+        check_references(&dynamic, &registry)?;
+        serialize(dynamic, &registry)
     }
-    let entities: Vec<_> = if with_entities {
-        world
-            .archetypes()
+
+    /// Write a capture of store `S` back into the world. Layouts can only be
+    /// restored into a workbench that has none yet. On failure nothing restored
+    /// from entities is kept.
+    pub fn restore<S: Store>(&mut self, text: &str) -> Result<(), String> {
+        let world = &mut self.world;
+        let registry = world.resource::<AppTypeRegistry>().clone();
+        let registry = registry.read();
+        let dynamic = parse(text, &registry)?;
+        let with_entities = TypeId::of::<S>() == TypeId::of::<WorkbenchStore>();
+        if !with_entities && !dynamic.entities.is_empty() {
+            return Err(format!(
+                "Only WorkbenchStore holds entities, not {}",
+                type_name::<S>()
+            ));
+        }
+        let routing = world.resource::<PersistRouting>();
+        for value in dynamic
+            .entities
             .iter()
-            .flat_map(|archetype| archetype.entities())
-            .map(|entity| entity.id())
-            .filter(|&entity| {
-                world
-                    .get::<bevy::ecs::resource::IsResource>(entity)
-                    .is_none()
-            })
-            .collect()
-    } else {
-        Vec::new()
-    };
-    let mut dynamic = DynamicWorldBuilder::from_world(world, &registry)
-        .with_component_filter(components)
-        .with_resource_filter(resources)
-        .extract_entities(entities.into_iter())
-        .extract_resources()
-        .build();
-    dynamic
-        .entities
-        .retain(|entity| !entity.components.is_empty());
-    leave_out_unsaved_panels(&mut dynamic);
-    check_references(&dynamic, &registry)?;
-    serialize(dynamic, &registry)
+            .flat_map(|entity| &entity.components)
+            .chain(&dynamic.resources)
+        {
+            let registration = value
+                .get_represented_type_info()
+                .and_then(|info| registry.get(info.type_id()))
+                .ok_or_else(|| format!("{} isn't registered", value.reflect_type_path()))?;
+            if registration.data::<ReflectPersist>().is_none() {
+                return Err(format!(
+                    "{} isn't marked Persist",
+                    value.reflect_type_path()
+                ));
+            }
+            if registration.data::<ReflectResource>().is_some()
+                && routing.store_of(registration.type_id()) != TypeId::of::<S>()
+            {
+                return Err(format!(
+                    "{} belongs in another store",
+                    value.reflect_type_path()
+                ));
+            }
+        }
+        if dynamic
+            .entities
+            .iter()
+            .any(|e| value::<Layout>(e).is_some())
+            && !world.workbench().layouts().is_empty()
+        {
+            return Err("Layouts can only be restored into an empty workbench".into());
+        }
+
+        write_entities(world, &dynamic, &registry).map(|_| ())
+    }
 }
 
 /// Every persisted component type.
@@ -180,58 +237,6 @@ fn write_entities(
         return Err(error);
     }
     Ok(map)
-}
-
-/// Write a capture of store `S` back into the world. Layouts can only be
-/// restored into a workbench that has none yet. On failure nothing restored
-/// from entities is kept.
-pub fn restore<S: Store>(world: &mut World, text: &str) -> Result<(), String> {
-    let registry = world.resource::<AppTypeRegistry>().clone();
-    let registry = registry.read();
-    let dynamic = parse(text, &registry)?;
-    let with_entities = TypeId::of::<S>() == TypeId::of::<WorkbenchStore>();
-    if !with_entities && !dynamic.entities.is_empty() {
-        return Err(format!(
-            "Only WorkbenchStore holds entities, not {}",
-            type_name::<S>()
-        ));
-    }
-    let routing = world.resource::<PersistRouting>();
-    for value in dynamic
-        .entities
-        .iter()
-        .flat_map(|entity| &entity.components)
-        .chain(&dynamic.resources)
-    {
-        let registration = value
-            .get_represented_type_info()
-            .and_then(|info| registry.get(info.type_id()))
-            .ok_or_else(|| format!("{} isn't registered", value.reflect_type_path()))?;
-        if registration.data::<ReflectPersist>().is_none() {
-            return Err(format!(
-                "{} isn't marked Persist",
-                value.reflect_type_path()
-            ));
-        }
-        if registration.data::<ReflectResource>().is_some()
-            && routing.store_of(registration.type_id()) != TypeId::of::<S>()
-        {
-            return Err(format!(
-                "{} belongs in another store",
-                value.reflect_type_path()
-            ));
-        }
-    }
-    if dynamic
-        .entities
-        .iter()
-        .any(|e| value::<Layout>(e).is_some())
-        && !layouts(world).is_empty()
-    {
-        return Err("Layouts can only be restored into an empty workbench".into());
-    }
-
-    write_entities(world, &dynamic, &registry).map(|_| ())
 }
 
 /// A panel entity saved with nothing but its place in an area couldn't be

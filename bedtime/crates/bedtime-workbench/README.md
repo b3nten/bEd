@@ -65,8 +65,8 @@ fn setup(mut commands: Commands) {
 }
 ```
 
-At most one `ActiveLayout` exists in the World; zero is valid. `layouts(world)`
-returns stable insertion order and `active_layout(world)` returns an Option.
+At most one `ActiveLayout` exists in the World; zero is valid. `layouts()`
+returns stable insertion order and `active_layout()` returns an Option.
 A bare layout creates no area. `Area::default()` covers the full layout; multiple
 areas must form a complete nonoverlapping integer `0..LAYOUT_EXTENT` tiling.
 Areas may be empty. Attachment selects a panel's tab without changing area focus;
@@ -83,9 +83,39 @@ Game entities need no Workbench components. Application-wide session data belong
 in resources; optional panel/document owners give work a shorter lifetime.
 
 No selected layout is normal: shell/titlebar/menu/status remain available and
-panel content is skipped. `Workbench::new(world)` works in that state. Operations
+panel content is skipped. `world.workbench_mut()` works in that state. Operations
 that need a destination return an error. Deleting the last layout is allowed.
 Keep deferred writers/readers ordered normally; unapplied Commands are not visible.
+
+## Operations
+
+Workbench operations are methods on two views of the `World`, from
+`WorkbenchWorldExt`:
+
+```rust,ignore
+use bedtime_workbench::WorkbenchWorldExt;
+
+// Reads: a `&WorkbenchRef`.
+let layout = world.workbench().active_layout();
+let ids = world.workbench().document_ids();
+
+// Changes: a `&mut Workbench`, which also has every read.
+let workbench = world.workbench_mut();
+workbench.focus_panel(panel)?;
+workbench.save_document(id)?;
+```
+
+Changes that have to keep the workbench's rules (membership, persistence,
+unsaved work, shutdown) go through `Workbench`; plain reads stay on their
+resources and components (`Settings::get`, `Layout::focused_area`). There are no
+free functions taking a `World`. A system queues a closure, which Bevy runs as a
+command:
+
+```rust,ignore
+commands.queue(move |world: &mut World| {
+    let _ = world.workbench_mut().save_document(id);
+});
+```
 
 ## Application-owned sessions
 
@@ -121,6 +151,11 @@ applications don't implement them.
 - **Quit.** `CloseRequested` asks the same about every unsaved document, waits
   for saves, shuts down managed work, then sends `AppExit`. Hook `AppExit` to
   flush application state.
+- **Other exits.** `Workbench::request_exit(name, then)` ends the session the
+  same way but runs `then` instead of sending `AppExit`; bed switches workspace
+  with it. `name` titles the prompt ("Switch workspace with unsaved
+  changes?") and is `ClosePrompt::exit`. Cancel leaves the session running.
+  One exit at a time; a quit during another exit is ignored.
 
 Raw despawn of panels bypasses the prompt; it is not a user-facing close.
 
@@ -133,8 +168,10 @@ returns the same document. Models come from
 `TextBuffer` for text); sources implement `DocumentSource<Model>`.
 
 ```rust,ignore
-let document = open_document(world, MemorySource::new("Notes", TextBuffer::from("hello")))?;
-// Loads on a worker; inspect_document(world, document.id())?.status says when it's Ready.
+let document = world
+    .workbench_mut()
+    .open_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
+// Loads on a worker; world.workbench().inspect_document(document.id())?.status says when it's Ready.
 world.spawn((NotesViewer, DocumentReference::new(document.id()), InArea(area)));
 ```
 
@@ -170,7 +207,7 @@ Request user-facing errors independently of the panel that noticed
 an operation fail:
 
 ```rust,ignore
-request_error_dialog(world, ErrorDialog {
+world.workbench_mut().request_error_dialog(ErrorDialog {
     title: "Could not open the file".into(),
     message: "The file is no longer available. Refresh Files and try again.".into(),
     details: Some(error.to_string()),
@@ -204,6 +241,19 @@ error can be requested again, so callers must edge-detect persistent failures
 rather than resubmitting them on every draw/poll. Errors requested during drawing
 appear on the next root pass. The module/API are absent with `ui` disabled; the
 standalone core remains renderer-independent.
+
+## Notifications
+
+`Workbench::notify(Notification::error(text))` tells the user something that
+needs no answer: a setting or layout that couldn't be saved, an action whose
+handler failed. Each is logged and kept in the `Notifications` resource (the
+last 50; a repeat of the latest refreshes its time instead of adding another).
+Workbench doesn't draw them; the application shows `Notifications::latest()`,
+in a status bar say. Workbench sends its own store and settings failures here,
+and every action handler's `Err`. An action that isn't available (a shortcut
+pressed where it does nothing) isn't a failure and isn't reported. Anything
+that could lose work, such as a document that won't save, asks with a dialog
+instead.
 
 ## Layouts, panels and UI
 
@@ -359,7 +409,7 @@ in `WorkbenchUi`. Select the menu with
 until the application registers its drawing function:
 
 ~~~rust,ignore
-let status = Workbench::new(world).register_status_bar(draw_status);
+let status = world.workbench_mut().register_status_bar(draw_status);
 world.entity_mut(status).insert(ApplicationStatus::default());
 
 fn draw_status(ui: &mut egui::Ui, world: &mut World, context: &bedtime_ui::UiContext<'_>) {
@@ -565,8 +615,8 @@ calculations: cancellation can suppress its returned value. `ManagedTask` report
 Finished, Cancelled and Failed; cancellation is cooperative.
 
 Quitting through `CloseRequested` performs orderly exit. Headless hosts and tests
-can instead call `shutdown_work(world)` and keep updating until
-`work_finished(world)`. New document/work admissions are rejected after shutdown.
+can instead call `shutdown_work()` and keep updating until
+`work_finished()`. New document/work admissions are rejected after shutdown.
 Dropping the World alone is a fallback, not orderly shutdown. Tasks must return
 after cancellation.
 
@@ -801,9 +851,9 @@ app.register_type::<Notes>()
 - `persistence::capture::<S>(world)` and `restore::<S>(world, text)` capture and
   restore a store's data directly, e.g. for export or tests. Layouts are only
   restored into an empty workbench.
-- **Layout templates.** `capture_layout(world, layout)` saves one layout's
+- **Layout templates.** `capture_layout(layout)` saves one layout's
   areas and panels as a `LayoutTemplate` (RON text, reflectable, so an app can
-  keep templates in a persisted resource). `instantiate_layout(world, &template)`
+  keep templates in a persisted resource). `instantiate_layout(&template)`
   builds a new, inactive layout from it, after the existing ones; failure adds
   nothing. A panel that refers to an entity outside the layout (a document,
   say) belongs to one workspace's data, so it's left out of templates.
@@ -816,7 +866,7 @@ only what was set in it, so a missing value inherits from the layers below,
 then `Setting::default()`. Workbench attaches no meaning to the layers.
 
 ```rust,ignore
-use bedtime_workbench::{setting, settings::{SettingsAppExt, Settings, set_setting}};
+use bedtime_workbench::{WorkbenchWorldExt, setting, settings::{SettingsAppExt, Settings}};
 
 setting! {
     /// File tree indentation, in points.
@@ -829,7 +879,9 @@ app.add_settings_layer::<GlobalStore>()      // lower precedence
    .register_setting::<FileTreeIndent>();
 
 let indent = world.resource::<Settings>().get::<FileTreeIndent>();
-set_setting::<FileTreeIndent>(world, StoreId::of::<GlobalStore>(), 18.0)?;
+world
+    .workbench_mut()
+    .set_setting::<FileTreeIndent>(StoreId::of::<GlobalStore>(), 18.0)?;
 ```
 
 - **`apply`** runs when a setting's resolved value changes: after `set_setting`

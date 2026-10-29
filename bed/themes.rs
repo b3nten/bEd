@@ -6,10 +6,8 @@
 //! See `bed/themes/README.md` for the format and the themes' sources.
 use crate::settings::{CONTROL_WIDTH, columns, overridden_marker, reset_button};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::ThemeFolder};
-use bedtime_workbench::{
-    persistence::StoreId,
-    settings::{Settings, clear_setting, set_setting},
-};
+use bedtime_workbench::WorkbenchWorldExt;
+use bedtime_workbench::{persistence::StoreId, settings::Settings};
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -100,9 +98,12 @@ impl Plugin for ThemesPlugin {
         let Some(folder) = folder() else {
             return;
         };
-        if let Err(error) = install(&folder) {
-            warn!("Couldn't write themes to {}: {error}", folder.display());
-        }
+        let result = install(&folder);
+        crate::status::notify_failure(
+            app.world_mut(),
+            &format!("Couldn't write themes to {}", folder.display()),
+            result,
+        );
         app.insert_resource(ThemeFolder::new(folder));
     }
 }
@@ -176,13 +177,18 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
         },
     );
     if value != chosen {
-        let _ = set_setting::<crate::settings::ColorTheme>(world, layer, value);
+        let result = world
+            .workbench_mut()
+            .set_setting::<crate::settings::ColorTheme>(layer, value);
+        crate::status::notify_failure(world, "Couldn't change the theme", result);
     }
     if reset {
-        let _ = clear_setting::<crate::settings::ColorTheme>(world, layer);
+        let result = world
+            .workbench_mut()
+            .clear_setting::<crate::settings::ColorTheme>(layer);
+        crate::status::notify_failure(world, "Couldn't reset the theme", result);
     }
     if open_folder && let Some(folder) = folder() {
-        let _ = std::fs::create_dir_all(&folder);
         let opener = if cfg!(target_os = "macos") {
             "open"
         } else if cfg!(windows) {
@@ -190,9 +196,13 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
         } else {
             "xdg-open"
         };
-        if let Err(error) = std::process::Command::new(opener).arg(&folder).spawn() {
-            warn!("Couldn't open {}: {error}", folder.display());
-        }
+        let result = std::fs::create_dir_all(&folder)
+            .and_then(|()| std::process::Command::new(opener).arg(&folder).spawn());
+        crate::status::notify_failure(
+            world,
+            &format!("Couldn't open {}", folder.display()),
+            result,
+        );
     }
 }
 

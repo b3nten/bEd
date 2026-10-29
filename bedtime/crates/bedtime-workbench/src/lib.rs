@@ -14,16 +14,18 @@ mod geometry;
 mod layout;
 mod lifecycle;
 mod menus;
+mod notifications;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 #[cfg(feature = "persistence")]
 pub mod settings;
 mod work;
 pub use actions::*;
-pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument, close_prompt, resolve_close};
+pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
 pub use layout::*;
 pub use lifecycle::*;
 pub use menus::*;
+pub use notifications::{Notification, NotificationLevel, Notifications};
 pub use work::*;
 #[cfg(feature = "native")]
 mod native;
@@ -33,12 +35,12 @@ pub use bedtime_clipboard::{Clipboard, ClipboardPlugin};
 pub use native::{
     NativeCapabilities, NativeError, NativeMenuBar, NativeSystems, WindowBackground, WindowBlur,
     WindowTitlebarGeometry, WorkbenchNativeMenuPlugin, WorkbenchNativePlugin,
-    WorkbenchNativeWindowPlugin, native_menu_installed,
+    WorkbenchNativeWindowPlugin,
 };
 #[cfg(feature = "ui")]
 mod dialogs;
 #[cfg(feature = "ui")]
-pub use dialogs::{ErrorDialog, ErrorDialogs, request_error_dialog};
+pub use dialogs::{ErrorDialog, ErrorDialogs};
 #[cfg(feature = "ui")]
 mod frontend;
 #[cfg(feature = "ui")]
@@ -98,23 +100,61 @@ impl PluginGroup for WorkbenchPlugin {
     }
 }
 
-/// Controlled operations in the application's single editing session.
-pub struct Workbench<'w> {
-    pub(crate) world: &'w mut World,
+/// The workbench's read operations: a view of the `World`, from
+/// `world.workbench()`. Reads that need no workbench rules are methods on the
+/// resources and components themselves (`Settings::get`, `Layout`).
+#[repr(transparent)]
+pub struct WorkbenchRef {
+    world: World,
 }
-impl<'w> Workbench<'w> {
-    pub fn new(world: &'w mut World) -> Self {
-        assert!(
-            world.contains_resource::<ManagedWork>(),
-            "Install WorkbenchCorePlugin"
-        );
-        Self { world }
-    }
+
+/// The workbench's operations: a mutable view of the `World`, from
+/// `world.workbench_mut()`. Every change that has to keep the workbench's
+/// rules (membership, persistence, unsaved work, shutdown) goes through it.
+/// It reads like a `WorkbenchRef` too. From a system, queue a closure:
+/// `commands.queue(move |world: &mut World| world.workbench_mut().save_document(id))`.
+#[repr(transparent)]
+pub struct Workbench {
+    world: World,
+}
+
+impl WorkbenchRef {
     pub fn world(&self) -> &World {
-        self.world
+        &self.world
     }
+}
+
+impl Workbench {
     pub fn world_mut(&mut self) -> &mut World {
-        self.world
+        &mut self.world
+    }
+}
+
+impl std::ops::Deref for Workbench {
+    type Target = WorkbenchRef;
+    fn deref(&self) -> &WorkbenchRef {
+        view(&self.world)
+    }
+}
+
+fn view(world: &World) -> &WorkbenchRef {
+    // SAFETY: WorkbenchRef is a repr(transparent) wrapper of World.
+    unsafe { &*(world as *const World).cast::<WorkbenchRef>() }
+}
+
+/// `world.workbench()` and `world.workbench_mut()`.
+pub trait WorkbenchWorldExt {
+    fn workbench(&self) -> &WorkbenchRef;
+    fn workbench_mut(&mut self) -> &mut Workbench;
+}
+
+impl WorkbenchWorldExt for World {
+    fn workbench(&self) -> &WorkbenchRef {
+        view(self)
+    }
+    fn workbench_mut(&mut self) -> &mut Workbench {
+        // SAFETY: Workbench is a repr(transparent) wrapper of World.
+        unsafe { &mut *(self as *mut World).cast::<Workbench>() }
     }
 }
 
