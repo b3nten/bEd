@@ -245,7 +245,8 @@ impl Launch {
         // they still apply, but only in memory. The default workspace has none:
         // it's just where bed is without a project.
         if !workspace.default {
-            app.add_settings_layer::<WorkbenchStore>();
+            app.add_settings_layer::<WorkbenchStore>()
+                .label_settings_layer::<WorkbenchStore>("Workspace");
         }
         if let (Some(lock), Some(config)) = (lock, &self.config) {
             app.add_store::<WorkbenchStore>(DirectoryStore::new(workspace.store_directory(config)))

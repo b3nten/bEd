@@ -1,8 +1,8 @@
 # Architecture: the bedtime crates
 
-Status (2026-10-29): **agreed direction, not built.** Today most of this lives
-in `bedtime-workbench`; the [migration](#migration) below moves it one crate at a
-time. Update this file as decisions change.
+Status (2026-10-29): **migration steps 1–2 built** (persistence, settings); the
+rest still lives in `bedtime-workbench`, and the [migration](#migration) below
+moves it one crate at a time. Update this file as decisions change.
 
 ## Goal
 

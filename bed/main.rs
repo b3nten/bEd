@@ -43,7 +43,7 @@ pub fn app(start: Start) -> App {
         }),
         UiPlugin,
         WorkbenchPlugin,
-        settings::SettingsPlugin,
+        settings::BedSettingsPlugin,
         menus::MenusPlugin,
         layouts::LayoutsPlugin,
         effects::EffectsPlugin,

@@ -306,7 +306,7 @@ fn two_commands_cannot_share_a_key() {
 mod keybinding_settings {
     use super::*;
     use crate::persistence::{StoreId, WorkbenchStore};
-    use crate::settings::SettingsAppExt;
+    use crate::settings::{SettingsAppExt, SettingsWorldExt};
 
     struct GlobalStore;
     impl crate::persistence::Store for GlobalStore {}
@@ -353,24 +353,24 @@ mod keybinding_settings {
 
         let world = app.world_mut();
         world
-            .workbench_mut()
-            .set_setting::<Keybinding<Find>>(global, vec![ctrl(KeyCode::KeyB)])
+            .settings_mut()
+            .set::<Keybinding<Find>>(global, vec![ctrl(KeyCode::KeyB)])
             .unwrap();
         world
-            .workbench_mut()
-            .set_setting::<Keybinding<Find>>(workspace, vec![ctrl(KeyCode::KeyD)])
+            .settings_mut()
+            .set::<Keybinding<Find>>(workspace, vec![ctrl(KeyCode::KeyD)])
             .unwrap();
         assert_eq!(keys(&app), [ctrl(KeyCode::KeyD)], "not both");
 
         let world = app.world_mut();
         world
-            .workbench_mut()
-            .set_setting::<Keybinding<Find>>(workspace, vec![])
+            .settings_mut()
+            .set::<Keybinding<Find>>(workspace, vec![])
             .unwrap();
         assert!(keys(&app).is_empty());
         app.world_mut()
-            .workbench_mut()
-            .clear_setting::<Keybinding<Find>>(workspace)
+            .settings_mut()
+            .clear::<Keybinding<Find>>(workspace)
             .unwrap();
         assert_eq!(keys(&app), [ctrl(KeyCode::KeyB)]);
 

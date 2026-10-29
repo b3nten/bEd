@@ -4,10 +4,14 @@
 //! watched while bed runs. Without a config directory, bed uses bedtime-ui's
 //! dark theme.
 //! See `bed/themes/README.md` for the format and the themes' sources.
-use crate::settings::{CONTROL_WIDTH, columns, overridden_marker, reset_button};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::ThemeFolder};
-use bedtime_workbench::WorkbenchWorldExt;
-use bedtime_workbench::{persistence::StoreId, settings::Settings};
+use bedtime_workbench::{
+    persistence::StoreId,
+    settings::{
+        SettingsWorldExt,
+        ui::{CONTROL_WIDTH, Marks, columns},
+    },
+};
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -121,12 +125,16 @@ fn choices(folder: Option<&ThemeFolder>) -> Vec<(String, String)> {
 
 /// The Theme row of the Settings panel.
 pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
-    let settings = world.resource::<Settings>();
+    let settings = world.settings();
     let chosen = settings.get_at::<crate::settings::ColorTheme>(layer);
     let set_here = settings
         .get_in::<crate::settings::ColorTheme>(layer)
         .is_some();
-    let overridden = settings.overridden_above::<crate::settings::ColorTheme>(layer);
+    let marks = Marks::new(
+        settings,
+        layer,
+        settings.overridden_above::<crate::settings::ColorTheme>(layer),
+    );
     let themes = world.get_resource::<ThemeFolder>();
     let choices = choices(themes);
     let found = themes.and_then(|themes| themes.get(&chosen));
@@ -143,7 +151,8 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
     columns(
         ui,
         "Theme",
-        |ui| overridden_marker(ui, context, overridden),
+        None,
+        |ui| marks.overridden(ui, context),
         |ui| {
             egui::ComboBox::from_id_salt("theme")
                 .width(CONTROL_WIDTH)
@@ -155,7 +164,7 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
                 });
         },
         |ui| {
-            reset = reset_button(ui, context, layer, set_here);
+            reset = set_here && marks.reset(ui, context);
             let mut frame = context.frame(ui);
             let button = frame.icon_button_sized(BuiltinIcon::FolderOpen, 14.0);
             frame.tooltip(&button, "Open the themes folder to edit or add themes");
@@ -178,14 +187,14 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
     );
     if value != chosen {
         let result = world
-            .workbench_mut()
-            .set_setting::<crate::settings::ColorTheme>(layer, value);
+            .settings_mut()
+            .set::<crate::settings::ColorTheme>(layer, value);
         crate::status::notify_failure(world, "Couldn't change the theme", result);
     }
     if reset {
         let result = world
-            .workbench_mut()
-            .clear_setting::<crate::settings::ColorTheme>(layer);
+            .settings_mut()
+            .clear::<crate::settings::ColorTheme>(layer);
         crate::status::notify_failure(world, "Couldn't reset the theme", result);
     }
     if open_folder && let Some(folder) = folder() {

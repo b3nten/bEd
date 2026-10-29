@@ -354,7 +354,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((
             WorkbenchCorePlugin,
-            crate::settings::SettingsPlugin,
+            crate::settings::BedSettingsPlugin,
             crate::layouts::LayoutsPlugin,
             MenusPlugin,
         ))

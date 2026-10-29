@@ -1,0 +1,18 @@
+[package]
+name = "bedtime-settings"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Typed settings resolved through layers kept in stores, with an optional settings UI"
+
+[features]
+default = []
+ui = ["dep:bedtime-ui"]
+
+[dependencies]
+bedtime-persistence.workspace = true
+bedtime-ui = { workspace = true, optional = true }
+bevy = { workspace = true, features = ["std", "bevy_log"] }
+ron = "0.12.2"
+serde = { workspace = true, features = ["derive"] }

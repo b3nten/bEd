@@ -283,6 +283,19 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 2: `bedtime-settings`**, 2026-10-29. Settings moved out
+  of workbench into their own crate (workbench re-exports it as `settings`).
+  `settings!` declares settings as entry blocks grouped by section (`setting!`
+  is gone); with the `ui` feature a setting in a section describes its editor
+  (inferred from the type when not given), and `ui::layer_tabs` /
+  `ui::sections` draw the panel from the `SettingsUi` registry. Changing is
+  `world.settings_mut().set/clear` (`set_setting`/`clear_setting` are gone);
+  layers have labels (`label_settings_layer`). Problems are `SettingsError` and
+  `StoreError` messages, shown by workbench as notifications. bed: the
+  Settings panel is generated; its row helpers moved into the crate (`Marks`
+  replaces `overridden_marker`/`reset_button`); bed's plugin is
+  `BedSettingsPlugin`.
+
 - **Architecture step 1: `bedtime-persistence`**, 2026-10-29. Stores,
   backends (`DirectoryStore`, `MemoryStore`), the world snapshot and persisted
   resources moved out of workbench into their own crate, with a small derive

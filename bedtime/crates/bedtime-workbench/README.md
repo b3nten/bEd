@@ -846,58 +846,9 @@ app.register_type::<Notes>()
 
 ## Settings (`persistence` feature)
 
-Settings are typed values resolved through **layers**, each kept in a store.
-Layers stack in the order the app adds them; later layers win. A layer holds
-only what was set in it, so a missing value inherits from the layers below,
-then `Setting::default()`. Workbench attaches no meaning to the layers.
-
-```rust,ignore
-use bedtime_workbench::{WorkbenchWorldExt, setting, settings::{SettingsAppExt, Settings}};
-
-setting! {
-    /// File tree indentation, in points.
-    pub FileTreeIndent: f32 = 16.0, key = "filetree.indent",
-    apply = |world, indent| world.resource_mut::<FileTreeConfig>().indent = *indent,
-}
-
-app.add_settings_layer::<GlobalStore>()      // lower precedence
-   .add_settings_layer::<WorkbenchStore>()   // overrides global
-   .register_setting::<FileTreeIndent>();
-
-let indent = world.resource::<Settings>().get::<FileTreeIndent>();
-world
-    .workbench_mut()
-    .set_setting::<FileTreeIndent>(StoreId::of::<GlobalStore>(), 18.0)?;
-```
-
-- **`apply`** runs when a setting's resolved value changes: after `set_setting`
-  or `clear_setting`, once for every registered setting when layers load at
-  startup, and when a layer's file changes on disk. Plugins don't need to know
-  about settings: they expose config resources, and the app's settings write to
-  them.
-- **Layers.** `only_in = [GlobalStore]` limits where a setting may be set.
-  `Settings::source::<S>()` says which layer a value comes from, `get_in` reads
-  one layer, `clear_setting` makes a layer inherit again.
-- **Storage.** A layer is the store's `settings` entry, a RON map from key to
-  value (`settings.ron` with `DirectoryStore`). Values are kept as raw RON, so
-  settings that aren't registered (e.g. from a plugin that isn't loaded) are
-  preserved. A layer without a backend lives in memory only.
-- **Bad values** fall through to lower layers and are reported, not deleted. A
-  layer file that can't be read is reported and never written. Changed layers
-  save about once a second and on exit. A layer whose file changes on disk is
-  reloaded; the last writer wins.
-- **The unit of override is the setting.** Anything overridable per entry is
-  split into one setting per entry with a derived key (`Setting::key()` is a
-  function, so generic settings can compute it).
-
-An editor for one layer should show `Settings::get_at::<S>(layer)`, the value
-that layer and those below it give, not the resolved value: otherwise editing a
-lower layer looks like it does nothing while a higher one overrides it.
-`overridden_above::<S>(layer)` names that higher layer, when its value differs.
-`set_setting` with the value a layer would inherit anyway (`inherited::<S>`)
-clears the layer instead, so it keeps following the layers below. `keys_at` and
-`keys_overridden_above` do the same for keybindings.
-
-`read_setting::<S>(&backend)` reads one setting straight from a store's
-backend, for decisions made before the app is built (bEd uses it to decide
-whether to reopen the last folder).
+Settings are [`bedtime-settings`](../bedtime-settings/README.md), re-exported as
+`bedtime_workbench::settings`: typed values resolved through layers kept in
+stores, and (with the `ui` feature) the pieces of a settings panel. Workbench
+installs its plugin and shows settings problems as notifications.
+Keybindings are settings too (`Keybinding<A>`); `keys_in`, `keys_at`,
+`set_keys_in` and `keys_overridden_above` read and write them by action id.

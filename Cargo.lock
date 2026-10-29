@@ -497,6 +497,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedtime-settings"
+version = "0.1.0"
+dependencies = [
+ "bedtime-persistence",
+ "bedtime-ui",
+ "bevy",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "bedtime-ui"
 version = "0.1.0"
 dependencies = [
@@ -518,6 +529,7 @@ dependencies = [
  "bedtime-clipboard",
  "bedtime-document",
  "bedtime-persistence",
+ "bedtime-settings",
  "bedtime-ui",
  "bevy",
  "bevy_egui",

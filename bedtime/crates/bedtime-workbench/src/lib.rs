@@ -17,8 +17,11 @@ mod menus;
 mod notifications;
 #[cfg(feature = "persistence")]
 pub mod persistence;
+/// Settings: [`bedtime-settings`](bedtime_settings), re-exported.
 #[cfg(feature = "persistence")]
-pub mod settings;
+pub mod settings {
+    pub use bedtime_settings::*;
+}
 mod work;
 pub use actions::*;
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
@@ -78,8 +81,26 @@ impl Plugin for WorkbenchCorePlugin {
         #[cfg(feature = "persistence")]
         {
             persistence::register(app);
-            settings::install(app);
+            if !app.is_plugin_added::<bedtime_settings::SettingsPlugin>() {
+                app.add_plugins(bedtime_settings::SettingsPlugin);
+            }
+            app.add_systems(Update, report_settings_errors);
         }
+    }
+}
+
+/// Show settings problems (values that can't be used) as notifications.
+#[cfg(feature = "persistence")]
+fn report_settings_errors(
+    world: &mut World,
+    mut cursor: Local<bevy::ecs::message::MessageCursor<bedtime_settings::SettingsError>>,
+) {
+    let errors: Vec<_> = cursor
+        .read(world.resource::<Messages<bedtime_settings::SettingsError>>())
+        .map(|error| error.0.clone())
+        .collect();
+    for error in errors {
+        world.workbench_mut().notify(Notification::warning(error));
     }
 }
 

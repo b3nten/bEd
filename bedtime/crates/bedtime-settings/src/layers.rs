@@ -1,91 +1,31 @@
-//! Settings: typed values resolved through layers, each layer kept in a store.
-//!
-//! Layers stack in the order the app adds them; later layers win. A layer
-//! holds only what was set in it, so a missing value inherits from the layers
-//! below, and finally from `Setting::default()`. Workbench knows nothing about
-//! what the layers mean; an app might stack `GlobalStore` under `WorkbenchStore`
-//! so per-workspace values override global ones.
-//!
-//! A setting's `apply` runs whenever its resolved value changes: after a `set`
-//! or `clear`, when layers load at startup, and when a layer's file changes on
-//! disk. Consumers (resources, components) are updated there.
-//!
-//! The unit of override is the setting. Anything that should be overridable per
-//! entry is split into one setting per entry with a derived key.
-use crate::persistence::{Store, StoreBackend, StoreId, StoreSystems, Stores};
-
-/// Settings layers load before the world snapshot, so restored panels see
-/// final values.
-#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct LoadSettings;
-use crate::{Notification, Workbench, WorkbenchWorldExt};
+//! Settings layers: what each holds, loading, saving and reloading them.
+use crate::{Setting, SettingsError, SettingsWorldExt};
+use bedtime_persistence::{Store, StoreBackend, StoreError, StoreErrorKind, StoreId, Stores};
 use bevy::prelude::*;
 use ron::value::RawValue;
-use serde::{Serialize, de::DeserializeOwned};
+use serde::Serialize;
 use std::{
     borrow::Cow,
     collections::BTreeMap,
     time::{Duration, Instant},
 };
 
-const ENTRY: &str = "settings";
-const CHECK_INTERVAL: Duration = Duration::from_secs(1);
+/// A layer's entry in its store: `settings.ron` in a `DirectoryStore`.
+pub const SETTINGS_ENTRY: &str = "settings";
+pub(crate) const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
-pub trait Setting: Send + Sync + 'static {
-    type Value: Clone + PartialEq + Serialize + DeserializeOwned + Send + Sync + 'static;
-    /// "filetree.indent". A function so generic settings can derive it.
-    fn key() -> Cow<'static, str>;
-    fn default() -> Self::Value;
-    /// Which layers may hold this setting. All of them by default.
-    fn allowed_in(_store: StoreId) -> bool {
-        true
-    }
-    /// Runs whenever the resolved value changes, including once at startup.
-    fn apply(_world: &mut World, _value: &Self::Value) {}
+/// Changing settings: `world.settings_mut()`. Reading is the [`Settings`]
+/// resource (`world.settings()`).
+#[repr(transparent)]
+pub struct SettingsMut {
+    world: World,
 }
 
-/// Define a setting.
-///
-/// ```ignore
-/// setting! {
-///     /// File tree indentation, in points.
-///     pub FileTreeIndent: f32 = 16.0, key = "filetree.indent",
-///     apply = |world, indent| world.resource_mut::<FileTreeConfig>().indent = *indent,
-/// }
-/// setting! {
-///     pub RestoreLastWorkspace: bool = true, key = "startup.restore", only_in = [GlobalStore],
-/// }
-/// ```
-#[macro_export]
-macro_rules! setting {
-    (
-        $(#[$meta:meta])* $vis:vis $name:ident: $ty:ty = $default:expr, key = $key:literal
-        $(, only_in = [$($store:ty),* $(,)?])?
-        $(, apply = $apply:expr)? $(,)?
-    ) => {
-        $(#[$meta])*
-        $vis struct $name;
-        impl $crate::settings::Setting for $name {
-            type Value = $ty;
-            fn key() -> ::std::borrow::Cow<'static, str> {
-                ::std::borrow::Cow::Borrowed($key)
-            }
-            fn default() -> $ty {
-                $default
-            }
-            $(
-                fn allowed_in(store: $crate::persistence::StoreId) -> bool {
-                    [$($crate::persistence::StoreId::of::<$store>()),*].contains(&store)
-                }
-            )?
-            $(
-                fn apply(world: &mut ::bevy::prelude::World, value: &$ty) {
-                    let apply: fn(&mut ::bevy::prelude::World, &$ty) = $apply;
-                    apply(world, value)
-                }
-            )?
-        }
-    };
+impl SettingsMut {
+    pub(crate) fn of(world: &mut World) -> &mut Self {
+        // SAFETY: SettingsMut is a repr(transparent) wrapper of World.
+        unsafe { &mut *(world as *mut World).cast::<Self>() }
+    }
 }
 
 /// All layers, lowest precedence first, and the registered settings.
@@ -97,6 +37,8 @@ pub struct Settings {
 
 struct Layer {
     store: StoreId,
+    /// What the layer is called in the settings panel ("Global").
+    label: Cow<'static, str>,
     /// Each value's RON text, exactly as stored. (`ron::Value` would lose enum
     /// variant names, and values of unknown settings must survive untouched.)
     values: BTreeMap<String, Box<RawValue>>,
@@ -190,6 +132,18 @@ impl Settings {
         self.layers.iter().map(|layer| layer.store)
     }
 
+    /// What a layer is called in the settings panel.
+    pub fn label(&self, store: StoreId) -> Option<&str> {
+        let layer = self.layers.iter().find(|layer| layer.store == store)?;
+        Some(&layer.label)
+    }
+
+    /// The layer below `store`, if any.
+    pub fn below(&self, store: StoreId) -> Option<StoreId> {
+        let index = self.layers.iter().position(|layer| layer.store == store)?;
+        index.checked_sub(1).map(|below| self.layers[below].store)
+    }
+
     /// Why a layer isn't loaded or saved, or which of its values don't decode.
     pub fn error(&self, store: StoreId) -> Option<String> {
         let layer = self.layers.iter().find(|layer| layer.store == store)?;
@@ -229,13 +183,9 @@ fn encode<T: Serialize>(value: &T) -> Result<Box<RawValue>, String> {
     RawValue::from_rust(value).map_err(|e| e.to_string())
 }
 
-impl Workbench {
+impl SettingsMut {
     /// Set a setting in one layer.
-    pub fn set_setting<S: Setting>(
-        &mut self,
-        store: StoreId,
-        value: S::Value,
-    ) -> Result<(), String> {
+    pub fn set<S: Setting>(&mut self, store: StoreId, value: S::Value) -> Result<(), String> {
         let world = &mut self.world;
         if !S::allowed_in(store) {
             return Err(format!("{} can't be set in {}", S::key(), store.name()));
@@ -244,7 +194,7 @@ impl Workbench {
         // following the layers below (a workspace set back to the global value
         // follows later global changes).
         if value == world.resource::<Settings>().inherited::<S>(store) {
-            return world.workbench_mut().clear_setting::<S>(store);
+            return world.settings_mut().clear::<S>(store);
         }
         let encoded = encode(&value)?;
         let mut settings = world.resource_mut::<Settings>();
@@ -256,7 +206,7 @@ impl Workbench {
     }
 
     /// Remove a setting from one layer, so it inherits from the layers below.
-    pub fn clear_setting<S: Setting>(&mut self, store: StoreId) -> Result<(), String> {
+    pub fn clear<S: Setting>(&mut self, store: StoreId) -> Result<(), String> {
         let world = &mut self.world;
         let mut settings = world.resource_mut::<Settings>();
         let layer = settings.layer_mut(store)?;
@@ -299,7 +249,7 @@ fn check_values(world: &mut World) {
         setting.invalid = invalid;
     }
     if !found.is_empty() {
-        world.workbench_mut().notify(Notification::warning(format!(
+        world.write_message(SettingsError(format!(
             "Some settings can't be used, so their defaults apply: {}",
             found.join(", ")
         )));
@@ -310,6 +260,9 @@ pub trait SettingsAppExt {
     /// Add a settings layer kept in store `S`. Later layers take precedence.
     /// Without a backend for `S`, the layer lives in memory only.
     fn add_settings_layer<S: Store>(&mut self) -> &mut Self;
+    /// What layer `S` is called in the settings panel. By default its store's
+    /// name without "Store" (`GlobalStore` is "Global").
+    fn label_settings_layer<S: Store>(&mut self, label: impl Into<Cow<'static, str>>) -> &mut Self;
     fn register_setting<S: Setting>(&mut self) -> &mut Self;
 }
 
@@ -322,14 +275,25 @@ impl SettingsAppExt for App {
             "{} was added as a settings layer twice",
             store.name()
         );
+        let name = store.name().rsplit("::").next().unwrap_or(store.name());
         settings.layers.push(Layer {
             store,
+            label: name.strip_suffix("Store").unwrap_or(name).to_owned().into(),
             values: BTreeMap::new(),
             dirty: false,
             blocked: None,
             version: None,
             save_error: None,
         });
+        self
+    }
+
+    fn label_settings_layer<S: Store>(&mut self, label: impl Into<Cow<'static, str>>) -> &mut Self {
+        let mut settings = self.world_mut().get_resource_or_init::<Settings>();
+        let layer = settings
+            .layer_mut(StoreId::of::<S>())
+            .expect("Add the settings layer before labelling it");
+        layer.label = label.into();
         self
     }
 
@@ -361,40 +325,32 @@ impl SettingsAppExt for App {
                     .collect()
             },
         });
+        #[cfg(feature = "ui")]
+        crate::ui::register::<S>(self);
         self
     }
-}
-
-pub(crate) fn install(app: &mut App) {
-    app.init_resource::<Settings>()
-        .configure_sets(PreStartup, LoadSettings.before(StoreSystems::Load))
-        .add_systems(PreStartup, load_layers.in_set(LoadSettings))
-        .add_systems(
-            Last,
-            (reload_changed_layers, save_layers).before(crate::SessionSystems::Close),
-        );
 }
 
 /// One setting's value as stored in `backend`'s layer, read directly, e.g. to
 /// decide something before the app is built. `None` when it isn't set there or
 /// can't be read.
 pub fn read_setting<S: Setting>(backend: &dyn StoreBackend) -> Option<S::Value> {
-    let bytes = backend.read(ENTRY).ok()??;
+    let bytes = backend.read(SETTINGS_ENTRY).ok()??;
     let text = std::str::from_utf8(&bytes).ok()?;
     let values: BTreeMap<String, Box<RawValue>> = ron::from_str(text).ok()?;
     values.get(S::key().as_ref())?.into_rust().ok()
 }
 
+/// A layer's values and the version of the file they came from.
+type LayerFile = (BTreeMap<String, Box<RawValue>>, Option<String>);
+
 /// Read one layer's file. `None` means it doesn't exist yet.
-fn read_layer(
-    world: &World,
-    store: StoreId,
-) -> Result<Option<(BTreeMap<String, Box<RawValue>>, Option<String>)>, String> {
+fn read_layer(world: &World, store: StoreId) -> Result<Option<LayerFile>, String> {
     let Some(backend) = world.resource::<Stores>().backend(store) else {
         return Ok(None);
     };
-    let version = backend.version(ENTRY)?;
-    let Some(bytes) = backend.read(ENTRY)? else {
+    let version = backend.version(SETTINGS_ENTRY)?;
+    let Some(bytes) = backend.read(SETTINGS_ENTRY)? else {
         return Ok(None);
     };
     let text = std::str::from_utf8(&bytes).map_err(|e| e.to_string())?;
@@ -402,7 +358,7 @@ fn read_layer(
     Ok(Some((values, version)))
 }
 
-fn load_layers(world: &mut World) {
+pub(crate) fn load_layers(world: &mut World) {
     let stores: Vec<_> = world.resource::<Settings>().layers().collect();
     for store in stores {
         let result = read_layer(world, store);
@@ -416,9 +372,12 @@ fn load_layers(world: &mut World) {
             Ok(None) => {}
             Err(error) => {
                 layer.blocked = Some(error.clone());
-                world.workbench_mut().notify(Notification::error(format!(
-                    "Couldn't read settings, so they won't be saved over ({error})"
-                )));
+                world.write_message(StoreError {
+                    store,
+                    entry: SETTINGS_ENTRY.into(),
+                    kind: StoreErrorKind::Load,
+                    error,
+                });
             }
         }
     }
@@ -428,7 +387,7 @@ fn load_layers(world: &mut World) {
 
 /// A layer whose file changed on disk (edited by hand, or written by another
 /// instance) is reloaded; last writer wins.
-fn reload_changed_layers(world: &mut World, mut last: Local<Option<Instant>>) {
+pub(crate) fn reload_changed_layers(world: &mut World, mut last: Local<Option<Instant>>) {
     if last.is_some_and(|at| at.elapsed() < CHECK_INTERVAL) {
         return;
     }
@@ -445,7 +404,7 @@ fn reload_changed_layers(world: &mut World, mut last: Local<Option<Instant>>) {
         let Some(backend) = world.resource::<Stores>().backend(store) else {
             continue;
         };
-        let Ok(version) = backend.version(ENTRY) else {
+        let Ok(version) = backend.version(SETTINGS_ENTRY) else {
             continue;
         };
         if version.is_none() || version == known {
@@ -467,7 +426,12 @@ fn reload_changed_layers(world: &mut World, mut last: Local<Option<Instant>>) {
                 layer.version = version;
                 if layer.blocked.is_none() {
                     layer.blocked = Some(error.clone());
-                    world.workbench_mut().notify(Notification::error(format!("Settings changed on disk but couldn't be read, so they won't be saved over ({error})")));
+                    world.write_message(StoreError {
+                        store,
+                        entry: SETTINGS_ENTRY.into(),
+                        kind: StoreErrorKind::Load,
+                        error,
+                    });
                 }
             }
         }
@@ -479,7 +443,7 @@ fn reload_changed_layers(world: &mut World, mut last: Local<Option<Instant>>) {
 }
 
 /// Dirty layers are written about once a second, and on exit.
-fn save_layers(world: &mut World, mut last: Local<Option<Instant>>) {
+pub(crate) fn save_layers(world: &mut World, mut last: Local<Option<Instant>>) {
     let exiting = world
         .get_resource::<Messages<AppExit>>()
         .is_some_and(|messages| !messages.is_empty());
@@ -507,8 +471,8 @@ fn save_layers(world: &mut World, mut last: Local<Option<Instant>>) {
         let layer = settings.layers.iter().find(|l| l.store == store).unwrap();
         let result = ron::ser::to_string_pretty(&layer.values, ron::ser::PrettyConfig::default())
             .map_err(|e| e.to_string())
-            .and_then(|text| backend.write(ENTRY, text.as_bytes()))
-            .and_then(|()| backend.version(ENTRY));
+            .and_then(|text| backend.write(SETTINGS_ENTRY, text.as_bytes()))
+            .and_then(|()| backend.version(SETTINGS_ENTRY));
         match result {
             Ok(version) => {
                 let mut settings = world.resource_mut::<Settings>();
@@ -525,13 +489,13 @@ fn save_layers(world: &mut World, mut last: Local<Option<Instant>>) {
                     continue;
                 }
                 layer.save_error = Some(error.clone());
-                world.workbench_mut().notify(Notification::error(format!(
-                    "Couldn't save settings; retrying ({error})"
-                )));
+                world.write_message(StoreError {
+                    store,
+                    entry: SETTINGS_ENTRY.into(),
+                    kind: StoreErrorKind::Save,
+                    error,
+                });
             }
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

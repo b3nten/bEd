@@ -1,10 +1,14 @@
 //! The Keyboard Shortcuts section: every registered command and its keys in
 //! the layer being edited. Click a command's keys, then press the new ones.
-use super::{CONTROL_WIDTH, columns, overridden_marker, reset_button};
 use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
-    ActionId, ActionRegistry, KeyChord, Keybindings, Modifiers, persistence::StoreId,
+    ActionId, ActionRegistry, KeyChord, Keybindings, Modifiers,
+    persistence::StoreId,
+    settings::{
+        SettingsWorldExt,
+        ui::{CONTROL_WIDTH, Marks, columns},
+    },
 };
 use bevy::prelude::*;
 
@@ -24,12 +28,14 @@ pub(super) fn section(
     for (command, label) in commands {
         let set_here = world.workbench().keys_in(&command, layer).is_some();
         let overridden = world.workbench().keys_overridden_above(&command, layer);
+        let marks = Marks::new(world.settings(), layer, overridden);
         let shared = shared_with(world, &command);
         let mut reset = false;
         columns(
             ui,
             label,
-            |ui| overridden_marker(ui, context, overridden),
+            None,
+            |ui| marks.overridden(ui, context),
             |ui| {
                 let size = egui::vec2(CONTROL_WIDTH, 0.0);
                 if recording.as_ref() == Some(&command) {
@@ -73,7 +79,7 @@ pub(super) fn section(
                 }
             },
             |ui| {
-                reset = reset_button(ui, context, layer, set_here);
+                reset = set_here && marks.reset(ui, context);
                 if let Some(note) = shared {
                     ui.weak(note);
                 }

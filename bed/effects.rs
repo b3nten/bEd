@@ -6,10 +6,11 @@
 //! and bends pointer input to match curvature. The render world runs the
 //! passes over the finished frame, after egui draws and before bedtime-ui's
 //! final colour conversion (`UiSystems::PrepareOutput`).
-use crate::settings::{CONTROL_WIDTH, row};
-use bedtime_ui::{UiContext, UiSystems, egui};
+use bedtime_ui::{UiSystems, egui};
 use bedtime_workbench::{
-    ActiveLayout, WorkbenchCamera, persistence::StoreId, setting, settings::SettingsAppExt,
+    ActiveLayout, WorkbenchCamera,
+    persistence::StoreId,
+    settings::{SettingsAppExt, SettingsWorldExt, settings},
 };
 use bevy::{
     asset::{AssetPath, embedded_asset, embedded_path},
@@ -34,14 +35,25 @@ use std::ops::RangeInclusive;
 
 const INTENSITY: RangeInclusive<f32> = 0.0..=1.0;
 
-/// Settings write into `Effects`; `prepare_input` reads it each frame.
+/// Settings write into `Effects`; `prepare_input` reads it each frame. The
+/// intensities show in Settings only while effects are on; they keep their
+/// values while off.
 macro_rules! effect_settings {
-    ($($name:ident: $default:expr, $key:literal, $field:ident;)*) => {
-        $(setting! {
-            pub $name: f32 = $default, key = $key,
-            apply = |world, value| {
-                world.resource_mut::<Effects>().$field = crate::settings::limit(*value, INTENSITY, $default)
-            },
+    ($($name:ident: $default:expr, $key:literal, $field:ident $(, $label:literal)?;)*) => {
+        $(settings! {
+            "Effects" {
+                pub $name: f32 {
+                    default: $default,
+                    key: $key,
+                    $(label: $label,)?
+                    ui: slider(INTENSITY),
+                    visible: effects_on,
+                    apply: |world, value| {
+                        world.resource_mut::<Effects>().$field =
+                            crate::settings::limit(*value, INTENSITY, $default)
+                    },
+                }
+            }
         })*
         fn register_intensities(app: &mut App) {
             $(app.register_setting::<$name>();)*
@@ -49,9 +61,19 @@ macro_rules! effect_settings {
     };
 }
 
-setting! {
-    pub EffectsEnabled: bool = false, key = "effects.enabled",
-    apply = |world, enabled| world.resource_mut::<Effects>().enabled = *enabled,
+settings! {
+    "Effects" {
+        pub EffectsEnabled: bool {
+            default: false,
+            key: "effects.enabled",
+            label: "Screen effects",
+            apply: |world, enabled| world.resource_mut::<Effects>().enabled = *enabled,
+        }
+    }
+}
+
+fn effects_on(world: &World, layer: StoreId) -> bool {
+    world.settings().get_at::<EffectsEnabled>(layer)
 }
 
 effect_settings! {
@@ -61,7 +83,7 @@ effect_settings! {
     Noise: 0.0, "effects.noise", noise;
     Curvature: 0.0, "effects.curvature", curvature;
     PixelGrid: 0.0, "effects.pixel_grid", pixel_grid;
-    BurnIn: 0.0, "effects.burn_in", burn_in;
+    BurnIn: 0.0, "effects.burn_in", burn_in, "Burn-in";
     Pulse: 0.0, "effects.pulse", pulse;
 }
 
@@ -133,41 +155,6 @@ impl Plugin for EffectsPlugin {
                     .before(upscaling),
             );
     }
-}
-
-/// The Effects section of the Settings panel. The intensities show only while
-/// effects are on; they keep their values while off.
-pub fn section(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
-    crate::settings::section(ui, "Effects");
-    row::<EffectsEnabled>(ui, world, context, layer, "Screen effects", |ui, on| {
-        context.frame(ui).toggle(on, "").changed()
-    });
-    let enabled = world
-        .resource::<bedtime_workbench::settings::Settings>()
-        .get_at::<EffectsEnabled>(layer);
-    if !enabled {
-        return;
-    }
-    fn slider<S: bedtime_workbench::settings::Setting<Value = f32>>(
-        ui: &mut egui::Ui,
-        world: &mut World,
-        context: &UiContext<'_>,
-        layer: StoreId,
-        label: &str,
-    ) {
-        row::<S>(ui, world, context, layer, label, |ui, value| {
-            ui.spacing_mut().slider_width = CONTROL_WIDTH - 76.0;
-            crate::settings::slider(ui, value, INTENSITY, "", 2)
-        });
-    }
-    slider::<Scanlines>(ui, world, context, layer, "Scanlines");
-    slider::<Vignette>(ui, world, context, layer, "Vignette");
-    slider::<Bloom>(ui, world, context, layer, "Bloom");
-    slider::<Noise>(ui, world, context, layer, "Noise");
-    slider::<Curvature>(ui, world, context, layer, "Curvature");
-    slider::<PixelGrid>(ui, world, context, layer, "Pixel grid");
-    slider::<BurnIn>(ui, world, context, layer, "Burn-in");
-    slider::<Pulse>(ui, world, context, layer, "Pulse");
 }
 
 #[derive(Component, Clone, Copy, ExtractComponent)]
@@ -695,7 +682,7 @@ mod tests {
 
     #[test]
     fn effects_follow_their_settings_and_stay_in_range() {
-        use bedtime_workbench::{WorkbenchCorePlugin, WorkbenchWorldExt, settings::SettingsAppExt};
+        use bedtime_workbench::{WorkbenchCorePlugin, settings::SettingsAppExt};
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugin, EffectsPlugin))
             .init_resource::<Time<Real>>()
@@ -705,13 +692,10 @@ mod tests {
         assert!(!world.resource::<Effects>().enabled);
         let global = StoreId::of::<crate::settings::GlobalStore>();
         world
-            .workbench_mut()
-            .set_setting::<EffectsEnabled>(global, true)
+            .settings_mut()
+            .set::<EffectsEnabled>(global, true)
             .unwrap();
-        world
-            .workbench_mut()
-            .set_setting::<Curvature>(global, 3.0)
-            .unwrap();
+        world.settings_mut().set::<Curvature>(global, 3.0).unwrap();
         let effects = world.resource::<Effects>();
         assert!(effects.enabled);
         assert_eq!(effects.curvature, 1.0);

@@ -14,6 +14,8 @@
 //! fills the table; without, the table holds each command's defaults.
 #[cfg(feature = "persistence")]
 use crate::persistence::StoreId;
+#[cfg(feature = "persistence")]
+use crate::settings::SettingsWorldExt;
 use crate::{Area, Layout, Notification, PanelInstance};
 use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
 use bevy::prelude::*;
@@ -494,10 +496,8 @@ impl ActionAppExt for App {
             },
             #[cfg(feature = "persistence")]
             set_keys_in: |world, store, chords| match chords {
-                Some(chords) => world
-                    .workbench_mut()
-                    .set_setting::<Keybinding<C>>(store, chords),
-                None => world.workbench_mut().clear_setting::<Keybinding<C>>(store),
+                Some(chords) => world.settings_mut().set::<Keybinding<C>>(store, chords),
+                None => world.settings_mut().clear::<Keybinding<C>>(store),
             },
         });
         world
