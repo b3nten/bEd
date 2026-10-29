@@ -77,7 +77,7 @@ appears.
 
 From workbench's `settings.rs`:
 
-- `Setting`, `setting!`, layers, `Settings` (`get`, `get_at`, `inherited`,
+- `Setting`, `settings!`, layers, `Settings` (`get`, `get_at`, `inherited`,
   `overridden_above`), `SettingsAppExt`, `read_setting`, `apply`.
 - Setting and clearing values. Today these are `Workbench` methods. Here they
   become methods on a settings view (`world.settings_mut().set::<S>(layer, v)`),
@@ -85,30 +85,55 @@ From workbench's `settings.rs`:
 - With `ui`: the row helpers that are in bed today (`columns`, `slider`,
   `combo`, `reset_button`, `overridden_marker`, layer tabs), and a settings
   panel that draws registered sections.
-- **A setting can describe its own UI**, optionally, in `setting!`:
+- **Settings are declared with `settings!`** (renamed from `setting!`). Each
+  setting is a block of entries, like a struct literal, and settings can be
+  grouped into sections:
 
   ```rust
-  setting! {
-      pub FontSize: f32 = 15.5, key = "appearance.font_size",
-          ui = slider(8.0..=72.0), section = "Appearance", label = "Font size";
-      pub WindowBlurEnabled: bool = false, key = "window.blur",
-          section = "Window", label = "Blur";          // bool: a toggle
-      pub ColorTheme: String = "everforest-dark-medium".into(), key = "appearance.theme",
-          ui = custom(themes::row), section = "Appearance";
-      pub ReopenLastWorkspace: bool = false, key = "startup.reopen_last"; // not shown
+  settings! {
+      "Appearance" {
+          pub ColorTheme: String {
+              default: "everforest-dark-medium".into(),
+              key: "appearance.theme",
+              ui: custom(themes::row),
+          }
+          pub FontSize: f32 {
+              default: 15.5,
+              key: "appearance.font_size",
+              ui: slider(8.0..=72.0),
+          }
+      }
+      "Startup" {
+          pub ReopenLastWorkspace: bool {
+              default: false,
+              key: "startup.reopen_last",
+              label: "Reopen the last workspace",
+              only_in: [GlobalStore],
+          }
+      }
+      // Outside a section: not shown in the panel.
+      pub LastLayout: u8 { default: 0, key: "layouts.last" }
   }
   ```
 
-  - Without `ui`, the editor comes from the value's type where it's obvious:
-    `bool` a toggle, a fieldless enum a combo box (variants from `Reflect`),
-    `String` a text field, a number a drag value. `custom(fn)` draws a row of
-    its own (Theme's folder button and error icon).
-  - A setting with no section and label isn't shown, so internal settings stay
-    out of the panel.
-  - These are associated items with defaults; a hand-written `impl Setting`
-    needs none of them.
-- **The panel draws what's registered**: sections in registration order (or
-  the order the app gives with `app.settings_sections([...])`), each setting's
+  - Each entry becomes the `Setting` trait item of the same name, in any
+    order. `key` and `default` are required; leaving one out is a compile
+    error naming it, and so is a misspelt entry.
+  - Optional entries fall back to the trait's defaults:
+    - `ui`: from the value's type where it's obvious: `bool` a toggle, a
+      fieldless enum a combo box (variants from `Reflect`), `String` a text
+      field, a number a drag value. `slider(range)` and `custom(fn)` (a row of
+      its own, like Theme's folder button and error icon) are in scope inside
+      the entry.
+    - `label`: the name split into words (`FontSize` is "Font size").
+    - `only_in`: every layer.
+  - The section is the enclosing string. A setting outside any section isn't
+    shown, so internal settings stay out of the panel.
+  - A hand-written `impl Setting` works too, providing only `key` and
+    `default`.
+- **The panel draws what's registered**: sections in the order they're
+  declared, across calls in registration order (or the order the app gives
+  with `app.settings_sections([...])`), each setting's
   row with the layer tabs, override markers and reset buttons bed has today.
   Keybindings are a section of their own, one row per action.
 - **The registry is public.** A `SettingsUi` resource lists each shown
