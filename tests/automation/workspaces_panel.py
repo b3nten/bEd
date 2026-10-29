@@ -29,6 +29,12 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     bed.wait(5)
     assert folder_stores() == [], folder_stores()
     assert Path(folder).is_dir(), "the folder itself must stay"
-    assert name not in (bed.config / "global" / "recent.ron").read_text()
+    # The recent list is saved with the rest of the app, about once a second.
+    recent = bed.config / "global" / "recent.ron"
+    for _ in range(100):
+        if name not in recent.read_text():
+            break
+        bed.wait(5)
+    assert name not in recent.read_text()
     assert not bed.exists(name)
     assert not bed.status()["errors"]

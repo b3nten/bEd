@@ -61,13 +61,7 @@ pub fn app(start: Start) -> App {
 
 /// `$BED_CONFIG_DIR`, else `$XDG_CONFIG_HOME/bed`, else `~/.config/bed`.
 pub fn config_directory() -> Option<PathBuf> {
-    if let Some(directory) = std::env::var_os("BED_CONFIG_DIR") {
-        return Some(directory.into());
-    }
-    let base = std::env::var_os("XDG_CONFIG_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
-    Some(base.join("bed"))
+    bedtime_persistence::config_directory("bed", Some("BED_CONFIG_DIR"))
 }
 
 /// A transparent window whose content runs under the titlebar.

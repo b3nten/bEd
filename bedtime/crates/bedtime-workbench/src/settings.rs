@@ -13,6 +13,11 @@
 //! The unit of override is the setting. Anything that should be overridable per
 //! entry is split into one setting per entry with a derived key.
 use crate::persistence::{Store, StoreBackend, StoreId, StoreSystems, Stores};
+
+/// Settings layers load before the world snapshot, so restored panels see
+/// final values.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct LoadSettings;
 use crate::{Notification, Workbench, WorkbenchWorldExt};
 use bevy::prelude::*;
 use ron::value::RawValue;
@@ -362,7 +367,8 @@ impl SettingsAppExt for App {
 
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<Settings>()
-        .add_systems(PreStartup, load_layers.in_set(StoreSystems::LoadSettings))
+        .configure_sets(PreStartup, LoadSettings.before(StoreSystems::Load))
+        .add_systems(PreStartup, load_layers.in_set(LoadSettings))
         .add_systems(
             Last,
             (reload_changed_layers, save_layers).before(crate::SessionSystems::Close),

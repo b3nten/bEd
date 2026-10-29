@@ -19,5 +19,6 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     bed.key("Primary+3")
     assert not bed.exists("Appearance")
     bed.screenshot("layouts")
-    assert "LayoutDefaults" in (bed.config / "global" / "world.ron").read_text()
+    # Layout defaults are their own file in the global store.
+    assert "Settings" in (bed.config / "global" / "layout_defaults.ron").read_text()
     assert not bed.status()["errors"]

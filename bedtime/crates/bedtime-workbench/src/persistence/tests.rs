@@ -1,10 +1,6 @@
 use super::*;
 use crate::WorkbenchWorldExt;
 use crate::tests::TestPanels;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Persist)]
@@ -31,9 +27,6 @@ struct Counter(u32);
 #[derive(Component, Reflect)]
 #[reflect(Component, Persist)]
 struct Pointer(#[entities] Entity);
-
-struct OtherStore;
-impl Store for OtherStore {}
 
 fn app() -> App {
     let mut app = App::new();
@@ -81,14 +74,11 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
         .unwrap();
     world.get_mut::<Area>(left).unwrap().selected = Some(b);
     world.get_mut::<Layout>(layout).unwrap().focused_area = Some(right);
-    let saved = world.workbench_mut().capture::<WorkbenchStore>().unwrap();
+    let saved = world.persistence().capture().unwrap();
 
     let mut target = app();
     let world = target.world_mut();
-    world
-        .workbench_mut()
-        .restore::<WorkbenchStore>(&saved)
-        .unwrap();
+    world.persistence_mut().restore(&saved).unwrap();
     let names: Vec<_> = world
         .workbench()
         .layouts()
@@ -122,61 +112,16 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
 fn layouts_are_only_restored_into_an_empty_workbench() {
     let mut source = app();
     crate::tests::layout(source.world_mut());
-    let saved = source
-        .world_mut()
-        .workbench_mut()
-        .capture::<WorkbenchStore>()
-        .unwrap();
+    let saved = source.world_mut().persistence().capture().unwrap();
     let mut target = app();
     crate::tests::layout(target.world_mut());
     assert!(
         target
             .world_mut()
-            .workbench_mut()
-            .restore::<WorkbenchStore>(&saved)
+            .persistence_mut()
+            .restore(&saved)
             .is_err()
     );
-}
-
-#[test]
-fn resources_are_saved_in_their_store() {
-    let mut source = app();
-    source.world_mut().insert_resource(Counter(7));
-    assert!(
-        source
-            .world_mut()
-            .workbench_mut()
-            .capture::<WorkbenchStore>()
-            .unwrap()
-            .contains("Counter")
-    );
-
-    source.persist_in::<Counter, OtherStore>();
-    let world = source.world_mut();
-    assert!(
-        !world
-            .workbench_mut()
-            .capture::<WorkbenchStore>()
-            .unwrap()
-            .contains("Counter")
-    );
-    let saved = world.workbench_mut().capture::<OtherStore>().unwrap();
-
-    let mut target = app();
-    target.persist_in::<Counter, OtherStore>();
-    assert!(
-        target
-            .world_mut()
-            .workbench_mut()
-            .restore::<WorkbenchStore>(&saved)
-            .is_err()
-    );
-    target
-        .world_mut()
-        .workbench_mut()
-        .restore::<OtherStore>(&saved)
-        .unwrap();
-    assert_eq!(target.world().resource::<Counter>(), &Counter(7));
 }
 
 #[test]
@@ -185,10 +130,7 @@ fn references_to_entities_that_arent_saved_are_refused() {
     let world = app.world_mut();
     let runtime_only = world.spawn_empty().id();
     world.spawn(Pointer(runtime_only));
-    let error = world
-        .workbench_mut()
-        .capture::<WorkbenchStore>()
-        .unwrap_err();
+    let error = world.persistence().capture().unwrap_err();
     assert!(error.contains("Pointer"));
 }
 
@@ -270,7 +212,7 @@ fn a_saved_template_is_nested_ron_and_round_trips() {
     note(world, area, "kept");
     let template = world.workbench_mut().capture_layout(layout).unwrap();
     world.insert_resource(Defaults(Some(template.clone())));
-    let saved = world.workbench_mut().capture::<WorkbenchStore>().unwrap();
+    let saved = world.persistence().capture().unwrap();
     // Nested, not an escaped string.
     assert!(saved.contains("\"kept\""), "{saved}");
     assert!(!saved.contains("\\\""), "{saved}");
@@ -281,8 +223,8 @@ fn a_saved_template_is_nested_ron_and_round_trips() {
         .init_resource::<Defaults>();
     target
         .world_mut()
-        .workbench_mut()
-        .restore::<WorkbenchStore>(&saved)
+        .persistence_mut()
+        .restore(&saved)
         .unwrap();
     let world = target.world_mut();
     let restored = world.resource::<Defaults>().0.clone().unwrap();
@@ -298,7 +240,7 @@ fn a_bad_layout_template_adds_nothing() {
     let world = source.world_mut();
     crate::tests::layout(world);
     world.workbench_mut().create_layout("Second").unwrap();
-    let whole = world.workbench_mut().capture::<WorkbenchStore>().unwrap();
+    let whole = world.persistence().capture().unwrap();
 
     let mut target = app();
     let world = target.world_mut();
@@ -321,62 +263,6 @@ fn a_bad_layout_template_adds_nothing() {
     assert_eq!(world.query::<&Area>().iter(world).count(), 0);
 }
 
-/// An in-memory backend that counts writes and versions each entry.
-#[derive(Clone, Default)]
-pub(crate) struct MemoryBackend(Arc<Mutex<MemoryState>>);
-
-#[derive(Default)]
-struct MemoryState {
-    entries: HashMap<String, (Vec<u8>, u64)>,
-    writes: usize,
-}
-
-impl MemoryBackend {
-    pub(crate) fn text(&self, entry: &str) -> Option<String> {
-        let state = self.0.lock().unwrap();
-        state
-            .entries
-            .get(entry)
-            .map(|(bytes, _)| String::from_utf8(bytes.clone()).unwrap())
-    }
-    fn world(&self) -> Option<String> {
-        self.text("world")
-    }
-    pub(crate) fn writes(&self) -> usize {
-        self.0.lock().unwrap().writes
-    }
-}
-
-impl StoreBackend for MemoryBackend {
-    fn read(&self, entry: &str) -> Result<Option<Vec<u8>>, String> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .entries
-            .get(entry)
-            .map(|(b, _)| b.clone()))
-    }
-    fn write(&self, entry: &str, bytes: &[u8]) -> Result<(), String> {
-        let mut state = self.0.lock().unwrap();
-        let version = state.entries.get(entry).map_or(0, |(_, v)| v + 1);
-        state
-            .entries
-            .insert(entry.into(), (bytes.to_vec(), version));
-        state.writes += 1;
-        Ok(())
-    }
-    fn version(&self, entry: &str) -> Result<Option<String>, String> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .entries
-            .get(entry)
-            .map(|(_, v)| v.to_string()))
-    }
-}
-
 /// Saving runs about once a second, and always when the app exits.
 pub(crate) fn save_now(app: &mut App) {
     app.world_mut().write_message(AppExit::Success);
@@ -386,7 +272,7 @@ pub(crate) fn save_now(app: &mut App) {
 
 #[test]
 fn stores_save_changes_and_restore_them_at_startup() {
-    let backend = MemoryBackend::default();
+    let backend = MemoryStore::default();
     let mut first = app();
     first.add_store::<WorkbenchStore>(backend.clone());
     first.update();
@@ -399,7 +285,7 @@ fn stores_save_changes_and_restore_them_at_startup() {
     note(first.world_mut(), area, "kept");
     save_now(&mut first);
     let writes = backend.writes();
-    assert!(backend.world().unwrap().contains("kept"));
+    assert!(backend.text("world").unwrap().contains("kept"));
     save_now(&mut first);
     assert_eq!(backend.writes(), writes, "unchanged data isn't rewritten");
 
@@ -414,7 +300,7 @@ fn stores_save_changes_and_restore_them_at_startup() {
 
 #[test]
 fn saved_data_that_cant_be_restored_is_never_overwritten() {
-    let backend = MemoryBackend::default();
+    let backend = MemoryStore::default();
     backend.write("world", b"not a world").unwrap();
     let mut app = app();
     app.add_store::<WorkbenchStore>(backend.clone());
@@ -425,29 +311,13 @@ fn saved_data_that_cant_be_restored_is_never_overwritten() {
             .error::<WorkbenchStore>()
             .is_some()
     );
+    let reported = app
+        .world()
+        .resource::<crate::Notifications>()
+        .latest()
+        .unwrap();
+    assert!(reported.text.starts_with("Couldn't restore saved world"));
     crate::tests::layout(app.world_mut());
     save_now(&mut app);
-    assert_eq!(backend.world().unwrap(), "not a world");
-}
-
-#[test]
-fn directory_stores_keep_one_file_per_entry() {
-    let directory = std::env::temp_dir().join(format!("bedtime-store-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&directory);
-    let store = DirectoryStore::new(directory.join("nested"));
-    assert_eq!(store.read("world").unwrap(), None);
-    assert_eq!(store.version("world").unwrap(), None);
-    store.write("world", b"first").unwrap();
-    assert_eq!(store.read("world").unwrap().as_deref(), Some(&b"first"[..]));
-    assert!(directory.join("nested/world.ron").exists());
-    assert!(store.version("world").unwrap().is_some());
-    store.write("world", b"second").unwrap();
-    assert_eq!(
-        store.read("world").unwrap().as_deref(),
-        Some(&b"second"[..])
-    );
-    // Nothing is left behind from the atomic write.
-    let files = std::fs::read_dir(directory.join("nested")).unwrap().count();
-    assert_eq!(files, 1);
-    std::fs::remove_dir_all(&directory).unwrap();
+    assert_eq!(backend.text("world").unwrap(), "not a world");
 }

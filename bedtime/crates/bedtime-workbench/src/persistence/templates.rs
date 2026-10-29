@@ -8,6 +8,7 @@
 //! belongs to the data of one workspace, not to an arrangement.
 use super::*;
 use crate::{Workbench, WorkbenchWorldExt};
+use bevy_world_serialization::DynamicWorldBuilder;
 
 /// One layout's arrangement and panels, as RON. Saved inside other RON (an
 /// app's persisted resource), it's written as nested RON, not as a string.
@@ -44,7 +45,7 @@ impl Workbench {
         }
         let registry = world.resource::<AppTypeRegistry>().clone();
         let registry = registry.read();
-        let components = persisted_components(&registry).deny::<ActiveLayout>();
+        let components = snapshot::persisted_components(&registry).deny::<ActiveLayout>();
         let mut dynamic = DynamicWorldBuilder::from_world(world, &registry)
             .with_component_filter(components)
             .extract_entities(entities.into_iter())
@@ -62,13 +63,13 @@ impl Workbench {
                 entity
                     .components
                     .iter()
-                    .any(|value| refers_outside(value.as_ref(), &registry, &captured))
+                    .any(|value| snapshot::refers_outside(value.as_ref(), &registry, &captured))
             })
             .map(|entity| entity.entity)
             .collect();
         leave_out_panels(&mut dynamic, &elsewhere);
-        check_references(&dynamic, &registry)?;
-        serialize(dynamic, &registry).and_then(LayoutTemplate::from_ron)
+        snapshot::check_references(&dynamic, &registry)?;
+        snapshot::serialize(dynamic, &registry).and_then(LayoutTemplate::from_ron)
     }
 
     /// Build a new layout from `template`, after the existing layouts. It isn't
@@ -77,7 +78,7 @@ impl Workbench {
         let world = &mut self.world;
         let registry = world.resource::<AppTypeRegistry>().clone();
         let registry = registry.read();
-        let dynamic = parse(template.as_str(), &registry)?;
+        let dynamic = snapshot::parse(template.as_str(), &registry)?;
         if !dynamic.resources.is_empty() {
             return Err("A layout template can't hold resources".into());
         }
@@ -109,7 +110,7 @@ impl Workbench {
                 ));
             }
         }
-        let map = write_entities(world, &dynamic, &registry)?;
+        let map = snapshot::write(world, &dynamic, &registry)?;
         Ok(map[&layout])
     }
 }

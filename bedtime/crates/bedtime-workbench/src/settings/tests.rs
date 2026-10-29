@@ -2,10 +2,7 @@ use super::*;
 use crate::WorkbenchWorldExt;
 use crate::{
     WorkbenchCorePlugin,
-    persistence::{
-        StoreAppExt, StoreBackend, WorkbenchStore,
-        tests::{MemoryBackend, save_now},
-    },
+    persistence::{MemoryStore, PersistenceAppExt, StoreBackend, WorkbenchStore, tests::save_now},
 };
 
 struct GlobalStore;
@@ -43,7 +40,7 @@ fn workspace() -> StoreId {
 }
 
 /// Global settings under per-workbench ones, each in its own backend.
-fn app(global: &MemoryBackend, workbench: &MemoryBackend) -> App {
+fn app(global: &MemoryStore, workbench: &MemoryStore) -> App {
     let mut app = App::new();
     app.add_plugins(WorkbenchCorePlugin)
         .init_resource::<Applied>()
@@ -64,7 +61,7 @@ fn applied(app: &App) -> Vec<f32> {
 
 #[test]
 fn later_layers_override_earlier_ones_and_clearing_inherits() {
-    let mut app = app(&MemoryBackend::default(), &MemoryBackend::default());
+    let mut app = app(&MemoryStore::default(), &MemoryStore::default());
     assert_eq!(applied(&app), [16.0], "apply runs once at startup");
     let world = app.world_mut();
 
@@ -96,7 +93,7 @@ fn later_layers_override_earlier_ones_and_clearing_inherits() {
 
 #[test]
 fn each_layer_has_its_own_view_and_knows_what_overrides_it() {
-    let mut app = app(&MemoryBackend::default(), &MemoryBackend::default());
+    let mut app = app(&MemoryStore::default(), &MemoryStore::default());
     let world = app.world_mut();
     let settings = world.resource::<Settings>();
     assert_eq!(settings.get_at::<Indent>(global()), 16.0);
@@ -127,7 +124,7 @@ fn each_layer_has_its_own_view_and_knows_what_overrides_it() {
 
 #[test]
 fn setting_the_inherited_value_clears_the_layer() {
-    let mut app = app(&MemoryBackend::default(), &MemoryBackend::default());
+    let mut app = app(&MemoryStore::default(), &MemoryStore::default());
     let world = app.world_mut();
     world
         .workbench_mut()
@@ -165,7 +162,7 @@ fn setting_the_inherited_value_clears_the_layer() {
 
 #[test]
 fn settings_can_be_limited_to_some_layers() {
-    let mut app = app(&MemoryBackend::default(), &MemoryBackend::default());
+    let mut app = app(&MemoryStore::default(), &MemoryStore::default());
     let world = app.world_mut();
     assert!(
         world
@@ -182,14 +179,14 @@ fn settings_can_be_limited_to_some_layers() {
 
 #[test]
 fn layers_load_at_startup_save_changes_and_keep_unknown_keys() {
-    let global_backend = MemoryBackend::default();
+    let global_backend = MemoryStore::default();
     global_backend
         .write(
             "settings",
             br#"{"test.indent": 18.0, "some.plugin": "kept"}"#,
         )
         .unwrap();
-    let mut app = app(&global_backend, &MemoryBackend::default());
+    let mut app = app(&global_backend, &MemoryStore::default());
     assert_eq!(app.world().resource::<Settings>().get::<Indent>(), 18.0);
     assert_eq!(applied(&app), [18.0]);
 
@@ -212,14 +209,14 @@ fn layers_load_at_startup_save_changes_and_keep_unknown_keys() {
 
 #[test]
 fn invalid_values_fall_through_and_are_reported() {
-    let global_backend = MemoryBackend::default();
+    let global_backend = MemoryStore::default();
     global_backend
         .write(
             "settings",
             br#"{"test.indent": "wide", "test.restore": false}"#,
         )
         .unwrap();
-    let workbench_backend = MemoryBackend::default();
+    let workbench_backend = MemoryStore::default();
     // Not allowed in this layer, so it's ignored too.
     workbench_backend
         .write("settings", br#"{"test.restore": true}"#)
@@ -239,9 +236,9 @@ fn invalid_values_fall_through_and_are_reported() {
 
 #[test]
 fn an_unreadable_layer_is_never_saved_over() {
-    let global_backend = MemoryBackend::default();
+    let global_backend = MemoryStore::default();
     global_backend.write("settings", b"not settings").unwrap();
-    let mut app = app(&global_backend, &MemoryBackend::default());
+    let mut app = app(&global_backend, &MemoryStore::default());
     assert!(app.world().resource::<Settings>().error(global()).is_some());
     app.world_mut()
         .workbench_mut()
@@ -253,8 +250,8 @@ fn an_unreadable_layer_is_never_saved_over() {
 
 #[test]
 fn a_layer_changed_outside_the_app_is_reloaded() {
-    let global_backend = MemoryBackend::default();
-    let mut app = app(&global_backend, &MemoryBackend::default());
+    let global_backend = MemoryStore::default();
+    let mut app = app(&global_backend, &MemoryStore::default());
     global_backend
         .write("settings", br#"{"test.indent": 24.0}"#)
         .unwrap();
@@ -266,8 +263,8 @@ fn a_layer_changed_outside_the_app_is_reloaded() {
 
 #[test]
 fn enum_values_round_trip_through_a_saved_layer() {
-    let global_backend = MemoryBackend::default();
-    let mut first = app(&global_backend, &MemoryBackend::default());
+    let global_backend = MemoryStore::default();
+    let mut first = app(&global_backend, &MemoryStore::default());
     first
         .world_mut()
         .workbench_mut()
@@ -278,7 +275,7 @@ fn enum_values_round_trip_through_a_saved_layer() {
         Shade::Light
     );
     save_now(&mut first);
-    let second = app(&global_backend, &MemoryBackend::default());
+    let second = app(&global_backend, &MemoryStore::default());
     assert_eq!(
         second.world().resource::<Settings>().get::<ShadeSetting>(),
         Shade::Light
@@ -287,7 +284,7 @@ fn enum_values_round_trip_through_a_saved_layer() {
 
 #[test]
 fn a_setting_can_be_read_before_the_app_exists() {
-    let backend = MemoryBackend::default();
+    let backend = MemoryStore::default();
     assert_eq!(read_setting::<RestoreLast>(&backend), None);
     backend
         .write(ENTRY, b"{\"test.restore\": false, \"test.shade\": Light}")

@@ -283,6 +283,19 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 1: `bedtime-persistence`**, 2026-10-29. Stores,
+  backends (`DirectoryStore`, `MemoryStore`), the world snapshot and persisted
+  resources moved out of workbench into their own crate, with a small derive
+  crate (`bedtime-persistence-macros`). `app.persist_world::<S>()` puts the
+  snapshot in one store; `app.persist::<T, S>()` with `#[derive(Persisted)]
+  #[persisted(key = "...")]` saves a serde resource as its own entry.
+  `persist_in` and "only WorkbenchStore holds entities" are gone; workbench's
+  layout rules are capture/restore hooks. Failures are `StoreError` messages
+  that workbench shows as notifications. `StoreAppExt` is `PersistenceAppExt`.
+  bed: `LayoutDefaults` is `global/layout_defaults.ron` (layout defaults saved
+  before this in `global/world.ron` aren't read any more) and the recent list
+  is a persisted resource.
+
 - **Workbench API, exits and notifications**, 2026-10-28:
   - Every workbench operation is a method on one of two views of the `World`
     (`WorkbenchWorldExt`): `world.workbench()` (`&WorkbenchRef`, reads) and

@@ -95,6 +95,9 @@ Builds on the existing reflected world serialization, simplified.
   go to `WorkbenchStore`.
 - **The app can redirect a resource** to another store without the plugin
   changing: `app.persist_in::<RecentFiles, GlobalStore>()`.
+  (Superseded: the world snapshot is saved in one store, and other data is a
+  persisted resource, `app.persist::<RecentFiles, GlobalStore>()`. See
+  [architecture.md](architecture.md#bedtime-persistence).)
 - **Plugins hook in by marking types.** A file tree's `show_hidden` lives on its
   panel component, marked `Persist`, and travels with the layout. Runtime state
   is rebuilt through required components and hooks, as now.

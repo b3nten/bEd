@@ -808,14 +808,15 @@ cargo build --offline --locked -p bed --features automation
 python3 bedtime_old/tools/smoke_corners.py  # drives bed_old; not maintained
 ```
 
-## Persistence and stores (`persistence` feature)
+## Persistence (`persistence` feature)
 
-Components and resources opt in to being saved with reflection metadata. Saved
-data goes to a **store**; workbench defines one, `WorkbenchStore`, and the
-application decides where it lives by giving it a backend.
+Saving is [`bedtime-persistence`](../bedtime-persistence/README.md), re-exported
+as `bedtime_workbench::persistence`: stores, the world snapshot, and persisted
+resources. Workbench defines `WorkbenchStore` and saves the world snapshot in
+it; the app decides where it lives by giving it a backend.
 
 ```rust,ignore
-use bedtime_workbench::persistence::{DirectoryStore, ReflectPersist, StoreAppExt, WorkbenchStore};
+use bedtime_workbench::persistence::{DirectoryStore, ReflectPersist, PersistenceAppExt, WorkbenchStore};
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Persist)]
@@ -826,31 +827,16 @@ app.register_type::<Notes>()
    .add_store::<WorkbenchStore>(DirectoryStore::new(config_dir));
 ```
 
-- **What's saved.** Entities with persisted components (layouts, areas, panels
-  and their marked components) go to `WorkbenchStore`. A persisted resource goes
-  there too unless the app redirects it: `app.persist_in::<RecentFiles, GlobalStore>()`,
-  where `GlobalStore` is any app-defined `Store` marker type with its own backend.
 - **Panels.** Save a panel's concrete component; its `PanelInstance` and runtime
   state come back through `#[require]` and hooks. A panel with nothing persisted
   is left out of the save. `PanelInstance` itself isn't saved (titles come from
   `Panel::LABEL` or are set at runtime).
-- **Relationships.** Both sides are saved and written back exactly, the way Bevy
-  scenes work, so tab and area order survive. Entity fields must use Bevy's
-  `#[entities]` mapping, and every entity a saved value refers to must be saved
-  too. Asset handles can't be saved; save a path or other descriptor.
-- **When.** Each store's data is read and restored once, before `Startup`, and
-  saved about once a second while it changes, and on exit. Change detection
-  compares the new capture with what was last written.
-- **Failure.** A store whose saved data can't be read or restored is reported and
-  never written, so a damaged file isn't overwritten. `Stores::error::<S>()`
-  says why a store isn't being saved, or why its last save failed.
-- **Backends.** `StoreBackend` reads and writes named byte entries (`world`, and
-  later `settings`). `DirectoryStore` keeps one `<entry>.ron` file per entry,
-  written atomically. Other backends (SQLite, a remote service) need no knowledge
-  of ECS or reflection.
-- `persistence::capture::<S>(world)` and `restore::<S>(world, text)` capture and
-  restore a store's data directly, e.g. for export or tests. Layouts are only
-  restored into an empty workbench.
+- **Restoring.** Layouts are only restored into a workbench that has none.
+  Which tab was selected and which area focused are put back afterwards, and a
+  restore that leaves the workbench invalid is undone.
+- **Failure.** Store failures become notifications.
+- Data that belongs somewhere else (shared by every workspace, say) is a
+  persisted resource in another store: `app.persist::<RecentFiles, GlobalStore>()`.
 - **Layout templates.** `capture_layout(layout)` saves one layout's
   areas and panels as a `LayoutTemplate` (RON text, reflectable, so an app can
   keep templates in a persisted resource). `instantiate_layout(&template)`

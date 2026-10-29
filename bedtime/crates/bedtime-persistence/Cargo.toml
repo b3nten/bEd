@@ -1,0 +1,14 @@
+[package]
+name = "bedtime-persistence"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Stores, a persisted world snapshot and persisted resources for Bevy apps"
+
+[dependencies]
+bedtime-persistence-macros = { path = "../bedtime-persistence-macros" }
+bevy = { workspace = true, features = ["std", "bevy_asset", "serialize", "bevy_log"] }
+bevy_world_serialization = "=0.20.0"
+ron = "0.12.2"
+serde = { workspace = true, features = ["derive"] }

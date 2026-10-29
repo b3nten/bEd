@@ -1,0 +1,15 @@
+[package]
+name = "bedtime-persistence-macros"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Derive macro for bedtime-persistence's Persisted"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"

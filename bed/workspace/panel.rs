@@ -3,12 +3,12 @@
 //! folder, never the folder. The default workspace isn't listed: it's where bed
 //! is without a project, not a workspace you manage.
 use super::{RecentWorkspaces, Start, Workspace, available, delete};
-use crate::{menus::switch, panels::PanelPolicy, settings::GlobalLocation};
+use crate::{menus::switch, panels::PanelPolicy};
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, ErrorDialog, Handler, Panel,
-    PanelFactory, PanelInstance, persistence::DirectoryStore, persistence::ReflectPersist,
+    PanelFactory, PanelInstance, persistence::ReflectPersist,
 };
 use bevy::prelude::*;
 use std::{
@@ -321,12 +321,7 @@ fn forget(world: &mut World, folder: &Path, config: Option<&Path>) {
     let result = (|| {
         let config = config.ok_or("There's no configuration directory")?;
         delete(&folder_workspace(folder), config)?;
-        let global = world.resource::<GlobalLocation>().0.clone();
-        if let Some(global) = global {
-            world
-                .resource_mut::<RecentWorkspaces>()
-                .forget(&DirectoryStore::new(global), folder)?;
-        }
+        world.resource_mut::<RecentWorkspaces>().forget(folder);
         Ok::<_, String>(())
     })();
     world.resource_mut::<KnownWorkspaces>().checked = None;

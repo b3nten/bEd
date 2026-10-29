@@ -12,10 +12,14 @@
 use crate::settings::{GlobalLocation, GlobalStore, ReopenLastWorkspace};
 use bedtime_workbench::{
     ErrorDialog, WorkbenchWorldExt,
-    persistence::{DirectoryStore, StoreAppExt, StoreBackend, WorkbenchStore},
+    persistence::{
+        DirectoryStore, Persisted, PersistenceAppExt, StoreBackend, WorkbenchStore, read_persisted,
+        write_persisted,
+    },
     settings::{Setting, SettingsAppExt, read_setting},
 };
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, TryLockError},
     path::{Path, PathBuf},
@@ -24,7 +28,6 @@ use std::{
 mod panel;
 pub use panel::{OpenWorkspaces, WorkspacesPanel, WorkspacesPanelPlugin};
 
-const RECENT_ENTRY: &str = "recent";
 const RECENT_LIMIT: usize = 10;
 
 /// The open workspace.
@@ -122,37 +125,30 @@ pub fn lock(directory: &Path, workspace: &Workspace) -> Result<Option<WorkspaceL
     claim().map_err(|e| format!("{}: {e}", directory.display()))
 }
 
-/// Recently opened folders, most recent first. Kept in the global store's
-/// directory as its own entry, so it can be read before the app is built.
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
+/// Recently opened folders, most recent first. Persisted in the global store,
+/// and read from it directly before the app is built.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize, Persisted)]
+#[persisted(key = "recent")]
+#[serde(transparent)]
 pub struct RecentWorkspaces(pub Vec<PathBuf>);
 
 impl RecentWorkspaces {
     pub fn read(store: &dyn StoreBackend) -> Self {
-        let read = || -> Option<Vec<PathBuf>> {
-            let bytes = store.read(RECENT_ENTRY).ok()??;
-            ron::de::from_bytes(&bytes).ok()
-        };
-        Self(read().unwrap_or_default())
+        read_persisted(store).ok().flatten().unwrap_or_default()
     }
 
-    /// Move `root` to the front and save the list.
+    /// Move `root` to the front and save the list straight away (this happens
+    /// before there's an App to save it).
     pub fn remember(&mut self, store: &dyn StoreBackend, root: &Path) -> Result<(), String> {
         self.0.retain(|path| path != root);
         self.0.insert(0, root.to_owned());
         self.0.truncate(RECENT_LIMIT);
-        self.write(store)
+        write_persisted(store, self)
     }
 
-    /// Take `root` off the list and save it.
-    pub fn forget(&mut self, store: &dyn StoreBackend, root: &Path) -> Result<(), String> {
+    /// Take `root` off the list; it's saved with the rest of the app.
+    pub fn forget(&mut self, root: &Path) {
         self.0.retain(|path| path != root);
-        self.write(store)
-    }
-
-    fn write(&self, store: &dyn StoreBackend) -> Result<(), String> {
-        let text = ron::ser::to_string_pretty(&self.0, default()).map_err(|e| e.to_string())?;
-        store.write(RECENT_ENTRY, text.as_bytes())
     }
 }
 
@@ -238,6 +234,7 @@ impl Launch {
         if let Some(global) = &global {
             app.add_store::<GlobalStore>(DirectoryStore::new(global));
         }
+        app.persist::<RecentWorkspaces, GlobalStore>();
         app.insert_resource(GlobalLocation(global));
         let Opened {
             workspace,

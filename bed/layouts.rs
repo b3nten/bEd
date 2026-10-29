@@ -11,9 +11,10 @@ use crate::{
 use bedtime_workbench::WorkbenchWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout, PanelFactory,
-    persistence::{LayoutTemplate, ReflectPersist, StoreAppExt},
+    persistence::{LayoutTemplate, Persisted, PersistenceAppExt, ReflectPersist},
 };
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 pub const SLOTS: usize = 5;
 
@@ -30,8 +31,8 @@ impl LayoutSlot {
 
 /// Each slot's default arrangement, shared by every workspace. `None` is a
 /// single empty area.
-#[derive(Resource, Reflect, Clone, Debug, Default, PartialEq)]
-#[reflect(Resource, Persist, Default)]
+#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize, Persisted)]
+#[persisted(key = "layout_defaults")]
 pub struct LayoutDefaults(pub [Option<LayoutTemplate>; SLOTS]);
 
 /// Switch to numbered layout `N` (from 0).
@@ -69,9 +70,8 @@ pub struct LayoutsPlugin;
 impl Plugin for LayoutsPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<LayoutSlot>()
-            .register_type::<LayoutDefaults>()
             .init_resource::<LayoutDefaults>()
-            .persist_in::<LayoutDefaults, GlobalStore>()
+            .persist::<LayoutDefaults, GlobalStore>()
             .add_action_handler::<UseLayout<0>>(Handler::new(use_layout::<0>))
             .add_action_handler::<UseLayout<1>>(Handler::new(use_layout::<1>))
             .add_action_handler::<UseLayout<2>>(Handler::new(use_layout::<2>))
