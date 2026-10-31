@@ -140,7 +140,7 @@ Each step should produce a usable app. We can reorder at any point.
    commands + keybindings → menus + toolbar.
 6. Project root + file tree panel.
 7. Open a file into an editor tab (opening policy; observation 1).
-8. Other viewers: image / hex / model, chosen by file type; "Open with".
+8. ✅ Other viewers: image / hex / model (and font, audio, video, tables), chosen by file type; "Open with".
 9. Terminal.
 10. Structure panel (observation 7).
 11. LSP + status bar.
@@ -284,7 +284,25 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **File operations in the tree**, 2026-10-31, awaiting review.
+- **Viewers**, 2026-10-31, awaiting review. New crates, each a plugin with an
+  opener, a model decoded on the load worker, and a panel whose content fills
+  it with `Floating` controls (new in bedtime-ui) and right-click menus:
+  `bedtime-hex` (any file, `Fit::Can`: the last resort; find, go to offset),
+  `bedtime-image` (raster, animated GIF/APNG/WebP, SVG; zoom, pan, sharp
+  pixels), `bedtime-model` (ported from bedtime_old: the 62 tests pass; new
+  panel with a preparation system), `bedtime-font` (preview, glyph grid,
+  outline inspector; skrifa), `bedtime-audio` (rodio; waveform, spectrum,
+  spectrogram from a load-time analysis), `bedtime-video` (macOS
+  AVFoundation via objc2; scrubber; `FileModel::UNREAD` so videos aren't read
+  into memory) and `bedtime-table` (CSV/TSV editor: `TableChange` edits with
+  undo; sort, filter, resize; saves with its delimiter). Workbench:
+  `Fit::Specific` and best-fit opener choice (default among equals),
+  `viewer_document`. Fixtures moved to `tests/fixtures` (plus a Swift-made
+  clip). `tests/automation/viewers.py` covers every viewer (audio isn't played
+  aloud). Floating bars are opaque: any alpha below 1 showed content through
+  strongly on the transparent window.
+
+- **File operations in the tree**, 2026-10-31, committed (`1b77364`).
   `bedtime-filetree/src/ops.rs` (`FileOperations`, `run_file_operation`,
   `copy_files`, `paste_files`) runs `bedtime-filesystem`'s `execute` on
   `ManagedWork` and finishes in `Update`: refresh, select what was made,

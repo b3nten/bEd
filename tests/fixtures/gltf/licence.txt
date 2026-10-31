@@ -1,0 +1,15 @@
+LittlestTokyo.glb — Littlest Tokyo
+
+Author: glenatron
+Author profile: https://sketchfab.com/glenatron
+Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+Licence terms: https://creativecommons.org/licenses/by/4.0/
+
+Original model:
+https://sketchfab.com/models/94b24a60dc1b48248de50bf087c0f042
+
+Source mirror:
+https://github.com/mrdoob/three.js/blob/r180/examples/models/gltf/LittlestTokyo.glb
+
+The model is included unchanged as a Draco decoding and static skinning test
+fixture. Its original attribution and licence remain in its asset metadata.

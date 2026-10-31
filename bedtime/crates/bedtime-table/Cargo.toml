@@ -1,0 +1,19 @@
+[package]
+name = "bedtime-table"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A CSV and TSV table editor for workbench apps: edit cells, rows and columns; sort and filter"
+
+[features]
+default = ["persistence"]
+# Save table panels with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-document.workspace = true
+bedtime-filesystem.workspace = true
+bedtime-ui.workspace = true
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }

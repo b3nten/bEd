@@ -75,8 +75,12 @@ impl OpenerId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Fit {
     No,
+    /// It can show it (a hex viewer, anything).
     Can,
+    /// It suits it (an editor, text).
     Preferred,
+    /// It's made for this kind of file (an image viewer, a PNG).
+    Specific,
 }
 
 /// A model and a viewer for it, with a label ("Text Editor") and, optionally,
@@ -381,7 +385,7 @@ impl Workbench {
     }
 
     /// Open the file at `path` with the opener that suits it: `options.opener`
-    /// if it can, else the default opener if it fits, else the best fit.
+    /// if it can, else the best fit (the default opener among equals).
     /// Returns the panel. A file nothing opens goes to the app's fallback
     /// (`None`), or is an error without one.
     #[cfg(feature = "files")]
@@ -481,18 +485,19 @@ fn choose_file_opener(
     if let Some(id) = requested {
         return (fit(id) != Fit::No).then_some(id);
     }
-    if let Some(id) = openers.default
-        && fit(id) != Fit::No
-    {
-        return Some(id);
+    // The best fit; among equals the default, else the first registered.
+    let mut best: Option<(Fit, OpenerId)> = None;
+    for opener in &openers.openers {
+        let fit = fit(opener.id);
+        let better = match best {
+            None => fit != Fit::No,
+            Some((best, _)) => fit > best || (fit == best && openers.default == Some(opener.id)),
+        };
+        if better {
+            best = Some((fit, opener.id));
+        }
     }
-    openers
-        .openers
-        .iter()
-        .map(|opener| (fit(opener.id), opener.id))
-        .filter(|(fit, _)| *fit != Fit::No)
-        .max_by_key(|(fit, _)| *fit)
-        .map(|(_, id)| id)
+    best.map(|(_, id)| id)
 }
 
 /// How to apply state to `panel`, if it's a viewer for `model`.
@@ -589,6 +594,48 @@ fn shows_viewer(world: &World, area: Entity) -> bool {
             .iter()
             .any(|opener| (opener.shows)(world, panel))
     })
+}
+
+/// What a viewer panel shows, for drawing it: its document's model (viewers'
+/// models are cheap to clone), handle and revision.
+pub struct ViewerDocument<M: DocumentModel> {
+    pub handle: DocumentHandle<M>,
+    pub model: M,
+    pub revision: u64,
+}
+
+/// The document `panel` shows, if it's ready. While it loads this draws a
+/// spinner; if it couldn't be read, why.
+pub fn viewer_document<M: DocumentModel>(
+    ui: &mut bedtime_ui::egui::Ui,
+    world: &World,
+    panel: Entity,
+) -> Option<ViewerDocument<M>> {
+    use bedtime_ui::egui;
+    let document = world.get::<DocumentReference>(panel)?.document();
+    let workbench = world.workbench();
+    let info = workbench.inspect_document(document).ok()?;
+    match info.status {
+        DocumentStatus::Loading => {
+            ui.centered_and_justified(|ui| ui.spinner());
+            None
+        }
+        DocumentStatus::Failed(error) => {
+            egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
+                ui.label(format!("This file can't be opened: {error}"));
+            });
+            None
+        }
+        DocumentStatus::Ready => {
+            let handle = workbench.cast_document::<M>(document).ok()?;
+            let model = workbench.read_document(handle).ok()?.clone();
+            Some(ViewerDocument {
+                handle,
+                model,
+                revision: info.revision,
+            })
+        }
+    }
 }
 
 /// Editing a document pins its preview panels.

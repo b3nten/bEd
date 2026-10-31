@@ -1,8 +1,16 @@
 //! Files: the workspace folder's file tree, what opens which file, saving
-//! them, and Structure. Text opens in the editor; anything else is reported.
+//! them, and Structure. Text opens in the editor; images, models, fonts,
+//! sound, video and tables in their viewers; anything else in hex.
 use crate::panels::PanelPolicy;
+use bedtime_audio::AudioPlugin;
 use bedtime_code::{CodePlugin, StructurePanel};
 use bedtime_filetree::{FileTree, FileTreePlugin};
+use bedtime_font::FontPlugin;
+use bedtime_hex::HexPlugin;
+use bedtime_image::ImagePlugin;
+use bedtime_model::ModelViewerPlugin;
+use bedtime_table::TablePlugin;
+use bedtime_video::VideoPlugin;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Notification, OpenersAppExt,
     PanelFactory, WorkbenchWorldExt,
@@ -38,10 +46,20 @@ pub struct FilesPlugin;
 
 impl Plugin for FilesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((FileTreePlugin, CodePlugin))
-            .set_open_fallback(nothing_opens)
-            .add_action_handler::<OpenFiles>(Handler::new(open_files))
-            .add_action_handler::<OpenStructure>(Handler::new(open_structure));
+        app.add_plugins((
+            FileTreePlugin,
+            CodePlugin,
+            HexPlugin,
+            ImagePlugin,
+            ModelViewerPlugin,
+            FontPlugin,
+            AudioPlugin,
+            VideoPlugin,
+            TablePlugin,
+        ))
+        .set_open_fallback(nothing_opens)
+        .add_action_handler::<OpenFiles>(Handler::new(open_files))
+        .add_action_handler::<OpenStructure>(Handler::new(open_structure));
         // Save, Undo and Redo act on the focused panel's document.
         app.world_mut().workbench_mut().register_document_handlers();
     }

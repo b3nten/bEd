@@ -1,6 +1,6 @@
 """Files: a folder's layout 1 starts with the file tree. A click previews a
 text file beside it and leaves the tree focused; a double click keeps it
-open; a file nothing opens is reported in the status bar. Open folders are
+open; binary data opens in hex. Open folders are
 saved with the workspace. Files are created from the menu, renamed with F2,
 and dragged into folders."""
 import tempfile
@@ -59,9 +59,9 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: bed.exists("other.txt") and len(bed.find_all("other.txt")) == 2, "other.txt previews")
         assert len(bed.find_all("notes.txt")) == 2, "the double-clicked file was replaced"
 
-        # Nothing here opens binary data.
+        # Binary data opens in hex.
         bed.click(row(bed, "data.bin"))
-        until(bed, lambda: bed.exists(contains="can't open data.bin"), "data.bin is reported")
+        until(bed, lambda: bed.exists(contains="0x0"), "data.bin shows in hex")
         assert not bed.status()["errors"], bed.status()["errors"]
         bed.screenshot("files")
 

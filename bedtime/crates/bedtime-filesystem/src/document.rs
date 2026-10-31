@@ -129,6 +129,9 @@ pub trait FileModel: DocumentModel {
     fn encode(&self, out: &mut dyn Write) -> std::io::Result<()>;
     /// Files larger than this aren't opened as this model.
     const MAX_LEN: u64 = 256 * 1024 * 1024;
+    /// The viewer reads the file itself (a video, played from disk): loading
+    /// only checks it's there, and `decode` is given no bytes.
+    const UNREAD: bool = false;
 }
 
 impl FileModel for TextBuffer {
@@ -209,6 +212,14 @@ impl<M: FileModel> DocumentSource<M> for FsDocumentSource {
         let metadata = source.metadata().map_err(source_error)?;
         if !metadata.is_file() {
             return Err(SourceError::Failed("It isn't a regular file".into()));
+        }
+        if M::UNREAD {
+            let model = M::decode(&[]).map_err(SourceError::Failed)?;
+            return Ok(SourceLoad {
+                model,
+                version: Some(version(&metadata.version)),
+                saved: true,
+            });
         }
         if metadata.len > M::MAX_LEN {
             return Err(SourceError::Failed("It's too large to open".into()));

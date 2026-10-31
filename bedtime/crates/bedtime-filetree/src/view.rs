@@ -871,11 +871,12 @@ fn open_factory(path: PathBuf) -> bedtime_workbench::PanelFactory {
 
 /// The icon for a file, by its extension. Does no I/O.
 pub fn file_icon(path: &Path) -> BuiltinIcon {
-    match path
+    let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
         .unwrap_or("")
-    {
+        .to_ascii_lowercase();
+    match extension.as_str() {
         "rs" => BuiltinIcon::Rust,
         "py" => BuiltinIcon::Python,
         "js" | "mjs" => BuiltinIcon::Javascript,
@@ -883,7 +884,15 @@ pub fn file_icon(path: &Path) -> BuiltinIcon {
         "json" => BuiltinIcon::Json,
         "toml" | "ini" | "ron" => BuiltinIcon::Config,
         "md" => BuiltinIcon::Markdown,
-        "png" | "jpg" | "jpeg" | "svg" | "webp" => BuiltinIcon::Image,
+        "png" | "apng" | "jpg" | "jpeg" | "jfif" | "svg" | "webp" | "gif" | "bmp" | "ico"
+        | "tif" | "tiff" | "tga" | "qoi" | "dds" | "hdr" | "exr" | "pnm" | "ppm" | "pgm"
+        | "pbm" => BuiltinIcon::Image,
+        "mp3" | "wav" | "wave" | "flac" | "ogg" | "oga" | "m4a" | "aac" | "aif" | "aiff"
+        | "caf" => BuiltinIcon::Audio,
+        "mp4" | "m4v" | "mov" | "qt" | "3gp" | "mkv" | "webm" | "avi" => BuiltinIcon::Video,
+        "ttf" | "otf" | "ttc" | "otc" | "woff" | "woff2" => BuiltinIcon::Font,
+        "csv" | "tsv" | "tab" => BuiltinIcon::Spreadsheet,
+        "gltf" | "glb" | "stl" | "obj" | "fbx" => BuiltinIcon::Box,
         "sh" => BuiltinIcon::Bash,
         "txt" => BuiltinIcon::Text,
         _ => BuiltinIcon::Default,

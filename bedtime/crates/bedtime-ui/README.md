@@ -224,6 +224,22 @@ initialization and real operation errors retain the service's normal semantics;
 native access/conversion failures still produce `UiError` rather than being
 silently treated as absent text.
 
+## Floating controls
+
+Content that fills its panel (an image, a model, a video) keeps its controls
+in `Floating` bars: small rounded bars at a corner or the middle of an edge of
+a rect, shown while the pointer is over it or one of their menus is open, and
+faded away otherwise (`shown(true)` keeps them, as for a paused video).
+`UiFrame::floating_button`, `floating_toggle` (underlined in the accent while
+on) and `floating_label` are their pieces.
+
+```rust,ignore
+Floating::new(id, rect, egui::Align2::CENTER_BOTTOM).show(&mut frame, |f| {
+    if f.floating_button(BuiltinIcon::Fit, "Fit").clicked() { /* ... */ }
+    f.floating_label("100%");
+});
+```
+
 ## Icons and viewports
 
 Icons remain Bevy `Icon` and partial `IconSet` assets. A surface's `UiIcons` handle

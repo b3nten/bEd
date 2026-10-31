@@ -583,7 +583,7 @@
       "guidelines": "https://www.jetbrains.com/company/brand/",
       "aliases": {
         "loc": {
-          "ko-KR": "코틀린"
+          "ko-KR": "\ucf54\ud2c0\ub9b0"
         }
       }
     }
@@ -1430,5 +1430,110 @@
     "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
     "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/circle-alert.svg",
     "sha256": "ce3e98b7a03b78c0071131df42466e4e1ff5187fccad30e739ec9ce951cf685a"
+  },
+  {
+    "key": "play",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/play.svg",
+    "sha256": "d7c34786135922a92b6896f6c2384ceeb0346afbf6041dc79982011411409833"
+  },
+  {
+    "key": "pause",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/pause.svg",
+    "sha256": "f122ec4ea7f5693a0b1baafa9c708b53980dc87b4aacb297c6e6f71c1a4c115c"
+  },
+  {
+    "key": "repeat",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/repeat.svg",
+    "sha256": "6b67b8707e6a3107a1ccad48716bd93fc5e95e8d91f2bff5eec64f62cc7dfc4b"
+  },
+  {
+    "key": "volume",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/volume-2.svg",
+    "sha256": "fb404f9c128a0579de67b399177631e5edb3502fdc247ceb30e8b15754b46071"
+  },
+  {
+    "key": "volume-off",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/volume-x.svg",
+    "sha256": "f382e421b7aae01172989f2b749ee87e44c0c82c16970b13a9ad5a323b613be0"
+  },
+  {
+    "key": "fit",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/scan.svg",
+    "sha256": "c77f0e634b2451a14a262a59b61d75bbcea3994b16eeba1f5753e86b33282a4d"
+  },
+  {
+    "key": "info",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/info.svg",
+    "sha256": "bc977a64eb96f3e9c1041ffd09a3fceb70e3e65c02b571f76064062ed31f3cb9"
+  },
+  {
+    "key": "waveform",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/audio-waveform.svg",
+    "sha256": "d4b6f62b0d72b7ad223f9abeb51e64875e4533123d7898d07acfa74154eb14b3"
+  },
+  {
+    "key": "spectrum",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/chart-no-axes-column.svg",
+    "sha256": "5dfd8fc5b5417dad858991de4969c3fe1c4a466104d0880a15b691ff7c5b1f12"
+  },
+  {
+    "key": "layers",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/layers.svg",
+    "sha256": "ce16d0a955e3581cda17f6b2fd5c5bc2034b405f9cecc31c8ebb8495b4afc1bb"
+  },
+  {
+    "key": "sliders",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/sliders-horizontal.svg",
+    "sha256": "e43a00e5eb684e6cbb61083bed2528d7a3fa5f265693eb2b5f314cd432aa65f4"
+  },
+  {
+    "key": "filter",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/funnel.svg",
+    "sha256": "288f869330602e29a640099ffc5d6ac01caadad2ef6f8aac1138b8bf91ccd752"
+  },
+  {
+    "key": "grid",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/grid-3x3.svg",
+    "sha256": "6c24155397cf0e751c05931bae68e67e4fe0fd58baeb7b29e9f80c90ed1d5194"
+  },
+  {
+    "key": "type",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/type.svg",
+    "sha256": "82c514732330f9c36c0f1f7fd1034634fa6ad21ba2016ffa76cf5d9608c3d6b1"
+  },
+  {
+    "key": "box",
+    "upstream": "lucide",
+    "revision": "a04f228cd01185e09c188b7227b9600c08c565ec",
+    "url": "https://github.com/lucide-icons/lucide/blob/a04f228cd01185e09c188b7227b9600c08c565ec/icons/box.svg",
+    "sha256": "511862693d914d2bf1947c9ccc513595f2a256541f5dd4f6f9ac8383cd41ac4f"
   }
 ]

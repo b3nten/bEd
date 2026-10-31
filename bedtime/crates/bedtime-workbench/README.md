@@ -238,14 +238,22 @@ world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..defa
   without `preview` pins an existing preview, and so does editing its document.
 - With the `files` feature (default), openers say which files they open
   (`files(fit)`, for a `FileModel`), `openers_for(path)` lists them ("Open
-  With"), and `open_path` picks the requested opener, the default one if it
-  fits, or the best fit. A file nothing opens goes to the fallback, which
+  With"), and `open_path` picks the requested opener, else the best fit:
+  `Fit::Specific` (made for this kind of file: an image viewer, a PNG) over
+  `Preferred` (the editor, any text) over `Can` (hex, anything), the default
+  opener among equals. A file nothing opens goes to the fallback, which
   tells the user (`open_path` returns `Ok(None)`); without one it's an error.
   `openers_for_document` lists viewers for an open document.
 - A viewer opened from a file keeps the path with the panel (`ViewerFile`,
   saved with persistence). A restored panel with a path but no document gets
   it back from the opener whose viewer it is (`reopen_viewers`, in `Update`);
   one whose file can't be opened is closed, with a notification.
+- `viewer_document::<M>(ui, world, panel)` is how a viewer's `draw` starts: it
+  draws a spinner while the document loads, or why it couldn't be read, and
+  otherwise returns its model (viewers' models are cheap to clone), handle and
+  revision.
+- Every panel showing a document is titled after it each `Update`, so tabs
+  (even behind others) follow a renamed or moved file.
 
 ## Execution and external work
 

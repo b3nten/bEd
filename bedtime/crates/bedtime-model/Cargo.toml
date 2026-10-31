@@ -1,0 +1,33 @@
+[package]
+name = "bedtime-model"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A 3D model viewer for workbench apps: glTF, GLB and STL"
+
+[features]
+default = ["persistence"]
+# Save model panels with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-document.workspace = true
+bedtime-filesystem.workspace = true
+bedtime-ui.workspace = true
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "reflect_auto_register", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_anti_alias", "bevy_log", "bevy_mikktspace", "bevy_gltf", "png", "jpeg", "webp"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+gltf.workspace = true
+draco-core.workspace = true
+meshopt = "=0.6.2"
+glam.workspace = true
+image = { workspace = true, features = ["hdr", "webp"] }
+half = { version = "2.7", default-features = false }
+bytemuck.workspace = true
+base64.workspace = true
+stl_io.workspace = true
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["bevy_winit", "x11", "wayland"] }

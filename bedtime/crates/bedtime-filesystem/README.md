@@ -103,7 +103,10 @@ symlink aliases (hard links stay separate), which follows confirmed moves
 (`move_document_sources`) and notices deletions (`delete_document_sources`).
 It's a `bedtime_document::DocumentSource<M>` for any `M: FileModel`, the
 model's `decode` and `encode`; `TextBuffer` is one (UTF-8, no NUL bytes, up to
-256 MiB).
+256 MiB). `decode` runs on the document's load worker, so a viewer's model can
+decode there (an image's pixels, a sound's spectrogram). A model whose viewer
+reads the file itself (a video) sets `UNREAD`: loading only checks the file
+and gives `decode` no bytes.
 
 A save is refused (`Changed`) unless the file is still what was last loaded or
 saved: the same version, or, when the version moved on without the contents

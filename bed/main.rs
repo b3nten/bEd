@@ -43,6 +43,8 @@ pub fn app(start: Start) -> App {
     }
 
     let mut app = App::new();
+    // Models are handed to Bevy's glTF loader from memory.
+    bedtime_model::register_asset_source(&mut app);
     app.add_plugins((
         defaults.set(WindowPlugin {
             primary_window: Some(window),

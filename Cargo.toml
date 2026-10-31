@@ -3,16 +3,23 @@ members = [
     "bed",
     "bedtime/crates/bedtime-clipboard",
     "bedtime/crates/bedtime-code",
+    "bedtime/crates/bedtime-hex",
+    "bedtime/crates/bedtime-image",
+    "bedtime/crates/bedtime-model",
     "bedtime/crates/bedtime-document",
     "bedtime/crates/bedtime-ui",
+    "bedtime/crates/bedtime-video",
+    "bedtime/crates/bedtime-audio",
     "bedtime/crates/bedtime-automation",
     "bedtime/crates/bedtime-persistence",
     "bedtime/crates/bedtime-persistence-macros",
     "bedtime/crates/bedtime-settings",
+    "bedtime/crates/bedtime-table",
     "bedtime/crates/bedtime-terminal",
     "bedtime/crates/bedtime-actions",
     "bedtime/crates/bedtime-filesystem",
     "bedtime/crates/bedtime-filetree",
+    "bedtime/crates/bedtime-font",
     "bedtime/crates/bedtime-grammars",
     "bedtime/crates/bedtime-menus",
     "bedtime/crates/bedtime-work",
@@ -35,11 +42,18 @@ opt-level = 1
 [workspace.dependencies]
 bedtime-document = { path = "bedtime/crates/bedtime-document" }
 bedtime-code = { path = "bedtime/crates/bedtime-code" }
+bedtime-font = { path = "bedtime/crates/bedtime-font" }
+bedtime-hex = { path = "bedtime/crates/bedtime-hex" }
+bedtime-image = { path = "bedtime/crates/bedtime-image" }
+bedtime-model = { path = "bedtime/crates/bedtime-model" }
 bedtime-clipboard = { path = "bedtime/crates/bedtime-clipboard", default-features = false }
 bedtime-ui = { path = "bedtime/crates/bedtime-ui" }
+bedtime-video = { path = "bedtime/crates/bedtime-video" }
+bedtime-audio = { path = "bedtime/crates/bedtime-audio" }
 bedtime-automation = { path = "bedtime/crates/bedtime-automation" }
 bedtime-persistence = { path = "bedtime/crates/bedtime-persistence" }
 bedtime-settings = { path = "bedtime/crates/bedtime-settings" }
+bedtime-table = { path = "bedtime/crates/bedtime-table" }
 bedtime-terminal = { path = "bedtime/crates/bedtime-terminal" }
 bedtime-actions = { path = "bedtime/crates/bedtime-actions" }
 bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
