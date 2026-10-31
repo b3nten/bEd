@@ -12,4 +12,4 @@ pub mod text;
 pub use history::*;
 pub use model::DocumentModel;
 pub use source::*;
-pub use text::{BufferEdit, TextBuffer};
+pub use text::{BufferEdit, TextBuffer, TextOpenState, TextPosition};

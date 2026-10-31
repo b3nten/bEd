@@ -1,6 +1,6 @@
 # Project context
 
-Last updated: 2026-10-27. Keep this file short and current. Update the step log
+Last updated: 2026-10-30. Keep this file short and current. Update the step log
 and open questions as work proceeds; delete anything that turns out to be wrong.
 
 ## Goal
@@ -28,10 +28,11 @@ need to write this again?* If yes, it probably belongs in Bedtime.
 
 - `bed/` — the new app: window, workbench, settings (`settings.rs`), workspaces
   (`workspace.rs`), panel opening policy (`panels.rs`), menus, toolbar and app
-  commands (`menus.rs`). Run `bed [folder]`.
+  commands (`menus.rs`), Files and what opens which file (`files.rs`, `text.rs`).
+  Run `bed [folder]`.
 - `bed_old/` — the previous app, kept as reference only. Not in the workspace.
-- `bedtime/crates/` — the maintained library: `bedtime-workbench`, `bedtime-ui`,
-  `bedtime-document`, `bedtime-clipboard`, `bedtime-automation`.
+- `bedtime/crates/` — the maintained library (see
+  [docs/architecture.md](docs/architecture.md) for the crates and layers).
 - `tools/bed.py` — drive bed from Python scripts (launch unfocused, click, type,
   read widgets, screenshot). Saved scripts: `tests/automation/`.
 - `bedtime_old/` — the other plugins (editor, filesystem, filetree, terminal, hex,
@@ -282,6 +283,24 @@ Each step should produce a usable app. We can reorder at any point.
   trait is `UiComponent`; `OnSurface` is `InSurface`; bed's `Appearance`
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
+
+- **Architecture step 7: opening, files and the file tree**, 2026-10-30,
+  awaiting review. `bedtime-filesystem` ported (file document sources save
+  against their version, falling back to comparing contents after a move;
+  `FileModel` for `TextBuffer`). Opening in workbench (`opening.rs`, see
+  [docs/architecture.md](docs/architecture.md#opening)): `OpenState` on the
+  model, `Viewer<M>`, `OpenOptions`/`Target`, openers, `open_document`,
+  `open_path` (`Ok(None)` when the app's fallback took the file),
+  `openers_for`. A new viewer goes in the focused area only if it already shows
+  a viewer, else the largest; opening without `preview` pins a preview. The
+  old `open_document` is now `load_document`. `bedtime-filetree`, a lean port:
+  the `Root` folder, shared background listings and watching, preview on
+  click, for good on double click or Enter, Open With, keys, open folders
+  saved; file operations, drag and drop, hiding and multiple selection are
+  left for later (its README lists them). bed: `files.rs` (Files action and
+  toolbar button, text opener, fallback notice), `text.rs` (a read-only text
+  viewer until the editor returns), and a folder's layout 1 starts with Files
+  in the left quarter. `tests/automation/files.py`.
 
 - **Architecture step 6: plugin groups, workspaces in workbench, the
   umbrella crate**, 2026-10-29. `WorkbenchCorePlugin` is `DocumentsPlugin`,

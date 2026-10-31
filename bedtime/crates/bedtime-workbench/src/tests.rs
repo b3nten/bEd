@@ -41,7 +41,7 @@ fn moving_between_layouts_preserves_shared_document_and_local_state() {
     let document = w
         .world_mut()
         .workbench_mut()
-        .open_document(MemorySource::new("File", TextBuffer::from("text")))
+        .load_document(MemorySource::new("File", TextBuffer::from("text")))
         .unwrap();
     w.world_mut()
         .entity_mut(panel)

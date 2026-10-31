@@ -20,7 +20,7 @@
 //!
 //! let mut app = App::new();
 //! app.add_plugins(WorkbenchCorePlugins);
-//! let document = app.world_mut().workbench_mut().open_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
+//! let document = app.world_mut().workbench_mut().load_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
 //! while app.world().workbench().inspect_document(document.id())?.status == DocumentStatus::Loading {
 //!     app.update();
 //! }
@@ -130,6 +130,9 @@ pub struct Document {
 impl Document {
     pub fn title(&self) -> String {
         self.store.title()
+    }
+    pub fn model_type(&self) -> TypeId {
+        self.model_type
     }
     pub fn model_type_name(&self) -> &'static str {
         self.model_name
@@ -438,7 +441,7 @@ impl WorkbenchRef {
 impl Workbench {
     /// Open the document for `source`, or return the one already open for it.
     /// Loading happens on a worker; `inspect_document` reports when it's ready.
-    pub fn open_document<M: DocumentModel>(
+    pub fn load_document<M: DocumentModel>(
         &mut self,
         source: impl DocumentSource<M>,
     ) -> Result<DocumentHandle<M>, DocumentError> {

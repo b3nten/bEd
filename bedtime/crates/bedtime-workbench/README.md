@@ -166,7 +166,7 @@ returns the same document. Models come from
 ```rust,ignore
 let document = world
     .workbench_mut()
-    .open_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
+    .load_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
 // Loads on a worker; world.workbench().inspect_document(document.id())?.status says when it's Ready.
 world.spawn((NotesViewer, DocumentReference::new(document.id()), InArea(area)));
 ```
@@ -209,6 +209,39 @@ and every action handler's `Err`. An action that isn't available (a shortcut
 pressed where it does nothing) isn't a failure and isn't reported. Anything
 that could lose work, such as a document that won't save, asks with a dialog
 instead.
+
+## Opening
+
+`open_document(source, OpenOptions)` shows a document in a viewer panel with
+the model's `OpenState` applied (`TextOpenState`: a cursor, a selection). A
+viewer is a panel implementing `Viewer<M>` (`new` from the document, `apply`
+a state); an opener pairs it with its model and a label:
+
+```rust,ignore
+app.register_opener(Opener::<TextBuffer>::new::<EditorPanel>("Text Editor").files(text_fit))
+   .register_opener(Opener::<TextBuffer>::new::<HexPanel>("Hex").files(|_, _| Fit::Can))
+   .register_default_opener::<EditorPanel>()
+   .set_open_fallback(|world, path, reason| { /* nothing opens it: say so */ });
+
+world.workbench_mut().open_document(source, OpenOptions::at(state))?;
+world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..default() })?;
+```
+
+- `Target::Existing` (default) reuses a panel already showing the document in
+  the current layout (the focused area's, else the first) and applies the
+  state to it; with none, or with `Target::New { area }`, a new panel goes in
+  that area, else the focused area if it already shows a viewer, else the
+  largest (so opening from a file tree's sidebar doesn't land in the sidebar).
+  `Target::Panel(panel)` names the panel; it must show the document. Opening
+  never switches layouts.
+- `preview: true` makes a new panel replace its area's preview. Opening
+  without `preview` pins an existing preview, and so does editing its document.
+- With the `files` feature (default), openers say which files they open
+  (`files(fit)`, for a `FileModel`), `openers_for(path)` lists them ("Open
+  With"), and `open_path` picks the requested opener, the default one if it
+  fits, or the best fit. A file nothing opens goes to the fallback, which
+  tells the user (`open_path` returns `Ok(None)`); without one it's an error.
+  `openers_for_document` lists viewers for an open document.
 
 ## Execution and external work
 

@@ -8,11 +8,13 @@ use std::path::PathBuf;
 use workspace::{Start, Workspace};
 
 mod effects;
+mod files;
 mod layouts;
 mod menus;
 mod panels;
 mod settings;
 mod status;
+mod text;
 mod themes;
 mod workspace;
 
@@ -52,6 +54,7 @@ pub fn app(start: Start) -> App {
         effects::EffectsPlugin,
         themes::ThemesPlugin,
         workspace::WorkspacesPanelPlugin,
+        files::FilesPlugin,
         automation,
     ))
     // Look for installed fonts now, so Settings can list them when opened.

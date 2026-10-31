@@ -20,6 +20,10 @@ actions = ["dep:bedtime-actions", "bedtime-actions/ui"]
 menus = ["dep:bedtime-menus", "actions", "bedtime-menus/ui"]
 work = ["dep:bedtime-work"]
 documents = ["dep:bedtime-document"]
+# File sources and watching; with workbench, opening files by path.
+filesystem = ["dep:bedtime-filesystem", "documents"]
+# The file tree panel.
+filetree = ["dep:bedtime-filetree", "workbench", "filesystem"]
 # macOS window chrome and the native menu bar.
 native = ["bedtime-ui/native", "bedtime-menus?/native"]
 
@@ -27,6 +31,8 @@ native = ["bedtime-ui/native", "bedtime-menus?/native"]
 bedtime-ui.workspace = true
 bedtime-actions = { workspace = true, optional = true }
 bedtime-document = { workspace = true, optional = true }
+bedtime-filesystem = { workspace = true, optional = true }
+bedtime-filetree = { workspace = true, optional = true }
 bedtime-menus = { workspace = true, optional = true }
 bedtime-persistence = { workspace = true, optional = true }
 bedtime-settings = { workspace = true, optional = true }

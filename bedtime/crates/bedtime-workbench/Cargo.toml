@@ -7,7 +7,9 @@ license.workspace = true
 description = "World sessions, layouts, panels, documents and commands for Bedtime"
 
 [features]
-default = ["ui", "native", "clipboard"]
+default = ["ui", "native", "clipboard", "files"]
+# Opening files by path (`open_path`, openers' `files`), with bedtime-filesystem.
+files = ["dep:bedtime-filesystem"]
 ui = ["dep:bevy_egui", "bedtime-settings?/ui", "bedtime-actions/ui", "bedtime-menus/ui"]
 clipboard = ["dep:bedtime-clipboard"]
 persistence = ["dep:bedtime-persistence", "dep:bedtime-settings", "bedtime-actions/settings", "bedtime-ui/persistence", "dep:bevy_world_serialization", "bevy/serialize"]
@@ -20,6 +22,7 @@ native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window",
 bedtime-actions.workspace = true
 bedtime-menus.workspace = true
 bedtime-document.workspace = true
+bedtime-filesystem = { workspace = true, optional = true }
 bedtime-work.workspace = true
 bedtime-persistence = { workspace = true, optional = true }
 bedtime-settings = { workspace = true, optional = true }

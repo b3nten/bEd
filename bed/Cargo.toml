@@ -16,6 +16,8 @@ automation = ["bedtime-automation/enabled"]
 
 [dependencies]
 bedtime-automation.workspace = true
+bedtime-document.workspace = true
+bedtime-filetree.workspace = true
 bedtime-persistence.workspace = true
 bedtime-ui = { workspace = true, features = ["system-fonts"] }
 bedtime-workbench = { workspace = true, features = ["persistence", "workspaces"] }

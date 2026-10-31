@@ -9,6 +9,8 @@ members = [
     "bedtime/crates/bedtime-persistence-macros",
     "bedtime/crates/bedtime-settings",
     "bedtime/crates/bedtime-actions",
+    "bedtime/crates/bedtime-filesystem",
+    "bedtime/crates/bedtime-filetree",
     "bedtime/crates/bedtime-menus",
     "bedtime/crates/bedtime-work",
     "bedtime/crates/bedtime",
@@ -35,6 +37,8 @@ bedtime-automation = { path = "bedtime/crates/bedtime-automation" }
 bedtime-persistence = { path = "bedtime/crates/bedtime-persistence" }
 bedtime-settings = { path = "bedtime/crates/bedtime-settings" }
 bedtime-actions = { path = "bedtime/crates/bedtime-actions" }
+bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
+bedtime-filetree = { path = "bedtime/crates/bedtime-filetree" }
 bedtime-menus = { path = "bedtime/crates/bedtime-menus" }
 bedtime-work = { path = "bedtime/crates/bedtime-work" }
 bedtime-workbench = { path = "bedtime/crates/bedtime-workbench" }

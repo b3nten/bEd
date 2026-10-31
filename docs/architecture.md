@@ -1,8 +1,9 @@
 # Architecture: the bedtime crates
 
-Status (2026-10-29): **migration steps 1–6 built** (persistence, settings, actions and work, menus, layouts and chrome, the framework); step 7 (opening) is next; the
-rest still lives in `bedtime-workbench`, and the [migration](#migration) below
-moves it one crate at a time. Update this file as decisions change.
+Status (2026-10-30): **migration steps 1–7 built** (persistence, settings,
+actions and work, menus, layouts and chrome, the framework, opening with
+`bedtime-filesystem` and a first `bedtime-filetree`); the plugins are next.
+Update this file as decisions change.
 
 ## Goal
 
@@ -38,6 +39,7 @@ bed is one app on top: policy only.
 | `bedtime-clipboard` | — | Clipboard (exists) |
 | `bedtime-filesystem` | document | File sources and change watching (ported from bedtime_old) |
 | `bedtime-workbench` | all of the above | The framework |
+| `bedtime-filetree` | workbench, filesystem | The file tree panel (first plugin) |
 | `bedtime-automation` | ui | Driving an app from scripts (exists) |
 | `bedtime` | — | Re-exports the others behind features, as `bevy` does |
 
@@ -381,10 +383,11 @@ world.workbench_mut().open_document(source, OpenOptions::<TextBuffer> {
   state. With none in the current layout, a new panel is placed there.
   Opening never switches layouts.
 - `Target::New { area }` always places a new panel.
-- A new panel goes in the named area, else the area the request came from,
-  else the focused area. With `preview`, it replaces that area's preview tab.
-  Applying state to an existing panel doesn't change whether it's a preview;
-  editing a document pins its preview panel.
+- A new panel goes in the named area, else the focused area if it already
+  shows a viewer, else the largest area (a file tree's sidebar is focused when
+  it opens a file, and isn't where files go). With `preview`, it replaces that
+  area's preview tab. Opening without `preview` pins an existing preview
+  panel, and so does editing its document.
 
 **Openers** pair a model with a viewer, give it a label, and may handle
 files:
@@ -403,7 +406,7 @@ app.register_opener(
   else the best fit, which builds the source and model; the caller never
   knows either. `PathOptions` carries what a path-only caller has: a line and
   column, the target, preview. A file nothing claims goes to the app's
-  fallback hook.
+  fallback hook, which tells the user; `open_path` then returns `Ok(None)`.
 - There are no URIs and no navigation history; restore goes through each
   viewer panel's persisted source and state.
 

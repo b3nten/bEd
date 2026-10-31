@@ -52,6 +52,8 @@ pub(crate) fn install(app: &mut App) {
             report_failed_actions.after(ActionSystems::Dispatch),
         );
     documents::install(app);
+    app.init_resource::<Openers>()
+        .add_systems(Update, opening::pin_edited_previews);
     closing::install(app);
     document_actions::install(app);
     // A gesture's layout edit applies before shortcuts are read.

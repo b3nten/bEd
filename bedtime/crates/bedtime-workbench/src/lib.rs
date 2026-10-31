@@ -4,6 +4,7 @@ mod document_actions;
 mod documents;
 mod lifecycle;
 mod notifications;
+mod opening;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 #[cfg(feature = "workspaces")]
@@ -31,6 +32,7 @@ pub use document_actions::*;
 pub use documents::*;
 pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
+pub use opening::*;
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "clipboard")]

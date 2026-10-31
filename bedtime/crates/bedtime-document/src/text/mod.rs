@@ -13,9 +13,35 @@ use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete};
 
 impl DocumentModel for TextBuffer {
     type Change = BufferEdit;
+    type OpenState = TextOpenState;
     fn apply(&mut self, change: &BufferEdit) -> Result<BufferEdit, String> {
         change.apply(self)
     }
+    fn state_at_line(line: u32, column: u32) -> TextOpenState {
+        TextOpenState {
+            cursor: Some(TextPosition::LineColumn { line, column }),
+            selection: None,
+        }
+    }
+}
+
+/// Where to open a text document: the cursor (revealed), and a selection.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TextOpenState {
+    pub cursor: Option<TextPosition>,
+    /// Bytes to select.
+    pub selection: Option<std::ops::Range<usize>>,
+}
+
+/// A place in a text document.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextPosition {
+    /// From 0; the column counts characters.
+    LineColumn {
+        line: u32,
+        column: u32,
+    },
+    Byte(usize),
 }
 
 #[derive(Clone)]

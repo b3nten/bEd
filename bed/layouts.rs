@@ -2,14 +2,15 @@
 //! ordinary workbench layout saved with the workspace; `LayoutSlot` says which
 //! number it is. A slot's layout is made the first time it's opened, from that
 //! slot's default: a template saved in the global store with "Save Layout as
-//! Default", or a single empty area. The default workspace's layout 1 starts
-//! with the Workspaces panel instead.
+//! Default", or a single empty area. Layout 1 starts with the Workspaces panel
+//! in the default workspace, and with Files beside an empty area in a folder's.
 use crate::workspace::{GlobalStore, Workspace, WorkspacesPanel};
-use bedtime_workbench::LayoutsWorldExt;
+use bedtime_filetree::FileTree;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout, PanelFactory,
     persistence::{LayoutTemplate, Persisted, PersistenceAppExt, ReflectPersist},
 };
+use bedtime_workbench::{LayoutsWorldExt, SplitAxis};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -122,9 +123,20 @@ fn create(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
         None => {
             let layout = world.layouts_mut().create(slot.name())?;
             let default_workspace = world.get_resource::<Workspace>().is_some_and(|w| w.default);
-            if slot == LayoutSlot(0) && default_workspace {
+            if slot == LayoutSlot(0) {
                 let area = world.layouts_mut().destination_area(layout)?;
-                (PanelFactory::of::<WorkspacesPanel>().create)(world, area);
+                if default_workspace {
+                    (PanelFactory::of::<WorkspacesPanel>().create)(world, area);
+                } else {
+                    // Files in the left quarter; files open on the right.
+                    world.layouts_mut().split_area(
+                        area,
+                        SplitAxis::Horizontal,
+                        2500,
+                        [100, 100],
+                    )?;
+                    (PanelFactory::of::<FileTree>().create)(world, area);
+                }
             }
             layout
         }

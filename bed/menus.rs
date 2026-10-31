@@ -3,10 +3,12 @@
 //! Menus and tools only name commands: labels, shortcuts and whether they're
 //! enabled all come from the command and its handler.
 use crate::{
+    files::OpenFiles,
     layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
     settings::{OpenSettings, SettingsPanel},
     workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
 };
+use bedtime_filetree::FileTree;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;
 use bedtime_workbench::{
@@ -138,6 +140,7 @@ fn compose_menus(mut commands: Commands) {
         Invokes::of::<OpenSettings>(),
         InMenu(view),
     ));
+    commands.spawn((MenuItem::action::<OpenFiles>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
     commands.spawn((MenuItem::action::<UseLayout<0>>(), InMenu(layout)));
     commands.spawn((MenuItem::action::<UseLayout<1>>(), InMenu(layout)));
@@ -290,6 +293,13 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
             context,
             BuiltinIcon::Settings,
             PanelFactory::of::<SettingsPanel>(),
+        );
+        tool::<OpenFiles>(
+            ui,
+            world,
+            context,
+            BuiltinIcon::Folder,
+            PanelFactory::of::<FileTree>(),
         );
     });
 }

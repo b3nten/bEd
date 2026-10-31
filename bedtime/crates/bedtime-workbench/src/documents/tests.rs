@@ -35,7 +35,7 @@ pub(crate) fn open<M: DocumentModel>(
     let document = app
         .world_mut()
         .workbench_mut()
-        .open_document(source)
+        .load_document(source)
         .unwrap();
     update_until(app, |world| {
         info(world, document.id()).status != DocumentStatus::Loading
@@ -187,18 +187,19 @@ fn opening_a_source_twice_returns_the_same_document() {
     let first = app
         .world_mut()
         .workbench_mut()
-        .open_document(source.clone())
+        .load_document(source.clone())
         .unwrap();
     let second = app
         .world_mut()
         .workbench_mut()
-        .open_document(source)
+        .load_document(source)
         .unwrap();
     assert_eq!(first, second);
     assert_eq!(app.world().workbench().document_ids(), [first.id()]);
     #[derive(Clone, PartialEq)]
     struct Other;
     impl DocumentModel for Other {
+        type OpenState = ();
         type Change = ();
         fn apply(&mut self, _: &()) -> Result<(), String> {
             Ok(())
