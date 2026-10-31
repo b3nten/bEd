@@ -284,6 +284,14 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 10: Structure**, 2026-10-31, awaiting review.
+  `bedtime_code::structure` (from `bed_old/crates/bed-structure`):
+  `StructurePanel`, `StructureSource` following the focused editor (or the
+  last one), `reveal_entry` selecting a declaration's name in its editor. The
+  outline stays during reanalysis. Editors now take keyboard focus when a
+  hidden tab of theirs is shown focused. bed: View → Structure
+  (`app.open_structure`). `tests/automation/structure.py`.
+
 - **Architecture step 9: syntax**, 2026-10-31, awaiting review.
   `bedtime-grammars` back as is (30 grammars, ~25 s clean build). The old
   `bedtime-treesitter` is `bedtime_code::syntax`; `DocumentSyntax` (one

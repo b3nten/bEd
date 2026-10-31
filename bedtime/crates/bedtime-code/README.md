@@ -1,7 +1,7 @@
 # bedtime-code
 
-Code editing for workbench apps, in one crate: the text editor and syntax
-(tree-sitter) now; Structure and language servers will be modules here too.
+Code editing for workbench apps, in one crate: the text editor, syntax
+(tree-sitter) and Structure now; language servers will be a module here too.
 They call each other directly instead of through contribution APIs. The
 grammars are their own crate, `bedtime-grammars` (30 languages, compiled C;
 about 25 s on a clean build, cached after).
@@ -41,6 +41,9 @@ read-only.
   cancelled.
 - **Undo grouping.** Typing groups end on navigation, focus loss, another
   view's edit, or 650 ms idle.
+- **Focus.** The text has keyboard focus while its panel has the layout's
+  (also when a hidden tab is shown again), and gives it up when another panel
+  takes it.
 - **Positions** are UTF-8 byte offsets; views map them through the
   document's change journal, and clamp them when the journal has a gap.
 
@@ -77,11 +80,23 @@ The editor reads its document's `DocumentSyntax` when drawing:
   `unfold_all` on `EditorView`. Folds and the outline are only used at their
   own revision, never mapped.
 
+## Structure
+
+`StructurePanel` lists the outline (declarations, from the syntax analysis)
+of the focused editor's text, or of the last editor focused while another
+kind of panel has focus (`StructureSource`, updated after `update_syntax`).
+Entries collapse and expand, animated. While an edit is reanalysed the last
+outline stays, so it doesn't flicker as you type; another editor or language
+clears it. Clicking an entry selects its name in that editor and focuses the
+editor (`reveal_entry`); an entry from an older analysis, or an editor that's
+gone or composing, does nothing. Its byte ranges are never mapped through
+edits.
+
 ## Tests
 
 ```sh
 cargo test -p bedtime-code --all-features
-python3 tools/bed.py run tests/automation/editor.py tests/automation/syntax.py
+python3 tools/bed.py run tests/automation/editor.py tests/automation/syntax.py tests/automation/structure.py
 ```
 
 The million-line tests are ignored by default; run them with `--ignored`.

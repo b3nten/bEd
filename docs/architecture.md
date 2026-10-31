@@ -1,9 +1,9 @@
 # Architecture: the bedtime crates
 
-Status (2026-10-31): **migration steps 1–9 built** (persistence, settings,
+Status (2026-10-31): **migration steps 1–10 built** (persistence, settings,
 actions and work, menus, layouts and chrome, the framework, opening with
-`bedtime-filesystem` and a first `bedtime-filetree`, the editor and syntax in
-`bedtime-code`); Structure and language servers are next.
+`bedtime-filesystem` and a first `bedtime-filetree`, the editor, syntax and
+Structure in `bedtime-code`); language servers are next.
 Update this file as decisions change.
 
 ## Goal
@@ -41,7 +41,7 @@ bed is one app on top: policy only.
 | `bedtime-filesystem` | document | File sources and change watching (ported from bedtime_old) |
 | `bedtime-workbench` | all of the above | The framework |
 | `bedtime-filetree` | workbench, filesystem | The file tree panel (first plugin) |
-| `bedtime-code` | workbench, filesystem, grammars | Code editing: the editor and syntax, then Structure and language servers as modules |
+| `bedtime-code` | workbench, filesystem, grammars | Code editing: the editor, syntax and Structure, then language servers as a module |
 | `bedtime-grammars` | — | Bundled tree-sitter grammars (compiled C) |
 | `bedtime-automation` | ui | Driving an app from scripts (exists) |
 | `bedtime` | — | Re-exports the others behind features, as `bevy` does |
@@ -537,8 +537,9 @@ Then the plugins:
    standalone `TextSession` host, diff, syntax, diagnostics or completions.
 9. **Syntax** in `bedtime-code` (built): tree-sitter analysis per document,
    highlighting and folds in the editor; `bedtime-grammars` its own crate.
-10. **Structure** and **language servers**, as modules of `bedtime-code`.
-11. Terminal.
+10. **Structure** in `bedtime-code` (built).
+11. **Language servers**, a module of `bedtime-code`.
+12. Terminal.
 
 **One crate for code.** Editor, syntax, Structure and language servers depend
 on each other anyway (Structure reads the syntax tree and moves the editor;

@@ -3,7 +3,7 @@
 //! Menus and tools only name commands: labels, shortcuts and whether they're
 //! enabled all come from the command and its handler.
 use crate::{
-    files::OpenFiles,
+    files::{OpenFiles, OpenStructure},
     layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
     settings::{OpenSettings, SettingsPanel},
     workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
@@ -144,6 +144,7 @@ fn compose_menus(mut commands: Commands) {
         InMenu(view),
     ));
     commands.spawn((MenuItem::action::<OpenFiles>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<OpenStructure>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
     commands.spawn((MenuItem::action::<UseLayout<0>>(), InMenu(layout)));
     commands.spawn((MenuItem::action::<UseLayout<1>>(), InMenu(layout)));

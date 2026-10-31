@@ -13,8 +13,8 @@ use bedtime_workbench::{
 };
 use bevy::prelude::*;
 
-/// Registers the editor as the default viewer for text files, and analyses
-/// the documents editors show.
+/// Registers the editor as the default viewer for text files, analyses the
+/// documents editors show, and keeps Structure following the focused editor.
 pub struct CodePlugin;
 
 impl Plugin for CodePlugin {
@@ -24,7 +24,16 @@ impl Plugin for CodePlugin {
                 Opener::<TextBuffer>::new::<EditorPanel>("Text Editor").files(text_fit),
             )
             .register_default_opener::<EditorPanel>()
-            .add_systems(Update, crate::syntax::update_syntax);
+            .register_type::<crate::structure::StructurePanel>()
+            .init_resource::<crate::structure::StructureSource>()
+            .add_systems(
+                Update,
+                (
+                    crate::syntax::update_syntax,
+                    crate::structure::update_source,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -56,9 +65,12 @@ pub struct EditorPanel {
     /// An open's state, applied once the text is loaded.
     #[reflect(ignore)]
     pending: Option<TextOpenState>,
-    /// The panel had the layout's focus last frame.
+    /// The panel had the layout's focus when last drawn, and on which frame:
+    /// a hidden tab isn't drawn.
     #[reflect(ignore)]
     focused: bool,
+    #[reflect(ignore)]
+    drawn: u64,
 }
 
 impl Viewer<TextBuffer> for EditorPanel {
@@ -148,12 +160,15 @@ fn draw(
     let focused = world
         .get::<PanelPresentation>(panel)
         .is_some_and(|presentation| presentation.focused);
-    if focused && !editor.focused {
+    let frame = ui.ctx().cumulative_frame_nr();
+    let shown_last_frame = editor.drawn + 1 >= frame;
+    if focused && !(editor.focused && shown_last_frame) {
         ui.memory_mut(|memory| memory.request_focus(id));
     } else if !focused && ui.memory(|memory| memory.has_focus(id)) {
         ui.memory_mut(|memory| memory.surrender_focus(id));
     }
     editor.focused = focused;
+    editor.drawn = frame;
     let mut session = DocumentSession {
         world,
         handle,
