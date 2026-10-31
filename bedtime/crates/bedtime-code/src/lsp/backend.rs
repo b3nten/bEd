@@ -36,6 +36,10 @@ enum Command {
         origin: RequestOrigin,
         byte: usize,
     },
+    Ask {
+        origin: RequestOrigin,
+        ask: Ask,
+    },
 }
 struct Admitted {
     command: Option<Command>,
@@ -140,6 +144,11 @@ impl ServerHandle {
     pub fn definition(&self, origin: RequestOrigin, byte: usize) -> Result<(), String> {
         self.admit(Command::Definition { origin, byte }, 0)
     }
+    /// Code actions, rename, references, formatting: answered with
+    /// `Event::Answer`.
+    pub fn ask(&self, origin: RequestOrigin, ask: Ask) -> Result<(), String> {
+        self.admit(Command::Ask { origin, ask }, 0)
+    }
     pub fn query(&self, origin: RequestOrigin, query: LanguageQuery) -> Result<(), String> {
         let bytes = match &query {
             LanguageQuery::Resolve { item, .. } => item.bytes,
@@ -173,12 +182,20 @@ struct Capabilities {
     hover: bool,
     completion: bool,
     resolve: bool,
+    code_action: bool,
+    code_action_resolve: bool,
+    rename: bool,
+    references: bool,
+    formatting: bool,
 }
 struct SyncedDocument {
     update: DocumentUpdate,
     version: i32,
     opened: bool,
     saved: Option<TextBuffer>,
+    /// The server's latest diagnostics, as sent: code actions take the ones
+    /// at their range as context.
+    diagnostics: Vec<Value>,
 }
 enum Pending {
     Initialize,
@@ -188,6 +205,10 @@ enum Pending {
         kind: QueryKind,
         byte: usize,
         item: Option<Value>,
+    },
+    Ask {
+        origin: RequestOrigin,
+        kind: AskKind,
     },
     Shutdown,
 }
@@ -249,10 +270,12 @@ impl ServerWorker {
             "workspaceFolders":[{"uri":root_uri.as_str(),"name":self.launch.root.file_name().unwrap_or_default().to_string_lossy()}],
             "initializationOptions":self.launch.config.initialization_options,
                 "capabilities":{"experimental":{"serverStatusNotification":true},"general":{"positionEncodings":["utf-8","utf-16"]},"window":{"workDoneProgress":true},
-                "workspace":{"configuration":true,"workspaceFolders":true,"applyEdit":false},
+                "workspace":{"configuration":true,"workspaceFolders":true,"applyEdit":true,"workspaceEdit":{"documentChanges":true,"resourceOperations":[]}},
                 "textDocument":{"synchronization":{"didSave":true,"dynamicRegistration":false},"definition":{"linkSupport":true},
                     "hover":{"contentFormat":["markdown","plaintext"]},
-                    "completion":{"contextSupport":true,"completionItem":{"snippetSupport":true,"documentationFormat":["markdown","plaintext"],"insertReplaceSupport":true,"resolveSupport":{"properties":["documentation","detail","additionalTextEdits"]}}},"publishDiagnostics":{"versionSupport":true}}}
+                    "completion":{"contextSupport":true,"completionItem":{"snippetSupport":true,"documentationFormat":["markdown","plaintext"],"insertReplaceSupport":true,"resolveSupport":{"properties":["documentation","detail","additionalTextEdits"]}}},"publishDiagnostics":{"versionSupport":true},
+                    "codeAction":{"codeActionLiteralSupport":{"codeActionKind":{"valueSet":["","quickfix","refactor","refactor.extract","refactor.inline","refactor.rewrite","source","source.organizeImports"]}},"resolveSupport":{"properties":["edit"]},"dataSupport":true,"disabledSupport":true},
+                    "rename":{"prepareSupport":false},"references":{},"formatting":{}}}
         }), Pending::Initialize)?;
         let result = (|| {
             while !cancelled() {
@@ -475,7 +498,7 @@ impl Runtime {
                     );
                 }
                 self.cancel_document(update.key, events)?;
-                let (version, opened, saved) = if let Some(old) = old {
+                let (version, opened, saved, diagnostics) = if let Some(old) = old {
                     self.sync_update(&old, &update)?;
                     (
                         if old.update.revision == update.revision {
@@ -485,6 +508,7 @@ impl Runtime {
                         },
                         old.opened,
                         old.saved,
+                        old.diagnostics,
                     )
                 } else {
                     if self.ready {
@@ -494,6 +518,7 @@ impl Runtime {
                         self.next_version,
                         self.ready && self.capabilities.open_close,
                         None,
+                        Vec::new(),
                     )
                 };
                 // The retained canonical root is sufficient for the next batch.
@@ -506,6 +531,7 @@ impl Runtime {
                         version,
                         opened,
                         saved,
+                        diagnostics,
                     },
                 );
             }
@@ -521,6 +547,19 @@ impl Runtime {
                         doc.saved = Some(text);
                     }
                     self.documents.insert(document, doc);
+                }
+            }
+            Command::Ask { origin, ask } => {
+                let kind = ask.kind();
+                if let Err(error) = self.ask(origin, ask) {
+                    Self::publish(
+                        events,
+                        Event::Answer {
+                            origin,
+                            kind,
+                            result: Err(error),
+                        },
+                    )?;
                 }
             }
             Command::Definition { origin, byte } => {
@@ -734,8 +773,16 @@ impl Runtime {
                         self.activity.message(params);
                         Some(Value::Null)
                     }
+                    // Edits the server makes itself (running a command).
+                    // Applied by the app; answered as applied once handed on.
                     "workspace/applyEdit" => Some(
-                        json!({"applied":false,"failureReason":"Workspace edits are not supported"}),
+                        match parse_workspace_edit(&params["edit"], self.capabilities.encoding) {
+                            Ok(edit) => match Self::publish(events, Event::ApplyEdit(edit)) {
+                                Ok(()) => json!({"applied": true}),
+                                Err(error) => json!({"applied": false, "failureReason": error}),
+                            },
+                            Err(error) => json!({"applied": false, "failureReason": error}),
+                        },
                     ),
                     _ => None,
                 };
@@ -876,9 +923,117 @@ impl Runtime {
                     },
                 )?;
             }
+            Pending::Ask { origin, kind } => {
+                let encoding = self.capabilities.encoding;
+                let uri = self
+                    .documents
+                    .get(&origin.document)
+                    .map(|doc| doc.update.uri.clone());
+                let answer = result.and_then(|value| {
+                    Ok(match kind {
+                        AskKind::CodeActions => Answer::CodeActions(parse_code_actions(value)?),
+                        AskKind::ResolveCodeAction => Answer::CodeAction(parse_code_action(value)?),
+                        AskKind::Command => Answer::Done,
+                        AskKind::Rename => Answer::Edit(if value.is_null() {
+                            WorkspaceEdit {
+                                files: Vec::new(),
+                                encoding,
+                            }
+                        } else {
+                            parse_workspace_edit(value, encoding)?
+                        }),
+                        AskKind::References => {
+                            Answer::References(parse_references(value, encoding)?)
+                        }
+                        AskKind::Format => Answer::Edit(WorkspaceEdit {
+                            files: vec![FileEdit {
+                                uri: uri.ok_or("LSP document is detached")?,
+                                edits: parse_text_edits(value)?,
+                            }],
+                            encoding,
+                        }),
+                    })
+                });
+                Self::publish(
+                    events,
+                    Event::Answer {
+                        origin,
+                        kind,
+                        result: answer,
+                    },
+                )?;
+            }
             Pending::Shutdown => self.shutdown_answered = true,
         }
         Ok(())
+    }
+    /// Send `ask` for its document, as the server has it.
+    fn ask(&mut self, origin: RequestOrigin, ask: Ask) -> Result<(), String> {
+        let kind = ask.kind();
+        let provided = match kind {
+            AskKind::CodeActions => self.capabilities.code_action,
+            AskKind::ResolveCodeAction => self.capabilities.code_action_resolve,
+            AskKind::Command => true,
+            AskKind::Rename => self.capabilities.rename,
+            AskKind::References => self.capabilities.references,
+            AskKind::Format => self.capabilities.formatting,
+        };
+        if !self.ready || !provided {
+            return Err("This language server can't do that".into());
+        }
+        let doc = self
+            .documents
+            .get(&origin.document)
+            .ok_or("LSP document is detached")?;
+        if doc.update.revision != origin.revision {
+            return Err("The text has changed since".into());
+        }
+        let encoding = self.capabilities.encoding;
+        let text = &doc.update.text;
+        let document = serde_json::json!({ "uri": doc.update.uri.as_str() });
+        let (method, params) = match ask {
+            Ask::CodeActions { range } => {
+                let range = ProtocolRange {
+                    start: encoding.position(text, range.start)?,
+                    end: encoding.position(text, range.end)?,
+                };
+                let diagnostics: Vec<Value> = doc
+                    .diagnostics
+                    .iter()
+                    .filter(|diagnostic| {
+                        serde_json::from_value::<ProtocolRange>(diagnostic["range"].clone())
+                            .is_ok_and(|at| overlaps(&at, &range))
+                    })
+                    .cloned()
+                    .collect();
+                (
+                    "textDocument/codeAction",
+                    json!({"textDocument": document, "range": range,
+                        "context": {"diagnostics": diagnostics, "triggerKind": 1}}),
+                )
+            }
+            Ask::ResolveCodeAction(action) => ("codeAction/resolve", (*action).clone()),
+            Ask::Command(command) => (
+                "workspace/executeCommand",
+                json!({"command": command["command"], "arguments": command["arguments"]}),
+            ),
+            Ask::Rename { byte, name } => (
+                "textDocument/rename",
+                json!({"textDocument": document, "position": encoding.position(text, byte)?,
+                    "newName": name}),
+            ),
+            Ask::References { byte } => (
+                "textDocument/references",
+                json!({"textDocument": document, "position": encoding.position(text, byte)?,
+                    "context": {"includeDeclaration": true}}),
+            ),
+            Ask::Format { tab_size, spaces } => (
+                "textDocument/formatting",
+                json!({"textDocument": document,
+                    "options": {"tabSize": tab_size, "insertSpaces": spaces}}),
+            ),
+        };
+        self.request(method, params, Pending::Ask { origin, kind })
     }
     fn diagnostics(
         &mut self,
@@ -933,6 +1088,8 @@ impl Runtime {
                 message: message.into(),
             });
         }
+        let key = doc.update.key;
+        let kept = raw.clone();
         let result = Self::publish(
             events,
             Event::Diagnostics {
@@ -944,6 +1101,9 @@ impl Runtime {
                 )),
             },
         );
+        if let Some(doc) = self.documents.get_mut(&key) {
+            doc.diagnostics = kept;
+        }
         if result.is_ok() {
             self.activity.analysis_changed();
         }
@@ -979,6 +1139,17 @@ impl Runtime {
                             origin,
                             kind,
                             result: Err("Language request timed out".into()),
+                        },
+                    )?;
+                }
+                Pending::Ask { origin, kind } => {
+                    self.notify("$/cancelRequest", json!({"id":id}))?;
+                    Self::publish(
+                        events,
+                        Event::Answer {
+                            origin,
+                            kind,
+                            result: Err("The language server took too long".into()),
                         },
                     )?;
                 }
@@ -1046,6 +1217,21 @@ fn capabilities(result: &Value) -> Result<Capabilities, String> {
         resolve: c
             .get("completionProvider")
             .is_some_and(|v| v["resolveProvider"] == true),
+        code_action: c
+            .get("codeActionProvider")
+            .is_some_and(|v| v == true || v.is_object()),
+        code_action_resolve: c
+            .get("codeActionProvider")
+            .is_some_and(|v| v["resolveProvider"] == true),
+        rename: c
+            .get("renameProvider")
+            .is_some_and(|v| v == true || v.is_object()),
+        references: c
+            .get("referencesProvider")
+            .is_some_and(|v| v == true || v.is_object()),
+        formatting: c
+            .get("documentFormattingProvider")
+            .is_some_and(|v| v == true || v.is_object()),
         ..Default::default()
     };
     if let Some(sync) = c.get("textDocumentSync").filter(|s| !s.is_null()) {

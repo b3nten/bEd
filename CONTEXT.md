@@ -284,6 +284,20 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 13: code actions, rename, references, formatting**,
+  2026-10-31, awaiting review. Backend: one `Ask` request (code actions with
+  the diagnostics at their range, resolve, execute command, rename,
+  references, formatting) answered as `Event::Answer`; server
+  `workspace/applyEdit` forwarded as `Event::ApplyEdit` (answered applied);
+  capabilities advertised, file operations refused. `lsp/edits.rs` parses
+  them; `lsp/actions.rs` has the actions (Cmd+., F2, Shift+F12,
+  Cmd/Ctrl+Shift+I), the menu and rename box drawn over the editor, edits
+  applied to open documents (unsaved) or files on disk (checked), and the
+  `ReferencesPanel`. bed: Edit menu entries; the status bar says when the
+  server is loading. `tests/automation/code_actions.py` (real
+  rust-analyzer); the fake server answers the new requests. The opening
+  policy is deferred.
+
 - **Architecture step 12: hover and completions**, 2026-10-31, awaiting
   review. The editor's completion menu, snippet tab stops and pointer
   targets are back (`editor/completion.rs`); `lsp/assist.rs` (from bed_old's

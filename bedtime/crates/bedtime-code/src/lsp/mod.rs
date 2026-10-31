@@ -3,6 +3,8 @@
 //! protocol state and I/O; `documents` connects it to workbench documents,
 //! diagnostics in the editor and go-to-definition.
 mod activity;
+mod edits;
+pub use edits::*;
 mod intelligence;
 pub use intelligence::*;
 #[cfg(unix)]
@@ -16,6 +18,13 @@ mod transport;
 #[cfg(unix)]
 pub use backend::*;
 pub use protocol::{Encoding, FileUri, Position, ProtocolRange};
+#[cfg(unix)]
+pub(crate) mod actions;
+#[cfg(unix)]
+pub use actions::{
+    CodeActions, FindReferences, FormatDocument, ReferencesPanel, RenameSymbol, choose_code_action,
+    find_references_at, format_document, offered_code_actions, rename_symbol, request_code_actions,
+};
 #[cfg(unix)]
 pub(crate) mod assist;
 #[cfg(unix)]
@@ -149,4 +158,11 @@ pub enum Event {
         document: DocumentKey,
         message: String,
     },
+    Answer {
+        origin: RequestOrigin,
+        kind: AskKind,
+        result: Result<Answer, String>,
+    },
+    /// The server wants these edits made (while running a command).
+    ApplyEdit(WorkspaceEdit),
 }

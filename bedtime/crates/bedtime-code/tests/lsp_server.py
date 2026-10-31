@@ -56,7 +56,9 @@ while True:
             time.sleep(0.25)
         sync = {"openClose": True, "change": 1 if scenario == "full" else 2,
                 "save": False if scenario == "false-save" else {"includeText": True}}
-        capabilities = {"definitionProvider": True, "positionEncoding": encoding, "hoverProvider": True, "completionProvider": {"resolveProvider": True,"triggerCharacters": [".", ":"]}}
+        capabilities = {"definitionProvider": True, "positionEncoding": encoding, "hoverProvider": True, "completionProvider": {"resolveProvider": True,"triggerCharacters": [".", ":"]},
+                        "codeActionProvider": {"resolveProvider": True}, "renameProvider": True,
+                        "referencesProvider": True, "documentFormattingProvider": True}
         if scenario != "none":
             capabilities["textDocumentSync"] = sync
         send(dict(id=request["id"], result={"capabilities": capabilities, "serverInfo":{"name":"Bedtime fixture","version":"1.0"}}))
@@ -129,6 +131,33 @@ while True:
         item["documentation"] = {"kind":"markdown","value":"Resolved **completion documentation**."}
         item["additionalTextEdits"] = [{"range":{"start":{"line":0,"character":0},"end":{"line":0,"character":0}},"newText":"// auto import\n"}]
         send(dict(id=request["id"], result=item))
+    elif method == "textDocument/codeAction":
+        send(dict(id=request["id"], result=[
+            {"title": "Add a comment", "kind": "quickfix", "data": {"uri": uri}},
+            {"title": "Run the fixture command", "command": "fixture.edit", "arguments": [uri]},
+            {"title": "Not here", "disabled": {"reason": "fixture says no"}}]))
+    elif method == "codeAction/resolve":
+        item = dict(params)
+        item["edit"] = {"changes": {params["data"]["uri"]: [{"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}, "newText": "// fixed\n"}]}}
+        send(dict(id=request["id"], result=item))
+    elif method == "workspace/executeCommand":
+        target = params["arguments"][0]
+        send(dict(id=5000, method="workspace/applyEdit", params={"edit": {"changes": {target: [
+            {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}, "newText": "// command\n"}]}}}))
+        send(dict(id=request["id"], result=None))
+    elif method == "textDocument/rename":
+        other = uri.rsplit("/", 1)[0] + "/target.rs"
+        send(dict(id=request["id"], result={"changes": {
+            uri: [{"range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}}, "newText": params["newName"]}],
+            other: [{"range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 9}}, "newText": params["newName"]}]}}))
+    elif method == "textDocument/references":
+        other = uri.rsplit("/", 1)[0] + "/target.rs"
+        send(dict(id=request["id"], result=[
+            {"uri": uri, "range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 7}}},
+            {"uri": other, "range": {"start": {"line": 0, "character": 3}, "end": {"line": 0, "character": 9}}}]))
+    elif method == "textDocument/formatting":
+        send(dict(id=request["id"], result=[
+            {"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}, "newText": "// formatted\n"}]))
     elif method == "shutdown":
         send(dict(id=request["id"], result=None))
     record = dict(request, mirror=documents.get(uri), pid=os.getpid())

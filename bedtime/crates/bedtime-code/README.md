@@ -131,16 +131,35 @@ docs), and `documents`, which connects it to workbench documents:
 - `request_query`, `query_is_current`, `cancel_query` and
   `take_query_answers` are there for other callers; the editor's own
   queries are answered straight to it (`assist`).
+- **Code actions** (Cmd/Ctrl+.): the server's fixes and refactorings for
+  the selection, in a menu at the caret (Up/Down, Enter, Escape; disabled
+  ones say why). Choosing one resolves it if the server sent it bare, applies
+  its edit and runs its command; edits the server makes while running it
+  (`workspace/applyEdit`) are applied the same way.
+- **Rename** (F2): a box at the caret with the name; Enter renames it
+  everywhere.
+- **Find References** (Shift+F12): the References panel (in the current
+  layout, made in its largest area if there isn't one) lists the uses by
+  file, with each line's text; clicking one opens it there.
+- **Format Document** (Cmd/Ctrl+Shift+I, not Alt-based: Alt with a letter
+  types a character while editing).
+- **Edits** from all of these apply to an open document as one undoable
+  change, left unsaved; to a file that isn't open, on disk, only if it hasn't
+  changed since it was read. Creating, renaming and deleting files is
+  refused (the client tells servers so). Overlapping edits are refused.
+- `request_code_actions`, `offered_code_actions`, `choose_code_action`,
+  `rename_symbol`, `find_references_at` and `format_document` do the same
+  without the UI.
 - Restart Language Server; `restart` and `stop` for apps.
 
 ## Tests
 
 ```sh
 cargo test -p bedtime-code --all-features
-python3 tools/bed.py run tests/automation/editor.py tests/automation/syntax.py tests/automation/structure.py tests/automation/language_servers.py
+python3 tools/bed.py run tests/automation/editor.py tests/automation/syntax.py tests/automation/structure.py tests/automation/language_servers.py tests/automation/code_actions.py
 ```
 
 The million-line tests and the real rust-analyzer backend tests are ignored by
 default; run them with `--ignored`. `tests/lsp_server.py` is the scripted fake
-server the other language server tests use. `language_servers.py` needs
-rust-analyzer installed, and skips otherwise.
+server the other language server tests use. `language_servers.py` and
+`code_actions.py` need rust-analyzer installed, and skip otherwise.

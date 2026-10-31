@@ -1826,6 +1826,10 @@ fn word_boundary(text: &TextBuffer, from: usize, forward: bool) -> usize {
         }
     }
 }
+/// The word (or run of other characters) at `byte`.
+pub fn word_at(text: &TextBuffer, byte: usize) -> Range<usize> {
+    word_range(text, byte)
+}
 fn word_range(text: &TextBuffer, from: usize) -> Range<usize> {
     let category = class(text, from);
     run_boundary(text, from, category, false)..run_boundary(text, from, category, true)

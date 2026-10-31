@@ -128,6 +128,14 @@ fn language_server(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
         ServerStatus::Starting => (format!("{program} starting"), palette.muted, None),
         ServerStatus::Ready => match activity.progress.first() {
             Some(work) => (format!("{program}: {}", work.label()), palette.muted, None),
+            // It answers nothing while loading the project.
+            None if activity
+                .project_status
+                .as_ref()
+                .is_some_and(|status| !status.quiescent) =>
+            {
+                (format!("{program}: loading"), palette.muted, None)
+            }
             None => (program.to_owned(), palette.muted, None),
         },
         ServerStatus::Failed(error) => (
@@ -164,7 +172,11 @@ fn language_server(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
     }
     ui.add_space(context.metrics.spacing[0]);
     // The server's progress doesn't wake the UI by itself.
-    if server.status() == ServerStatus::Starting || !activity.progress.is_empty() {
+    let loading = activity
+        .project_status
+        .as_ref()
+        .is_some_and(|status| !status.quiescent);
+    if server.status() == ServerStatus::Starting || !activity.progress.is_empty() || loading {
         ui.ctx().request_repaint_after(Duration::from_millis(250));
     }
 }

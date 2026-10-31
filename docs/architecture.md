@@ -3,8 +3,8 @@
 Status (2026-10-31): **migration steps 1–12 built** (persistence, settings,
 actions and work, menus, layouts and chrome, the framework, opening with
 `bedtime-filesystem` and a first `bedtime-filetree`, the editor, syntax,
-Structure, language servers, hover and completions in `bedtime-code`); the
-opening policy is being discussed.
+Structure, language servers, hover, completions, code actions, rename,
+references and formatting in `bedtime-code`); the opening policy is deferred.
 Update this file as decisions change.
 
 ## Goal
@@ -543,7 +543,9 @@ Then the plugins:
     go-to-definition through `open_path`, status.
 12. **Hover and completions** in `bedtime-code` (built). Requests never wait:
     a server that can't answer now is an error now.
-13. Terminal.
+13. **Code actions, rename, references, formatting** (built), with workspace
+    edits and the References panel.
+14. Terminal.
 
 **One crate for code.** Editor, syntax, Structure and language servers depend
 on each other anyway (Structure reads the syntax tree and moves the editor;

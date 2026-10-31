@@ -5,8 +5,9 @@ use bedtime_code::{
     CodePlugin, EditorPanel,
     lsp::{
         DocumentServer, Intelligence, LanguageQuery, LanguageServer, LanguageServers, QueryKind,
-        ServerConfig, ServerStatus, completion_context, go_to_definition, query_is_current,
-        request_query, take_query_answers,
+        ReferencesPanel, ServerConfig, ServerStatus, choose_code_action, completion_context,
+        find_references_at, format_document, go_to_definition, offered_code_actions,
+        query_is_current, rename_symbol, request_code_actions, request_query, take_query_answers,
     },
 };
 use bedtime_document::{BufferEdit, TextBuffer};
@@ -33,9 +34,10 @@ fn server(world: &World, panel: Entity) -> Option<&DocumentServer> {
     world.get::<DocumentServer>(document.entity())
 }
 
-#[test]
-fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
-    let root = std::env::temp_dir().join(format!("bedtime-code-lsp-{}", std::process::id()));
+/// A workbench whose root holds `main.rs` and `target.rs`, served by the fake
+/// server's `scenario`, with `main.rs` open in an editor.
+fn host(name: &str, scenario: &str) -> (App, PathBuf, Entity) {
+    let root = std::env::temp_dir().join(format!("bedtime-code-lsp-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let root = root.canonicalize().unwrap();
@@ -52,7 +54,7 @@ fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
                     program: "python3".into(),
                     arguments: vec![
                         format!("{}/tests/lsp_server.py", env!("CARGO_MANIFEST_DIR")),
-                        "cross-file".into(),
+                        scenario.into(),
                         root.join("transcript.jsonl").to_string_lossy().into(),
                     ],
                     ..default()
@@ -68,6 +70,19 @@ fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
         .open_path(&root.join("main.rs"), PathOptions::default())
         .unwrap()
         .unwrap();
+    (app, root, panel)
+}
+
+fn text(world: &World, panel: Entity) -> String {
+    let document = world.get::<DocumentReference>(panel).unwrap().document();
+    let workbench = world.workbench();
+    let handle = workbench.cast_document::<TextBuffer>(document).unwrap();
+    workbench.read_document(handle).unwrap().to_string()
+}
+
+#[test]
+fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
+    let (mut app, root, panel) = host("sync", "cross-file");
 
     // Opened: the server reports a diagnostic for the first revision.
     until(&mut app, "a diagnostic", |world| {
@@ -163,6 +178,74 @@ fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
     app.world_mut().layouts_mut().close_panel(panel).unwrap();
     until(&mut app, "the document is closed", |world| {
         world.get::<DocumentServer>(document.entity()).is_none()
+    });
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn code_actions_rename_references_and_formatting_change_code() {
+    let (mut app, root, panel) = host("edits", "basic");
+    until(&mut app, "the server is ready", |world| {
+        server(world, panel).is_some_and(|server| server.diagnostics.is_some())
+    });
+
+    // Rename: the open document changes (unsaved), the other file on disk.
+    rename_symbol(app.world_mut(), panel, 3, "start".into()).unwrap();
+    until(&mut app, "renamed", |world| {
+        text(world, panel) == "fn start() {}\n"
+    });
+    assert_eq!(
+        std::fs::read_to_string(root.join("target.rs")).unwrap(),
+        "fn start() {}\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join("main.rs")).unwrap(),
+        "fn main() {}\n"
+    );
+
+    // Formatting edits the document.
+    format_document(app.world_mut(), panel).unwrap();
+    until(&mut app, "formatted", |world| {
+        text(world, panel).starts_with("// formatted\n")
+    });
+
+    // Code actions: one to resolve, one that runs a command (whose edit the
+    // server sends back), one that can't be used here.
+    let offered = |app: &mut App| {
+        request_code_actions(app.world_mut(), panel, 0..0).unwrap();
+        until(app, "code actions", |world| {
+            offered_code_actions(world, panel).is_some()
+        });
+    };
+    offered(&mut app);
+    let titles: Vec<String> = offered_code_actions(app.world(), panel)
+        .unwrap()
+        .iter()
+        .map(|action| action.title.clone())
+        .collect();
+    assert_eq!(
+        titles,
+        ["Add a comment", "Run the fixture command", "Not here"]
+    );
+    choose_code_action(app.world_mut(), panel, 0);
+    until(&mut app, "resolved and applied", |world| {
+        text(world, panel).starts_with("// fixed\n")
+    });
+    offered(&mut app);
+    choose_code_action(app.world_mut(), panel, 1);
+    until(&mut app, "the command's edit", |world| {
+        text(world, panel).starts_with("// command\n")
+    });
+    offered(&mut app);
+    let before = text(app.world(), panel);
+    choose_code_action(app.world_mut(), panel, 2);
+    app.update();
+    assert_eq!(text(app.world(), panel), before);
+
+    // References open in a panel.
+    find_references_at(app.world_mut(), panel, 0).unwrap();
+    until(&mut app, "references", |world| {
+        world.query::<&ReferencesPanel>().iter(world).count() == 1
     });
     let _ = std::fs::remove_dir_all(&root);
 }

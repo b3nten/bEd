@@ -34,6 +34,22 @@ def editor(bed):
     return next(w for w in bed.widgets() if w["role"] == "TextInput")
 
 
+def settled(bed, seconds=2.0):
+    """rust-analyzer is ready and idle (just its name in the status bar), and
+    stays so for `seconds`: it reports loading only once it has started."""
+    deadline = time.monotonic() + 180
+    since = None
+    while time.monotonic() < deadline:
+        if bed.exists("rust-analyzer"):
+            since = since or time.monotonic()
+            if time.monotonic() - since >= seconds:
+                return
+        else:
+            since = None
+        bed.wait(10)
+    raise AssertionError("never: rust-analyzer settles")
+
+
 def row(bed, name):
     return min(bed.find_all(name), key=lambda widget: widget["rect"][0])
 
@@ -62,7 +78,7 @@ with tempfile.TemporaryDirectory() as folder:
             bed.key("ArrowDown")
         for _ in range(12):
             bed.key("ArrowRight")
-        until(bed, lambda: bed.exists("rust-analyzer"), "indexing finishes")
+        settled(bed)
         bed.key("F12")
         until(bed, lambda: bed.exists("other.rs") and len(bed.find_all("other.rs")) == 2,
               "the definition opens", seconds=30)

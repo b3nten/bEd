@@ -8,6 +8,9 @@ use crate::{
     settings::{OpenSettings, SettingsPanel},
     workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
 };
+use bedtime_code::lsp::{
+    CodeActions, FindReferences, FormatDocument, GoToDefinition, RenameSymbol,
+};
 use bedtime_filetree::FileTree;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;
@@ -138,6 +141,12 @@ fn compose_menus(mut commands: Commands) {
     commands.spawn((MenuItem::action::<SaveDocument>(), InMenu(file)));
     commands.spawn((MenuItem::action::<UndoDocument>(), InMenu(edit)));
     commands.spawn((MenuItem::action::<RedoDocument>(), InMenu(edit)));
+    commands.spawn((MenuSeparator, InMenu(edit)));
+    commands.spawn((MenuItem::action::<GoToDefinition>(), InMenu(edit)));
+    commands.spawn((MenuItem::action::<FindReferences>(), InMenu(edit)));
+    commands.spawn((MenuItem::action::<RenameSymbol>(), InMenu(edit)));
+    commands.spawn((MenuItem::action::<CodeActions>(), InMenu(edit)));
+    commands.spawn((MenuItem::action::<FormatDocument>(), InMenu(edit)));
     commands.spawn((
         MenuItem::new("Settings"),
         Invokes::of::<OpenSettings>(),

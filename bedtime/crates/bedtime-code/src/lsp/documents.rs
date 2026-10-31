@@ -31,7 +31,7 @@ impl Default for LanguageServers {
 /// A document's connection to its server, on the document's entity.
 #[derive(Component)]
 pub struct DocumentServer {
-    file: PathBuf,
+    pub(crate) file: PathBuf,
     /// Syntax's name for its language.
     pub language: &'static str,
     key: DocumentKey,
@@ -49,7 +49,7 @@ pub struct DocumentServer {
 #[derive(Component)]
 pub struct LanguageServer {
     launch: Launch,
-    handle: ServerHandle,
+    pub(super) handle: ServerHandle,
     task: ManagedTask<()>,
     lifecycle: Lifecycle,
     documents: HashSet<DocumentKey>,
@@ -125,6 +125,7 @@ impl Plugin for LanguageServersPlugin {
 }
 
 fn install(app: &mut App) {
+    super::actions::install(app);
     app.init_resource::<LanguageServers>()
         .init_resource::<Definitions>()
         .init_resource::<Queries>()
@@ -167,7 +168,10 @@ fn restart_action(world: &mut World, invocation: ActionInvocation) -> ActionResu
 /// The server of `panel`'s document, if it can answer a question now: it's
 /// running, it isn't loading the project, and it has the document as it is
 /// (sent now if it hadn't yet). Otherwise why not: nothing waits.
-fn answering_server(world: &mut World, panel: Entity) -> Result<(Entity, RequestOrigin), String> {
+pub(super) fn answering_server(
+    world: &mut World,
+    panel: Entity,
+) -> Result<(Entity, RequestOrigin), String> {
     let document = world
         .get::<DocumentReference>(panel)
         .ok_or("No document is shown")?
@@ -467,6 +471,18 @@ fn receive(world: &mut World) {
                     if world.resource::<Definitions>().latest == Some(origin) {
                         world.resource_mut::<Definitions>().latest = None;
                         open_definition(world, result);
+                    }
+                }
+                super::Event::Answer {
+                    origin,
+                    kind,
+                    result,
+                } => super::actions::answered(world, origin, kind, result),
+                super::Event::ApplyEdit(edit) => {
+                    if let Err(error) = super::actions::apply_workspace_edit(world, &edit, "Edit") {
+                        world
+                            .workbench_mut()
+                            .notify(Notification::warning(format!("Edit: {error}")));
                     }
                 }
                 super::Event::Intelligence {

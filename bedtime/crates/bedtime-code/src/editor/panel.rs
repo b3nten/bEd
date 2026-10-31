@@ -66,6 +66,9 @@ pub struct EditorPanel {
     /// An open's state, applied once the text is loaded.
     #[reflect(ignore)]
     pending: Option<TextOpenState>,
+    /// A popup of the panel's own (code actions) has keyboard focus.
+    #[reflect(ignore)]
+    pub(crate) popup: bool,
     /// The panel had the layout's focus when last drawn, and on which frame:
     /// a hidden tab isn't drawn.
     #[reflect(ignore)]
@@ -176,7 +179,7 @@ fn draw(
     // A clicked tab button takes egui's focus: take it back unless a text
     // field (this editor's Find bar, say) has it.
     let typing_elsewhere = ui.ctx().text_edit_focused();
-    if focused && (!(editor.focused && shown_last_frame) || !typing_elsewhere) {
+    if focused && !editor.popup && (!(editor.focused && shown_last_frame) || !typing_elsewhere) {
         ui.memory_mut(|memory| memory.request_focus(id));
     } else if !focused && ui.memory(|memory| memory.has_focus(id)) {
         ui.memory_mut(|memory| memory.surrender_focus(id));
@@ -205,6 +208,7 @@ fn draw(
         && crate::lsp::server_of(world, panel).is_some()
     {
         crate::lsp::assist::draw(ui, world, panel, output);
+        crate::lsp::actions::draw(ui, world, panel, output);
     }
     result.and(shown.map(|_| ()))
 }
