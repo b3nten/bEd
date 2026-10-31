@@ -9,6 +9,7 @@ members = [
     "bedtime/crates/bedtime-persistence",
     "bedtime/crates/bedtime-persistence-macros",
     "bedtime/crates/bedtime-settings",
+    "bedtime/crates/bedtime-terminal",
     "bedtime/crates/bedtime-actions",
     "bedtime/crates/bedtime-filesystem",
     "bedtime/crates/bedtime-filetree",
@@ -39,6 +40,7 @@ bedtime-ui = { path = "bedtime/crates/bedtime-ui" }
 bedtime-automation = { path = "bedtime/crates/bedtime-automation" }
 bedtime-persistence = { path = "bedtime/crates/bedtime-persistence" }
 bedtime-settings = { path = "bedtime/crates/bedtime-settings" }
+bedtime-terminal = { path = "bedtime/crates/bedtime-terminal" }
 bedtime-actions = { path = "bedtime/crates/bedtime-actions" }
 bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
 bedtime-filetree = { path = "bedtime/crates/bedtime-filetree" }
@@ -82,6 +84,5 @@ objc2-quartz-core = { version = "=0.3.2", default-features = false, features = [
 bevy_render = { path = "vendor/bevy_render" }
 bevy_winit = { path = "vendor/bevy_winit" }
 egui = { path = "vendor/egui" }
-# Re-enable with the terminal plugin (bedtime_old/crates/bedtime-terminal).
-# rio-vt = { path = "vendor/rio-vt" }
+rio-vt = { path = "vendor/rio-vt" }
 arboard = { path = "vendor/arboard" }

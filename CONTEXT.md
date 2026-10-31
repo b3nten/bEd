@@ -40,8 +40,8 @@ need to write this again?* If yes, it probably belongs in Bedtime.
   smoke-test tools and fixtures. Reference only, not in the workspace, and they
   won't build against the new workbench. Each plugin is brought back into
   `bedtime/crates/` when bed needs it, cleaned up against the new workbench APIs.
-- `vendor/` — patched `bevy_render`, `egui`, `rio-vt`, `arboard` (see root `Cargo.toml`;
-  the `rio-vt` patch is commented out until the terminal returns).
+- `vendor/` — patched `bevy_render`, `bevy_winit`, `egui`, `rio-vt`, `arboard` (see
+  root `Cargo.toml` and `vendor/README.md`).
 - `references/zed/` — local Zed checkout for reference; gitignored.
 
 The old guidance docs (AGENTS.md, ENGINEERING.md, `.skills/`, `MIGRATION/`) were
@@ -283,6 +283,17 @@ Each step should produce a usable app. We can reorder at any point.
   trait is `UiComponent`; `OnSurface` is `InSurface`; bed's `Appearance`
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
+
+- **Architecture step 14: the terminal**, 2026-10-31, awaiting review.
+  `bedtime-terminal` back from bedtime_old with small changes: the rio-vt
+  patch is on again; reserved shortcuts come from `Keybindings`; the theme's
+  font size comes from `Metrics`; panels are saved with the layout (a
+  restored one starts a fresh shell) and start in `Root` without a working
+  directory of their own; the screen's text is its accessibility value.
+  bed: `terminal.rs` (New Terminal, Ctrl+`, View menu and titlebar button;
+  `+open path[:line[:column]]` / `+o` from a terminal opens files), and
+  `main` hands helper invocations to `handle_shell_command`.
+  `tests/automation/terminal.py`.
 
 - **Architecture step 13: code actions, rename, references, formatting**,
   2026-10-31, awaiting review. Backend: one `Ask` request (code actions with

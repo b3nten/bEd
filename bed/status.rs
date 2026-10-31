@@ -36,8 +36,8 @@ pub fn body(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
     let background = bedtime_ui::theme::color(context.theme.palette.background);
     let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
     ui.painter().rect_filled(bar, 0.0, background);
-    ui.painter()
-        .line_segment([bar.left_top(), bar.right_top()], stroke);
+    // ui.painter()
+        // .line_segment([bar.left_top(), bar.right_top()], stroke);
     let content = bar.shrink2(egui::vec2(10.0, 2.0));
     if content.is_positive() {
         let mut row = ui.new_child(

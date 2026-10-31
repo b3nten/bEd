@@ -6,6 +6,7 @@ use crate::{
     files::{OpenFiles, OpenStructure},
     layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
     settings::{OpenSettings, SettingsPanel},
+    terminal::NewTerminal,
     workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
 };
 use bedtime_code::lsp::{
@@ -154,6 +155,7 @@ fn compose_menus(mut commands: Commands) {
     ));
     commands.spawn((MenuItem::action::<OpenFiles>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenStructure>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<NewTerminal>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
     commands.spawn((MenuItem::action::<UseLayout<0>>(), InMenu(layout)));
     commands.spawn((MenuItem::action::<UseLayout<1>>(), InMenu(layout)));
@@ -313,6 +315,13 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
             context,
             BuiltinIcon::Folder,
             PanelFactory::of::<FileTree>(),
+        );
+        tool::<NewTerminal>(
+            ui,
+            world,
+            context,
+            BuiltinIcon::Terminal,
+            PanelFactory::of::<bedtime_terminal::TerminalPanel>(),
         );
     });
 }

@@ -4,7 +4,8 @@ Status (2026-10-31): **migration steps 1–12 built** (persistence, settings,
 actions and work, menus, layouts and chrome, the framework, opening with
 `bedtime-filesystem` and a first `bedtime-filetree`, the editor, syntax,
 Structure, language servers, hover, completions, code actions, rename,
-references and formatting in `bedtime-code`); the opening policy is deferred.
+references and formatting in `bedtime-code`, and `bedtime-terminal`); the
+opening policy is deferred.
 Update this file as decisions change.
 
 ## Goal
@@ -44,6 +45,7 @@ bed is one app on top: policy only.
 | `bedtime-filetree` | workbench, filesystem | The file tree panel (first plugin) |
 | `bedtime-code` | workbench, filesystem, grammars | Code editing: the editor, syntax, Structure and language servers |
 | `bedtime-grammars` | — | Bundled tree-sitter grammars (compiled C) |
+| `bedtime-terminal` | workbench | Terminal panels (PTY, emulator), and the shell bridge for app commands |
 | `bedtime-automation` | ui | Driving an app from scripts (exists) |
 | `bedtime` | — | Re-exports the others behind features, as `bevy` does |
 
@@ -545,7 +547,8 @@ Then the plugins:
     a server that can't answer now is an error now.
 13. **Code actions, rename, references, formatting** (built), with workspace
     edits and the References panel.
-14. Terminal.
+14. **Terminal** (built): `bedtime-terminal` as it was, against the new
+    workbench; saved panels restart a shell in `Root`.
 
 **One crate for code.** Editor, syntax, Structure and language servers depend
 on each other anyway (Structure reads the syntax tree and moves the editor;

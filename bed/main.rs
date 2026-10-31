@@ -14,10 +14,15 @@ mod menus;
 mod panels;
 mod settings;
 mod status;
+mod terminal;
 mod themes;
 mod workspace;
 
 fn main() -> AppExit {
+    // Run from a terminal's `+open`: hand it to the running bed and exit.
+    if let Some(exit) = bedtime_terminal::handle_shell_command() {
+        return exit;
+    }
     let argument = std::env::args_os().nth(1).map(PathBuf::from);
     app(Start::CommandLine(argument)).run()
 }
@@ -54,6 +59,7 @@ pub fn app(start: Start) -> App {
         themes::ThemesPlugin,
         workspace::WorkspacesPanelPlugin,
         files::FilesPlugin,
+        terminal::TerminalsPlugin,
         automation,
     ))
     // Look for installed fonts now, so Settings can list them when opened.

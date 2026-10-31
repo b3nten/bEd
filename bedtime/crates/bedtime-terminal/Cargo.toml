@@ -1,0 +1,28 @@
+[package]
+name = "bedtime-terminal"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Local PTY terminal panels with workbench-owned lifetime"
+
+[features]
+default = ["persistence"]
+# Save terminal panels with the layout (a restored one starts a fresh shell).
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-ui.workspace = true
+bedtime-workbench.workspace = true
+bevy = { workspace = true, features = ["std"] }
+bevy_egui.workspace = true
+
+rio-vt.workspace = true
+rio-graphics.workspace = true
+polling.workspace = true
+unicode-width.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
