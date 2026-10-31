@@ -99,8 +99,16 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             let response = ui.interact(
                 rect,
                 egui::Id::new((panel, &row.path)),
-                egui::Sense::click(),
+                egui::Sense::click_and_drag(),
             );
+            // Drag a file onto the layout to open it there (an area, beside
+            // a tab, a new split), if something here can open it.
+            if response.drag_started()
+                && row.kind != EntryKind::Directory
+                && !world.workbench().openers_for(&row.path).is_empty()
+            {
+                bedtime_workbench::panel_drag_source(&response, open_factory(row.path.clone()));
+            }
             let selected = view.selected.as_ref() == Some(&row.path);
             response.widget_info(|| {
                 egui::WidgetInfo::selected(
@@ -419,6 +427,27 @@ pub(crate) fn apply(world: &mut World, panel: Entity, root: &Path, intent: Inten
         }
         Intent::Refresh => world.resource_mut::<Folders>().refresh(),
     }
+}
+
+/// Opens `path` in the area it's dropped in (or does nothing if it can't).
+fn open_factory(path: PathBuf) -> bedtime_workbench::PanelFactory {
+    bedtime_workbench::PanelFactory::new("File", move |world, area| {
+        let options = PathOptions {
+            target: bedtime_workbench::Target::New { area: Some(area) },
+            ..default()
+        };
+        match world.workbench_mut().open_path(&path, options) {
+            Ok(Some(panel)) => panel,
+            Ok(None) => Entity::PLACEHOLDER,
+            Err(error) => {
+                let name = path.file_name().unwrap_or(path.as_os_str()).display();
+                world.workbench_mut().notify(Notification::error(format!(
+                    "Couldn't open {name}: {error}"
+                )));
+                Entity::PLACEHOLDER
+            }
+        }
+    })
 }
 
 /// The icon for a file, by its extension. Does no I/O.

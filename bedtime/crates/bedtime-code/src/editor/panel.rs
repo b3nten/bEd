@@ -202,6 +202,9 @@ fn draw(
     }
     let shown = editor.view.show(ui, id, &mut session, context.motion);
     world.entity_mut(panel).insert(editor);
+    if let Ok(output) = &shown {
+        context_menu(world, panel, &output.response);
+    }
     // Hover, completions and Cmd/Ctrl-click, from the language server.
     #[cfg(unix)]
     if let Ok(output) = &shown
@@ -211,6 +214,132 @@ fn draw(
         crate::lsp::actions::draw(ui, world, panel, output);
     }
     result.and(shown.map(|_| ()))
+}
+
+/// What the right-click menu asked for.
+enum MenuChoice {
+    Action(bedtime_workbench::ActionId),
+    Event(egui::Event),
+    Paste,
+}
+
+/// The right-click menu: the language server's actions (when the file has
+/// one), then Cut, Copy, Paste and Select All. A right-click outside the
+/// selection has already moved the caret there.
+fn context_menu(world: &mut World, panel: Entity, response: &egui::Response) {
+    use bedtime_workbench::{ActionId, Keybindings};
+    let shortcut = |world: &World, action: ActionId| {
+        world
+            .get_resource::<Keybindings>()
+            .and_then(|keys| keys.keys(&action).first().map(|chord| chord.label()))
+            .unwrap_or_default()
+    };
+    #[cfg(unix)]
+    let language: Vec<(ActionId, &'static str, String)> =
+        if crate::lsp::server_of(world, panel).is_some() {
+            use crate::lsp::{
+                CodeActions, FindReferences, FormatDocument, GoToDefinition, RenameSymbol,
+            };
+            use bedtime_workbench::Action;
+            [
+                (ActionId::of::<GoToDefinition>(), GoToDefinition::LABEL),
+                (ActionId::of::<FindReferences>(), FindReferences::LABEL),
+                (ActionId::of::<RenameSymbol>(), RenameSymbol::LABEL),
+                (ActionId::of::<CodeActions>(), CodeActions::LABEL),
+                (ActionId::of::<FormatDocument>(), FormatDocument::LABEL),
+            ]
+            .into_iter()
+            .map(|(id, label)| (id.clone(), label, shortcut(world, id)))
+            .collect()
+        } else {
+            Vec::new()
+        };
+    #[cfg(not(unix))]
+    let language: Vec<(ActionId, &'static str, String)> = Vec::new();
+    let read_only = world
+        .get::<EditorPanel>(panel)
+        .is_some_and(|editor| editor.view.settings.read_only);
+    let has_selection = world
+        .get::<EditorPanel>(panel)
+        .is_some_and(|editor| !editor.view.selection().range().is_empty());
+    let primary = if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    };
+    let mut choice = None;
+    response.context_menu(|ui| {
+        for (action, label, keys) in &language {
+            if ui
+                .add(egui::Button::new(*label).shortcut_text(keys))
+                .clicked()
+            {
+                choice = Some(MenuChoice::Action(action.clone()));
+                ui.close();
+            }
+        }
+        if !language.is_empty() {
+            ui.separator();
+        }
+        let item = |ui: &mut egui::Ui, label: &str, key: &str, enabled: bool| {
+            ui.add_enabled(
+                enabled,
+                egui::Button::new(label).shortcut_text(format!("{primary}+{key}")),
+            )
+            .clicked()
+        };
+        if item(ui, "Cut", "X", has_selection && !read_only) {
+            choice = Some(MenuChoice::Event(egui::Event::Cut));
+            ui.close();
+        }
+        if item(ui, "Copy", "C", has_selection) {
+            choice = Some(MenuChoice::Event(egui::Event::Copy));
+            ui.close();
+        }
+        if item(ui, "Paste", "V", !read_only) {
+            choice = Some(MenuChoice::Paste);
+            ui.close();
+        }
+        ui.separator();
+        if item(ui, "Select All", "A", true) {
+            choice = Some(MenuChoice::Event(egui::Event::Key {
+                key: egui::Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }));
+            ui.close();
+        }
+    });
+    let event = match choice {
+        None => return,
+        Some(MenuChoice::Action(action)) => {
+            if let Some(mut requests) =
+                world.get_resource_mut::<bedtime_workbench::ActionRequests>()
+            {
+                requests.submit(bedtime_workbench::ActionRequest {
+                    action,
+                    context: bedtime_workbench::InvocationContext::Entity(panel),
+                    source: Some(panel),
+                });
+            }
+            return;
+        }
+        Some(MenuChoice::Event(event)) => event,
+        Some(MenuChoice::Paste) => {
+            let text = world
+                .get_resource_mut::<bedtime_workbench::Clipboard>()
+                .and_then(|mut clipboard| clipboard.read_text().ok());
+            match text {
+                Some(text) => egui::Event::Paste(text),
+                None => return,
+            }
+        }
+    };
+    if let Some(mut editor) = world.get_mut::<EditorPanel>(panel) {
+        editor.view.queue_event(event);
+    }
 }
 
 /// Where an open's state puts the cursor, revealed in the middle. Focus is

@@ -1,5 +1,6 @@
 """Editor: a text file opened from Files can be edited and saved, undo works,
-and the editor comes back with the workspace."""
+the right-click menu cuts and pastes, and the editor comes back with the
+workspace."""
 import tempfile
 from pathlib import Path
 from bed import Bed
@@ -41,6 +42,24 @@ with tempfile.TemporaryDirectory() as folder:
         bed.key("Primary+Shift+Z")
         until(bed, lambda: bed.exists(contains="hello first line"), "redone")
         bed.screenshot("editor")
+
+        # The right-click menu: Select All, Cut (the text goes), Paste (back).
+        editor = next(w for w in bed.widgets() if w["role"] == "TextInput")
+        x0, y0, _, _ = editor["rect"]
+        spot = (x0 + 8 + 2 * 9.6, y0 + 6 + 0.5 * 20.5)
+        bed.click(spot, button="Right")
+        until(bed, lambda: bed.exists(contains="Select All "), "the context menu opens")
+        bed.screenshot("editor-menu")
+        bed.click(bed.find(contains="Select All "))
+        bed.click(spot, button="Right")
+        until(bed, lambda: bed.exists(contains="Cut "), "the menu again")
+        bed.click(bed.find(contains="Cut "))
+        value = lambda: next(w for w in bed.widgets() if w["role"] == "TextInput").get("value") or ""
+        until(bed, lambda: value() == "", "cut leaves nothing")
+        bed.click(spot, button="Right")
+        until(bed, lambda: bed.exists(contains="Paste "), "the menu once more")
+        bed.click(bed.find(contains="Paste "))
+        until(bed, lambda: "hello first line" in value(), "paste puts it back")
         assert not bed.status()["errors"], bed.status()["errors"]
 
         # Away and back: the editor shows the file again.

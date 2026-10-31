@@ -33,6 +33,10 @@ read-only.
   Shift-Tab indentation, smart newline indentation and closing-bracket
   outdent, wrapping (`EditorSettings::wrap`), line numbers, the animated
   caret.
+- **Right-click menu.** A right-click outside the selection moves the caret
+  there; the menu offers the language server's actions (Go to Definition,
+  Find References, Rename, Code Actions, Format Document) when the file has
+  one, then Cut, Copy, Paste and Select All (`EditorView::queue_event`).
 - **Find and Replace.** Cmd/Ctrl-F, and Ctrl-H off macOS; literal, case and
   whole-word search over the rope in the background; Replace All is one undo
   step.

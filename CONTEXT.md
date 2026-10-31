@@ -284,6 +284,15 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Editor right-click menu, file tree dragging**, 2026-10-31, awaiting
+  review. The editor's context menu (language server actions when there's
+  a server; Cut/Copy/Paste/Select All through `EditorView::queue_event`;
+  a right-click outside the selection moves the caret first). Files drag
+  from the tree onto the layout to open there (a `PanelFactory` around
+  `open_path`); bedtime-ui lets a factory decline with
+  `Entity::PLACEHOLDER`. `editor.py` and `files.py` cover both. Moving files
+  within the tree needs the file operations, not yet ported.
+
 - **Terminal: command blocks, the cursor, links**, 2026-10-31, awaiting
   review. The cursor glides between cells with a comet. Shell integration
   (`integration.rs`: zsh via `ZDOTDIR`, bash via `PS0`/`PROMPT_COMMAND`)

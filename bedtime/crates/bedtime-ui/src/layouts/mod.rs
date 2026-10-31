@@ -466,9 +466,11 @@ pub trait Panel: Component {
     );
 }
 
-/// An application-owned, infallible panel constructor for a creation drag.
-/// Validate application-specific inputs before offering the factory. It must
-/// create exactly one panel in the supplied area, and return that entity.
+/// An application-owned panel constructor for a creation drag. Validate
+/// application-specific inputs before offering the factory. It must create
+/// exactly one panel in the supplied area and return that entity, or, if it
+/// can't after all (a file gone since), create nothing and return
+/// `Entity::PLACEHOLDER`: the drop does nothing.
 #[derive(Clone)]
 pub struct PanelFactory {
     pub label: &'static str,
@@ -1242,8 +1244,11 @@ impl Layouts {
                         return Err("Area is too small to split".into());
                     }
                 }
-                // Geometry is validated before invoking the infallible app factory.
+                // Geometry is validated before invoking the app factory.
                 let panel = (factory.create)(&mut self.world, *area);
+                if panel == Entity::PLACEHOLDER {
+                    return Err("Nothing could be shown there".into());
+                }
                 assert!(
                     self.world.get::<PanelInstance>(panel).is_some()
                         && self.world.get::<InArea>(panel).map(|owner| owner.0) == Some(*area),

@@ -145,6 +145,9 @@ pub struct EditorView {
         background::Job<(BufferEdit, TextSelection)>,
     )>,
     edit_message: Option<String>,
+    /// Editing asked for from outside the keyboard (a context menu's Copy,
+    /// Paste…), handled on the next draw as if typed.
+    queued: Vec<egui::Event>,
 }
 /// Lock each wheel input to its dominant axis. Keep that choice only for
 /// egui's smoothed tail, never across a new independent input.
@@ -289,6 +292,11 @@ impl EditorView {
     /// text is at the report's revision.
     pub fn set_diagnostics(&mut self, report: Option<std::sync::Arc<Diagnostics>>) {
         self.diagnostics = report;
+    }
+    /// Handle `event` (`Copy`, `Cut`, `Paste(text)`, a key) on the next draw,
+    /// as if it were typed.
+    pub fn queue_event(&mut self, event: egui::Event) {
+        self.queued.push(event);
     }
     pub fn selection(&self) -> TextSelection {
         self.selection
@@ -703,6 +711,33 @@ impl EditorView {
                             }
                             self.drag_anchor = Some(self.selection.anchor);
                         }
+                        // A right-click outside the selection moves the caret
+                        // there first, so a context menu acts where you clicked.
+                        if response.hovered()
+                            && ui.input(|i| i.pointer.secondary_pressed())
+                            && self.composition.is_none()
+                            && let Some(position) = ui.input(|i| i.pointer.interact_pos())
+                        {
+                            let geometry = layout::Geometry {
+                                text: &snapshot.text,
+                                metrics: &metrics,
+                                wrap: self.active_wrap(&snapshot, wrap_width),
+                                folds: &self.folding.display_map,
+                            };
+                            let hit = geometry.hit(ui, position - origin.to_vec2());
+                            let selected = self.selection.range();
+                            if !(selected.start..=selected.end).contains(&hit)
+                                || selected.is_empty()
+                            {
+                                session.end_undo_group();
+                                self.preferred_column = None;
+                                self.selection = TextSelection {
+                                    anchor: hit,
+                                    head: hit,
+                                };
+                            }
+                            response.request_focus();
+                        }
                         if response.dragged_by(egui::PointerButton::Primary)
                             && !(self.language_tools && ui.input(|i| i.modifiers.command))
                         {
@@ -747,6 +782,27 @@ impl EditorView {
                                     },
                                 )
                             });
+                            let queued = std::mem::take(&mut self.queued);
+                            for event in &queued {
+                                match self.handle_event(
+                                    ui,
+                                    id,
+                                    session,
+                                    &mut snapshot,
+                                    event,
+                                    now,
+                                    (viewport.height() / metrics.height).max(1.0) as usize,
+                                ) {
+                                    Ok(true) => {
+                                        reveal = Some((
+                                            self.selection.head..self.selection.head,
+                                            Reveal::Minimal,
+                                        ))
+                                    }
+                                    Ok(false) => {}
+                                    Err(error) => failure = Some(error),
+                                }
+                            }
                             let events = ui.input(|input| input.events.clone());
                             let mut consumed = Vec::new();
                             for (index, event) in events.iter().enumerate() {

@@ -64,6 +64,18 @@ with tempfile.TemporaryDirectory() as folder:
         assert not bed.status()["errors"], bed.status()["errors"]
         bed.screenshot("files")
 
+        # Drag a file from the tree onto the far side of the editor area: it
+        # opens in a new split there.
+        tab = max(bed.find_all("notes.txt"), key=lambda widget: widget["rect"][0])
+        tx0, ty0, tx1, ty1 = tab["rect"]
+        area_right = bed.status()["window"]["width"] - 30
+        x0, y0, x1, y1 = row(bed, "other.txt")["rect"]
+        before = len([w for w in bed.widgets() if (w.get("label") or "").startswith("Close ")])
+        bed.drag(((x0 + x1) / 2, (y0 + y1) / 2), (area_right, ty1 + 300))
+        until(bed, lambda: len([w for w in bed.widgets() if (w.get("label") or "").startswith("Close ")]) > before,
+              "the dragged file opens")
+        bed.screenshot("files-drag")
+
         # Away and back: src is still open.
         bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
         bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))

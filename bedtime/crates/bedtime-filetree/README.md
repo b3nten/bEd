@@ -19,6 +19,9 @@ world.spawn((FileTree::default(), InArea(area)));
   reports errors as notifications.
 - **Open With.** A file's context menu lists `openers_for(path)`, worked out
   when the menu opens. The menu also has Copy Path and Refresh.
+- **Dragging.** Drag a file onto the layout to open it there: in an area,
+  beside a tab, or in a new split (a `PanelFactory` that calls `open_path`
+  with that area). Only files something here can open can be dragged.
 - **Keys.** Up/Down, Home/End and Page Up/Down move the selection; Right opens
   a folder or moves into it, Left closes it or moves to its parent; Enter
   opens; typing selects the next row starting with what was typed.
@@ -47,7 +50,7 @@ being drawn.
 
 From the old tree (`bedtime_old/crates/bedtime-filetree`), still to come back
 as needed: creating, renaming, moving, copying and trashing files (and their
-clipboard and drag-and-drop), dragging a file out as a panel, multiple
+clipboard, and dragging within the tree to move or copy), multiple
 selection, hiding files, and row animation.
 
 ## Tests
