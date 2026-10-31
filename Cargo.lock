@@ -438,7 +438,7 @@ name = "bed"
 version = "0.1.0"
 dependencies = [
  "bedtime-automation",
- "bedtime-document",
+ "bedtime-code",
  "bedtime-filetree",
  "bedtime-persistence",
  "bedtime-ui",
@@ -455,6 +455,7 @@ name = "bedtime"
 version = "0.1.0"
 dependencies = [
  "bedtime-actions",
+ "bedtime-code",
  "bedtime-document",
  "bedtime-filesystem",
  "bedtime-filetree",
@@ -497,6 +498,19 @@ dependencies = [
  "arboard",
  "bevy_app",
  "bevy_ecs",
+]
+
+[[package]]
+name = "bedtime-code"
+version = "0.1.0"
+dependencies = [
+ "bedtime-document",
+ "bedtime-filesystem",
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]

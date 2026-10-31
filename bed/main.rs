@@ -14,7 +14,6 @@ mod menus;
 mod panels;
 mod settings;
 mod status;
-mod text;
 mod themes;
 mod workspace;
 

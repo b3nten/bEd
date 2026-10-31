@@ -15,7 +15,7 @@ use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
     ActionsWorldExt, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext, Invokes,
     KeyChord, LayoutSurface, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator, NativeMenuBar,
-    PanelFactory, SaveDocument, draw_menu_bar, panel_drag_source,
+    PanelFactory, RedoDocument, SaveDocument, UndoDocument, draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -113,6 +113,7 @@ fn compose_menus(mut commands: Commands) {
     // On macOS the first menu becomes the application menu.
     let app = menu("bEd");
     let file = menu("File");
+    let edit = menu("Edit");
     let view = menu("View");
     let layout = menu("Layout");
     commands.spawn((
@@ -135,6 +136,8 @@ fn compose_menus(mut commands: Commands) {
     commands.spawn((MenuItem::action::<CloseFolder>(), InMenu(file)));
     commands.spawn((MenuSeparator, InMenu(file)));
     commands.spawn((MenuItem::action::<SaveDocument>(), InMenu(file)));
+    commands.spawn((MenuItem::action::<UndoDocument>(), InMenu(edit)));
+    commands.spawn((MenuItem::action::<RedoDocument>(), InMenu(edit)));
     commands.spawn((
         MenuItem::new("Settings"),
         Invokes::of::<OpenSettings>(),
@@ -392,6 +395,7 @@ mod tests {
             [
                 ("bEd".into(), true),
                 ("File".into(), true),
+                ("Edit".into(), true),
                 ("View".into(), true),
                 ("Layout".into(), true)
             ]

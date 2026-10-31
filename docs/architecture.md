@@ -1,8 +1,9 @@
 # Architecture: the bedtime crates
 
-Status (2026-10-30): **migration steps 1–7 built** (persistence, settings,
+Status (2026-10-30): **migration steps 1–8 built** (persistence, settings,
 actions and work, menus, layouts and chrome, the framework, opening with
-`bedtime-filesystem` and a first `bedtime-filetree`); the plugins are next.
+`bedtime-filesystem` and a first `bedtime-filetree`, the editor in
+`bedtime-code`); syntax, Structure and language servers are next.
 Update this file as decisions change.
 
 ## Goal
@@ -40,6 +41,7 @@ bed is one app on top: policy only.
 | `bedtime-filesystem` | document | File sources and change watching (ported from bedtime_old) |
 | `bedtime-workbench` | all of the above | The framework |
 | `bedtime-filetree` | workbench, filesystem | The file tree panel (first plugin) |
+| `bedtime-code` | workbench, filesystem | Code editing: the editor, then syntax, Structure and language servers as modules |
 | `bedtime-automation` | ui | Driving an app from scripts (exists) |
 | `bedtime` | — | Re-exports the others behind features, as `bevy` does |
 
@@ -407,8 +409,10 @@ app.register_opener(
   knows either. `PathOptions` carries what a path-only caller has: a line and
   column, the target, preview. A file nothing claims goes to the app's
   fallback hook, which tells the user; `open_path` then returns `Ok(None)`.
-- There are no URIs and no navigation history; restore goes through each
-  viewer panel's persisted source and state.
+- There are no URIs and no navigation history. A viewer opened from a file
+  keeps the path with the panel (`ViewerFile`, saved); restoring the panel
+  opens the file again with the opener whose viewer it is. One whose file is
+  gone is closed, and the user told.
 
 ### Documents and unsaved work
 
@@ -526,8 +530,21 @@ possible, and the step is reviewed before the next.
    [opening](#opening) (`OpenState`, viewers, openers, `open_document`,
    `open_path`), then the file tree as its first user.
 
-Then the plugins: editor and tree-sitter, structure, language servers,
-terminal.
+Then the plugins:
+
+8. **The editor** in `bedtime-code` (built): the old editor without its
+   standalone `TextSession` host, diff, syntax, diagnostics or completions.
+9. **Syntax** (tree-sitter highlighting and folds), **Structure** and
+   **language servers**, as modules of `bedtime-code`; grammars stay their own
+   crate.
+10. Terminal.
+
+**One crate for code.** Editor, syntax, Structure and language servers depend
+on each other anyway (Structure reads the syntax tree and moves the editor;
+diagnostics and completions draw in the editor). In one crate they call each
+other directly: no feature flags, no contribution APIs (`set_syntax`,
+`set_diagnostics`, `set_completions`), no per-document analysis attachments.
+The cost is that the editor can't be used without them compiled in.
 
 ## Open questions
 

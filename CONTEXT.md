@@ -28,7 +28,7 @@ need to write this again?* If yes, it probably belongs in Bedtime.
 
 - `bed/` — the new app: window, workbench, settings (`settings.rs`), workspaces
   (`workspace.rs`), panel opening policy (`panels.rs`), menus, toolbar and app
-  commands (`menus.rs`), Files and what opens which file (`files.rs`, `text.rs`).
+  commands (`menus.rs`), Files and what opens which file (`files.rs`).
   Run `bed [folder]`.
 - `bed_old/` — the previous app, kept as reference only. Not in the workspace.
 - `bedtime/crates/` — the maintained library (see
@@ -283,6 +283,21 @@ Each step should produce a usable app. We can reorder at any point.
   trait is `UiComponent`; `OnSurface` is `InSurface`; bed's `Appearance`
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
+
+- **Architecture step 8: the editor**, 2026-10-30, awaiting review.
+  `bedtime-code` (one crate for code: the editor now, syntax, Structure and
+  language servers later as modules; see
+  [docs/architecture.md](docs/architecture.md#migration)). The old editor,
+  workbench-only: its session trait is private, implemented over the panel's
+  document (`DocumentSession`) and in memory for its 31 ported tests. Dropped
+  for now: diff, syntax, diagnostics, completions, language-tool hovers, the
+  standalone example. Kept: Find/Replace, wrapping, indentation, IME, folding
+  (nothing supplies folds yet). `EditorPanel` is a `Viewer<TextBuffer>`; an
+  open's `TextOpenState` becomes a selection revealed in the middle;
+  keyboard focus follows the panel's focus. Workbench: `ViewerFile` keeps a
+  file viewer's path with the panel and `reopen_viewers` reopens it on
+  restore. bed: `CodePlugin` replaces `text.rs`; Save/Undo/Redo handlers
+  registered, Edit menu. `tests/automation/editor.py`.
 
 - **Architecture step 7: opening, files and the file tree**, 2026-10-30,
   awaiting review. `bedtime-filesystem` ported (file document sources save

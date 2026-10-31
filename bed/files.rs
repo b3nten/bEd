@@ -1,11 +1,11 @@
-//! Files: the workspace folder's file tree, and what opens which file. Text
-//! opens in the text viewer; anything else is reported.
-use crate::{panels::PanelPolicy, text::TextViewer};
-use bedtime_document::TextBuffer;
+//! Files: the workspace folder's file tree, what opens which file, and
+//! saving them. Text opens in the editor; anything else is reported.
+use crate::panels::PanelPolicy;
+use bedtime_code::CodePlugin;
 use bedtime_filetree::{FileTree, FileTreePlugin};
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Fit, Handler, Notification, Opener,
-    OpenersAppExt, PanelFactory, WorkbenchWorldExt,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Notification, OpenersAppExt,
+    PanelFactory, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 use std::path::Path;
@@ -26,29 +26,16 @@ pub struct FilesPlugin;
 
 impl Plugin for FilesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(FileTreePlugin)
-            .register_opener(Opener::<TextBuffer>::new::<TextViewer>("Text").files(text_fit))
-            .register_default_opener::<TextViewer>()
+        app.add_plugins((FileTreePlugin, CodePlugin))
             .set_open_fallback(nothing_opens)
             .add_action_handler::<OpenFiles>(Handler::new(open_files));
+        // Save, Undo and Redo act on the focused panel's document.
+        app.world_mut().workbench_mut().register_document_handlers();
     }
 }
 
 fn open_files(world: &mut World, _: ActionInvocation) -> ActionResult {
     crate::panels::open_panel::<FileTree>(world, (), PanelFactory::of::<FileTree>()).map(|_| ())
-}
-
-/// Text: no NUL bytes, and UTF-8 (the start may end mid-character).
-fn text_fit(_: &Path, head: &[u8]) -> Fit {
-    let utf8 = match std::str::from_utf8(head) {
-        Ok(_) => true,
-        Err(error) => error.error_len().is_none(),
-    };
-    if utf8 && !head.contains(&0) {
-        Fit::Preferred
-    } else {
-        Fit::No
-    }
 }
 
 fn nothing_opens(world: &mut World, path: &Path, _: String) {

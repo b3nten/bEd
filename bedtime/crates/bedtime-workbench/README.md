@@ -242,6 +242,10 @@ world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..defa
   fits, or the best fit. A file nothing opens goes to the fallback, which
   tells the user (`open_path` returns `Ok(None)`); without one it's an error.
   `openers_for_document` lists viewers for an open document.
+- A viewer opened from a file keeps the path with the panel (`ViewerFile`,
+  saved with persistence). A restored panel with a path but no document gets
+  it back from the opener whose viewer it is (`reopen_viewers`, in `Update`);
+  one whose file can't be opened is closed, with a notification.
 
 ## Execution and external work
 

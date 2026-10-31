@@ -1,0 +1,21 @@
+[package]
+name = "bedtime-code"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Code editing for workbench apps: the text editor, and later syntax, structure and language servers"
+
+[features]
+default = ["persistence"]
+# Save editor panels with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-document.workspace = true
+bedtime-filesystem.workspace = true
+bedtime-ui.workspace = true
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }
+unicode-segmentation = "=1.13.3"
+unicode-width.workspace = true

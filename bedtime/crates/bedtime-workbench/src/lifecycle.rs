@@ -54,6 +54,9 @@ pub(crate) fn install(app: &mut App) {
     documents::install(app);
     app.init_resource::<Openers>()
         .add_systems(Update, opening::pin_edited_previews);
+    #[cfg(feature = "files")]
+    app.register_type::<ViewerFile>()
+        .add_systems(Update, opening::reopen_viewers);
     closing::install(app);
     document_actions::install(app);
     // A gesture's layout edit applies before shortcuts are read.

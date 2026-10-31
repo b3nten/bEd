@@ -8,13 +8,15 @@
 //! - [`workbench`] (default): the framework for document-based apps, with
 //!   `WorkbenchPlugins`. `workspaces` adds workspaces, which need the
 //!   bevy_winit fork.
-//! - Plugins: [`filetree`].
+//! - Plugins: [`filetree`], [`code`].
 //!
 //! See `docs/architecture.md` for how the layers fit together.
 pub use bedtime_ui as ui;
 
 #[cfg(feature = "actions")]
 pub use bedtime_actions as actions;
+#[cfg(feature = "code")]
+pub use bedtime_code as code;
 #[cfg(feature = "documents")]
 pub use bedtime_document as document;
 #[cfg(feature = "filesystem")]

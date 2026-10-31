@@ -2,6 +2,7 @@
 members = [
     "bed",
     "bedtime/crates/bedtime-clipboard",
+    "bedtime/crates/bedtime-code",
     "bedtime/crates/bedtime-document",
     "bedtime/crates/bedtime-ui",
     "bedtime/crates/bedtime-automation",
@@ -31,6 +32,7 @@ opt-level = 1
 
 [workspace.dependencies]
 bedtime-document = { path = "bedtime/crates/bedtime-document" }
+bedtime-code = { path = "bedtime/crates/bedtime-code" }
 bedtime-clipboard = { path = "bedtime/crates/bedtime-clipboard", default-features = false }
 bedtime-ui = { path = "bedtime/crates/bedtime-ui" }
 bedtime-automation = { path = "bedtime/crates/bedtime-automation" }

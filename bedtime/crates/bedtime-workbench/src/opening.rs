@@ -132,12 +132,13 @@ impl<M: DocumentModel> Opener<M> {
                 let source = bedtime_filesystem::Filesystem::local()
                     .document_source(path)
                     .map_err(|e| e.to_string())?;
+                let file = source.path();
                 let state = options
                     .line
                     .map_or_else(M::OpenState::default, |(line, column)| {
                         M::state_at_line(line, column)
                     });
-                world.workbench_mut().open_document::<M>(
+                let panel = world.workbench_mut().open_document::<M>(
                     source,
                     OpenOptions {
                         state,
@@ -145,7 +146,22 @@ impl<M: DocumentModel> Opener<M> {
                         opener: Some(options.opener),
                         preview: options.preview,
                     },
-                )
+                )?;
+                world.entity_mut(panel).insert(ViewerFile(file));
+                Ok(panel)
+            },
+            reopen: |world, panel, path| {
+                let source = bedtime_filesystem::Filesystem::local()
+                    .document_source(path)
+                    .map_err(|e| e.to_string())?;
+                let document = world
+                    .workbench_mut()
+                    .load_document::<M>(source)
+                    .map_err(|e| e.to_string())?;
+                world
+                    .entity_mut(panel)
+                    .insert(DocumentReference::new(document.id()));
+                Ok(())
             },
         });
         self
@@ -170,6 +186,48 @@ struct ErasedOpener {
 struct FileOpener {
     fit: fn(&std::path::Path, &[u8]) -> Fit,
     open: fn(&mut World, &std::path::Path, ResolvedPathOptions) -> Result<Entity, String>,
+    /// Show the file in a restored viewer panel that has lost its document.
+    reopen: fn(&mut World, Entity, &std::path::Path) -> Result<(), String>,
+}
+
+/// The file a viewer panel shows, saved with the panel: restoring the panel
+/// opens the file again, with the opener whose viewer the panel is.
+#[cfg(feature = "files")]
+#[derive(Component, Reflect, Clone, Debug, PartialEq, Eq)]
+#[reflect(Component)]
+#[cfg_attr(feature = "persistence", reflect(crate::persistence::Persist))]
+pub struct ViewerFile(pub std::path::PathBuf);
+
+/// Give restored viewer panels their files back. One that can't be opened is
+/// closed, with a notification.
+#[cfg(feature = "files")]
+pub(crate) fn reopen_viewers(world: &mut World) {
+    let restored: Vec<(Entity, std::path::PathBuf)> = world
+        .query_filtered::<(Entity, &ViewerFile), Without<DocumentReference>>()
+        .iter(world)
+        .map(|(panel, file)| (panel, file.0.clone()))
+        .collect();
+    for (panel, path) in restored {
+        let reopen = world.get_resource::<Openers>().and_then(|openers| {
+            openers
+                .openers
+                .iter()
+                .find(|opener| (opener.shows)(world, panel))
+                .and_then(|opener| Some(opener.files.as_ref()?.reopen))
+        });
+        let result = match reopen {
+            Some(reopen) => reopen(world, panel, &path),
+            None => Err("nothing here opens it".into()),
+        };
+        if let Err(error) = result {
+            world.entity_mut(panel).remove::<ViewerFile>();
+            let _ = world.layouts_mut().close_panel(panel);
+            let name = path.file_name().unwrap_or(path.as_os_str()).display();
+            world.workbench_mut().notify(Notification::warning(format!(
+                "Couldn't reopen {name}: {error}"
+            )));
+        }
+    }
 }
 
 #[cfg(feature = "files")]
@@ -559,7 +617,7 @@ mod tests {
     use bedtime_document::{MemorySource, TextBuffer, TextOpenState, TextPosition};
 
     /// A text viewer that records the states applied to it.
-    #[derive(Component)]
+    #[derive(Component, Default)]
     #[require(PanelInstance = PanelInstance::of::<Self>())]
     struct TextView {
         applied: Vec<TextOpenState>,
@@ -867,6 +925,36 @@ mod tests {
             },
         );
         assert_eq!(unopened, Ok(None));
+
+        // A restored viewer has its file but not its document: it gets it back.
+        assert_eq!(
+            world.get::<ViewerFile>(panel),
+            Some(&ViewerFile(notes.canonicalize().unwrap()))
+        );
+        let area = world.get::<InArea>(panel).unwrap().0;
+        let restored = world
+            .spawn((TextView::default(), ViewerFile(notes.clone()), InArea(area)))
+            .id();
+        app.update();
+        let world = app.world_mut();
+        let reference = world.get::<DocumentReference>(restored).unwrap();
+        assert_eq!(
+            Some(reference.document()),
+            world.get::<DocumentReference>(panel).map(|r| r.document())
+        );
+        // One whose file is gone is closed, and the user told.
+        let gone = world
+            .spawn((
+                TextView::default(),
+                ViewerFile(directory.join("gone.txt")),
+                InArea(area),
+            ))
+            .id();
+        app.update();
+        assert!(app.world().get_entity(gone).is_err());
+        let world = app.world_mut();
+        let told = &world.resource::<Notifications>().latest().unwrap().text;
+        assert!(told.starts_with("Couldn't reopen gone.txt"), "{told}");
         assert_eq!(world.resource::<Unopened>().0.len(), 1);
         std::fs::remove_dir_all(directory).unwrap();
     }

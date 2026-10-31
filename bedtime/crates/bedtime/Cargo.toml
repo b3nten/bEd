@@ -24,12 +24,15 @@ documents = ["dep:bedtime-document"]
 filesystem = ["dep:bedtime-filesystem", "documents"]
 # The file tree panel.
 filetree = ["dep:bedtime-filetree", "workbench", "filesystem"]
+# Code editing: the editor (later syntax, structure, language servers).
+code = ["dep:bedtime-code", "workbench", "filesystem"]
 # macOS window chrome and the native menu bar.
 native = ["bedtime-ui/native", "bedtime-menus?/native"]
 
 [dependencies]
 bedtime-ui.workspace = true
 bedtime-actions = { workspace = true, optional = true }
+bedtime-code = { workspace = true, optional = true }
 bedtime-document = { workspace = true, optional = true }
 bedtime-filesystem = { workspace = true, optional = true }
 bedtime-filetree = { workspace = true, optional = true }
