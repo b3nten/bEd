@@ -279,9 +279,7 @@ What's left, plus what bed does today that any document app needs:
   workspace, and switching by rebuilding the App (`bevy::winit::relaunch`).
   Moves from bed's `workspace.rs`; bed keeps choices like "reopen the last
   workspace" as a setting it passes in.
-- **Opening**: open a target at a location, viewers (panels bound to a
-  document), navigation history, restoring opened panels. Designed after the
-  move; see [open questions](#open-questions).
+- **Opening** documents in viewers, with state; see [below](#opening).
 - **Notifications**, and turning lower crates' failure messages into
   notifications.
 
@@ -330,6 +328,84 @@ only exists to switch workspace.
   workspaces.
 - **Switching and the recent list** exist only with the plugin. The exit flow
   (`request_exit`) is core; switching is one use of it.
+
+### Opening
+
+Opening shows a document in a viewer panel, with optional state ("at line
+40", "select this span"). It's the same call whether the document is new,
+already open in a panel (Structure moving its editor to a symbol), or open
+elsewhere. Tools' own navigation (go to definition) is theirs: they work out
+a target, then open it.
+
+**Every open ends the same way: a viewer panel, and its state applied.**
+
+```rust
+trait DocumentModel {
+    /// What can come with an open: where to put the cursor, what to select.
+    type OpenState: Default + Clone + Send + Sync + 'static;
+    /// For callers that only have a line and column (a terminal's
+    /// `+open main.rs:42`). Ignored by default.
+    fn state_at_line(_line: u32, _column: u32) -> Self::OpenState { default() }
+}
+
+trait Viewer<M: DocumentModel>: Panel {
+    /// A new panel showing `document`.
+    fn new(document: DocumentHandle<M>) -> Self;
+    /// Move to `state`, on a fresh panel or an existing one. A viewer whose
+    /// content isn't loaded yet keeps it and applies it once it is.
+    fn apply(world: &mut World, panel: Entity, state: &M::OpenState);
+}
+```
+
+The state belongs to the model, so it means the same in any viewer (a hex
+viewer of text scrolls to the same byte). What's only the viewer's (scroll,
+folds, zoom) is persisted by the viewer panel itself, and restoring a panel
+applies its state the same way.
+
+**Which panel:**
+
+```rust
+world.workbench_mut().open_document(source, OpenOptions::<TextBuffer> {
+    state,
+    target: Target::Existing,  // or Panel(entity), or New { area }
+    opener: None,              // the default viewer
+    preview: true,
+})?;
+```
+
+- `Target::Panel(panel)` applies to that panel; one that isn't a viewer of
+  this model is an error.
+- `Target::Existing` (the default) reuses a panel already showing the
+  document with the requested opener (any, if none was named): the one in the
+  focused area, else the first in the current layout. It gets focus and the
+  state. With none in the current layout, a new panel is placed there.
+  Opening never switches layouts.
+- `Target::New { area }` always places a new panel.
+- A new panel goes in the named area, else the area the request came from,
+  else the focused area. With `preview`, it replaces that area's preview tab.
+  Applying state to an existing panel doesn't change whether it's a preview;
+  editing a document pins its preview panel.
+
+**Openers** pair a model with a viewer, give it a label, and may handle
+files:
+
+```rust
+app.register_opener(
+    Opener::new::<TextBuffer, EditorPanel>("Text Editor").files(text_fit),
+)
+.register_opener(Opener::new::<TextBuffer, HexPanel>("Hex").files(|_, _| Fit::Can))
+.register_default_opener::<EditorPanel>();
+```
+
+- `openers_for(path)` lists what can open a file (a file tree's "Open With");
+  `openers_for_document(id)` lists viewers for an open document's model.
+- `open_path(path, PathOptions)` uses the default opener if it fits the file,
+  else the best fit, which builds the source and model; the caller never
+  knows either. `PathOptions` carries what a path-only caller has: a line and
+  column, the target, preview. A file nothing claims goes to the app's
+  fallback hook.
+- There are no URIs and no navigation history; restore goes through each
+  viewer panel's persisted source and state.
 
 ### Documents and unsaved work
 
@@ -443,21 +519,18 @@ possible, and the step is reviewed before the next.
 6. **The framework.** `WorkbenchPlugins`; workspaces move from bed into
    workbench as an optional plugin and feature, with `Root`. Add the umbrella
    crate and the docking-only example.
-7. **Opening.** Design and build opening and viewers, with
-   `bedtime-filesystem` and the file tree as the first user.
+7. **Opening.** `bedtime-filesystem` (file sources, watching), then
+   [opening](#opening) (`OpenState`, viewers, openers, `open_document`,
+   `open_path`), then the file tree as its first user.
 
 Then the plugins: editor and tree-sitter, structure, language servers,
 terminal.
 
 ## Open questions
 
-- **Names** of what moves into `bedtime-ui`: `WorkbenchSurface`,
-  `WorkbenchCamera` and friends lose the `Workbench` prefix there.
 - **The panel drawing contract.** Panels take `&mut World` today. Drawing
   from read-only access and sending intents (actions, layout edits) is the
   preferred direction; do it after step 5, as its own step, so the move stays
   mechanical.
-- **Opening:** whether targets are URIs (`file:`, `untitled:`, plugin
-  schemes), whether navigation history belongs to it, who draws a picker for
-  several results (references, definitions), and whether preview tabs are a
-  docking feature that apps turn on.
+- **A shared picker for several results** (references, definitions,
+  search), when language servers need one.
