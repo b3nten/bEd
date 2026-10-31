@@ -7,3 +7,5 @@ RIS resets dynamic color overrides and the cursor blink preference, preserving B
 XTGETTCAP capability-name accumulation is capped at 64 KiB so requests spanning many PTY reads cannot create an unbounded parser buffer or an oversized reply. Oversized requests are consumed through their terminator and receive the normal small failure response; later terminal traffic continues.
 
 Native graphics admission is capped at 1024 stored images and 4096 placement records across both screens. Existing image/placement IDs can still be replaced at capacity. Atlas clipping fragments obey the placement bound through the existing key recount transition, which releases the oldest excess fragments.
+
+OSC 133 `C` and `D` are recorded too: each row has a `CommandMark` (when a command's output started, and when it finished with its exit status), kept with the row like its semantic prompt mark, and `D` sends `RioEvent::CommandFinished` with the status and the time since `C`. Setting either mark marks the row dirty.

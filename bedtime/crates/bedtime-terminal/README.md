@@ -51,6 +51,32 @@ start or explicit `restart()`. Cwd/environment setup affects the child, not the
 application. Without a directory override, the child inherits the application's
 working directory. `TERM_PROGRAM` defaults to `bed` unless explicitly overridden.
 
+## Commands, the cursor and links
+
+- **Shell integration.** The user's own shell (no explicit `shell` in the
+  options) marks its prompts and commands (OSC 133) and, for zsh, its
+  directory (OSC 7). zsh gets them from bed's `.zshenv` (via `ZDOTDIR`; the
+  user's own `ZDOTDIR` and startup files still load), bash from `PS0` and
+  `PROMPT_COMMAND` (a `.bashrc` that replaces `PROMPT_COMMAND` loses them);
+  fish 4 sends them itself. rio-vt records them on the rows (see its patch
+  record).
+- **Command blocks** (`command_blocks`): each command, from its prompt to the
+  next, gets a bar in the left gutter: breathing accent while it runs, green
+  when it succeeded, red when it failed, flaring as it finishes (a failure
+  tints the whole command for a moment). Its prompt line says how it failed
+  and how long it took (from a second; while running, after two). Clicking
+  the bar selects the command's output. Cmd+Up/Down (Ctrl+Shift elsewhere)
+  jumps between commands.
+- **Notifications.** A command that ran 10 s or more and finished while its
+  terminal wasn't in front reports a workbench notification.
+- **Cursor.** The cursor glides between cells (its leading edge in 50 ms, its
+  trailing edge in 130 ms) with a fading comet; in cell units, so scrolling
+  doesn't animate. Off with the app's reduced motion.
+- **Links.** With Cmd (Ctrl elsewhere) held, links in the output are
+  underlined; a `path:line` shows that line. Cmd-click opens files in the app
+  (`open_path`, relative to the shell's directory, at the line and column)
+  and web and mail links in the system browser.
+
 ## Local shell commands
 
 Applications opt in by registering aliases and handling helper invocations before

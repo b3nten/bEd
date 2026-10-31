@@ -114,6 +114,10 @@ pub trait Handler {
     /// OSC 133: mark the cursor row as a semantic prompt row.
     fn set_semantic_prompt(&mut self, _: crate::crosswords::grid::row::SemanticPrompt) {}
 
+    /// OSC 133 `C` (`None`) or `D` (`Some(exit status)`): a command's output
+    /// starts, or it finished.
+    fn set_command_mark(&mut self, _: Option<Option<i32>>) {}
+
     /// OSC 1337 SetUserVar: record a shell-provided variable.
     fn set_user_var(&mut self, _name: String, _value: String) {}
 
@@ -1178,6 +1182,9 @@ impl<U: Handler> Perform for Performer<'_, U> {
 
             // OSC 133 - semantic prompt zones (shell integration).
             b"133" => {
+                if let Some(event) = osc::parse_command_mark(params) {
+                    self.handler.set_command_mark(event);
+                }
                 if let Some(mark) = osc::parse_semantic_prompt(params) {
                     self.handler.set_semantic_prompt(mark);
                 }

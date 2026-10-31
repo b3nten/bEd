@@ -284,6 +284,18 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Terminal: command blocks, the cursor, links**, 2026-10-31, awaiting
+  review. The cursor glides between cells with a comet. Shell integration
+  (`integration.rs`: zsh via `ZDOTDIR`, bash via `PS0`/`PROMPT_COMMAND`)
+  sends OSC 133 and (zsh) OSC 7; rio-vt (patched) records `C`/`D` on rows and
+  reports finished commands. `blocks.rs` works out command blocks (rules
+  checked against real zsh: every `A` is a prompt; `C` can be on the next
+  prompt's row); the view draws status bars, exit/duration labels and
+  flares, selects a command's output on click; Cmd+Up/Down jumps between
+  commands; long commands that finish unseen notify. Cmd-hover underlines
+  links (with a line preview for `path:line`), Cmd-click opens files with
+  `open_path` and URLs in the browser. `terminal.py` covers blocks and links.
+
 - **Architecture step 14: the terminal**, 2026-10-31, awaiting review.
   `bedtime-terminal` back from bedtime_old with small changes: the rio-vt
   patch is on again; reserved shortcuts come from `Keybindings`; the theme's

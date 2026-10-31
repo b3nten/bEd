@@ -1,6 +1,10 @@
 """Terminal: New Terminal opens a shell in the workspace folder; what's typed
-runs; `+open file:line` in it opens the file in bed. A terminal comes back
-with its workspace, as a fresh shell whose `+open` still works."""
+runs; `+open file:line` in it opens the file in bed. With shell integration
+(zsh, bash), each command gets a bar saying how it went; Cmd-clicking a
+path in the output opens it. A terminal comes back with its workspace, as a
+fresh shell whose `+open` still works."""
+import os
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -14,6 +18,11 @@ def until(bed, check, what, seconds=30):
             return
         bed.wait(10)
     raise AssertionError(f"never: {what}")
+
+
+def terminal_rect(bed):
+    return next(w for w in bed.widgets() if w["role"] == "TextInput"
+                and "notes.txt:3" in (w.get("value") or ""))["rect"]
 
 
 def screen(bed):
@@ -35,6 +44,27 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: "hello-from-bed" in screen(bed) and root.resolve().name in screen(bed),
               "the command runs in the workspace folder")
         bed.screenshot("terminal")
+
+        # Command blocks: a failed command's bar says so (zsh and bash).
+        if Path(os.environ.get("SHELL", "")).name in ("zsh", "bash"):
+            bed.type("false")
+            bed.key("Enter")
+            until(bed, lambda: bed.exists(contains="Exit 1"), "the failed command is marked")
+
+            # Cmd-click a path printed at the top of a cleared screen.
+            bed.type("clear; printf 'notes.txt:3\\n'")
+            bed.key("Enter")
+            until(bed, lambda: screen(bed).startswith("notes.txt:3"), "the path is printed")
+            x0, y0, _, _ = terminal_rect(bed)
+            at = {"move": {"x": x0 + 14 + 3, "y": y0 + 12 + 3}}
+            bed.input({"key_down": "SuperLeft" if sys.platform == "darwin" else "ControlLeft"}, at,
+                      {"press": "Left"}, {"release": "Left"},
+                      {"key_up": "SuperLeft" if sys.platform == "darwin" else "ControlLeft"})
+            until(bed, lambda: bed.exists("notes.txt") and "three" in screen(bed), "the path opens")
+            bed.screenshot("terminal-link")
+            bed.click(min((w for w in bed.widgets() if w.get("label") == "zsh" or w.get("label") == "bash"),
+                          key=lambda w: w["rect"][0]))
+            bed.wait(10)
 
         bed.type("+open notes.txt:2")
         bed.key("Enter")

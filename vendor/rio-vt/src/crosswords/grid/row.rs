@@ -21,6 +21,14 @@ pub enum SemanticPrompt {
     PromptContinuation,
 }
 
+/// OSC 133 `C` (a command's output starts) and `D` (it finished, with its
+/// exit status) on the row the cursor was on, with when they arrived.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CommandMark {
+    pub started: Option<std::time::Instant>,
+    pub finished: Option<(Option<i32>, std::time::Instant)>,
+}
+
 /// A row in the grid.
 #[derive(Clone, Debug)]
 pub struct Row<T> {
@@ -53,6 +61,9 @@ pub struct Row<T> {
     /// scrollback; cleared when the row is recycled.
     pub semantic_prompt: SemanticPrompt,
 
+    /// OSC 133 command start/finish marks, kept like `semantic_prompt`.
+    pub command: CommandMark,
+
     /// Per-row dirty bit set on every write through `IndexMut` /
     /// `last_mut` / `iter_mut` / `reset` / `append*` / `front_split_off`.
     /// Read + cleared by the renderer's snapshot path so it can copy
@@ -71,6 +82,7 @@ impl<T> Default for Row<T> {
             has_extras: false,
             has_styles: false,
             semantic_prompt: SemanticPrompt::None,
+            command: CommandMark::default(),
             dirty: true,
         }
     }
@@ -111,6 +123,7 @@ impl<T: Clone + Default> Row<T> {
             has_extras: false,
             has_styles: false,
             semantic_prompt: SemanticPrompt::None,
+            command: CommandMark::default(),
             dirty: true,
         }
     }
@@ -129,6 +142,7 @@ impl<T: Clone + Default> Row<T> {
         self.has_extras = src.has_extras;
         self.has_styles = src.has_styles;
         self.semantic_prompt = src.semantic_prompt;
+        self.command = src.command;
     }
 
     /// Reset a recycled row back to a blank `columns`-wide row, reusing the
@@ -146,6 +160,7 @@ impl<T: Clone + Default> Row<T> {
         self.has_extras = false;
         self.has_styles = false;
         self.semantic_prompt = SemanticPrompt::None;
+        self.command = CommandMark::default();
         self.dirty = true;
     }
 
@@ -232,6 +247,7 @@ impl<T: Clone + Default> Row<T> {
         self.has_extras = false;
         self.has_styles = template.carries_style();
         self.semantic_prompt = SemanticPrompt::None;
+        self.command = CommandMark::default();
         self.dirty = true;
     }
 }
@@ -251,6 +267,7 @@ impl<T> Row<T> {
             has_extras: true,
             has_styles,
             semantic_prompt: SemanticPrompt::None,
+            command: CommandMark::default(),
             dirty: true,
         }
     }

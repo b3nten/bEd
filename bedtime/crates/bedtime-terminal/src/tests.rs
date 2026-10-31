@@ -1069,3 +1069,56 @@ fn restarted_or_closed_origins_and_abandoned_commands_fail_explicitly() {
     assert!(shell_reply(&mut app, &mut closed).contains("closed or restarted"));
     finish(&mut app);
 }
+
+#[test]
+fn shell_integration_marks_make_command_blocks_and_report_finishes() {
+    let (mut app, workspace) = host();
+    // A script standing in for an integrated shell: a prompt, a command's
+    // output, its failure, and the next prompt (D then A on its row).
+    let panel = panel(
+        &mut app,
+        workspace,
+        script(
+            "printf '\\033]133;A\\007$ make\\n\\033]133;C\\007building\\n'; \
+             printf '\\033]133;D;2\\007\\033]133;A\\007$ '; sleep 30",
+        ),
+    );
+    eventually(&mut app, |app| {
+        observe(app, panel);
+        text(app, panel).contains("building")
+            && !command_blocks(
+                &app.world()
+                    .get::<TerminalPanel>(panel)
+                    .unwrap()
+                    .snapshot()
+                    .lines,
+            )
+            .iter()
+            .any(CommandBlock::running)
+            && command_blocks(
+                &app.world()
+                    .get::<TerminalPanel>(panel)
+                    .unwrap()
+                    .snapshot()
+                    .lines,
+            )
+            .iter()
+            .any(CommandBlock::failed)
+    });
+    let snapshot = app.world().get::<TerminalPanel>(panel).unwrap().snapshot();
+    let blocks = command_blocks(&snapshot.lines);
+    assert_eq!(blocks.len(), 2, "{blocks:?}");
+    assert_eq!(blocks[0].prompt, Some(0));
+    assert_eq!(blocks[0].output.map(|(row, _)| row), Some(1));
+    assert!(matches!(blocks[0].finished, Some((Some(2), _))));
+    assert!(!blocks[1].ran());
+    // The worker reported the finish (quick, so no notification).
+    app.update();
+    assert!(
+        app.world()
+            .resource::<bedtime_workbench::Notifications>()
+            .latest()
+            .is_none()
+    );
+    finish(&mut app);
+}

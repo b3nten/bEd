@@ -76,6 +76,11 @@ pub struct PtyOptions {
 pub enum PtyEvent {
     Exited(Option<ExitStatus>),
     Error(String),
+    /// Shell integration: a command finished.
+    CommandFinished {
+        status: Option<i32>,
+        duration: Option<std::time::Duration>,
+    },
 }
 
 struct QueuedWrite {
@@ -138,6 +143,10 @@ pub enum TerminalCommand {
     Text(String),
     Theme(TerminalTheme),
     Scroll(i32),
+    /// To the previous (or next) prompt.
+    ScrollToPrompt {
+        forward: bool,
+    },
     SelectionStart {
         col: usize,
         row: usize,
@@ -567,12 +576,19 @@ fn parse_output(
     writes: &mut VecDeque<QueuedWrite>,
     budget: &Arc<AtomicUsize>,
     child_alive: bool,
+    status: &Mutex<VecDeque<PtyEvent>>,
 ) -> io::Result<()> {
     for event in terminal.feed(bytes) {
-        if let TerminalEvent::Write(bytes) = event
-            && child_alive
-        {
-            enqueue_reply(writes, budget, bytes)?;
+        match event {
+            TerminalEvent::Write(bytes) if child_alive => enqueue_reply(writes, budget, bytes)?,
+            TerminalEvent::CommandFinished {
+                status: exit,
+                duration,
+            } => status.lock().unwrap().push_back(PtyEvent::CommandFinished {
+                status: exit,
+                duration,
+            }),
+            _ => {}
         }
     }
     Ok(())
@@ -673,6 +689,9 @@ fn run_worker(
                         TerminalCommand::Scroll(lines) => {
                             terminal.scroll_display(lines);
                         }
+                        TerminalCommand::ScrollToPrompt { forward } => {
+                            terminal.scroll_to_prompt(forward);
+                        }
                         TerminalCommand::SelectionStart { col, row, snap } => {
                             terminal.select_start(col, row, snap)
                         }
@@ -733,7 +752,14 @@ fn run_worker(
                 }
                 Ok(length) => {
                     bytes.truncate(length);
-                    parse_output(terminal, &bytes, &mut writes, &reply_budget, !child_exited)?;
+                    parse_output(
+                        terminal,
+                        &bytes,
+                        &mut writes,
+                        &reply_budget,
+                        !child_exited,
+                        status,
+                    )?;
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     drained = true;
@@ -1717,6 +1743,7 @@ mod tests {
                 match event {
                     PtyEvent::Exited(status) => exit = status,
                     PtyEvent::Error(error) => panic!("{error}"),
+                    PtyEvent::CommandFinished { .. } => {}
                 }
             }
             exit.is_some()
@@ -1859,6 +1886,7 @@ mod tests {
                 match event {
                     PtyEvent::Exited(_) => stopped = true,
                     PtyEvent::Error(error) => panic!("{error}"),
+                    PtyEvent::CommandFinished { .. } => {}
                 }
             }
             stopped

@@ -22,7 +22,13 @@ pub(crate) enum KeyboardAction {
     Copy,
     SelectAll,
     ScrollPage(i32),
-    ScrollEdge { top: bool },
+    ScrollEdge {
+        top: bool,
+    },
+    /// To the previous (or next) prompt: the previous (next) command.
+    ScrollPrompt {
+        forward: bool,
+    },
 }
 
 #[derive(Default)]
@@ -238,6 +244,9 @@ impl InputMapper {
                             LocalShortcut::Edge(top) => {
                                 mapped[index].action(KeyboardAction::ScrollEdge { top })
                             }
+                            LocalShortcut::Prompt { forward } => {
+                                mapped[index].action(KeyboardAction::ScrollPrompt { forward })
+                            }
                         }
                         continue;
                     }
@@ -385,6 +394,7 @@ enum LocalShortcut {
     SelectAll,
     Page(i32),
     Edge(bool),
+    Prompt { forward: bool },
 }
 
 fn local_shortcut(key: Key, modifiers: Modifiers, mac: bool) -> Option<LocalShortcut> {
@@ -404,6 +414,8 @@ fn local_shortcut(key: Key, modifiers: Modifiers, mac: bool) -> Option<LocalShor
             Key::C => return Some(LocalShortcut::Copy),
             Key::V => return Some(LocalShortcut::Paste),
             Key::A => return Some(LocalShortcut::SelectAll),
+            Key::ArrowUp => return Some(LocalShortcut::Prompt { forward: false }),
+            Key::ArrowDown => return Some(LocalShortcut::Prompt { forward: true }),
             _ => {}
         }
     }

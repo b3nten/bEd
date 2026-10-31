@@ -127,6 +127,12 @@ pub enum TerminalDamage {
 
 #[derive(Clone)]
 pub enum RioEvent {
+    /// OSC 133 `D`: a command finished, with its exit status (if the shell
+    /// said) and how long since its `C` (if there was one).
+    CommandFinished {
+        status: Option<i32>,
+        duration: Option<std::time::Duration>,
+    },
     PrepareRender(u64),
     PrepareRenderOnRoute(u64, usize),
     PrepareUpdateConfig,
@@ -300,6 +306,9 @@ pub enum RioEvent {
 impl Debug for RioEvent {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            RioEvent::CommandFinished { status, duration } => {
+                write!(f, "CommandFinished({status:?}, {duration:?})")
+            }
             RioEvent::ClipboardStore(ty, text) => {
                 write!(f, "ClipboardStore({ty:?}, {text})")
             }

@@ -164,6 +164,11 @@ pub enum TerminalEvent {
     Write(Vec<u8>),
     Title(String),
     Bell,
+    /// Shell integration: a command finished.
+    CommandFinished {
+        status: Option<i32>,
+        duration: Option<std::time::Duration>,
+    },
     Error(String),
 }
 
@@ -180,7 +185,15 @@ pub struct TerminalRow {
     pub revision: u64,
     pub cells: Vec<TerminalCell>,
     pub wrapped: bool,
+    /// A prompt starts on this row (OSC 133 `A`, from shell integration).
+    pub prompt: bool,
+    /// A command's output started (`C`) or it finished (`D`) on this row.
+    pub command: CommandMark,
 }
+
+/// When a command's output started and when it finished (with its exit
+/// status), from shell integration.
+pub use rio_vt::crosswords::grid::row::CommandMark;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalSelectionSpan {
@@ -686,6 +699,16 @@ impl Terminal {
         }
     }
 
+    /// Scroll to the previous (or next) prompt; with shell integration, the
+    /// previous (or next) command.
+    pub fn scroll_to_prompt(&mut self, forward: bool) {
+        let before = self.display_offset();
+        self.term.scroll_to_prompt(forward);
+        if self.display_offset() != before {
+            self.changed();
+        }
+    }
+
     pub fn feed(&mut self, bytes: &[u8]) -> Vec<TerminalEvent> {
         let cursor = self.cursor();
         let filtered = self.text_only.as_mut().map(|filter| filter.filter(bytes));
@@ -743,6 +766,9 @@ impl Terminal {
                 }
                 RioEvent::Title(_, title) => outgoing.push(TerminalEvent::Title(title)),
                 RioEvent::Bell(_) => outgoing.push(TerminalEvent::Bell),
+                RioEvent::CommandFinished { status, duration } => {
+                    outgoing.push(TerminalEvent::CommandFinished { status, duration })
+                }
                 RioEvent::UpdateGraphics { queues, .. } => {
                     outgoing.extend(self.consume_graphics_queues(queues))
                 }
@@ -957,10 +983,16 @@ impl Terminal {
                 .map(|x| self.grid_cell(line, Column(x)))
                 .collect();
             let wrapped = cells.last().is_some_and(|cell| cell.mode & ATTR_WRAP != 0);
-            if let Some(previous) = old_rows
-                .iter()
-                .find(|previous| previous.wrapped == wrapped && previous.cells == cells)
-            {
+            let source = &self.term.grid[line];
+            let prompt =
+                source.semantic_prompt == rio_vt::crosswords::grid::row::SemanticPrompt::Prompt;
+            let command = source.command;
+            if let Some(previous) = old_rows.iter().find(|previous| {
+                previous.wrapped == wrapped
+                    && previous.prompt == prompt
+                    && previous.command == command
+                    && previous.cells == cells
+            }) {
                 rows.push(previous.clone());
             } else {
                 self.row_revision += 1;
@@ -968,6 +1000,8 @@ impl Terminal {
                     revision: self.row_revision,
                     cells,
                     wrapped,
+                    prompt,
+                    command,
                 }));
             }
         }

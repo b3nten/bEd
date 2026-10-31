@@ -17,8 +17,6 @@ pub use bedtime_ui as ui;
 pub use bedtime_actions as actions;
 #[cfg(feature = "code")]
 pub use bedtime_code as code;
-#[cfg(feature = "terminal")]
-pub use bedtime_terminal as terminal;
 #[cfg(feature = "documents")]
 pub use bedtime_document as document;
 #[cfg(feature = "filesystem")]
@@ -31,6 +29,8 @@ pub use bedtime_menus as menus;
 pub use bedtime_persistence as persistence;
 #[cfg(feature = "settings")]
 pub use bedtime_settings as settings;
+#[cfg(feature = "terminal")]
+pub use bedtime_terminal as terminal;
 #[cfg(feature = "work")]
 pub use bedtime_work as work;
 #[cfg(feature = "workbench")]

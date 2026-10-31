@@ -1,7 +1,10 @@
 //! Local terminal panels. Workbench owns the runtime's lifetime; the terminal
 //! worker alone owns the PTY and emulator. Drawing never starts or reaps a child.
+mod blocks;
 mod color;
 mod input;
+#[cfg(unix)]
+mod integration;
 mod process_title;
 mod shell;
 pub mod shell_bridge;
@@ -27,6 +30,7 @@ use std::{collections::VecDeque, io, process::ExitStatus, sync::Arc};
 use view::{TerminalInput, TerminalView};
 
 pub use crate::{
+    blocks::{CommandBlock, command_blocks},
     terminal::TerminalSnapshot,
     terminal_pty::{PtyOptions as TerminalOptions, TerminalShell, WindowSize},
 };
@@ -51,7 +55,12 @@ impl Plugin for TerminalPlugin {
             .add_systems(Startup, shell::initialize)
             .add_systems(
                 Update,
-                (update_terminals, shell::poll)
+                (
+                    update_terminals,
+                    report_finished_commands,
+                    open_links,
+                    shell::poll,
+                )
                     .chain()
                     .in_set(TerminalSystems::Update),
             )
@@ -102,6 +111,12 @@ pub struct TerminalPanel {
     restart_after_stop: bool,
     #[reflect(ignore)]
     error: Option<String>,
+    /// Commands finished since last reported (shell integration).
+    #[reflect(ignore)]
+    finished: Vec<(Option<i32>, Option<std::time::Duration>)>,
+    /// Links clicked, opened in `Update`.
+    #[reflect(ignore)]
+    links: Vec<terminal_links::LinkTarget>,
 }
 
 // A saturated backend pauses new process input while this bounded, ordered
@@ -138,6 +153,8 @@ impl Default for TerminalPanel {
             action: None,
             restart_after_stop: false,
             error: None,
+            finished: Vec::new(),
+            links: Vec::new(),
         }
     }
 }
@@ -208,6 +225,14 @@ impl Panel for TerminalPanel {
         let state = &mut *panel_state;
         state.drawn = true;
         state.theme = Some(terminal_theme(context.theme));
+        state.view.motion = context.motion;
+        // Relative paths in the output are the shell's (OSC 7), else where
+        // it started.
+        state.view.directory = state
+            .snapshot
+            .current_directory
+            .clone()
+            .or_else(|| state.options.working_directory.clone());
 
         let snapshot = state.snapshot.clone();
         let accepts_input = matches!(state.status, TerminalStatus::Running)
@@ -279,6 +304,9 @@ impl Panel for TerminalPanel {
             })
             .inner;
         state.size = Some(output.size);
+        if let Some(link) = output.link {
+            state.links.push(link);
+        }
         send_inputs(state, output.inputs);
     }
 }
@@ -358,6 +386,114 @@ fn send_inputs(state: &mut TerminalPanel, inputs: Vec<TerminalInput>) {
             }
             break;
         }
+    }
+}
+
+/// Commands that ran a while (10 s) and finished while you weren't looking
+/// at their terminal are reported as notifications.
+pub const NOTIFY_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+
+fn report_finished_commands(world: &mut World) {
+    let window_focused = world
+        .query::<&Window>()
+        .iter(world)
+        .any(|window| window.focused);
+    let mut reports = Vec::new();
+    for (mut panel, instance, presentation) in world
+        .query::<(
+            &mut TerminalPanel,
+            &PanelInstance,
+            Option<&PanelPresentation>,
+        )>()
+        .iter_mut(world)
+    {
+        let watching = window_focused && presentation.is_some_and(|p| p.focused);
+        for (status, duration) in panel.finished.drain(..) {
+            let Some(duration) = duration.filter(|d| *d >= NOTIFY_AFTER && !watching) else {
+                continue;
+            };
+            let took = format_duration(duration);
+            reports.push(match status {
+                Some(status) if status != 0 => bedtime_workbench::Notification::error(format!(
+                    "{}: a command failed (exit {status}) after {took}",
+                    instance.title
+                )),
+                _ => bedtime_workbench::Notification::info(format!(
+                    "{}: a command finished after {took}",
+                    instance.title
+                )),
+            });
+        }
+    }
+    for report in reports {
+        bedtime_workbench::WorkbenchWorldExt::workbench_mut(world).notify(report);
+    }
+}
+
+/// Open clicked links: files in the app (`open_path`, relative to the
+/// shell's directory), web and mail links in the system's browser.
+fn open_links(world: &mut World) {
+    use bedtime_workbench::{Notification, PathOptions, WorkbenchWorldExt};
+    let mut clicked = Vec::new();
+    for mut panel in world.query::<&mut TerminalPanel>().iter_mut(world) {
+        let directory = panel
+            .snapshot
+            .current_directory
+            .clone()
+            .or_else(|| panel.options.working_directory.clone());
+        clicked.extend(panel.links.drain(..).map(|link| (link, directory.clone())));
+    }
+    for (link, directory) in clicked {
+        let result = match link {
+            terminal_links::LinkTarget::External(url) => open_externally(&url),
+            terminal_links::LinkTarget::File {
+                host: Some(host), ..
+            } => Err(format!("That file is on another computer ({host})")),
+            terminal_links::LinkTarget::File {
+                host: None,
+                path,
+                position,
+            } => {
+                let path = match directory {
+                    Some(directory) if path.is_relative() => directory.join(path),
+                    _ => path,
+                };
+                let options = PathOptions {
+                    line: position.map(|(line, column)| (line.max(0) as u32, column.max(0) as u32)),
+                    ..Default::default()
+                };
+                world
+                    .workbench_mut()
+                    .open_path(&path, options)
+                    .map(|_| ())
+                    .map_err(|error| format!("{}: {error}", path.display()))
+            }
+        };
+        if let Err(error) = result {
+            world.workbench_mut().notify(Notification::warning(error));
+        }
+    }
+}
+
+fn open_externally(url: &str) -> Result<(), String> {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Couldn't open {url}: {error}"))
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    let seconds = duration.as_secs();
+    if seconds < 60 {
+        format!("{seconds}s")
+    } else {
+        format!("{}m {:02}s", seconds / 60, seconds % 60)
     }
 }
 
@@ -458,6 +594,9 @@ fn update_terminal(
             match event {
                 PtyEvent::Exited(exit) => state.status = TerminalStatus::Exited(exit),
                 PtyEvent::Error(error) => state.status = TerminalStatus::Failed(error),
+                PtyEvent::CommandFinished { status, duration } => {
+                    state.finished.push((status, duration));
+                }
             }
         }
         if matches!(state.status, TerminalStatus::Starting)
@@ -557,6 +696,8 @@ fn start_terminal(
         terminal.set_theme(theme);
     }
     let mut options = state.options.clone();
+    #[cfg(unix)]
+    integration::apply(&mut options);
     let shell_token = shell.configure(&mut options, panel)?;
     if !options.env_remove.iter().any(|name| name == "TERM_PROGRAM") {
         options

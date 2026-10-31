@@ -461,6 +461,8 @@ where
     pub current_directory: Option<std::path::PathBuf>,
     /// Shell state from `OSC 1337 ; SetUserVar` (iTerm2 style).
     pub user_vars: rustc_hash::FxHashMap<String, String>,
+    /// When the running command's output started (OSC 133 `C`).
+    command_started: Option<std::time::Instant>,
 
     /// Whether a `TerminalDamaged` event is already in flight to the renderer.
     /// Set by PTY thread before sending; cleared by renderer after extracting damage.
@@ -532,6 +534,7 @@ impl<U: EventListener> Crosswords<U> {
             title_stack: Default::default(),
             current_directory: None,
             user_vars: rustc_hash::FxHashMap::default(),
+            command_started: None,
             damage_event_in_flight: false,
             modify_other_keys: 0,
             keyboard_mode_stack: Default::default(),
@@ -3498,6 +3501,30 @@ impl<U: EventListener> Handler for Crosswords<U> {
     ) {
         let row = self.grid.cursor.pos.row;
         self.grid[row].semantic_prompt = mark;
+        self.grid[row].dirty = true;
+    }
+
+    fn set_command_mark(&mut self, event: Option<Option<i32>>) {
+        let row = self.grid.cursor.pos.row;
+        let now = std::time::Instant::now();
+        match event {
+            None => {
+                self.grid[row].command.started = Some(now);
+                self.command_started = Some(now);
+            }
+            Some(status) => {
+                self.grid[row].command.finished = Some((status, now));
+                let duration = self
+                    .command_started
+                    .take()
+                    .map(|started| now.saturating_duration_since(started));
+                self.event_proxy.send_event(
+                    RioEvent::CommandFinished { status, duration },
+                    self.window_id,
+                );
+            }
+        }
+        self.grid[row].dirty = true;
     }
 
     fn set_user_var(&mut self, name: String, value: String) {

@@ -36,6 +36,8 @@ const DEFAULT_BG: usize = 259;
 pub(crate) struct ViewOutput {
     pub size: WindowSize,
     pub inputs: Vec<TerminalInput>,
+    /// A link Cmd/Ctrl-clicked in the output.
+    pub link: Option<crate::terminal_links::LinkTarget>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -99,6 +101,53 @@ struct PaintKey {
     reverse: bool,
 }
 
+/// The cursor's glide between cells, in cell units (so scrolling and moving
+/// the panel don't animate): its leading edge arrives in 50 ms, its trailing
+/// edge in 130 ms, leaving a fading comet between them.
+#[derive(Clone, Copy)]
+struct Glide {
+    target: Vec2,
+    leading: Vec2,
+    trailing: Vec2,
+    started: f64,
+}
+
+impl Glide {
+    fn at(target: Vec2, now: f64) -> Self {
+        Self {
+            target,
+            leading: target,
+            trailing: target,
+            started: now,
+        }
+    }
+
+    fn sample(self, now: f64) -> (Vec2, Vec2) {
+        let elapsed = (now - self.started).max(0.0);
+        let at = |from: Vec2, seconds: f64| {
+            let t = (elapsed / seconds).min(1.0) as f32;
+            from + (self.target - from) * (1.0 - (1.0 - t).powi(3))
+        };
+        (at(self.leading, 0.05), at(self.trailing, 0.13))
+    }
+
+    /// Move to `target`, starting from where it's drawn now. A long jump
+    /// (a cleared screen) starts at most a few cells away.
+    fn retarget(&mut self, target: Vec2, now: f64) {
+        let (leading, trailing) = self.sample(now);
+        let bounded = |from: Vec2| {
+            let delta = from - target;
+            target + delta * (6.0 / delta.length().max(1e-3)).min(1.0)
+        };
+        *self = Self {
+            target,
+            leading: bounded(leading),
+            trailing: bounded(trailing),
+            started: now,
+        };
+    }
+}
+
 /// One instance belongs to one panel. All egui identity is scoped under the
 /// caller's Ui ID; no global focus, selection, font, or transport state is used.
 #[derive(Default)]
@@ -121,6 +170,15 @@ pub(crate) struct TerminalView {
     selection_viewport: Option<(usize, usize, usize)>,
     last_cursor_revision: Option<u64>,
     cursor_started: f64,
+    glide: Option<Glide>,
+    /// The app's motion policy: off, the cursor jumps.
+    pub(crate) motion: bedtime_ui::MotionPolicy,
+    /// Where relative paths in the output are: the shell's directory.
+    pub(crate) directory: Option<std::path::PathBuf>,
+    /// The visible links, for the snapshot revision they were found in.
+    links: Option<(u64, Vec<crate::terminal_links::TerminalLink>)>,
+    /// A file's line shown when hovering a link to it.
+    preview: Option<(std::path::PathBuf, i32, Option<String>)>,
     paint_key: Option<PaintKey>,
     atlas_probe: Option<Arc<egui::Galley>>,
     rows: HashMap<usize, PreparedRow>,
@@ -225,6 +283,7 @@ impl TerminalView {
                 cell_height: (cell.y * density).round().clamp(1.0, u16::MAX as f32) as u16,
             },
             inputs: Vec::new(),
+            link: None,
         };
         let now = ui.input(|input| input.time);
         // any_popup_open observes popups already drawn in this pass; the
@@ -369,6 +428,9 @@ impl TerminalView {
                                         as i32,
                             )))
                     }
+                    KeyboardAction::ScrollPrompt { forward } => output.inputs.push(
+                        TerminalInput::Command(TerminalCommand::ScrollToPrompt { forward }),
+                    ),
                     KeyboardAction::ScrollEdge { top } => {
                         output
                             .inputs
@@ -384,7 +446,25 @@ impl TerminalView {
                 }
             }
             let mut consumed = mapped.consumed;
+            // Cmd/Ctrl-click on a link opens it (not a selection, nor a click
+            // for the program).
+            if let egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers,
+            } = &event
+                && pointer_allowed
+                && modifiers.command
+                && hit(ui, clip, *pos)
+                && let Some(link) = self.link_at(snapshot, cell_at(*pos, inner.min, cell, snapshot))
+            {
+                output.link = crate::terminal_links::classify_link(&link.target);
+                response.request_focus();
+                consumed = true;
+            }
             match &event {
+                egui::Event::PointerButton { .. } if consumed => {}
                 egui::Event::PointerButton {
                     pos,
                     button,
@@ -738,6 +818,20 @@ impl TerminalView {
                 );
             }
         }
+        self.paint_link(ui, &painter, snapshot, theme, inner, cell);
+        // Blocks' bars are in the left padding, outside the text's clip.
+        let gutter = canvas_painter.with_clip_rect(clip);
+        self.paint_blocks(
+            ui,
+            &gutter,
+            snapshot,
+            theme,
+            inner,
+            cell,
+            font.clone(),
+            allow_input,
+            &mut output,
+        );
         if self.last_cursor_revision != Some(snapshot.cursor_revision) {
             self.last_cursor_revision = Some(snapshot.cursor_revision);
             self.cursor_started = now;
@@ -745,6 +839,18 @@ impl TerminalView {
         let cursor_on = (((now - self.cursor_started).max(0.0) / CURSOR_PERIOD).floor() as u64)
             .is_multiple_of(2);
         if allow_input && snapshot.display_offset == 0 && snapshot.cursor.visible {
+            let target = vec2(snapshot.cursor.col as f32, snapshot.cursor.row as f32);
+            let glide = self.glide.get_or_insert(Glide::at(target, now));
+            if !self.motion.enabled {
+                *glide = Glide::at(target, now);
+            } else if glide.target != target {
+                glide.retarget(target, now);
+            }
+            let (leading, trailing) = glide.sample(now);
+            let gliding = (leading - target).length() > 0.01 || (trailing - target).length() > 0.01;
+            if gliding {
+                ui.ctx().request_repaint();
+            }
             self.paint_cursor(
                 &painter,
                 snapshot,
@@ -752,7 +858,9 @@ impl TerminalView {
                 cell,
                 density,
                 process_focused,
-                cursor_on,
+                cursor_on || gliding,
+                (leading - target) * cell,
+                gliding.then_some((trailing - target) * cell),
             );
             if process_focused && snapshot.cursor.blinking {
                 repaint_at_boundary(ui.ctx(), now - self.cursor_started, CURSOR_PERIOD);
@@ -940,6 +1048,268 @@ impl TerminalView {
         self.rows.retain(|identity, _| visible.contains(identity));
     }
 
+    /// The visible links (found again when the screen changes).
+    fn link_at(
+        &mut self,
+        snapshot: &TerminalSnapshot,
+        point: CellPoint,
+    ) -> Option<crate::terminal_links::TerminalLink> {
+        use crate::terminal_links::{LinkCell, LinkRow, collect_links};
+        if self
+            .links
+            .as_ref()
+            .is_none_or(|(revision, _)| *revision != snapshot.revision)
+        {
+            let rows: Vec<LinkRow<'_>> = snapshot
+                .lines
+                .iter()
+                .map(|line| LinkRow {
+                    cells: line
+                        .cells
+                        .iter()
+                        .map(|cell| LinkCell {
+                            text: &cell.text,
+                            width: cell.width,
+                            explicit: cell.hyperlink.as_deref(),
+                        })
+                        .collect(),
+                    wrapped: line.wrapped,
+                })
+                .collect();
+            self.links = Some((snapshot.revision, collect_links(&rows)));
+        }
+        let (_, links) = self.links.as_ref()?;
+        links
+            .iter()
+            .find(|link| link.contains(point.row, point.col))
+            .filter(|link| crate::terminal_links::classify_link(&link.target).is_some())
+            .cloned()
+    }
+
+    /// With Cmd/Ctrl held, the link under the pointer is underlined; a file
+    /// link with a line shows that line.
+    fn paint_link(
+        &mut self,
+        ui: &egui::Ui,
+        painter: &Painter,
+        snapshot: &TerminalSnapshot,
+        theme: &Theme,
+        inner: Rect,
+        cell: Vec2,
+    ) {
+        let (command, pointer) = ui.input(|i| (i.modifiers.command, i.pointer.hover_pos()));
+        let Some(pointer) = pointer.filter(|p| command && inner.contains(*p)) else {
+            return;
+        };
+        let Some(link) = self.link_at(snapshot, cell_at(pointer, inner.min, cell, snapshot)) else {
+            return;
+        };
+        let ink = bedtime_ui::theme::color(theme.palette.accent);
+        for span in &link.spans {
+            let y = inner.top() + (span.row + 1) as f32 * cell.y - 1.0;
+            painter.line_segment(
+                [
+                    egui::pos2(inner.left() + span.col as f32 * cell.x, y),
+                    egui::pos2(inner.left() + span.end_col as f32 * cell.x, y),
+                ],
+                Stroke::new(1.0, ink),
+            );
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        // The line a `path:line` points at.
+        if let Some(crate::terminal_links::LinkTarget::File {
+            host: None,
+            path,
+            position: Some((line, _)),
+        }) = crate::terminal_links::classify_link(&link.target)
+        {
+            let path = match &self.directory {
+                Some(directory) if path.is_relative() => directory.join(&path),
+                _ => path,
+            };
+            if self
+                .preview
+                .as_ref()
+                .is_none_or(|(shown, at, _)| *shown != path || *at != line)
+            {
+                let text = std::fs::read_to_string(&path).ok().and_then(|text| {
+                    text.lines()
+                        .nth(line.max(0) as usize)
+                        .map(|text| text.trim().chars().take(160).collect())
+                });
+                self.preview = Some((path, line, text));
+            }
+            if let Some((_, _, Some(text))) = &self.preview {
+                egui::Tooltip::always_open(
+                    ui.ctx().clone(),
+                    ui.layer_id(),
+                    ui.id().with("link-preview"),
+                    egui::PopupAnchor::Pointer,
+                )
+                .show(|ui| {
+                    ui.label(egui::RichText::new(text).monospace());
+                });
+            }
+        }
+    }
+
+    /// Command blocks (with shell integration): a bar in the left gutter along
+    /// each command — accent while it runs, green when it succeeded, red when
+    /// it failed, flaring as it finishes — and on its prompt line, how long it
+    /// took and how it failed. Clicking a bar selects the command's output.
+    #[allow(clippy::too_many_arguments)]
+    fn paint_blocks(
+        &mut self,
+        ui: &egui::Ui,
+        painter: &Painter,
+        snapshot: &TerminalSnapshot,
+        theme: &Theme,
+        inner: Rect,
+        cell: Vec2,
+        font: FontId,
+        allow_input: bool,
+        output: &mut ViewOutput,
+    ) {
+        let now = std::time::Instant::now();
+        let color = |rgba| bedtime_ui::theme::color(rgba);
+        let palette = &theme.palette;
+        let mut animating = false;
+        for block in crate::blocks::command_blocks(&snapshot.lines) {
+            if !block.ran() {
+                continue;
+            }
+            let (first, last) = (*block.rows.start(), *block.rows.end());
+            let top = inner.top() + first as f32 * cell.y + 2.0;
+            let bottom = (inner.top() + (last + 1) as f32 * cell.y - 2.0).min(inner.bottom());
+            if bottom <= top {
+                continue;
+            }
+            let bar = Rect::from_min_max(
+                egui::pos2(inner.left() - 9.0, top),
+                egui::pos2(inner.left() - 6.0, bottom),
+            );
+            let ink = match block.finished {
+                None => {
+                    // Running: a slow breath of the accent.
+                    animating = true;
+                    let breath = (ui.input(|i| i.time) * 2.5).sin() as f32 * 0.5 + 0.5;
+                    color(palette.accent).gamma_multiply(0.45 + 0.55 * breath)
+                }
+                Some((Some(status), _)) if status != 0 => color(palette.error),
+                Some((Some(_), _)) => color(palette.success).gamma_multiply(0.8),
+                Some((None, _)) => color(palette.muted),
+            };
+            // Just finished: the bar flares and fades back.
+            if let Some((_, at)) = block.finished {
+                let age = now.saturating_duration_since(at).as_secs_f32();
+                let flare = (1.0 - age / 0.9).max(0.0);
+                if flare > 0.0 && self.motion.enabled {
+                    animating = true;
+                    let spread = if block.failed() { 6.0 } else { 3.5 };
+                    painter.rect_filled(
+                        bar.expand2(vec2(spread * flare, 1.0)),
+                        3.0,
+                        ink.gamma_multiply(0.35 * flare),
+                    );
+                    if block.failed() {
+                        // A failure tints its whole command for a moment.
+                        painter.rect_filled(
+                            Rect::from_min_max(
+                                egui::pos2(inner.left() - 4.0, top),
+                                egui::pos2(inner.right(), bottom),
+                            ),
+                            2.0,
+                            ink.gamma_multiply(0.07 * flare),
+                        );
+                    }
+                }
+            }
+            painter.rect_filled(bar, 1.5, ink);
+            // How it went, at the end of its prompt line, where there's room.
+            if let (Some(prompt), Some(duration)) = (block.prompt, block.duration(now)) {
+                let seconds = duration.as_secs_f32();
+                let label = match block.finished {
+                    Some((Some(status), _)) if status != 0 => {
+                        Some(format!("exit {status} · {}", short_duration(seconds)))
+                    }
+                    Some(_) if seconds >= 1.0 => Some(short_duration(seconds)),
+                    None if seconds >= 2.0 => Some(format!("running {}", short_duration(seconds))),
+                    _ => None,
+                };
+                if let Some(label) = label {
+                    let tint = if block.failed() {
+                        palette.error
+                    } else {
+                        palette.muted
+                    };
+                    let galley = painter.layout_no_wrap(label, font.clone(), color(tint));
+                    let row_text_end = snapshot.lines[prompt]
+                        .cells
+                        .iter()
+                        .rposition(|cell| !cell.text.trim().is_empty())
+                        .map_or(0, |col| col + 1);
+                    let x = inner.right() - galley.size().x - 4.0;
+                    if x > inner.left() + (row_text_end as f32 + 2.0) * cell.x {
+                        let y = inner.top() + prompt as f32 * cell.y;
+                        painter.galley(egui::pos2(x, y), galley, color(tint));
+                    }
+                }
+            }
+            // Click the bar: select the output (then Copy copies it).
+            let target = bar.expand2(vec2(4.0, 0.0));
+            let id = ui.id().with(("command-block", first));
+            let response = ui.interact(target, id, egui::Sense::click());
+            if response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+            }
+            let detail = match block.finished {
+                Some((Some(status), _)) => format!("Exit {status}"),
+                Some((None, _)) => "Finished".to_owned(),
+                None => "Running".to_owned(),
+            };
+            let duration = block.duration(now).map_or(String::new(), |d| {
+                format!(" after {}", short_duration(d.as_secs_f32()))
+            });
+            let summary = format!("{detail}{duration}");
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, summary.clone())
+            });
+            let response =
+                response.on_hover_text(format!("{summary}. Click to select its output."));
+            if response.clicked()
+                && allow_input
+                && let Some((from, _)) = block.output
+            {
+                let to = if block.finished.is_some() {
+                    last
+                } else {
+                    last.max(from)
+                };
+                output
+                    .inputs
+                    .push(TerminalInput::Command(TerminalCommand::SelectionStart {
+                        col: 0,
+                        row: from,
+                        snap: SelectionSnap::Line,
+                    }));
+                output
+                    .inputs
+                    .push(TerminalInput::Command(TerminalCommand::SelectionExtend {
+                        col: snapshot.cols.saturating_sub(1),
+                        row: to,
+                        rectangular: false,
+                        done: true,
+                    }));
+                self.local_selection = None;
+                self.frozen_selection = false;
+            }
+        }
+        if animating {
+            ui.ctx().request_repaint();
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn paint_cursor(
         &self,
         painter: &Painter,
@@ -949,6 +1319,9 @@ impl TerminalView {
         density: f32,
         focused: bool,
         cursor_on: bool,
+        // Where the glide has the cursor, and its comet's tail, from its cell.
+        offset: Vec2,
+        tail: Option<Vec2>,
     ) {
         let cursor = snapshot.cursor;
         let Some(source) = snapshot.lines.get(cursor.row) else {
@@ -959,11 +1332,21 @@ impl TerminalView {
         }
         let col = cluster_start(&source.cells, cursor.col);
         let width = source.cells[col].width.max(1) as usize;
-        let rect = Rect::from_min_size(
+        let home = Rect::from_min_size(
             origin + vec2(col as f32 * cell.x, cursor.row as f32 * cell.y),
             vec2(width as f32 * cell.x, cell.y),
         );
+        let rect = home.translate(offset);
         let color = resolve(TerminalColor::Indexed(256), &snapshot.palette);
+        // The comet: fading copies from the tail up to the cursor.
+        if let Some(tail) = tail.filter(|_| focused) {
+            const STEPS: usize = 6;
+            for step in 0..STEPS {
+                let t = step as f32 / STEPS as f32;
+                let at = home.translate(tail + (offset - tail) * t);
+                painter.rect_filled(at, 0.0, color.gamma_multiply(0.06 + 0.3 * t * t));
+            }
+        }
         let thickness = (2.0 / density).max(1.0 / density);
         if !focused {
             painter.rect_stroke(
@@ -993,10 +1376,12 @@ impl TerminalView {
                 }
                 _ => {
                     painter.rect_filled(rect, 0.0, color);
-                    if let Some(cluster) = self.rows[&(Arc::as_ptr(source) as usize)]
-                        .clusters
-                        .iter()
-                        .find(|cluster| cluster.col == col)
+                    // The character under the block, once it has arrived.
+                    if tail.is_none()
+                        && let Some(cluster) = self.rows[&(Arc::as_ptr(source) as usize)]
+                            .clusters
+                            .iter()
+                            .find(|cluster| cluster.col == col)
                     {
                         paint_cluster(
                             painter,
@@ -1412,9 +1797,38 @@ fn word_bounds(cells: &[TerminalCell], col: usize) -> (usize, usize) {
     (start, end.min(cells.len()))
 }
 
+/// `840ms`, `3.2s`, `2m 05s`.
+fn short_duration(seconds: f32) -> String {
+    if seconds < 1.0 {
+        format!("{}ms", (seconds * 1000.0).round() as u32)
+    } else if seconds < 60.0 {
+        format!("{seconds:.1}s")
+    } else {
+        let whole = seconds as u32;
+        format!("{}m {:02}s", whole / 60, whole % 60)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cursor_glides_to_its_cell_and_long_jumps_start_nearby() {
+        let mut glide = Glide::at(vec2(0.0, 0.0), 0.0);
+        glide.retarget(vec2(1.0, 0.0), 0.0);
+        assert_eq!(glide.sample(0.0), (vec2(0.0, 0.0), vec2(0.0, 0.0)));
+        let (leading, trailing) = glide.sample(0.02);
+        assert!(
+            leading.x > 0.5 && trailing.x < leading.x,
+            "{leading:?} {trailing:?}"
+        );
+        assert_eq!(glide.sample(0.2), (vec2(1.0, 0.0), vec2(1.0, 0.0)));
+        // A cleared screen: the cursor sweeps in from a few cells away.
+        glide.retarget(vec2(0.0, 40.0), 1.0);
+        let (leading, _) = glide.sample(1.0);
+        assert!((leading - vec2(0.0, 40.0)).length() <= 6.01);
+    }
 
     fn context() -> egui::Context {
         let context = egui::Context::default();
@@ -1994,6 +2408,60 @@ mod tests {
                 Color32::from_rgb(110, 70, 50)
             )
         );
+    }
+
+    #[test]
+    fn command_click_on_a_path_opens_it_instead_of_selecting() {
+        let context = context();
+        let mut terminal = Terminal::new_text_only(30, 4);
+        terminal.feed(b"src/main.rs:12:5 error here");
+        let snapshot = terminal.snapshot();
+        let mut view = TerminalView::default();
+        frame(&mut view, &context, &snapshot, vec![], true, true, 0.0);
+        let position = PADDING.to_pos2() + vec2(2.0, 2.0);
+        let click = |modifiers| {
+            vec![
+                egui::Event::PointerMoved(position),
+                egui::Event::PointerButton {
+                    pos: position,
+                    button: PointerButton::Primary,
+                    pressed: true,
+                    modifiers,
+                },
+            ]
+        };
+        let (opened, _) = frame(
+            &mut view,
+            &context,
+            &snapshot,
+            click(egui::Modifiers::COMMAND),
+            true,
+            true,
+            0.1,
+        );
+        assert_eq!(
+            opened.link,
+            Some(crate::terminal_links::LinkTarget::File {
+                host: None,
+                path: "src/main.rs".into(),
+                position: Some((11, 4)),
+            })
+        );
+        assert!(!opened.inputs.iter().any(|input| matches!(
+            input,
+            TerminalInput::Command(TerminalCommand::SelectionStart { .. })
+        )));
+        // A plain click selects as usual.
+        let (plain, _) = frame(
+            &mut view,
+            &context,
+            &snapshot,
+            click(egui::Modifiers::NONE),
+            true,
+            true,
+            0.5,
+        );
+        assert_eq!(plain.link, None);
     }
 
     #[test]

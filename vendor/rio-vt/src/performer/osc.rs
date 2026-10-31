@@ -69,6 +69,21 @@ pub(super) fn parse_semantic_prompt(
     }
 }
 
+/// Parse OSC 133 `C` (output starts: `Some(None)`) and `D[;exit]` (the
+/// command finished: `Some(Some(status))`, status `None` when not given).
+pub(super) fn parse_command_mark(params: &[&[u8]]) -> Option<Option<Option<i32>>> {
+    match *params.get(1)?.first()? {
+        b'C' => Some(None),
+        b'D' => Some(Some(
+            params
+                .get(2)
+                .and_then(|status| std::str::from_utf8(status).ok())
+                .and_then(|status| status.parse().ok()),
+        )),
+        _ => None,
+    }
+}
+
 /// Parse `OSC 1337 ; SetUserVar=name=<base64 value>`. The value is
 /// base64 per iTerm2's spec; anything undecodable is dropped.
 pub(super) fn parse_set_user_var(params: &[&[u8]]) -> Option<(String, String)> {
