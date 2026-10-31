@@ -284,6 +284,19 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 12: hover and completions**, 2026-10-31, awaiting
+  review. The editor's completion menu, snippet tab stops and pointer
+  targets are back (`editor/completion.rs`); `lsp/assist.rs` (from bed_old's
+  `lsp/interaction.rs`) asks for hover and completions as the editor draws
+  and shows them; `lsp/documentation.rs` renders Markdown. Per the user:
+  no queues. Requests go out at once or fail at once (starting, failed,
+  loading, text not synced, which is then sent immediately); the
+  backend's empty-answer deferral and transient retries are gone (their two
+  tests too). Explicit requests report errors in notifications. An editor
+  panel takes keyboard focus back from a clicked tab button. Menu entries
+  are labelled for accessibility. `language_servers.py` covers hover and
+  completion with real rust-analyzer.
+
 - **Architecture step 11: language servers**, 2026-10-31, awaiting review.
   `bedtime_code::lsp`: the old `bedtime-lsp` backend as is (its fake-server
   tests pass), and `documents.rs` replacing its workbench adapter: a

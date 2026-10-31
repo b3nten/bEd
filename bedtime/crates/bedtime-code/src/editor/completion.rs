@@ -1,6 +1,6 @@
-//! Completions as edits: a main edit and others (an import, say), applied as
-//! one change; a snippet's tab stops are parsed here. The menu that offers
-//! them comes with hover and completions.
+//! Completions: the menu the language server's suggestions are offered in,
+//! and accepting one as an edit (a main edit and others, an import say,
+//! applied as one change). A snippet's tab stops are then visited with Tab.
 use crate::editor::*;
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -249,4 +249,710 @@ pub struct CompletionChoice {
     pub kind: std::sync::Arc<str>,
     pub label: std::sync::Arc<str>,
     pub detail: std::sync::Arc<str>,
+}
+pub(super) struct Menu {
+    revision: u64,
+    choices: std::sync::Arc<[CompletionChoice]>,
+    selected: usize,
+    reveal: bool,
+}
+pub(super) struct Snippet {
+    revision: u64,
+    stops: Vec<(u32, Range<usize>)>,
+    active: usize,
+}
+#[derive(Default)]
+pub(crate) struct Assistance {
+    pub(super) menu: Option<Menu>,
+    pending: Option<(u64, CompletionEdit)>,
+    pub(super) snippet: Option<Snippet>,
+    pub popup_rect: Option<egui::Rect>,
+    pub accepted: Option<usize>,
+    pub requested: bool,
+    pub refresh: bool,
+    pub dismissed: bool,
+    pub typed: Option<String>,
+}
+impl EditorView {
+    pub fn set_completions(
+        &mut self,
+        revision: u64,
+        choices: impl Into<std::sync::Arc<[CompletionChoice]>>,
+    ) {
+        let choices = choices.into();
+        self.assistance.menu = (!choices.is_empty()).then_some(Menu {
+            revision,
+            choices,
+            selected: 0,
+            reveal: true,
+        });
+    }
+    pub fn clear_completions(&mut self) {
+        self.assistance.menu = None;
+    }
+    pub fn selected_completion(&self) -> Option<usize> {
+        self.assistance.menu.as_ref().map(|m| m.selected)
+    }
+    pub fn queue_completion(&mut self, revision: u64, edit: CompletionEdit) {
+        self.assistance.pending = Some((revision, edit));
+        self.assistance.menu = None;
+    }
+    pub(crate) fn prepare_assistance(
+        &mut self,
+        id: egui::Id,
+        session: &mut dyn TextSession,
+        snapshot: &mut TextSnapshot,
+    ) -> Result<(), EditorError> {
+        self.assistance.accepted = None;
+        self.assistance.requested = false;
+        self.assistance.refresh = false;
+        self.assistance.dismissed = false;
+        self.assistance.typed = None;
+        if self
+            .assistance
+            .menu
+            .as_ref()
+            .is_some_and(|m| m.revision != snapshot.revision)
+        {
+            self.assistance.menu = None;
+        }
+        if self
+            .assistance
+            .snippet
+            .as_ref()
+            .is_some_and(|s| s.revision != snapshot.revision)
+        {
+            self.assistance.snippet = None;
+        }
+        if let Some((revision, edit)) = self.assistance.pending.take()
+            && revision == snapshot.revision
+            && !self.settings.read_only
+            && !self.is_composing()
+        {
+            let prepared = edit.prepare(&snapshot.text).map_err(EditorError)?;
+            let range = prepared
+                .stops
+                .first()
+                .map(|(_, r)| r.clone())
+                .unwrap_or(prepared.caret..prepared.caret);
+            session.set_edit_owner(id);
+            session.end_undo_group();
+            session.edit_buffer(revision, prepared.edit)?;
+            session.end_undo_group();
+            *snapshot = session.snapshot()?;
+            self.selection = TextSelection::new(&snapshot.text, range.start, range.end)?;
+            self.navigation = Some(Navigation {
+                revision: snapshot.revision,
+                range: range.clone(),
+                selection: Some(self.selection),
+                reveal: Reveal::Minimal,
+                focus: false,
+            });
+            self.assistance.snippet = (edit.snippet && prepared.stops.iter().any(|(n, _)| *n != 0))
+                .then_some(Snippet {
+                    revision: snapshot.revision,
+                    stops: prepared.stops,
+                    active: 0,
+                });
+        }
+        Ok(())
+    }
+    pub(crate) fn assistance_event(
+        &mut self,
+        id: egui::Id,
+        session: &mut dyn TextSession,
+        snapshot: &mut TextSnapshot,
+        event: &egui::Event,
+    ) -> Result<bool, EditorError> {
+        if self.is_composing() || self.settings.read_only {
+            self.assistance.menu = None;
+            self.assistance.snippet = None;
+            return Ok(false);
+        }
+        if let egui::Event::Key {
+            key,
+            pressed: true,
+            modifiers,
+            ..
+        } = event
+        {
+            if *key == egui::Key::Space && modifiers.ctrl && !modifiers.alt && !modifiers.shift {
+                self.assistance.requested = true;
+                return Ok(true);
+            }
+            if self
+                .assistance
+                .menu
+                .as_ref()
+                .is_some_and(|m| m.revision == snapshot.revision)
+            {
+                let menu = self.assistance.menu.as_mut().unwrap();
+                match key {
+                    egui::Key::ArrowDown => {
+                        menu.selected = (menu.selected + 1) % menu.choices.len();
+                        menu.reveal = true;
+                        return Ok(true);
+                    }
+                    egui::Key::ArrowUp => {
+                        menu.selected =
+                            (menu.selected + menu.choices.len() - 1) % menu.choices.len();
+                        menu.reveal = true;
+                        return Ok(true);
+                    }
+                    egui::Key::Enter | egui::Key::Tab => {
+                        self.assistance.accepted = Some(menu.selected);
+                        self.assistance.menu = None;
+                        return Ok(true);
+                    }
+                    egui::Key::Escape => {
+                        self.assistance.menu = None;
+                        self.assistance.dismissed = true;
+                        return Ok(true);
+                    }
+                    egui::Key::Backspace | egui::Key::Delete => {
+                        self.assistance.refresh = true;
+                    }
+                    _ => {}
+                }
+            }
+            if *key == egui::Key::Tab
+                && self.assistance.snippet.is_some()
+                && !modifiers.ctrl
+                && !modifiers.alt
+                && !modifiers.command
+            {
+                let snippet = self.assistance.snippet.as_mut().unwrap();
+                let current = snippet.stops[snippet.active].0;
+                if modifiers.shift {
+                    if let Some(next) = (0..snippet.active)
+                        .rev()
+                        .find(|i| snippet.stops[*i].0 != current)
+                    {
+                        snippet.active = next;
+                    }
+                } else if let Some(next) = (snippet.active + 1..snippet.stops.len())
+                    .find(|i| snippet.stops[*i].0 != current)
+                {
+                    snippet.active = next;
+                }
+                let (number, range) = &snippet.stops[snippet.active];
+                self.selection = TextSelection::new(&snapshot.text, range.start, range.end)?;
+                if *number == 0 {
+                    self.assistance.snippet = None;
+                }
+                session.end_undo_group();
+                return Ok(true);
+            }
+            if *key == egui::Key::Escape
+                && (self.assistance.snippet.is_some() || self.language_tools)
+            {
+                self.assistance.snippet = None;
+                self.assistance.dismissed = true;
+                return Ok(true);
+            }
+        }
+        // Mirror replacements across repeated tabstops in a single transaction.
+        if let Some(mut snippet) = self.assistance.snippet.take() {
+            let active = snippet.stops[snippet.active].clone();
+            let selected = self.selection.range();
+            let mut replacement = match event {
+                egui::Event::Text(t) | egui::Event::Paste(t) => Some(t.clone()),
+                _ => None,
+            };
+            let mut range = selected.clone();
+            if let egui::Event::Key {
+                key,
+                pressed: true,
+                modifiers,
+                ..
+            } = event
+                && modifiers.is_none()
+                && matches!(key, egui::Key::Backspace | egui::Key::Delete)
+            {
+                replacement = Some(String::new());
+                if range.is_empty() {
+                    if *key == egui::Key::Backspace {
+                        range.start = snapshot.text.previous_grapheme(range.start);
+                    } else {
+                        range.end = snapshot.text.next_grapheme(range.end);
+                    }
+                }
+            }
+            if let Some(replacement) =
+                replacement.filter(|_| range.start >= active.1.start && range.end <= active.1.end)
+            {
+                let relative = range.start - active.1.start..range.end - active.1.start;
+                let mut edits: Vec<_> = snippet
+                    .stops
+                    .iter()
+                    .filter(|(n, _)| *n == active.0)
+                    .map(|(_, r)| TextEdit {
+                        range: r.start + relative.start..r.start + relative.end,
+                        replacement: replacement.clone(),
+                    })
+                    .collect();
+                edits.sort_by_key(|e| e.range.start);
+                // Nested/overlapping placeholders retire their children after a replacement.
+                snippet.stops.retain(|(n, r)| {
+                    *n == active.0 || !(r.start >= range.start && r.end <= range.end)
+                });
+                let plan = CompletionEdit {
+                    primary: edits.remove(0),
+                    additional: edits.clone(),
+                    snippet: false,
+                }
+                .prepare(&snapshot.text)
+                .map_err(EditorError)?;
+                session.set_edit_owner(id);
+                session.edit_buffer(snapshot.revision, plan.edit)?;
+                *snapshot = session.snapshot()?;
+                // Use all mirror locations rather than the selection when the active copy is not first.
+                let mut deltas: Vec<_> = snippet
+                    .stops
+                    .iter()
+                    .filter(|(n, _)| *n == active.0)
+                    .map(|(_, r)| TextDelta {
+                        range: r.start + relative.start..r.start + relative.end,
+                        inserted_bytes: replacement.len(),
+                    })
+                    .collect();
+                deltas.sort_by_key(|d| std::cmp::Reverse(d.range.start));
+                let mut head = range.end;
+                for delta in &deltas {
+                    head = delta.map_position(head);
+                    for (_, r) in &mut snippet.stops {
+                        // Placeholder boundaries stay around their contents, including inserts at either edge.
+                        if r.start >= delta.range.end && r.start != delta.range.start {
+                            r.start = delta.map_position(r.start);
+                        }
+                        if r.end >= delta.range.start {
+                            r.end = delta.map_position(r.end);
+                        }
+                    }
+                }
+                snippet.active = snippet
+                    .stops
+                    .iter()
+                    .position(|(n, _)| *n == active.0)
+                    .unwrap_or(0);
+                snippet.revision = snapshot.revision;
+                self.selection = TextSelection::caret(&snapshot.text, head)?;
+                self.assistance.snippet = Some(snippet);
+                return Ok(true);
+            }
+            if selected.start >= active.1.start && selected.end <= active.1.end {
+                self.assistance.snippet = Some(snippet);
+            }
+        }
+        if let egui::Event::Text(text) = event {
+            self.assistance.typed = Some(text.clone());
+        }
+        Ok(false)
+    }
+    pub(crate) fn completion_popup(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: egui::Id,
+        caret: egui::Rect,
+        revision: u64,
+        focused: bool,
+    ) {
+        self.assistance.popup_rect = None;
+        if !focused
+            || self.is_composing()
+            || self
+                .assistance
+                .menu
+                .as_ref()
+                .is_some_and(|m| m.revision != revision)
+        {
+            self.assistance.menu = None;
+            return;
+        }
+        let Some(menu) = self.assistance.menu.as_mut() else {
+            return;
+        };
+        let mut accepted = None;
+        let popup = egui::Area::new(id.with("completion"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(caret.left_bottom())
+            .constrain_to(ui.ctx().content_rect().shrink(8.0))
+            .show(ui.ctx(), |ui| {
+                let size = egui::TextStyle::Body.resolve(ui.style()).size;
+                egui::Frame::popup(ui.style())
+                    .inner_margin(egui::Margin::symmetric(
+                        (size * 0.6) as i8,
+                        (size * 0.4) as i8,
+                    ))
+                    .show(ui, |ui| {
+                        let font_size = size;
+                        ui.set_width(
+                            (font_size * 26.0)
+                                .min(ui.ctx().content_rect().width() - 24.0)
+                                .max(1.0),
+                        );
+                        ui.spacing_mut().item_spacing.y = font_size * 0.2;
+                        ui.spacing_mut().button_padding.y = 0.0;
+                        ui.spacing_mut().interact_size.y = font_size;
+                        let background = ui.visuals().window_fill;
+                        let accent = ui.visuals().selection.stroke.color;
+                        let selected_fill = background.lerp_to_gamma(accent, 0.24);
+                        let hover_fill = background.lerp_to_gamma(accent, 0.16);
+                        let row_height = ui.text_style_height(&egui::TextStyle::Body);
+                        let mut scroll = egui::ScrollArea::vertical()
+                            .max_height((row_height + ui.spacing().item_spacing.y) * 8.0);
+                        if menu.reveal {
+                            scroll = scroll.vertical_scroll_offset(
+                                (menu.selected.saturating_sub(4)) as f32
+                                    * (row_height + ui.spacing().item_spacing.y),
+                            );
+                            menu.reveal = false;
+                        }
+                        scroll.show_rows(ui, row_height, menu.choices.len(), |ui, rows| {
+                            for index in rows {
+                                let choice = &menu.choices[index];
+                                let (rect, response) = ui.allocate_exact_size(
+                                    egui::vec2(ui.available_width(), row_height),
+                                    egui::Sense::click(),
+                                );
+                                let fill = if index == menu.selected
+                                    || response.is_pointer_button_down_on()
+                                {
+                                    selected_fill
+                                } else if response.hovered() {
+                                    hover_fill
+                                } else {
+                                    background
+                                };
+                                ui.painter().rect_filled(
+                                    rect.expand2(egui::vec2(0.0, 1.0)),
+                                    0.0,
+                                    fill,
+                                );
+                                let font = egui::TextStyle::Body.resolve(ui.style());
+                                let kind_width = font_size * 4.0;
+                                let kind_color = match choice.kind.as_ref() {
+                                    "fn" | "ctor" | "event" => self.syntax_palette.function,
+                                    "type" | "trait" | "mod" | "enum" | "struct" | "T" => {
+                                        self.syntax_palette.r#type
+                                    }
+                                    "field" | "prop" | "var" | "ref" => {
+                                        self.syntax_palette.variable
+                                    }
+                                    "unit" | "value" | "const" => self.syntax_palette.number,
+                                    "kw" | "op" => self.syntax_palette.keyword,
+                                    "file" | "dir" => self.syntax_palette.string,
+                                    _ => accent,
+                                };
+                                ui.painter().text(
+                                    rect.left_top(),
+                                    egui::Align2::LEFT_TOP,
+                                    choice.kind.as_ref(),
+                                    font.clone(),
+                                    kind_color,
+                                );
+                                let mut job = egui::text::LayoutJob::default();
+                                job.append(
+                                    choice.label.as_ref(),
+                                    0.0,
+                                    egui::TextFormat {
+                                        font_id: font.clone(),
+                                        color: ui.visuals().text_color(),
+                                        ..Default::default()
+                                    },
+                                );
+                                if !choice.detail.trim().is_empty() {
+                                    job.append(
+                                        &format!("  {}", choice.detail),
+                                        0.0,
+                                        egui::TextFormat {
+                                            font_id: font,
+                                            color: ui.visuals().weak_text_color(),
+                                            ..Default::default()
+                                        },
+                                    );
+                                }
+                                job.wrap.max_width = (rect.width() - kind_width).max(1.0);
+                                job.wrap.max_rows = 1;
+                                let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+                                ui.painter().galley(
+                                    rect.left_top() + egui::vec2(kind_width, 0.0),
+                                    galley,
+                                    ui.visuals().text_color(),
+                                );
+                                response.widget_info(|| {
+                                    egui::WidgetInfo::selected(
+                                        egui::WidgetType::SelectableLabel,
+                                        true,
+                                        index == menu.selected,
+                                        choice.label.as_ref(),
+                                    )
+                                });
+                                if response.clicked() {
+                                    accepted = Some(index);
+                                }
+                            }
+                        });
+                    });
+            });
+        self.assistance.popup_rect = Some(popup.response.rect);
+        if let Some(index) = accepted {
+            self.assistance.accepted = Some(index);
+            self.assistance.menu = None;
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::tests::{focus, frame, key};
+    #[test]
+    fn completion_import_and_snippet_are_one_undoable_edit() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("completion");
+        let mut doc = MemoryTextSession::new("package main\n\nfunc main() { Pr }\n");
+        let mut view = EditorView::default();
+        focus(&ctx, &mut view, &mut doc, id);
+        let start = doc.text().to_string().find("Pr").unwrap();
+        view.queue_completion(
+            0,
+            CompletionEdit {
+                primary: TextEdit {
+                    range: start..start + 2,
+                    replacement: "Println(${1:message})$0".into(),
+                },
+                additional: vec![TextEdit {
+                    range: 13..13,
+                    replacement: "import \"fmt\"\n".into(),
+                }],
+                snippet: true,
+            },
+        );
+        let output = frame(&ctx, &mut view, &mut doc, id, vec![]);
+        assert_eq!(
+            doc.text().to_string(),
+            "package main\nimport \"fmt\"\n\nfunc main() { Println(message) }\n"
+        );
+        assert_eq!(
+            doc.text().slice(output.selection.range()).to_string(),
+            "message"
+        );
+        assert_eq!(doc.snapshot().unwrap().revision, 1);
+        doc.history(HistoryAction::Undo).unwrap();
+        assert_eq!(
+            doc.text().to_string(),
+            "package main\n\nfunc main() { Pr }\n"
+        );
+    }
+    #[test]
+    fn stale_completion_and_overlapping_edits_leave_text_unchanged() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("stale");
+        let mut doc = MemoryTextSession::new("abc");
+        let mut view = EditorView::default();
+        focus(&ctx, &mut view, &mut doc, id);
+        let edit = CompletionEdit {
+            primary: TextEdit {
+                range: 0..3,
+                replacement: "ok".into(),
+            },
+            additional: vec![],
+            snippet: false,
+        };
+        view.queue_completion(0, edit.clone());
+        doc.edit(
+            0,
+            TextEdit {
+                range: 3..3,
+                replacement: "!".into(),
+            },
+        )
+        .unwrap();
+        frame(&ctx, &mut view, &mut doc, id, vec![]);
+        assert_eq!(doc.text(), "abc!");
+        let mut invalid = edit;
+        invalid.additional.push(TextEdit {
+            range: 1..2,
+            replacement: "oops".into(),
+        });
+        assert!(invalid.prepare(doc.text()).is_err());
+        assert_eq!(doc.text(), "abc!");
+    }
+    #[test]
+    fn snippet_mirrors_and_tab_navigation_follow_edits() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("snippet");
+        let mut doc = MemoryTextSession::new("");
+        let mut view = EditorView::default();
+        focus(&ctx, &mut view, &mut doc, id);
+        view.queue_completion(
+            0,
+            CompletionEdit {
+                primary: TextEdit {
+                    range: 0..0,
+                    replacement: "${1:name} = $1; ${2|first,second|}$0".into(),
+                },
+                additional: vec![],
+                snippet: true,
+            },
+        );
+        frame(&ctx, &mut view, &mut doc, id, vec![]);
+        frame(
+            &ctx,
+            &mut view,
+            &mut doc,
+            id,
+            vec![egui::Event::Text("世界".into())],
+        );
+        assert_eq!(doc.text(), "世界 = 世界; first");
+        frame(
+            &ctx,
+            &mut view,
+            &mut doc,
+            id,
+            vec![key(egui::Key::Tab, egui::Modifiers::NONE)],
+        );
+        assert_eq!(
+            doc.text().slice(view.selection.range()).to_string(),
+            "first"
+        );
+        frame(
+            &ctx,
+            &mut view,
+            &mut doc,
+            id,
+            vec![key(egui::Key::Tab, egui::Modifiers::SHIFT)],
+        );
+        assert_eq!(doc.text().slice(view.selection.range()).to_string(), "世界");
+        frame(
+            &ctx,
+            &mut view,
+            &mut doc,
+            id,
+            vec![
+                key(egui::Key::Tab, egui::Modifiers::NONE),
+                key(egui::Key::Tab, egui::Modifiers::NONE),
+            ],
+        );
+        assert_eq!(view.selection.head(), doc.text().len());
+        assert!(view.assistance.snippet.is_none());
+    }
+    #[test]
+    fn completion_keys_select_without_inserting_newlines_or_tabs() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("menu");
+        let mut doc = MemoryTextSession::new("f");
+        let mut view = EditorView::default();
+        focus(&ctx, &mut view, &mut doc, id);
+        view.set_completions(
+            0,
+            vec![
+                CompletionChoice {
+                    kind: "fn".into(),
+                    label: "foo".into(),
+                    detail: "".into(),
+                },
+                CompletionChoice {
+                    kind: "fn".into(),
+                    label: "far".into(),
+                    detail: "".into(),
+                },
+            ],
+        );
+        let output = frame(
+            &ctx,
+            &mut view,
+            &mut doc,
+            id,
+            vec![
+                key(egui::Key::ArrowDown, egui::Modifiers::NONE),
+                key(egui::Key::Enter, egui::Modifiers::NONE),
+            ],
+        );
+        assert_eq!(output.completion_accepted, Some(1));
+        assert_eq!(doc.text(), "f");
+        let output = frame(
+            &ctx,
+            &mut view,
+            &mut doc,
+            id,
+            vec![key(egui::Key::Space, egui::Modifiers::CTRL)],
+        );
+        assert!(output.completion_requested);
+        assert_eq!(doc.text(), "f");
+    }
+    #[test]
+    fn snippet_defaults_escapes_and_invalid_transforms_are_explicit() {
+        let (text, stops) =
+            parse_snippet("${1:hello ${2:world}} \\$ ${3|a\\,b,c|} ${UNKNOWN:fallback}$0").unwrap();
+        assert_eq!(text, "hello world $ a,b fallback");
+        assert!(
+            stops
+                .iter()
+                .any(|(n, r)| *n == 2 && &text[r.clone()] == "world")
+        );
+        assert!(parse_snippet("${1/a/b/}").is_err());
+        assert!(parse_snippet("${1:unfinished").is_err());
+    }
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+    #[test]
+    fn command_click_reports_pointer_symbol_without_moving_the_caret() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("link");
+        let mut view = EditorView::default();
+        view.language_tools = true;
+        let mut doc = MemoryTextSession::new("x\t世界 name\n");
+        let first = crate::editor::tests::frame(&ctx, &mut view, &mut doc, id, vec![]);
+        let font = egui::TextStyle::Monospace.resolve(&ctx.global_style());
+        let cell = ctx.fonts_mut(|f| f.glyph_width(&font, ' '));
+        let pos = egui::pos2(
+            first.text_rect.left() + 8.0 + cell * 4.2,
+            first.text_rect.top() + 6.0 + first.caret_rect.height() * 0.5,
+        );
+        let mods = egui::Modifiers {
+            command: true,
+            ..Default::default()
+        };
+        let mut run = |pressed| {
+            let mut result = None;
+            let _ = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(600.0, 300.0),
+                    )),
+                    events: vec![
+                        egui::Event::ModifiersChanged(mods),
+                        egui::Event::PointerMoved(pos),
+                        egui::Event::PointerButton {
+                            pos,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: mods,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    result = Some(
+                        view.show(ui, id, &mut doc, MotionPolicy::default())
+                            .unwrap(),
+                    )
+                },
+            );
+            result.unwrap()
+        };
+        let press = run(true);
+        assert_eq!(press.selection.head(), 0);
+        let click = run(false);
+        assert_eq!(click.selection.head(), 0);
+        assert_eq!(click.hovered_symbol.unwrap().range, 2..8);
+        assert_eq!(click.definition_clicked, Some(2));
+    }
 }

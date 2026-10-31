@@ -108,6 +108,10 @@ pub struct EditorView {
     folding: folding::Folding,
     /// A language server's diagnostics, drawn only at their revision.
     diagnostics: Option<std::sync::Arc<Diagnostics>>,
+    /// Report the word under the pointer (for hover) and Cmd/Ctrl-clicks on
+    /// it (go to definition) instead of moving the caret.
+    pub language_tools: bool,
+    assistance: completion::Assistance,
     /// Whether the text has a language: reserves the fold column before its
     /// first analysis arrives, so text doesn't shift.
     pub has_syntax: bool,
@@ -176,7 +180,32 @@ impl PointerPresses {
         self.count
     }
 }
+/// A word or character under the pointer.
+#[derive(Clone, Debug)]
+pub struct SymbolHit {
+    pub byte: usize,
+    pub range: Range<usize>,
+    pub rect: egui::Rect,
+}
+
 pub struct EditorOutput {
+    /// The word under the pointer (with `language_tools`).
+    pub hovered_symbol: Option<SymbolHit>,
+    /// The character under the pointer (with `language_tools`).
+    pub hovered_text: Option<SymbolHit>,
+    /// Cmd/Ctrl-click on a word: its byte.
+    pub definition_clicked: Option<usize>,
+    /// Ctrl-Space.
+    pub completion_requested: bool,
+    /// The text before the caret changed under an open menu (Backspace).
+    pub completion_refresh: bool,
+    /// The menu entry accepted (Enter, Tab, click).
+    pub completion_accepted: Option<usize>,
+    pub completion_rect: Option<egui::Rect>,
+    /// Escape closed the menu (or a snippet).
+    pub completion_dismissed: bool,
+    /// Text typed this frame.
+    pub typed: Option<String>,
     pub response: egui::Response,
     pub text_rect: egui::Rect,
     pub caret_rect: egui::Rect,
@@ -445,6 +474,7 @@ impl EditorView {
         } else {
             session.end_undo_group();
         }
+        self.prepare_assistance(id, session, &mut snapshot)?;
         if let Some((revision, selection, job)) = &self.indent_job {
             let (revision, selection) = (*revision, *selection);
             match job.poll() {
@@ -558,6 +588,9 @@ impl EditorView {
         let mut failure = None;
         let mut number_rows = Vec::new();
         let mut caret_rect = egui::Rect::NOTHING;
+        let mut hovered_symbol = None;
+        let mut hovered_text = None;
+        let mut definition_clicked = None;
         let mut rendered_lines = 0;
         let mut laid_out_bytes = 0;
         let (gutter, scroll) = ui
@@ -621,7 +654,10 @@ impl EditorView {
                             ui.set_cursor_icon(egui::CursorIcon::Text);
                         }
                         let pressed = ui.input(|i| i.pointer.primary_pressed());
-                        if response.hovered() && pressed {
+                        if response.hovered()
+                            && pressed
+                            && !(self.language_tools && ui.input(|i| i.modifiers.command))
+                        {
                             self.cancel_composition(session, id);
                             response.request_focus();
                             let position = ui.input(|i| i.pointer.interact_pos()).unwrap();
@@ -667,7 +703,9 @@ impl EditorView {
                             }
                             self.drag_anchor = Some(self.selection.anchor);
                         }
-                        if response.dragged_by(egui::PointerButton::Primary) {
+                        if response.dragged_by(egui::PointerButton::Primary)
+                            && !(self.language_tools && ui.input(|i| i.modifiers.command))
+                        {
                             self.pointer_presses.last = None;
                             if let Some(position) = ui.input(|i| i.pointer.interact_pos()) {
                                 let geometry = layout::Geometry {
@@ -701,7 +739,11 @@ impl EditorView {
                                         tab: true,
                                         horizontal_arrows: true,
                                         vertical_arrows: true,
-                                        escape: self.search.open || self.is_composing(),
+                                        escape: self.language_tools
+                                            || self.search.open
+                                            || self.is_composing()
+                                            || self.assistance.menu.is_some()
+                                            || self.assistance.snippet.is_some(),
                                     },
                                 )
                             });
@@ -820,6 +862,58 @@ impl EditorView {
                             wrap,
                             folds: &self.folding.display_map,
                         };
+                        if self.language_tools
+                            && self.composition.is_none()
+                            && response.hovered()
+                            && let Some(pointer) = ui.input(|i| i.pointer.hover_pos())
+                        {
+                            let local = pointer - origin.to_vec2();
+                            let mut byte = geometry.hit(ui, local);
+                            if geometry.caret(byte).left() > local.x && byte > 0 {
+                                byte = display.previous_grapheme(byte);
+                            }
+                            if byte < display.len()
+                                && byte < display.line_range(display.line_of(byte)).end
+                                && local.x >= 8.0
+                                && (geometry.caret(byte).top()..geometry.caret(byte).bottom())
+                                    .contains(&local.y)
+                            {
+                                let end = display.next_grapheme(byte);
+                                let start_rect = geometry.caret(byte).translate(origin.to_vec2());
+                                let end_rect = geometry.caret(end).translate(origin.to_vec2());
+                                hovered_text = Some(SymbolHit {
+                                    byte,
+                                    range: byte..end,
+                                    rect: start_rect.union(end_rect),
+                                });
+                            }
+                            let range = word_range(&display, byte);
+                            if byte < display.len()
+                                && class(&display, byte) == 1
+                                && !range.is_empty()
+                                && local.x >= 8.0
+                                && (geometry.caret(byte).top()..geometry.caret(byte).bottom())
+                                    .contains(&local.y)
+                            {
+                                let start = geometry.caret(range.start).translate(origin.to_vec2());
+                                let end = geometry.caret(range.end).translate(origin.to_vec2());
+                                let rect = if start.top() == end.top() {
+                                    start.union(end).expand2(egui::vec2(1.0, 0.0))
+                                } else {
+                                    egui::Rect::from_min_size(
+                                        pointer,
+                                        egui::vec2(metrics.cell, metrics.height),
+                                    )
+                                };
+                                hovered_symbol = Some(SymbolHit { byte, range, rect });
+                                if ui.input(|i| i.modifiers.command) {
+                                    ui.set_cursor_icon(egui::CursorIcon::PointingHand);
+                                    if response.clicked() {
+                                        definition_clicked = Some(byte);
+                                    }
+                                }
+                            }
+                        }
                         // The horizontal parent layout advances the cursor past
                         // the canvas. Extend from its origin after edits instead
                         // of reserving another canvas at that cursor.
@@ -935,6 +1029,27 @@ impl EditorView {
                                     " …",
                                     metrics.font.clone(),
                                     ui.visuals().weak_text_color(),
+                                );
+                            }
+                            if ui.input(|i| i.modifiers.command)
+                                && let Some(hit) = &hovered_symbol
+                                && hit.range.start < line.end
+                                && hit.range.end > line.start
+                            {
+                                painter.line_segment(
+                                    [
+                                        egui::pos2(
+                                            origin.x
+                                                + 8.0
+                                                + line.x_at(hit.range.start.max(line.start)),
+                                            y + metrics.height - 1.0,
+                                        ),
+                                        egui::pos2(
+                                            origin.x + 8.0 + line.x_at(hit.range.end.min(line.end)),
+                                            y + metrics.height - 1.0,
+                                        ),
+                                    ],
+                                    egui::Stroke::new(1.0, ui.visuals().hyperlink_color),
                                 );
                             }
                             painter.galley(
@@ -1172,7 +1287,23 @@ impl EditorView {
         if let Some(error) = failure {
             return Err(error);
         }
+        self.completion_popup(
+            ui,
+            id,
+            caret_rect,
+            snapshot.revision,
+            scroll.inner.has_focus(),
+        );
         Ok(EditorOutput {
+            hovered_symbol,
+            hovered_text,
+            definition_clicked,
+            completion_requested: self.assistance.requested,
+            completion_refresh: self.assistance.refresh,
+            completion_accepted: self.assistance.accepted,
+            completion_rect: self.assistance.popup_rect,
+            completion_dismissed: self.assistance.dismissed,
+            typed: self.assistance.typed.take(),
             response: scroll.inner,
             text_rect: scroll.inner_rect,
             caret_rect,
@@ -1195,6 +1326,9 @@ impl EditorView {
         now: f64,
         page: usize,
     ) -> Result<bool, EditorError> {
+        if self.assistance_event(id, session, snapshot, event)? {
+            return Ok(true);
+        }
         self.reconcile_folds(session, snapshot)?;
         let width = self
             .wrapping

@@ -23,6 +23,7 @@ unicode-width.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 libc.workspace = true
+pulldown-cmark.workspace = true
 # Use one pinned native runtime: Cargo permits only one links=tree-sitter.
 tree-sitter = { package = "arborium-tree-sitter", version = "=2.18.2" }
 

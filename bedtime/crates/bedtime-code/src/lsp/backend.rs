@@ -193,11 +193,6 @@ enum Pending {
 }
 struct Request {
     kind: Pending,
-    method: String,
-    params: Value,
-    bytes: usize,
-    attempts: u8,
-    retry_at: Option<Instant>,
     deadline: Instant,
 }
 struct Runtime {
@@ -335,11 +330,6 @@ impl Runtime {
             .send(json!({"jsonrpc":"2.0","method":method,"params":params}))
     }
     fn request(&mut self, method: &str, params: Value, kind: Pending) -> Result<(), String> {
-        let retained_bytes: usize = self.requests.values().map(|r| r.bytes).sum();
-        let bytes = params.to_string().len();
-        if retained_bytes.saturating_add(bytes) > COMMAND_BYTES {
-            return Err("Pending language request payloads exceed 32 MiB".into());
-        }
         if self.requests.len() >= MAX_REQUESTS {
             return Err("Too many language server requests".into());
         }
@@ -354,11 +344,6 @@ impl Runtime {
             self.next_request,
             Request {
                 kind,
-                method: method.to_owned(),
-                params,
-                bytes,
-                attempts: 0,
-                retry_at: None,
                 deadline: Instant::now() + Duration::from_secs(20),
             },
         );
@@ -777,48 +762,9 @@ impl Runtime {
         if message.get("result").is_some() == message.get("error").is_some() {
             return Err("LSP response requires exactly one result or error".into());
         }
-        let Some(mut request) = self.requests.remove(&id) else {
+        let Some(request) = self.requests.remove(&id) else {
             return Ok(());
         }; // Late cancelled reply.
-        let empty = message
-            .get("result")
-            .is_some_and(|v| v.is_null() || v.as_array().is_some_and(Vec::is_empty));
-        if empty
-            && self
-                .activity
-                .value
-                .project_status
-                .as_ref()
-                .is_some_and(|s| !s.quiescent)
-            && matches!(
-                request.kind,
-                Pending::Definition(_)
-                    | Pending::LanguageQuery {
-                        kind: QueryKind::Hover,
-                        ..
-                    }
-            )
-        {
-            request.retry_at = Some(Instant::now() + Duration::from_millis(100));
-            self.requests.insert(id, request);
-            return Ok(());
-        }
-        // Servers can invalidate analysis during workspace reloads independently
-        // of document edits. Retry only explicit transient protocol errors, with
-        // the captured origin and a finite backoff; ordinary failures stay errors.
-        if matches!(message["error"]["code"].as_i64(), Some(-32801 | -32802))
-            && request.attempts < 3
-            && matches!(
-                request.kind,
-                Pending::Definition(_) | Pending::LanguageQuery { .. }
-            )
-        {
-            request.attempts += 1;
-            request.retry_at =
-                Some(Instant::now() + Duration::from_millis(100 << (request.attempts - 1)));
-            self.requests.insert(id, request);
-            return Ok(());
-        }
         let result = if let Some(error) = message.get("error") {
             Err(error["message"]
                 .as_str()
@@ -1004,56 +950,6 @@ impl Runtime {
         result
     }
     fn expire(&mut self, events: &mpsc::SyncSender<Event>) -> Result<(), String> {
-        let retry_ids: Vec<_> = self
-            .requests
-            .iter()
-            .filter_map(|(id, r)| r.retry_at.filter(|at| *at <= Instant::now()).map(|_| *id))
-            .collect();
-        for id in retry_ids {
-            let mut request = self.requests.remove(&id).unwrap();
-            if request.deadline <= Instant::now() {
-                self.requests.insert(id, request);
-                continue;
-            }
-            let origin = match request.kind {
-                Pending::Definition(origin) | Pending::LanguageQuery { origin, .. } => origin,
-                _ => unreachable!(),
-            };
-            if !self
-                .documents
-                .get(&origin.document)
-                .is_some_and(|doc| doc.update.revision == origin.revision)
-            {
-                continue;
-            }
-            if request.deadline > Instant::now()
-                && self
-                    .activity
-                    .value
-                    .project_status
-                    .as_ref()
-                    .is_some_and(|s| !s.quiescent)
-                && matches!(
-                    request.kind,
-                    Pending::Definition(_)
-                        | Pending::LanguageQuery {
-                            kind: QueryKind::Hover,
-                            ..
-                        }
-                )
-            {
-                request.retry_at = Some(Instant::now() + Duration::from_millis(100));
-                self.requests.insert(id, request);
-                continue;
-            }
-            self.next_request = self
-                .next_request
-                .checked_add(1)
-                .ok_or("Language request IDs exhausted")?;
-            self.io.send(json!({"jsonrpc":"2.0","id":self.next_request,"method":request.method,"params":request.params}))?;
-            request.retry_at = None;
-            self.requests.insert(self.next_request, request);
-        }
         let ids: Vec<_> = self
             .requests
             .iter()

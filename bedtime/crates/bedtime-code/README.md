@@ -110,13 +110,28 @@ docs), and `documents`, which connects it to workbench documents:
   server (rust-analyzer runs `cargo check` then).
 - Diagnostics are drawn in the document's editors (underlined, with the
   message on hover) while the text is at their revision.
-- Go to Definition (F12, or Cmd/Ctrl-click) asks for the definition at the
-  caret and opens the first answer with `open_path`. A server that isn't ready
-  is an error at once; a newer request replaces an older one. Positions are
+- **Nothing waits.** A request goes to the server at once, or fails at once
+  when the server can't answer now: starting, failed, loading the project
+  (rust-analyzer says so), or without the document's latest text (which is
+  sent right then if it hadn't been yet). One request, one answer: no queues,
+  no retries, no waiting for a server to settle.
+- Go to Definition (F12, or Cmd/Ctrl-click a name) opens the first answer
+  with `open_path`; a newer request replaces an older one. Positions are
   taken as characters, which is exact for ASCII before the target.
+- **Hover**: resting the pointer on a name (200 ms) shows its documentation,
+  and the diagnostics there, in a popup (Markdown, its code coloured by a
+  syntax analysis on a worker).
+- **Completions** open as you type a word or a trigger character (`.`, `::`),
+  or with Ctrl-Space. Up/Down choose, Enter or Tab accept, Escape closes. The
+  selected entry is resolved for its documentation, shown beside the menu.
+  Accepting applies its edits (an import too) as one change; a snippet's tab
+  stops are then visited with Tab.
+- Errors from what you asked for (F12, Cmd-click, Ctrl-Space) go to
+  notifications; what's asked for you while typing just doesn't happen.
+- `request_query`, `query_is_current`, `cancel_query` and
+  `take_query_answers` are there for other callers; the editor's own
+  queries are answered straight to it (`assist`).
 - Restart Language Server; `restart` and `stop` for apps.
-
-Hover and completions are in the backend but not drawn yet.
 
 ## Tests
 

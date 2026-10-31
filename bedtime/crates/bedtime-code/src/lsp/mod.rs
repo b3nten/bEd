@@ -17,6 +17,10 @@ mod transport;
 pub use backend::*;
 pub use protocol::{Encoding, FileUri, Position, ProtocolRange};
 #[cfg(unix)]
+pub(crate) mod assist;
+#[cfg(unix)]
+mod documentation;
+#[cfg(unix)]
 mod documents;
 #[cfg(unix)]
 pub use documents::*;

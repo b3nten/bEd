@@ -157,6 +157,10 @@ fn draw(
     }
     editor.view.syntax_palette = syntax::SyntaxPalette::from_theme(context.theme);
     #[cfg(unix)]
+    {
+        editor.view.language_tools = crate::lsp::server_of(world, panel).is_some();
+    }
+    #[cfg(unix)]
     editor.view.set_diagnostics(
         world
             .get::<crate::lsp::DocumentServer>(document.entity())
@@ -169,7 +173,10 @@ fn draw(
         .is_some_and(|presentation| presentation.focused);
     let frame = ui.ctx().cumulative_frame_nr();
     let shown_last_frame = editor.drawn + 1 >= frame;
-    if focused && !(editor.focused && shown_last_frame) {
+    // A clicked tab button takes egui's focus: take it back unless a text
+    // field (this editor's Find bar, say) has it.
+    let typing_elsewhere = ui.ctx().text_edit_focused();
+    if focused && (!(editor.focused && shown_last_frame) || !typing_elsewhere) {
         ui.memory_mut(|memory| memory.request_focus(id));
     } else if !focused && ui.memory(|memory| memory.has_focus(id)) {
         ui.memory_mut(|memory| memory.surrender_focus(id));
@@ -191,24 +198,14 @@ fn draw(
         });
     }
     let shown = editor.view.show(ui, id, &mut session, context.motion);
-    // Cmd/Ctrl-click: go to the definition of what was clicked (the caret
-    // moved there).
+    world.entity_mut(panel).insert(editor);
+    // Hover, completions and Cmd/Ctrl-click, from the language server.
     #[cfg(unix)]
     if let Ok(output) = &shown
-        && output.response.clicked()
-        && ui.input(|input| input.modifiers.command)
         && crate::lsp::server_of(world, panel).is_some()
     {
-        let byte = editor.view.selection().head();
-        world.entity_mut(panel).insert(editor);
-        if let Err(error) = crate::lsp::go_to_definition(world, panel, byte) {
-            world
-                .workbench_mut()
-                .notify(Notification::warning(format!("Go to Definition: {error}")));
-        }
-        return shown.map(|_| ());
+        crate::lsp::assist::draw(ui, world, panel, output);
     }
-    world.entity_mut(panel).insert(editor);
     result.and(shown.map(|_| ()))
 }
 

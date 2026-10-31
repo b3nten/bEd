@@ -1,10 +1,10 @@
 # Architecture: the bedtime crates
 
-Status (2026-10-31): **migration steps 1–11 built** (persistence, settings,
+Status (2026-10-31): **migration steps 1–12 built** (persistence, settings,
 actions and work, menus, layouts and chrome, the framework, opening with
 `bedtime-filesystem` and a first `bedtime-filetree`, the editor, syntax,
-Structure and language servers in `bedtime-code`); hover and completions are
-next.
+Structure, language servers, hover and completions in `bedtime-code`); the
+opening policy is being discussed.
 Update this file as decisions change.
 
 ## Goal
@@ -541,8 +541,8 @@ Then the plugins:
 10. **Structure** in `bedtime-code` (built).
 11. **Language servers** in `bedtime-code` (built): sync, diagnostics,
     go-to-definition through `open_path`, status.
-12. **Hover and completions**: the backend has them; the editor's popups and
-    menu come back.
+12. **Hover and completions** in `bedtime-code` (built). Requests never wait:
+    a server that can't answer now is an error now.
 13. Terminal.
 
 **One crate for code.** Editor, syntax, Structure and language servers depend

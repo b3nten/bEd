@@ -4,8 +4,9 @@
 use bedtime_code::{
     CodePlugin, EditorPanel,
     lsp::{
-        DocumentServer, LanguageServer, LanguageServers, ServerConfig, ServerStatus,
-        go_to_definition,
+        DocumentServer, Intelligence, LanguageQuery, LanguageServer, LanguageServers, QueryKind,
+        ServerConfig, ServerStatus, completion_context, go_to_definition, query_is_current,
+        request_query, take_query_answers,
     },
 };
 use bedtime_document::{BufferEdit, TextBuffer};
@@ -16,7 +17,7 @@ use bedtime_workbench::{
 use bevy::prelude::*;
 use std::{path::PathBuf, time::Duration};
 
-fn until(app: &mut App, what: &str, done: impl Fn(&mut World) -> bool) {
+fn until(app: &mut App, what: &str, mut done: impl FnMut(&mut World) -> bool) {
     for _ in 0..2000 {
         app.update();
         if done(app.world_mut()) {
@@ -103,6 +104,39 @@ fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
             .and_then(|server| server.diagnostics.as_ref())
             .is_some_and(|report| report.items().is_empty())
     });
+
+    // Hover and completion answer for the current revision. (This fixture's
+    // first hover is empty.)
+    let ask = |app: &mut App, query: LanguageQuery| {
+        let kind = query.kind();
+        let origin = request_query(app.world_mut(), panel, query).unwrap();
+        let mut answer = None;
+        until(app, "an answer", |world| {
+            answer = take_query_answers(world)
+                .into_iter()
+                .find(|answer| answer.origin == origin && answer.kind == kind)
+                .map(|answer| answer.result.unwrap());
+            answer.is_some()
+        });
+        answer.unwrap()
+    };
+    ask(&mut app, LanguageQuery::Hover { byte: 6 });
+    let Intelligence::Hover(Some(hover)) = ask(&mut app, LanguageQuery::Hover { byte: 6 }) else {
+        panic!("no hover");
+    };
+    assert!(hover.contents.text.contains("fn first()"));
+    let completion = LanguageQuery::Completion {
+        byte: 5,
+        context: completion_context(None, false),
+    };
+    let Intelligence::Completion(list) = ask(&mut app, completion) else {
+        panic!("no completions");
+    };
+    assert_eq!(list.items[0].label, "first");
+    // A newer query of the same kind replaces an older one.
+    let older = request_query(app.world_mut(), panel, LanguageQuery::Hover { byte: 6 }).unwrap();
+    request_query(app.world_mut(), panel, LanguageQuery::Hover { byte: 7 }).unwrap();
+    assert!(!query_is_current(app.world(), &older, QueryKind::Hover));
 
     // The definition is in another file: it opens.
     go_to_definition(app.world_mut(), panel, 0).unwrap();

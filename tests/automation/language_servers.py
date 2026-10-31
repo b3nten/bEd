@@ -1,6 +1,7 @@
 """Language servers: a Rust file in a Cargo project gets rust-analyzer. The
 status bar shows the server and the file's errors; Go to Definition opens the
-definition in another file. Needs rust-analyzer installed."""
+definition in another file; hovering a name shows its documentation; typing
+offers completions, and Enter accepts one. Needs rust-analyzer installed."""
 import shutil
 import tempfile
 import time
@@ -27,6 +28,10 @@ def until(bed, check, what, seconds=60):
             return
         bed.wait(10)
     raise AssertionError(f"never: {what}")
+
+
+def editor(bed):
+    return next(w for w in bed.widgets() if w["role"] == "TextInput")
 
 
 def row(bed, name):
@@ -62,4 +67,25 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: bed.exists("other.rs") and len(bed.find_all("other.rs")) == 2,
               "the definition opens", seconds=30)
         bed.screenshot("language-servers-definition")
+
+        # Back to main.rs. Hovering `helper` (line 4, column 13) shows it.
+        bed.click(max(bed.find_all("main.rs"), key=lambda widget: widget["rect"][0]))
+        until(bed, lambda: editor(bed)["focused"], "main.rs is focused")
+        x0, y0, x1, y1 = editor(bed)["rect"]
+        cell, line = 9.6, 20.5
+        bed.move(x0 + 8 + 14 * cell, y0 + 6 + 3.5 * line)
+        until(bed, lambda: bed.exists(contains="pub fn helper"), "the hover shows", seconds=20)
+        bed.screenshot("language-servers-hover")
+
+        # A new line typing `other::hel`: the menu offers `helper`; Enter takes it.
+        bed.click((x1 - 20, y0 + 6 + 3.5 * line))
+        bed.key("Enter")
+        # Typed as a person would: the word after `::` asks for completions.
+        bed.type("other::")
+        bed.type("hel")
+        until(bed, lambda: bed.exists("helper()"), "completions are offered", seconds=20)
+        bed.screenshot("language-servers-completion")
+        bed.key("Enter")
+        until(bed, lambda: (editor(bed).get("value") or "").count("other::helper()") == 2,
+              "the completion is inserted")
         assert not bed.status()["errors"], bed.status()["errors"]

@@ -32,7 +32,8 @@ impl Default for LanguageServers {
 #[derive(Component)]
 pub struct DocumentServer {
     file: PathBuf,
-    language: &'static str,
+    /// Syntax's name for its language.
+    pub language: &'static str,
     key: DocumentKey,
     /// The server's entity (a `LanguageServer`).
     pub server: Entity,
@@ -107,11 +108,9 @@ impl Action for RestartLanguageServer {
     const LABEL: &'static str = "Restart Language Server";
 }
 
-/// Go-to-definition requests waiting for the server to have their revision,
-/// and the latest one (only its answer is opened).
+/// The latest go-to-definition request: only its answer is opened.
 #[derive(Resource, Default)]
 struct Definitions {
-    waiting: Vec<(RequestOrigin, usize)>,
     latest: Option<RequestOrigin>,
     next_ticket: u64,
 }
@@ -128,6 +127,7 @@ impl Plugin for LanguageServersPlugin {
 fn install(app: &mut App) {
     app.init_resource::<LanguageServers>()
         .init_resource::<Definitions>()
+        .init_resource::<Queries>()
         .add_action_handler::<GoToDefinition>(
             Handler::new(go_to_definition_action).available_when(|world, panel| {
                 panel.is_some_and(|p| server_of(world, p).is_some())
@@ -164,9 +164,10 @@ fn restart_action(world: &mut World, invocation: ActionInvocation) -> ActionResu
     restart(world, server)
 }
 
-/// Ask the server of `panel`'s document where the symbol at `byte` is
-/// defined, and open it. A server that isn't ready is an error now, not later.
-pub fn go_to_definition(world: &mut World, panel: Entity, byte: usize) -> Result<(), String> {
+/// The server of `panel`'s document, if it can answer a question now: it's
+/// running, it isn't loading the project, and it has the document as it is
+/// (sent now if it hadn't yet). Otherwise why not: nothing waits.
+fn answering_server(world: &mut World, panel: Entity) -> Result<(Entity, RequestOrigin), String> {
     let document = world
         .get::<DocumentReference>(panel)
         .ok_or("No document is shown")?
@@ -181,29 +182,141 @@ pub fn go_to_definition(world: &mut World, panel: Entity, byte: usize) -> Result
     let connection = world
         .get::<DocumentServer>(document.entity())
         .ok_or("No language server is set up for this file")?;
-    let key = connection.key;
-    let server = world
-        .get::<LanguageServer>(connection.server)
+    let (server, key) = (connection.server, connection.key);
+    let state = world
+        .get::<LanguageServer>(server)
         .ok_or("The language server has stopped")?;
-    match server.status() {
+    let program = state.program().to_owned();
+    match state.status() {
         ServerStatus::Ready => {}
-        ServerStatus::Starting => return Err(format!("{} is starting", server.program())),
-        ServerStatus::Failed(error) => return Err(format!("{} failed: {error}", server.program())),
-        ServerStatus::Stopped => return Err(format!("{} has stopped", server.program())),
+        ServerStatus::Starting => return Err(format!("{program} is starting")),
+        ServerStatus::Failed(error) => return Err(format!("{program} failed: {error}")),
+        ServerStatus::Stopped => return Err(format!("{program} has stopped")),
     }
+    if state
+        .activity()
+        .project_status
+        .as_ref()
+        .is_some_and(|status| !status.quiescent)
+    {
+        return Err(format!("{program} is loading the project"));
+    }
+    send_revision(world, document.entity());
+    let connection = world.get::<DocumentServer>(document.entity()).unwrap();
+    if connection.revision != Some(info.revision) {
+        return Err(connection
+            .error
+            .clone()
+            .unwrap_or_else(|| format!("{program} doesn't have this text yet")));
+    }
+    Ok((
+        server,
+        RequestOrigin {
+            document: key,
+            revision: info.revision,
+            panel: panel.to_bits(),
+            ticket: 0,
+        },
+    ))
+}
+
+/// Ask the server of `panel`'s document where the symbol at `byte` is
+/// defined, and open it. A server that can't answer now is an error now.
+pub fn go_to_definition(world: &mut World, panel: Entity, byte: usize) -> Result<(), String> {
+    let (server, mut origin) = answering_server(world, panel)?;
     let mut definitions = world.resource_mut::<Definitions>();
     definitions.next_ticket += 1;
-    let origin = RequestOrigin {
-        document: key,
-        revision: info.revision,
-        panel: panel.to_bits(),
-        ticket: definitions.next_ticket,
-    };
-    // A newer request replaces an older one.
-    definitions.waiting.clear();
-    definitions.waiting.push((origin, byte));
+    origin.ticket = definitions.next_ticket;
+    // Only the latest request's answer is opened.
     definitions.latest = Some(origin);
+    world
+        .get::<LanguageServer>(server)
+        .unwrap()
+        .handle
+        .definition(origin, byte)?;
     Ok(())
+}
+
+/// Each editor's latest hover, completion and resolve request, and the
+/// answers not taken yet.
+#[derive(Resource, Default)]
+struct Queries {
+    latest: HashMap<(Entity, QueryKind), RequestOrigin>,
+    answers: Vec<QueryAnswer>,
+    next_ticket: u64,
+}
+
+/// A server's answer to a query.
+pub struct QueryAnswer {
+    pub origin: RequestOrigin,
+    pub kind: QueryKind,
+    pub result: Result<Intelligence, String>,
+}
+
+/// What the server of `panel`'s document can do and is doing, while it's ready.
+pub fn language_activity(world: &World, panel: Entity) -> Option<Arc<ServerActivity>> {
+    let server = world.get::<LanguageServer>(server_of(world, panel)?)?;
+    (server.status() == ServerStatus::Ready).then(|| server.activity())
+}
+
+/// Ask `panel`'s server a question about its document as it is now; an
+/// error if it can't answer now. It replaces that editor's previous query of
+/// the same kind.
+pub fn request_query(
+    world: &mut World,
+    panel: Entity,
+    query: LanguageQuery,
+) -> Result<RequestOrigin, String> {
+    let (server, mut origin) = answering_server(world, panel)?;
+    let kind = query.kind();
+    let mut queries = world.resource_mut::<Queries>();
+    queries.next_ticket += 1;
+    origin.ticket = queries.next_ticket;
+    queries.latest.insert((panel, kind), origin);
+    world
+        .get::<LanguageServer>(server)
+        .unwrap()
+        .handle
+        .query(origin, query)?;
+    Ok(origin)
+}
+
+/// Forget `panel`'s query of `kind`, and tell the server.
+pub fn cancel_query(world: &mut World, panel: Entity, kind: QueryKind) {
+    let mut queries = world.resource_mut::<Queries>();
+    queries.latest.remove(&(panel, kind));
+    if let Some(server) = server_of(world, panel).and_then(|s| world.get::<LanguageServer>(s)) {
+        let _ = server.handle.cancel_query(panel.to_bits(), kind);
+    }
+}
+
+/// Whether `origin` is still its editor's latest query of `kind`, for the
+/// document as it is now.
+pub fn query_is_current(world: &World, origin: &RequestOrigin, kind: QueryKind) -> bool {
+    let Some(panel) = Entity::try_from_bits(origin.panel) else {
+        return false;
+    };
+    world.resource::<Queries>().latest.get(&(panel, kind)) == Some(origin)
+        && document_is_at(world, panel, origin)
+}
+
+/// `panel` still shows the document `origin` asked about, at its revision.
+fn document_is_at(world: &World, panel: Entity, origin: &RequestOrigin) -> bool {
+    let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document()) else {
+        return false;
+    };
+    world
+        .get::<DocumentServer>(document.entity())
+        .is_some_and(|connection| connection.key == origin.document)
+        && world
+            .workbench()
+            .inspect_document(document)
+            .is_ok_and(|info| info.revision == origin.revision && !info.has_drafts)
+}
+
+/// The answers that arrived since last taken.
+pub fn take_query_answers(world: &mut World) -> Vec<QueryAnswer> {
+    std::mem::take(&mut world.resource_mut::<Queries>().answers)
 }
 
 /// Restart a server (it shuts down, then starts again for its documents).
@@ -250,7 +363,7 @@ fn update(world: &mut World, mut saves: Local<MessageCursor<DocumentSaveFinished
     receive(world);
     disconnect(world, &shown);
     connect_and_sync(world, &shown);
-    send_definitions(world);
+    forget_stale_queries(world);
     // Servers check saved files (rust-analyzer runs `cargo check`). Only a
     // document with nothing unsaved has its saved text in memory.
     let saved: Vec<DocumentId> = saves
@@ -356,8 +469,26 @@ fn receive(world: &mut World) {
                         open_definition(world, result);
                     }
                 }
-                // Hover and completion come with their UI.
-                super::Event::Intelligence { .. } => {}
+                super::Event::Intelligence {
+                    origin,
+                    kind,
+                    result,
+                } => {
+                    if query_is_current(world, &origin, kind) {
+                        let answer = QueryAnswer {
+                            origin,
+                            kind,
+                            result,
+                        };
+                        // The editor's own queries go straight to it.
+                        match Entity::try_from_bits(origin.panel) {
+                            Some(panel) if super::assist::assists(world, panel) => {
+                                super::assist::accept(world, answer)
+                            }
+                            _ => world.resource_mut::<Queries>().answers.push(answer),
+                        }
+                    }
+                }
             }
         }
     }
@@ -443,13 +574,11 @@ fn connect_and_sync(world: &mut World, shown: &HashMap<Entity, (PathBuf, &'stati
     for (&document, (file, language)) in shown {
         let id = DocumentId(document);
         let workbench = world.workbench();
-        let (Ok(handle), Ok(info)) = (
-            workbench.cast_document::<TextBuffer>(id),
-            workbench.inspect_document(id),
-        ) else {
-            continue;
-        };
-        if info.status != bedtime_workbench::DocumentStatus::Ready {
+        let ready = workbench.cast_document::<TextBuffer>(id).is_ok()
+            && workbench
+                .inspect_document(id)
+                .is_ok_and(|info| info.status == bedtime_workbench::DocumentStatus::Ready);
+        if !ready {
             continue;
         }
         if world.get::<DocumentServer>(document).is_none() {
@@ -474,44 +603,56 @@ fn connect_and_sync(world: &mut World, shown: &HashMap<Entity, (PathBuf, &'stati
                 error: None,
             });
         }
-        let connection = world.get::<DocumentServer>(document).unwrap();
-        if connection.revision == Some(info.revision) {
-            continue;
-        }
-        let (server, key, base) = (connection.server, connection.key, connection.revision);
-        let workbench = world.workbench();
-        let text = workbench.read_document(handle).unwrap().clone();
-        if text.len() > MAX_SOURCE_BYTES {
-            let mut connection = world.get_mut::<DocumentServer>(document).unwrap();
-            connection.error = Some("Language servers see files up to 8 MiB".into());
-            connection.diagnostics = None;
-            connection.revision = Some(info.revision);
-            continue;
-        }
-        let changes = base.and_then(|base| {
-            let commits = workbench.document_changes_since(handle, base).ok()??;
-            let edits: Vec<BufferEdit> = commits
-                .into_iter()
-                .map(|commit| commit.changes)
-                .collect::<Option<Vec<_>>>()?
-                .into_iter()
-                .flatten()
-                .collect();
-            // A huge batch is cheaper sent whole.
-            (edits.len() <= 4096
-                && edits.iter().map(|e| e.replacement().len()).sum::<usize>() <= MAX_SOURCE_BYTES)
-                .then_some((base, edits))
-        });
-        let uri = match FileUri::from_path(file) {
-            Ok(uri) => uri,
-            Err(error) => {
-                world.get_mut::<DocumentServer>(document).unwrap().error = Some(error);
-                continue;
-            }
-        };
-        let result = world
+        send_revision(world, document);
+    }
+}
+
+/// Bring the server's copy of `document` up to date: its changes since the
+/// last revision sent when they're all known, else the whole text. Problems
+/// are kept on the connection (`error`).
+fn send_revision(world: &mut World, document: Entity) {
+    let id = DocumentId(document);
+    let workbench = world.workbench();
+    let (Ok(handle), Ok(info)) = (
+        workbench.cast_document::<TextBuffer>(id),
+        workbench.inspect_document(id),
+    ) else {
+        return;
+    };
+    let Some(connection) = world.get::<DocumentServer>(document) else {
+        return;
+    };
+    if connection.revision == Some(info.revision) {
+        return;
+    }
+    let (server, key, base) = (connection.server, connection.key, connection.revision);
+    let (file, language) = (connection.file.clone(), connection.language);
+    let text = workbench.read_document(handle).unwrap().clone();
+    if text.len() > MAX_SOURCE_BYTES {
+        let mut connection = world.get_mut::<DocumentServer>(document).unwrap();
+        connection.error = Some("Language servers see files up to 8 MiB".into());
+        connection.diagnostics = None;
+        connection.revision = Some(info.revision);
+        return;
+    }
+    let changes = base.and_then(|base| {
+        let commits = workbench.document_changes_since(handle, base).ok()??;
+        let edits: Vec<BufferEdit> = commits
+            .into_iter()
+            .map(|commit| commit.changes)
+            .collect::<Option<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        // A huge batch is cheaper sent whole.
+        (edits.len() <= 4096
+            && edits.iter().map(|e| e.replacement().len()).sum::<usize>() <= MAX_SOURCE_BYTES)
+            .then_some((base, edits))
+    });
+    let result = FileUri::from_path(&file).and_then(|uri| {
+        world
             .get::<LanguageServer>(server)
-            .unwrap()
+            .ok_or_else(|| "The language server has stopped".to_owned())?
             .handle
             .update(DocumentUpdate {
                 key,
@@ -520,22 +661,20 @@ fn connect_and_sync(world: &mut World, shown: &HashMap<Entity, (PathBuf, &'stati
                 revision: info.revision,
                 text,
                 changes,
-            });
-        if result.is_ok() {
-            world
-                .get_mut::<LanguageServer>(server)
-                .unwrap()
-                .documents
-                .insert(key);
+            })
+    });
+    if result.is_ok()
+        && let Some(mut server) = world.get_mut::<LanguageServer>(server)
+    {
+        server.documents.insert(key);
+    }
+    let mut connection = world.get_mut::<DocumentServer>(document).unwrap();
+    match result {
+        Ok(()) => {
+            connection.revision = Some(info.revision);
+            connection.error = None;
         }
-        let mut connection = world.get_mut::<DocumentServer>(document).unwrap();
-        match result {
-            Ok(()) => {
-                connection.revision = Some(info.revision);
-                connection.error = None;
-            }
-            Err(error) => connection.error = Some(error),
-        }
+        Err(error) => connection.error = Some(error),
     }
 }
 
@@ -584,40 +723,18 @@ fn protocol_language(language: &str) -> &str {
     }
 }
 
-/// Send waiting go-to-definition requests once the server has their revision.
-fn send_definitions(world: &mut World) {
-    let waiting = std::mem::take(&mut world.resource_mut::<Definitions>().waiting);
-    for (origin, byte) in waiting {
-        if world.resource::<Definitions>().latest != Some(origin) {
-            continue;
-        }
-        let Some(document) = Entity::try_from_bits(origin.document.id) else {
-            continue;
-        };
-        let Some(connection) = world
-            .get::<DocumentServer>(document)
-            .filter(|connection| connection.key == origin.document)
-        else {
-            continue;
-        };
-        if connection.revision != Some(origin.revision) {
-            // Edited since: the request is stale.
-            if connection.revision > Some(origin.revision) {
-                continue;
-            }
-            world
-                .resource_mut::<Definitions>()
-                .waiting
-                .push((origin, byte));
-            continue;
-        }
-        let server = connection.server;
-        if let Some(server) = world.get::<LanguageServer>(server)
-            && let Err(error) = server.handle.definition(origin, byte)
-        {
-            world
-                .workbench_mut()
-                .notify(Notification::warning(format!("Go to Definition: {error}")));
-        }
+/// Forget (and cancel) queries about text that has changed since.
+fn forget_stale_queries(world: &mut World) {
+    let stale: Vec<(Entity, QueryKind)> = {
+        let queries = world.resource::<Queries>();
+        queries
+            .latest
+            .iter()
+            .filter(|((panel, _), origin)| !document_is_at(world, *panel, origin))
+            .map(|(key, _)| *key)
+            .collect()
+    };
+    for (panel, kind) in stale {
+        cancel_query(world, panel, kind);
     }
 }
