@@ -286,6 +286,8 @@ class Bed:
         self.input(*steps)
 
     def type(self, text):
+        """Type printable text. egui drops text with control characters, so
+        press Enter or Tab with `key`."""
         self.input({"text": text})
 
     def scroll(self, dy, dx=0, at=None):

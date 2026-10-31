@@ -282,3 +282,67 @@ impl Geometry<'_> {
         self.text.column(byte).saturating_sub(segment.columns.start) + segment.indent
     }
 }
+
+impl VisibleLine {
+    pub fn apply_syntax(
+        &mut self,
+        ui: &egui::Ui,
+        metrics: &Metrics,
+        observation: &crate::syntax::Observation,
+        changes: &[crate::editor::TextDelta],
+        palette: &crate::editor::syntax::SyntaxPalette,
+    ) {
+        let spans =
+            crate::editor::syntax::mapped_highlights(observation, changes, self.start..self.end);
+        if spans.is_empty() {
+            return;
+        }
+        let mut job = (*self.galley.job).clone();
+        let offsets: Vec<usize> = job
+            .text
+            .char_indices()
+            .map(|(i, _)| i)
+            .chain(std::iter::once(job.text.len()))
+            .collect();
+        let display_byte = |source| {
+            let index = self
+                .carets
+                .partition_point(|(at, _)| *at < source)
+                .min(self.carets.len() - 1);
+            offsets[self.carets[index].1]
+        };
+        job.sections.clear();
+        let normal = ui.visuals().text_color();
+        let mut start = 0;
+        for span in &spans {
+            let from = display_byte(span.range.start.max(self.start));
+            let to = display_byte(span.range.end.min(self.end));
+            if from > start {
+                job.sections.push(egui::text::LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: egui::text::ByteIndex(start)..egui::text::ByteIndex(from),
+                    format: egui::TextFormat::simple(metrics.font.clone(), normal),
+                });
+            }
+            if to > from {
+                job.sections.push(egui::text::LayoutSection {
+                    leading_space: 0.0,
+                    byte_range: egui::text::ByteIndex(from)..egui::text::ByteIndex(to),
+                    format: egui::TextFormat::simple(
+                        metrics.font.clone(),
+                        palette.color(&span.capture, normal),
+                    ),
+                });
+            }
+            start = to;
+        }
+        if start < job.text.len() {
+            job.sections.push(egui::text::LayoutSection {
+                leading_space: 0.0,
+                byte_range: egui::text::ByteIndex(start)..egui::text::ByteIndex(job.text.len()),
+                format: egui::TextFormat::simple(metrics.font.clone(), normal),
+            });
+        }
+        self.galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    }
+}

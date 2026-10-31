@@ -1,9 +1,9 @@
 # Architecture: the bedtime crates
 
-Status (2026-10-30): **migration steps 1–8 built** (persistence, settings,
+Status (2026-10-31): **migration steps 1–9 built** (persistence, settings,
 actions and work, menus, layouts and chrome, the framework, opening with
-`bedtime-filesystem` and a first `bedtime-filetree`, the editor in
-`bedtime-code`); syntax, Structure and language servers are next.
+`bedtime-filesystem` and a first `bedtime-filetree`, the editor and syntax in
+`bedtime-code`); Structure and language servers are next.
 Update this file as decisions change.
 
 ## Goal
@@ -41,7 +41,8 @@ bed is one app on top: policy only.
 | `bedtime-filesystem` | document | File sources and change watching (ported from bedtime_old) |
 | `bedtime-workbench` | all of the above | The framework |
 | `bedtime-filetree` | workbench, filesystem | The file tree panel (first plugin) |
-| `bedtime-code` | workbench, filesystem | Code editing: the editor, then syntax, Structure and language servers as modules |
+| `bedtime-code` | workbench, filesystem, grammars | Code editing: the editor and syntax, then Structure and language servers as modules |
+| `bedtime-grammars` | — | Bundled tree-sitter grammars (compiled C) |
 | `bedtime-automation` | ui | Driving an app from scripts (exists) |
 | `bedtime` | — | Re-exports the others behind features, as `bevy` does |
 
@@ -534,10 +535,10 @@ Then the plugins:
 
 8. **The editor** in `bedtime-code` (built): the old editor without its
    standalone `TextSession` host, diff, syntax, diagnostics or completions.
-9. **Syntax** (tree-sitter highlighting and folds), **Structure** and
-   **language servers**, as modules of `bedtime-code`; grammars stay their own
-   crate.
-10. Terminal.
+9. **Syntax** in `bedtime-code` (built): tree-sitter analysis per document,
+   highlighting and folds in the editor; `bedtime-grammars` its own crate.
+10. **Structure** and **language servers**, as modules of `bedtime-code`.
+11. Terminal.
 
 **One crate for code.** Editor, syntax, Structure and language servers depend
 on each other anyway (Structure reads the syntax tree and moves the editor;

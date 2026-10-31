@@ -13,7 +13,8 @@ use bedtime_workbench::{
 };
 use bevy::prelude::*;
 
-/// Registers the editor as the default viewer for text files.
+/// Registers the editor as the default viewer for text files, and analyses
+/// the documents editors show.
 pub struct CodePlugin;
 
 impl Plugin for CodePlugin {
@@ -22,7 +23,8 @@ impl Plugin for CodePlugin {
             .register_opener(
                 Opener::<TextBuffer>::new::<EditorPanel>("Text Editor").files(text_fit),
             )
-            .register_default_opener::<EditorPanel>();
+            .register_default_opener::<EditorPanel>()
+            .add_systems(Update, crate::syntax::update_syntax);
     }
 }
 
@@ -135,6 +137,12 @@ fn draw(
         };
     }
     editor.view.settings.read_only = !info.writable;
+    editor.view.has_syntax = crate::syntax::language_name(&info.title).is_some();
+    match world.get::<crate::syntax::DocumentSyntax>(document.entity()) {
+        Some(syntax) => editor.view.set_analysis(&syntax.session),
+        None => editor.view.set_syntax(None),
+    }
+    editor.view.syntax_palette = syntax::SyntaxPalette::from_theme(context.theme);
     // Keyboard focus follows the panel's: the text takes it when the panel
     // becomes focused, and gives it up when another panel is.
     let focused = world

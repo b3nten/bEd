@@ -7,6 +7,7 @@ mod caret;
 mod folding;
 mod search;
 mod search_ui;
+pub mod syntax;
 mod whitespace;
 mod wrapping;
 pub use search::SearchQuery;
@@ -101,6 +102,15 @@ struct Composition {
 pub struct EditorView {
     pub settings: EditorSettings,
     folding: folding::Folding,
+    /// Whether the text has a language: reserves the fold column before its
+    /// first analysis arrives, so text doesn't shift.
+    pub has_syntax: bool,
+    /// The current analysis (folds, outline) and the one colours come from,
+    /// which may be older while a new one runs.
+    syntax: Option<std::sync::Arc<crate::syntax::Observation>>,
+    syntax_identity: Option<(u64, u64)>,
+    syntax_highlights: Option<std::sync::Arc<crate::syntax::Observation>>,
+    pub syntax_palette: syntax::SyntaxPalette,
     selection: TextSelection,
     observed_revision: Option<u64>,
     navigation: Option<Navigation>,
@@ -504,6 +514,8 @@ impl EditorView {
         } else {
             0.0
         };
+        let fold_gutter = self.has_syntax;
+        let gutter_width = gutter_width + if fold_gutter { 14.0 } else { 0.0 };
         let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
         let wheel = if hovered {
             let delta = ui.input(|i| {
@@ -746,6 +758,12 @@ impl EditorView {
                         if let Some((range, _)) = &reveal {
                             self.folding.reveal(&snapshot.text, range);
                         }
+                        let highlight_changes = self
+                            .highlight_changes(session, &snapshot)
+                            .unwrap_or_else(|error| {
+                                failure = Some(error);
+                                None
+                            });
                         let active_wrap = self.wrapping.index.as_ref().filter(|index| {
                             wrap_width.is_some() && index.snapshot.revision == snapshot.revision
                         });
@@ -812,7 +830,18 @@ impl EditorView {
                         let caret_row = geometry.visual_row_for(selection.head, self.upstream);
                         for row in first..last {
                             let segment = geometry.segment(row);
-                            let line = geometry.line(ui, row, first_cell..last_cell);
+                            let mut line = geometry.line(ui, row, first_cell..last_cell);
+                            if let (Some(observation), Some(changes)) =
+                                (&self.syntax_highlights, &highlight_changes)
+                            {
+                                line.apply_syntax(
+                                    ui,
+                                    &metrics,
+                                    observation,
+                                    changes,
+                                    &self.syntax_palette,
+                                );
+                            }
                             laid_out_bytes += line.source_bytes;
                             rendered_lines += 1;
                             let y = origin.y + 6.0 + geometry.row_y(row) * metrics.height;
@@ -933,19 +962,17 @@ impl EditorView {
                             }
                         }
                         caret_rect = local_caret.translate(origin.to_vec2());
-                        // Screen readers and scripts see the visible lines.
-                        if first < last {
-                            let visible = geometry.segment(first).bytes.start
-                                ..geometry.segment(last - 1).bytes.end;
-                            response.widget_info(|| {
-                                egui::WidgetInfo::text_edit(
-                                    ui.is_enabled(),
-                                    "",
-                                    display.slice(visible.clone()).to_string(),
-                                    "",
-                                )
-                            });
-                        }
+                        // Screen readers and scripts see the visible rows.
+                        response.widget_info(|| {
+                            let visible: Vec<String> = (first..last)
+                                .map(|row| {
+                                    let text =
+                                        display.slice(geometry.segment(row).bytes).to_string();
+                                    text.trim_end_matches(['\n', '\r']).to_owned()
+                                })
+                                .collect();
+                            egui::WidgetInfo::text_edit(ui.is_enabled(), "", visible.join("\n"), "")
+                        });
                         if wrapped != self.wrap_active && reveal.is_none() {
                             reveal = self
                                 .wrap_reveal
@@ -1011,7 +1038,7 @@ impl EditorView {
         }
         self.scroll = scroll.state.offset;
         self.observed_revision = Some(snapshot.revision);
-        if self.settings.line_numbers {
+        if self.settings.line_numbers || fold_gutter {
             let painter = ui
                 .painter()
                 .with_clip_rect(gutter.intersect(ui.clip_rect()));
@@ -1020,9 +1047,56 @@ impl EditorView {
                     egui::pos2(gutter.left(), y),
                     egui::pos2(gutter.right(), y + height),
                 )));
+                // A disclosure triangle where a fold starts.
+                if fold_gutter
+                    && (self.folding.collapsed_at(&snapshot.text, row)
+                        || self.syntax.as_ref().is_some_and(|o| {
+                            o.key.revision == snapshot.revision
+                                && o.folds.binary_search_by_key(&row, |f| f.start_line).is_ok()
+                        }))
+                {
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(gutter.right() - 14.0, y),
+                        egui::vec2(14.0, metrics.height),
+                    );
+                    bedtime_ui::paint_chevron(
+                        &painter,
+                        rect.center(),
+                        self.folding.openness(&snapshot.text, row, now),
+                        ui.visuals().weak_text_color(),
+                    );
+                    let toggle = ui.interact(
+                        rect.intersect(painter.clip_rect()),
+                        id.with(("fold", row)),
+                        egui::Sense::click(),
+                    );
+                    let collapsed = self.folding.collapsed_at(&snapshot.text, row);
+                    toggle.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            true,
+                            format!(
+                                "{} line {}",
+                                if collapsed { "Unfold" } else { "Fold" },
+                                row + 1
+                            ),
+                        )
+                    });
+                    if toggle.clicked() {
+                        if let Err(error) = self.toggle_fold(&snapshot, row) {
+                            failure = Some(error);
+                        }
+                        // The arrow isn't somewhere to type: the text keeps focus.
+                        ui.memory_mut(|memory| memory.request_focus(id));
+                        ui.ctx().request_repaint();
+                    }
+                }
                 if self.settings.line_numbers {
                     painter.text(
-                        egui::pos2(gutter.right() - 10.0, y),
+                        egui::pos2(
+                            gutter.right() - 3.0 - if fold_gutter { 14.0 } else { 7.0 },
+                            y,
+                        ),
                         egui::Align2::RIGHT_TOP,
                         (row + 1).to_string(),
                         metrics.font.clone(),
@@ -1567,3 +1641,6 @@ mod tests;
 
 #[cfg(test)]
 mod everyday_tests;
+
+#[cfg(test)]
+mod syntax_tests;

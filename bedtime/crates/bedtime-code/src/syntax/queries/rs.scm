@@ -1,0 +1,14 @@
+(mod_item name: (_) @name) @outline.module
+(struct_item name: (_) @name) @outline.type
+(enum_item name: (_) @name) @outline.type
+(union_item name: (_) @name) @outline.type
+(trait_item name: (_) @name) @outline.trait
+(impl_item type: (_) @name) @outline.impl
+(type_item name: (_) @name) @outline.type
+(function_item name: (_) @name) @outline.function
+(function_signature_item name: (_) @name) @outline.method
+(field_declaration name: (_) @name) @outline.field
+(enum_variant name: (_) @name) @outline.variant
+(const_item name: (_) @name) @outline.constant
+(static_item name: (_) @name) @outline.constant
+(macro_definition name: (_) @name) @outline.macro

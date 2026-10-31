@@ -12,6 +12,7 @@ members = [
     "bedtime/crates/bedtime-actions",
     "bedtime/crates/bedtime-filesystem",
     "bedtime/crates/bedtime-filetree",
+    "bedtime/crates/bedtime-grammars",
     "bedtime/crates/bedtime-menus",
     "bedtime/crates/bedtime-work",
     "bedtime/crates/bedtime",
@@ -41,6 +42,7 @@ bedtime-settings = { path = "bedtime/crates/bedtime-settings" }
 bedtime-actions = { path = "bedtime/crates/bedtime-actions" }
 bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
 bedtime-filetree = { path = "bedtime/crates/bedtime-filetree" }
+bedtime-grammars = { path = "bedtime/crates/bedtime-grammars" }
 bedtime-menus = { path = "bedtime/crates/bedtime-menus" }
 bedtime-work = { path = "bedtime/crates/bedtime-work" }
 bedtime-workbench = { path = "bedtime/crates/bedtime-workbench" }

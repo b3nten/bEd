@@ -1,6 +1,6 @@
 //! Sparse hidden-row intervals over the same wrapping geometry used everywhere.
 //! Cost depends on collapsed regions, never the number of document lines.
-use crate::editor::{EditorView, TextBuffer, TextDelta, TextSnapshot};
+use crate::editor::{EditorError, EditorView, TextBuffer, TextDelta, TextSnapshot};
 use std::ops::Range;
 
 #[derive(Default)]
@@ -300,6 +300,19 @@ impl Folding {
         }
     }
 
+    pub fn openness(&self, text: &TextBuffer, line: usize, now: f64) -> f32 {
+        self.motions
+            .values()
+            .find(|m| text.line_of(m.range.start) == line)
+            .map_or(
+                if self.collapsed_at(text, line) {
+                    0.0
+                } else {
+                    1.0
+                },
+                |m| m.value(now),
+            )
+    }
     pub fn reveal(&mut self, text: &TextBuffer, target: &Range<usize>) {
         let before = self.collapsed.len();
         self.collapsed.retain(|r| {
@@ -328,5 +341,68 @@ impl EditorView {
     }
     pub fn collapsed_regions(&self) -> &[Range<usize>] {
         &self.folding.collapsed
+    }
+    pub fn toggle_fold(&mut self, snapshot: &TextSnapshot, line: usize) -> Result<(), EditorError> {
+        if self.is_composing() {
+            return Err(EditorError("Finish composition before folding".into()));
+        }
+        self.folding.map_key = None;
+        if let Some(index) = self
+            .folding
+            .collapsed
+            .iter()
+            .position(|r| snapshot.text.line_of(r.start) == line)
+        {
+            self.folding.collapsed.remove(index);
+            return Ok(());
+        }
+        let region = self
+            .syntax
+            .as_ref()
+            .filter(|o| o.key.revision == snapshot.revision)
+            .and_then(|o| {
+                o.folds
+                    .binary_search_by_key(&line, |f| f.start_line)
+                    .ok()
+                    .map(|index| &o.folds[index])
+            })
+            .ok_or_else(|| EditorError("No current fold at this line".into()))?;
+        self.folding.collapsed.push(region.range.clone());
+        self.folding
+            .collapsed
+            .sort_by_key(|r| (r.start, std::cmp::Reverse(r.end)));
+        if snapshot.text.line_of(self.selection.head) > line
+            && self.selection.head < snapshot.text.line_start(region.end_line + 1)
+        {
+            self.selection = crate::editor::TextSelection::caret(
+                &snapshot.text,
+                snapshot.text.line_range(line).end,
+            )?;
+        }
+        Ok(())
+    }
+    pub fn fold_all(&mut self, snapshot: &TextSnapshot) -> Result<(), EditorError> {
+        if self.is_composing() {
+            return Err(EditorError("Finish composition before folding".into()));
+        }
+        let observation = self
+            .syntax
+            .as_ref()
+            .filter(|o| o.key.revision == snapshot.revision)
+            .ok_or_else(|| EditorError("No current syntax observation".into()))?;
+        let head = self.selection.head;
+        let containing = observation.folds.iter().find(|f| {
+            snapshot.text.line_of(head) > f.start_line
+                && head < snapshot.text.line_start(f.end_line + 1)
+        });
+        if let Some(region) = containing {
+            self.selection = crate::editor::TextSelection::caret(
+                &snapshot.text,
+                snapshot.text.line_range(region.start_line).end,
+            )?;
+        }
+        self.folding.collapsed = observation.folds.iter().map(|f| f.range.clone()).collect();
+        self.folding.map_key = None;
+        Ok(())
     }
 }

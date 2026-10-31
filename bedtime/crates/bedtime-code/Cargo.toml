@@ -14,8 +14,12 @@ persistence = ["bedtime-workbench/persistence"]
 [dependencies]
 bedtime-document.workspace = true
 bedtime-filesystem.workspace = true
+bedtime-grammars.workspace = true
 bedtime-ui.workspace = true
 bedtime-workbench = { workspace = true, features = ["files"] }
 bevy = { workspace = true, features = ["std"] }
 unicode-segmentation = "=1.13.3"
 unicode-width.workspace = true
+serde_json.workspace = true
+# Use one pinned native runtime: Cargo permits only one links=tree-sitter.
+tree-sitter = { package = "arborium-tree-sitter", version = "=2.18.2" }

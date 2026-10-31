@@ -1,6 +1,6 @@
 # Project context
 
-Last updated: 2026-10-30. Keep this file short and current. Update the step log
+Last updated: 2026-10-31. Keep this file short and current. Update the step log
 and open questions as work proceeds; delete anything that turns out to be wrong.
 
 ## Goal
@@ -283,6 +283,17 @@ Each step should produce a usable app. We can reorder at any point.
   trait is `UiComponent`; `OnSurface` is `InSurface`; bed's `Appearance`
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
+
+- **Architecture step 9: syntax**, 2026-10-31, awaiting review.
+  `bedtime-grammars` back as is (30 grammars, ~25 s clean build). The old
+  `bedtime-treesitter` is `bedtime_code::syntax`; `DocumentSyntax` (one
+  session and worker per document an editor shows, language from the title)
+  replaces the old `CodeLanguage`/`DocumentAnalysis` attachments, and the
+  editor reads it directly: colours from the theme, the fold column and
+  fold commands. Fold arrows are labelled for accessibility, and the editor's
+  accessibility value is its visible rows (folded lines excluded).
+  `tests/automation/syntax.py`. Automation's `type` can't send newlines; use
+  `key("Enter")`.
 
 - **Architecture step 8: the editor**, 2026-10-30, awaiting review.
   `bedtime-code` (one crate for code: the editor now, syntax, Structure and
