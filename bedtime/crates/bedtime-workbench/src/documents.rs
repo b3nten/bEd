@@ -636,7 +636,26 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(
             PreUpdate,
             poll_documents.before(crate::SessionSystems::Prepare),
-        );
+        )
+        .add_systems(Update, title_document_panels);
+}
+
+/// A panel showing a document is titled after it, including when the file
+/// it's in is renamed or moved (and the panel isn't drawn: a tab behind
+/// another).
+fn title_document_panels(
+    mut panels: Query<(&mut PanelInstance, &DocumentReference)>,
+    documents: Query<&Document>,
+) {
+    for (mut instance, reference) in &mut panels {
+        let Ok(document) = documents.get(reference.document().0) else {
+            continue;
+        };
+        let title = document.title();
+        if instance.title != title {
+            instance.title = title;
+        }
+    }
 }
 
 fn mark_referenced(

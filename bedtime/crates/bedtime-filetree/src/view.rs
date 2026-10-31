@@ -1,7 +1,7 @@
 //! Drawing the tree. Drawing only reads; what the user asks for comes back as
 //! intents, applied after.
 use crate::{FileTree, Folders, Row, TreeView, refresh_rows};
-use bedtime_filesystem::EntryKind;
+use bedtime_filesystem::{EntryKind, operations::Operation};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 use bedtime_workbench::{
     LayoutsWorldExt, Notification, OpenerId, Panel, PanelPresentation, PathOptions,
@@ -18,7 +18,7 @@ impl Panel for FileTree {
 }
 
 /// What the user asked for.
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum Intent {
     Toggle(PathBuf),
     Open {
@@ -27,6 +27,93 @@ pub(crate) enum Intent {
         opener: Option<OpenerId>,
     },
     Refresh,
+    Operation(Operation),
+    Copy {
+        paths: Vec<PathBuf>,
+        cut: bool,
+    },
+    Paste(PathBuf),
+}
+
+/// A name being typed: for a new file or folder (in a folder), or a rename.
+#[derive(Clone, Debug)]
+pub(crate) struct Naming {
+    kind: NameKind,
+    text: String,
+    /// Selected the name (its stem, for a rename) on the first frame.
+    started: bool,
+}
+
+#[derive(Clone, Debug)]
+enum NameKind {
+    NewFile(PathBuf),
+    NewFolder(PathBuf),
+    Rename(PathBuf),
+}
+
+impl Naming {
+    fn new(kind: NameKind) -> Self {
+        let text = match &kind {
+            NameKind::Rename(path) => path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
+        Self {
+            kind,
+            text,
+            started: false,
+        }
+    }
+
+    /// The row it's typed at: the renamed one, or the folder it goes in.
+    fn row(&self) -> &Path {
+        match &self.kind {
+            NameKind::NewFile(folder) | NameKind::NewFolder(folder) => folder,
+            NameKind::Rename(path) => path,
+        }
+    }
+
+    fn operation(&self) -> Option<Operation> {
+        let name = self.text.trim();
+        if name.is_empty() {
+            return None;
+        }
+        let name = std::ffi::OsString::from(name);
+        Some(match &self.kind {
+            NameKind::NewFile(directory) => Operation::CreateFile {
+                directory: directory.clone(),
+                name,
+            },
+            NameKind::NewFolder(directory) => Operation::CreateDirectory {
+                directory: directory.clone(),
+                name,
+            },
+            NameKind::Rename(path) => Operation::Rename {
+                path: path.clone(),
+                name,
+            },
+        })
+    }
+}
+
+/// What a drag from the tree carries, besides opening a file where it's
+/// dropped on the layout.
+struct TreeDrag {
+    paths: Vec<PathBuf>,
+}
+
+/// The folder something goes in, from the row it's at: the folder itself,
+/// or a file's folder.
+fn folder_of(row: &Row) -> PathBuf {
+    if row.kind == EntryKind::Directory {
+        row.path.clone()
+    } else {
+        row.path
+            .parent()
+            .map_or_else(|| row.path.clone(), Path::to_owned)
+    }
 }
 
 fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
@@ -60,6 +147,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         && ctx.memory(|memory| memory.top_modal_layer().is_none())
     {
         keyboard(ui, &mut view, tree::row_height(context), &mut intents);
+        editing_keys(ui, &mut view, &root, &mut intents);
     }
 
     if let Some(error) = world.resource::<Folders>().watch_error() {
@@ -89,9 +177,21 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         }
     }
     let rows = view.rows.clone();
+    // The empty space (under rows, which take clicks first): a menu for the root.
+    let whole = ui.available_rect_before_wrap();
+    let background = ui.interact(
+        whole,
+        egui::Id::new((panel, "background")),
+        egui::Sense::click(),
+    );
+    background.context_menu(|ui| {
+        folder_menu(ui, &root, &mut view.naming, &mut intents);
+    });
+    let mut row_rects: Vec<(usize, egui::Rect)> = Vec::new();
     ui.spacing_mut().item_spacing.y = 0.0;
     let output = scroll.show_rows(ui, height, rows.len(), |ui, range| {
-        for row in &rows[range] {
+        let first = range.start;
+        for (offset, row) in rows[range].iter().enumerate() {
             let (rect, _) = ui.allocate_exact_size(
                 egui::vec2(ui.available_width(), height),
                 egui::Sense::hover(),
@@ -101,13 +201,25 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
                 egui::Id::new((panel, &row.path)),
                 egui::Sense::click_and_drag(),
             );
-            // Drag a file onto the layout to open it there (an area, beside
-            // a tab, a new split), if something here can open it.
-            if response.drag_started()
-                && row.kind != EntryKind::Directory
-                && !world.workbench().openers_for(&row.path).is_empty()
-            {
-                bedtime_workbench::panel_drag_source(&response, open_factory(row.path.clone()));
+            row_rects.push((first + offset, rect));
+            // Drag onto a folder in the tree to move it there; onto the layout
+            // to open a file there (an area, beside a tab, a new split).
+            if response.drag_started() && row.depth > 0 {
+                let opens = row.kind != EntryKind::Directory
+                    && !world.workbench().openers_for(&row.path).is_empty();
+                let factory = if opens {
+                    open_factory(row.path.clone())
+                } else {
+                    bedtime_workbench::PanelFactory::new("File", |_, _| Entity::PLACEHOLDER)
+                };
+                response.dnd_set_drag_payload(
+                    bedtime_workbench::PanelFactoryPayload::with_content(
+                        factory,
+                        TreeDrag {
+                            paths: vec![row.path.clone()],
+                        },
+                    ),
+                );
             }
             let selected = view.selected.as_ref() == Some(&row.path);
             response.widget_info(|| {
@@ -150,9 +262,30 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
                 };
                 view.menu = Some((row.path.clone(), openers));
             }
-            response.context_menu(|ui| menu(ui, row, &view, &mut intents));
+            response.context_menu(|ui| {
+                let openers = view
+                    .menu
+                    .as_ref()
+                    .filter(|(path, _)| path == &row.path)
+                    .map(|(_, openers)| openers.clone())
+                    .unwrap_or_default();
+                menu(ui, row, &openers, &mut view.naming, &mut intents);
+            });
         }
     });
+    drop_into_tree(
+        ui,
+        &ctx,
+        &rows,
+        &row_rects,
+        whole,
+        &root,
+        context,
+        &mut intents,
+    );
+    if view.naming.is_some() {
+        draw_naming(ui, &ctx, panel, &mut view, &row_rects, whole, &mut intents);
+    }
     ctx.data_mut(|data| {
         data.insert_temp(
             egui::Id::new((panel, "files-scroll")),
@@ -233,7 +366,14 @@ fn paint(
 }
 
 /// The context menu of `row`.
-fn menu(ui: &mut egui::Ui, row: &Row, view: &TreeView, intents: &mut Vec<Intent>) {
+fn menu(
+    ui: &mut egui::Ui,
+    row: &Row,
+    openers: &[(OpenerId, &'static str)],
+    naming: &mut Option<Naming>,
+    intents: &mut Vec<Intent>,
+) {
+    let root = row.depth == 0;
     if row.kind != EntryKind::Directory {
         if ui.button("Open").clicked() {
             intents.push(Intent::Open {
@@ -242,11 +382,6 @@ fn menu(ui: &mut egui::Ui, row: &Row, view: &TreeView, intents: &mut Vec<Intent>
                 opener: None,
             });
         }
-        let openers = view
-            .menu
-            .as_ref()
-            .filter(|(path, _)| path == &row.path)
-            .map_or(&[][..], |(_, openers)| openers);
         if !openers.is_empty() {
             ui.menu_button("Open With", |ui| {
                 for &(opener, label) in openers {
@@ -262,11 +397,284 @@ fn menu(ui: &mut egui::Ui, row: &Row, view: &TreeView, intents: &mut Vec<Intent>
         }
         ui.separator();
     }
+    let folder = folder_of(row);
+    if ui.button("New File…").clicked() {
+        *naming = Some(Naming::new(NameKind::NewFile(folder.clone())));
+    }
+    if ui.button("New Folder…").clicked() {
+        *naming = Some(Naming::new(NameKind::NewFolder(folder.clone())));
+    }
+    ui.separator();
+    if ui
+        .add_enabled(!root, egui::Button::new("Rename…"))
+        .clicked()
+    {
+        *naming = Some(Naming::new(NameKind::Rename(row.path.clone())));
+    }
+    if ui
+        .add_enabled(!root, egui::Button::new("Duplicate"))
+        .clicked()
+    {
+        intents.push(Intent::Operation(Operation::Duplicate {
+            sources: vec![row.path.clone()],
+        }));
+    }
+    if ui
+        .add_enabled(!root, egui::Button::new("Move to Trash"))
+        .clicked()
+    {
+        intents.push(Intent::Operation(Operation::Trash {
+            sources: vec![row.path.clone()],
+        }));
+    }
+    ui.separator();
+    if ui.add_enabled(!root, egui::Button::new("Copy")).clicked() {
+        intents.push(Intent::Copy {
+            paths: vec![row.path.clone()],
+            cut: false,
+        });
+    }
+    if ui.add_enabled(!root, egui::Button::new("Cut")).clicked() {
+        intents.push(Intent::Copy {
+            paths: vec![row.path.clone()],
+            cut: true,
+        });
+    }
+    if ui.button("Paste").clicked() {
+        intents.push(Intent::Paste(folder));
+    }
+    ui.separator();
     if ui.button("Copy Path").clicked() {
         ui.ctx().copy_text(row.path.display().to_string());
     }
     if ui.button("Refresh").clicked() {
         intents.push(Intent::Refresh);
+    }
+}
+
+/// The menu of the empty space: the root folder.
+fn folder_menu(
+    ui: &mut egui::Ui,
+    folder: &Path,
+    naming: &mut Option<Naming>,
+    intents: &mut Vec<Intent>,
+) {
+    if ui.button("New File…").clicked() {
+        *naming = Some(Naming::new(NameKind::NewFile(folder.to_owned())));
+    }
+    if ui.button("New Folder…").clicked() {
+        *naming = Some(Naming::new(NameKind::NewFolder(folder.to_owned())));
+    }
+    if ui.button("Paste").clicked() {
+        intents.push(Intent::Paste(folder.to_owned()));
+    }
+    ui.separator();
+    if ui.button("Refresh").clicked() {
+        intents.push(Intent::Refresh);
+    }
+}
+
+/// The box a name is typed in, under its row (or at the top). Enter does it,
+/// Escape (or clicking away) doesn't.
+fn draw_naming(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    panel: Entity,
+    view: &mut TreeView,
+    row_rects: &[(usize, egui::Rect)],
+    whole: egui::Rect,
+    intents: &mut Vec<Intent>,
+) {
+    let Some(naming) = view.naming.as_mut() else {
+        return;
+    };
+    let anchor = view
+        .rows
+        .iter()
+        .position(|row| row.path == naming.row())
+        .and_then(|index| row_rects.iter().find(|(at, _)| *at == index))
+        .map_or(whole.left_top(), |(_, rect)| rect.left_bottom());
+    let id = egui::Id::new((panel, "naming"));
+    let label = match naming.kind {
+        NameKind::NewFile(_) => "New file",
+        NameKind::NewFolder(_) => "New folder",
+        NameKind::Rename(_) => "New name",
+    };
+    let mut done = None;
+    egui::Area::new(id.with("area"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(anchor + egui::vec2(tree::INSET, 0.0))
+        .constrain_to(ctx.content_rect().shrink(4.0))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                let output = egui::TextEdit::singleline(&mut naming.text)
+                    .id(id)
+                    .hint_text(label)
+                    .desired_width((whole.width() - 32.0).clamp(120.0, 320.0))
+                    .show(ui);
+                if !naming.started {
+                    naming.started = true;
+                    output.response.request_focus();
+                    // A rename selects the name without its extension.
+                    let stem = match naming.text.rfind('.') {
+                        Some(dot) if dot > 0 => naming.text[..dot].chars().count(),
+                        _ => naming.text.chars().count(),
+                    };
+                    let mut state = output.state.clone();
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::two(
+                            egui::text::CCursor::new(0),
+                            egui::text::CCursor::new(stem),
+                        )));
+                    state.store(ui.ctx(), id);
+                }
+                let (enter, escape) = ui.input(|input| {
+                    (
+                        input.key_pressed(egui::Key::Enter),
+                        input.key_pressed(egui::Key::Escape),
+                    )
+                });
+                if escape {
+                    done = Some(None);
+                } else if output.response.lost_focus() {
+                    done = Some(enter.then(|| naming.operation()).flatten());
+                }
+            });
+        });
+    let _ = ui;
+    if let Some(operation) = done {
+        view.naming = None;
+        if let Some(operation) = operation {
+            intents.push(Intent::Operation(operation));
+        }
+    }
+}
+
+/// While a tree drag is over the tree: the folder it would go into is
+/// highlighted (a file's folder, or the root over empty space), and letting
+/// go moves it there (Alt/Option, or Cmd/Ctrl, copies). Dropping it on itself,
+/// where it already is, or inside itself does nothing.
+#[allow(clippy::too_many_arguments)]
+fn drop_into_tree(
+    ui: &egui::Ui,
+    ctx: &egui::Context,
+    rows: &[Row],
+    row_rects: &[(usize, egui::Rect)],
+    whole: egui::Rect,
+    root: &Path,
+    context: &UiContext<'_>,
+    intents: &mut Vec<Intent>,
+) {
+    let Some(payload) = egui::DragAndDrop::payload::<bedtime_workbench::PanelFactoryPayload>(ctx)
+    else {
+        return;
+    };
+    let Some(drag) = payload.content::<TreeDrag>() else {
+        return;
+    };
+    let Some(pointer) = ctx.pointer_latest_pos().filter(|p| whole.contains(*p)) else {
+        return;
+    };
+    let hovered = row_rects
+        .iter()
+        .find(|(_, rect)| rect.y_range().contains(pointer.y))
+        .map(|(index, rect)| (&rows[*index], *rect));
+    let folder = hovered.map_or_else(|| root.to_owned(), |(row, _)| folder_of(row));
+    let fits = drag
+        .paths
+        .iter()
+        .all(|path| path.parent() != Some(folder.as_path()) && !folder.starts_with(path));
+    // The tree takes the drop (the layout doesn't make a panel of it).
+    bedtime_workbench::PanelFactoryPayload::reserve_for_content(ctx);
+    if !fits {
+        return;
+    }
+    let highlight = rows
+        .iter()
+        .position(|row| row.path == folder)
+        .and_then(|index| row_rects.iter().find(|(at, _)| *at == index))
+        .map_or(whole, |(_, rect)| *rect);
+    let ink = color(context.theme.palette.accent);
+    ui.painter().rect_stroke(
+        highlight.shrink(1.0),
+        4.0,
+        egui::Stroke::new(1.5, ink),
+        egui::StrokeKind::Inside,
+    );
+    let (released, copy) = ui.input(|input| {
+        (
+            input.pointer.primary_released(),
+            input.modifiers.alt || input.modifiers.command,
+        )
+    });
+    if released {
+        egui::DragAndDrop::clear_payload(ctx);
+        let sources = drag.paths.clone();
+        intents.push(Intent::Operation(if copy {
+            Operation::Copy {
+                sources,
+                directory: folder,
+            }
+        } else {
+            Operation::Move {
+                sources,
+                directory: folder,
+            }
+        }));
+    }
+}
+
+/// F2 renames; Cmd/Ctrl+Backspace (or Delete) moves to the Trash; Copy, Cut
+/// and Paste work on the selected row.
+fn editing_keys(ui: &mut egui::Ui, view: &mut TreeView, root: &Path, intents: &mut Vec<Intent>) {
+    let Some(selected) = view.selected.clone() else {
+        return;
+    };
+    let Some(row) = view.rows.iter().find(|row| row.path == selected).cloned() else {
+        return;
+    };
+    let not_root = row.path != root;
+    let (rename, trash, events) = ui.input_mut(|input| {
+        let rename = input.consume_key(egui::Modifiers::NONE, egui::Key::F2);
+        let trash = input.consume_key(egui::Modifiers::COMMAND, egui::Key::Backspace)
+            || input.consume_key(egui::Modifiers::NONE, egui::Key::Delete);
+        let events: Vec<egui::Event> = input
+            .events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)
+                )
+            })
+            .cloned()
+            .collect();
+        input.events.retain(|event| {
+            !matches!(
+                event,
+                egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_)
+            )
+        });
+        (rename, trash, events)
+    });
+    if rename && not_root {
+        view.naming = Some(Naming::new(NameKind::Rename(row.path.clone())));
+    }
+    if trash && not_root {
+        intents.push(Intent::Operation(Operation::Trash {
+            sources: vec![row.path.clone()],
+        }));
+    }
+    for event in events {
+        match event {
+            egui::Event::Copy | egui::Event::Cut if not_root => intents.push(Intent::Copy {
+                paths: vec![row.path.clone()],
+                cut: matches!(event, egui::Event::Cut),
+            }),
+            egui::Event::Paste(_) => intents.push(Intent::Paste(folder_of(&row))),
+            _ => {}
+        }
     }
 }
 
@@ -426,6 +834,17 @@ pub(crate) fn apply(world: &mut World, panel: Entity, root: &Path, intent: Inten
             }
         }
         Intent::Refresh => world.resource_mut::<Folders>().refresh(),
+        Intent::Operation(operation) => {
+            if let Err(error) = crate::ops::run_file_operation(world, operation, Some(panel)) {
+                world.workbench_mut().notify(Notification::error(error));
+            }
+        }
+        Intent::Copy { paths, cut } => crate::ops::copy_files(world, paths, cut),
+        Intent::Paste(folder) => {
+            if let Err(error) = crate::ops::paste_files(world, folder, Some(panel)) {
+                world.workbench_mut().notify(Notification::warning(error));
+            }
+        }
     }
 }
 
@@ -468,5 +887,53 @@ pub fn file_icon(path: &Path) -> BuiltinIcon {
         "sh" => BuiltinIcon::Bash,
         "txt" => BuiltinIcon::Text,
         _ => BuiltinIcon::Default,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(path: &str, kind: EntryKind) -> Row {
+        Row {
+            path: PathBuf::from(path),
+            name: String::new(),
+            depth: 1,
+            kind,
+            hidden: false,
+            expanded: false,
+            loading: false,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn things_go_in_a_folder_or_a_files_folder() {
+        assert_eq!(
+            folder_of(&row("/r/src", EntryKind::Directory)),
+            PathBuf::from("/r/src")
+        );
+        assert_eq!(
+            folder_of(&row("/r/src/a.rs", EntryKind::File)),
+            PathBuf::from("/r/src")
+        );
+    }
+
+    #[test]
+    fn names_make_operations() {
+        let mut naming = Naming::new(NameKind::NewFile("/r".into()));
+        assert!(naming.operation().is_none(), "an empty name does nothing");
+        naming.text = "  new.rs ".into();
+        assert!(matches!(
+            naming.operation(),
+            Some(Operation::CreateFile { directory, name }) if directory == Path::new("/r") && name == "new.rs"
+        ));
+        let rename = Naming::new(NameKind::Rename("/r/old.txt".into()));
+        assert_eq!(rename.text, "old.txt", "a rename starts from the name");
+        assert_eq!(rename.row(), Path::new("/r/old.txt"));
+        assert!(matches!(
+            Naming::new(NameKind::NewFolder("/r".into())).kind,
+            NameKind::NewFolder(_)
+        ));
     }
 }

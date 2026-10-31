@@ -119,11 +119,6 @@ fn draw(
         .workbench()
         .inspect_document(document)
         .map_err(error)?;
-    if let Some(mut instance) = world.get_mut::<PanelInstance>(panel)
-        && instance.title != info.title
-    {
-        instance.title = info.title.clone();
-    }
     match info.status {
         DocumentStatus::Loading => {
             ui.centered_and_justified(|ui| ui.spinner());

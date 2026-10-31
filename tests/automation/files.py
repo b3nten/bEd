@@ -1,7 +1,8 @@
 """Files: a folder's layout 1 starts with the file tree. A click previews a
 text file beside it and leaves the tree focused; a double click keeps it
 open; a file nothing opens is reported in the status bar. Open folders are
-saved with the workspace."""
+saved with the workspace. Files are created from the menu, renamed with F2,
+and dragged into folders."""
 import tempfile
 from pathlib import Path
 from bed import Bed
@@ -75,6 +76,40 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: len([w for w in bed.widgets() if (w.get("label") or "").startswith("Close ")]) > before,
               "the dragged file opens")
         bed.screenshot("files-drag")
+
+        # A new file in src, from its menu: named in a box, it opens.
+        bed.click(row(bed, "src"), button="Right")
+        until(bed, lambda: bed.exists(contains="New File"), "the tree's menu opens")
+        bed.screenshot("files-menu")
+        bed.click(bed.find(contains="New File"))
+        until(bed, lambda: any(w["role"] == "TextInput" and not w.get("value") for w in bed.widgets()),
+              "the name box shows")
+        bed.type("made.rs")
+        bed.key("Enter")
+        until(bed, lambda: (root / "src" / "made.rs").exists(), "made.rs is created")
+        until(bed, lambda: len(bed.find_all("made.rs")) == 2, "made.rs is listed and opened")
+
+        # F2 renames the selected row; the name without its extension is
+        # selected, so typing replaces it.
+        bed.click(row(bed, "other.txt"))
+        bed.key("F2")
+        until(bed, lambda: any(w["role"] == "TextInput" and w.get("value") == "other.txt" for w in bed.widgets()),
+              "the rename box shows")
+        bed.type("renamed")
+        bed.key("Enter")
+        until(bed, lambda: (root / "renamed.txt").exists() and not (root / "other.txt").exists(), "other.txt is renamed")
+        until(bed, lambda: bed.exists("renamed.txt"), "renamed.txt is listed")
+        # Its tabs follow, even one behind another.
+        until(bed, lambda: not bed.exists("other.txt"), "no tab keeps the old name")
+
+        # Drag it onto src: it moves there.
+        x0, y0, x1, y1 = row(bed, "renamed.txt")["rect"]
+        sx0, sy0, sx1, sy1 = row(bed, "src")["rect"]
+        bed.drag(((x0 + x1) / 2, (y0 + y1) / 2), ((sx0 + sx1) / 2, (sy0 + sy1) / 2))
+        until(bed, lambda: (root / "src" / "renamed.txt").exists() and not (root / "renamed.txt").exists(),
+              "renamed.txt moves into src")
+        assert not bed.status()["errors"], bed.status()["errors"]
+        bed.screenshot("files-ops")
 
         # Away and back: src is still open.
         bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))

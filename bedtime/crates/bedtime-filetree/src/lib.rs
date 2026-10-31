@@ -14,7 +14,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod ops;
 mod view;
+pub use bedtime_filesystem::operations::Operation;
+pub use ops::{FileOperations, copy_files, paste_files, run_file_operation};
 pub use view::file_icon;
 
 #[cfg(test)]
@@ -27,9 +30,10 @@ impl Plugin for FileTreePlugin {
         app.register_type::<FileTree>()
             .init_resource::<Folders>()
             .init_resource::<view::Intents>()
+            .init_resource::<FileOperations>()
             .add_systems(
                 Update,
-                (view::apply_intents, update_folders)
+                (view::apply_intents, ops::finish_operations, update_folders)
                     .chain()
                     .in_set(FileTreeSystems),
             );
@@ -105,6 +109,8 @@ pub struct TreeView {
     menu: Option<(PathBuf, Vec<(bedtime_workbench::OpenerId, &'static str)>)>,
     typed: String,
     typed_at: f64,
+    /// A name being typed (new file or folder, rename).
+    naming: Option<view::Naming>,
 }
 
 impl TreeView {
@@ -118,7 +124,7 @@ impl TreeView {
 }
 
 /// One line of the tree.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Row {
     pub path: PathBuf,
     pub name: String,

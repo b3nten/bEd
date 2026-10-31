@@ -284,8 +284,23 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Editor right-click menu, file tree dragging**, 2026-10-31, awaiting
-  review. The editor's context menu (language server actions when there's
+- **File operations in the tree**, 2026-10-31, awaiting review.
+  `bedtime-filetree/src/ops.rs` (`FileOperations`, `run_file_operation`,
+  `copy_files`, `paste_files`) runs `bedtime-filesystem`'s `execute` on
+  `ManagedWork` and finishes in `Update`: refresh, select what was made,
+  open a new file, notify errors, move `ViewerFile`s. The tree's menus
+  (rows, and the empty space for the root) have New File/Folder, Rename,
+  Duplicate, Move to Trash, Copy/Cut/Paste; names are typed in a popup box
+  under the row; F2, Cmd+Backspace/Delete and Copy/Cut/Paste keys. Rows
+  drag with a `TreeDrag` content payload: onto a folder in the tree moves
+  (Alt/Cmd copies), onto the layout opens. Workbench now titles every
+  document panel each `Update` (`title_document_panels`), so tabs behind
+  others follow renames; the editor no longer does it while drawing.
+  `files.py` covers create, F2 rename and drag-move (not Trash, to keep the
+  real Trash clean). Single selection only.
+
+- **Editor right-click menu, file tree dragging**, 2026-10-31, committed
+  (`1afb4e1`). The editor's context menu (language server actions when there's
   a server; Cut/Copy/Paste/Select All through `EditorView::queue_event`;
   a right-click outside the selection moves the caret first). Files drag
   from the tree onto the layout to open there (a `PanelFactory` around
