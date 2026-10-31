@@ -7,6 +7,8 @@ use std::{borrow::Cow, fmt, ops::BitOr};
 pub struct Modifiers(u8);
 
 impl Modifiers {
+    /// No modifiers: a key on its own (F12).
+    pub const NONE: Self = Self(0);
     pub const CONTROL: Self = Self(1);
     pub const SHIFT: Self = Self(2);
     pub const ALT: Self = Self(4);

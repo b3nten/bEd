@@ -4,6 +4,8 @@
 //! or performing ordinary edits.
 mod background;
 mod caret;
+mod completion;
+pub use completion::*;
 mod folding;
 mod search;
 mod search_ui;
@@ -12,8 +14,10 @@ mod whitespace;
 mod wrapping;
 pub use search::SearchQuery;
 pub use whitespace::Indentation;
+mod diagnostics;
 mod document;
 mod layout;
+pub use diagnostics::*;
 mod text {
     pub use bedtime_document::text::*;
 }
@@ -102,6 +106,8 @@ struct Composition {
 pub struct EditorView {
     pub settings: EditorSettings,
     folding: folding::Folding,
+    /// A language server's diagnostics, drawn only at their revision.
+    diagnostics: Option<std::sync::Arc<Diagnostics>>,
     /// Whether the text has a language: reserves the fold column before its
     /// first analysis arrives, so text doesn't shift.
     pub has_syntax: bool,
@@ -250,6 +256,11 @@ impl EditorView {
         Ok(())
     }
 
+    /// Diagnostics to underline; `None` removes them. Shown only while the
+    /// text is at the report's revision.
+    pub fn set_diagnostics(&mut self, report: Option<std::sync::Arc<Diagnostics>>) {
+        self.diagnostics = report;
+    }
     pub fn selection(&self) -> TextSelection {
         self.selection
     }
@@ -931,6 +942,55 @@ impl EditorView {
                                 line.galley.clone(),
                                 ui.visuals().text_color(),
                             );
+                            if self.composition.is_none()
+                                && let Some(report) = self
+                                    .diagnostics
+                                    .as_ref()
+                                    .filter(|d| d.revision == snapshot.revision)
+                            {
+                                for (index, diagnostic) in report
+                                    .intersecting(line.start..line.end)
+                                    .take(256)
+                                    .enumerate()
+                                {
+                                    let left = line.x_at(diagnostic.range.start.max(line.start));
+                                    let right = line
+                                        .x_at(diagnostic.range.end.min(line.end))
+                                        .max(left + metrics.cell);
+                                    let color = match diagnostic.severity {
+                                        DiagnosticSeverity::Error => ui.visuals().error_fg_color,
+                                        DiagnosticSeverity::Warning => ui.visuals().warn_fg_color,
+                                        _ => ui.visuals().weak_text_color(),
+                                    }
+                                    .gamma_multiply(if report.verified { 1.0 } else { 0.6 });
+                                    painter.line_segment(
+                                        [
+                                            egui::pos2(
+                                                origin.x + 8.0 + left,
+                                                y + metrics.height - 1.0,
+                                            ),
+                                            egui::pos2(
+                                                origin.x + 8.0 + right,
+                                                y + metrics.height - 1.0,
+                                            ),
+                                        ],
+                                        egui::Stroke::new(1.0, color),
+                                    );
+                                    let rect = egui::Rect::from_min_max(
+                                        egui::pos2(origin.x + 8.0 + left, y),
+                                        egui::pos2(origin.x + 8.0 + right, y + metrics.height),
+                                    )
+                                    .intersect(painter.clip_rect());
+                                    if rect.is_positive() {
+                                        ui.interact(
+                                            rect,
+                                            id.with(("diagnostic", row, index)),
+                                            egui::Sense::hover(),
+                                        )
+                                        .on_hover_text(diagnostic.message.as_ref());
+                                    }
+                                }
+                            }
                             if caret_row == row {
                                 local_caret = egui::Rect::from_min_size(
                                     egui::pos2(

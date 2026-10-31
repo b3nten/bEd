@@ -284,6 +284,19 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Architecture step 11: language servers**, 2026-10-31, awaiting review.
+  `bedtime_code::lsp`: the old `bedtime-lsp` backend as is (its fake-server
+  tests pass), and `documents.rs` replacing its workbench adapter: a
+  document's file comes from its editor's `ViewerFile`, its language from
+  syntax, servers from `LanguageServers` (rust-analyzer by default) under
+  `Root`. Diagnostics drawn in editors; Go to Definition (F12,
+  Cmd/Ctrl-click) opens the answer with `open_path`; Restart Language
+  Server. The editor's completion data and snippet parsing came back
+  (`editor/completion.rs`), its menu didn't yet. An open's column now counts
+  characters. bedtime-actions: `Modifiers::NONE`. bed: the status bar shows
+  the server of the editor you're in and its error/warning counts.
+  `tests/automation/language_servers.py` (real rust-analyzer).
+
 - **Architecture step 10: Structure**, 2026-10-31, awaiting review.
   `bedtime_code::structure` (from `bed_old/crates/bed-structure`):
   `StructurePanel`, `StructureSource` following the focused editor (or the

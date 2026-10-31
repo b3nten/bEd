@@ -1,7 +1,7 @@
 # bedtime-code
 
 Code editing for workbench apps, in one crate: the text editor, syntax
-(tree-sitter) and Structure now; language servers will be a module here too.
+(tree-sitter), Structure and language servers.
 They call each other directly instead of through contribution APIs. The
 grammars are their own crate, `bedtime-grammars` (30 languages, compiled C;
 about 25 s on a clean build, cached after).
@@ -92,11 +92,40 @@ editor (`reveal_entry`); an entry from an older analysis, or an editor that's
 gone or composing, does nothing. Its byte ranges are never mapped through
 edits.
 
+## Language servers
+
+`lsp` is the old `bedtime-lsp`: a backend that runs a local stdio server per
+launch configuration and root on a worker (process, protocol, sync, progress,
+diagnostics, definitions; its bounds and protocol details are in the module
+docs), and `documents`, which connects it to workbench documents:
+
+- A text document gets a server while an editor shows it from a file
+  (`ViewerFile`) whose language has one in `LanguageServers` (Rust:
+  rust-analyzer), under the workbench's `Root`. Without a root, none run.
+  Documents with unsaved changes stay connected after their editor closes.
+  Each document's connection is a `DocumentServer` on its entity; each server
+  a `LanguageServer` entity, shared by its documents.
+- Every revision is sent: its changes when all are known, else the text.
+  Successful saves of documents with nothing unsaved are reported to the
+  server (rust-analyzer runs `cargo check` then).
+- Diagnostics are drawn in the document's editors (underlined, with the
+  message on hover) while the text is at their revision.
+- Go to Definition (F12, or Cmd/Ctrl-click) asks for the definition at the
+  caret and opens the first answer with `open_path`. A server that isn't ready
+  is an error at once; a newer request replaces an older one. Positions are
+  taken as characters, which is exact for ASCII before the target.
+- Restart Language Server; `restart` and `stop` for apps.
+
+Hover and completions are in the backend but not drawn yet.
+
 ## Tests
 
 ```sh
 cargo test -p bedtime-code --all-features
-python3 tools/bed.py run tests/automation/editor.py tests/automation/syntax.py tests/automation/structure.py
+python3 tools/bed.py run tests/automation/editor.py tests/automation/syntax.py tests/automation/structure.py tests/automation/language_servers.py
 ```
 
-The million-line tests are ignored by default; run them with `--ignored`.
+The million-line tests and the real rust-analyzer backend tests are ignored by
+default; run them with `--ignored`. `tests/lsp_server.py` is the scripted fake
+server the other language server tests use. `language_servers.py` needs
+rust-analyzer installed, and skips otherwise.

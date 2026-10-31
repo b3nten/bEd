@@ -20,6 +20,10 @@ bedtime-workbench = { workspace = true, features = ["files"] }
 bevy = { workspace = true, features = ["std"] }
 unicode-segmentation = "=1.13.3"
 unicode-width.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+libc.workspace = true
 # Use one pinned native runtime: Cargo permits only one links=tree-sitter.
 tree-sitter = { package = "arborium-tree-sitter", version = "=2.18.2" }
+
+[dev-dependencies]

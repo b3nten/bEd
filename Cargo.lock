@@ -535,6 +535,8 @@ dependencies = [
  "bedtime-ui",
  "bedtime-workbench",
  "bevy",
+ "libc",
+ "serde",
  "serde_json",
  "unicode-segmentation",
  "unicode-width",

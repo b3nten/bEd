@@ -2,6 +2,7 @@
 //! analysis (`syntax`) and the Structure panel (`structure`), installed by
 //! `CodePlugin`.
 pub mod editor;
+pub mod lsp;
 pub mod structure;
 pub mod syntax;
 

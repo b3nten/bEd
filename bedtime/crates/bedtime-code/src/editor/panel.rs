@@ -25,6 +25,7 @@ impl Plugin for CodePlugin {
             )
             .register_default_opener::<EditorPanel>()
             .register_type::<crate::structure::StructurePanel>()
+            .add_plugins(crate::lsp::LanguageServersPlugin)
             .init_resource::<crate::structure::StructureSource>()
             .add_systems(
                 Update,
@@ -155,6 +156,12 @@ fn draw(
         None => editor.view.set_syntax(None),
     }
     editor.view.syntax_palette = syntax::SyntaxPalette::from_theme(context.theme);
+    #[cfg(unix)]
+    editor.view.set_diagnostics(
+        world
+            .get::<crate::lsp::DocumentServer>(document.entity())
+            .and_then(|server| server.diagnostics.clone()),
+    );
     // Keyboard focus follows the panel's: the text takes it when the panel
     // becomes focused, and gives it up when another panel is.
     let focused = world
@@ -184,6 +191,23 @@ fn draw(
         });
     }
     let shown = editor.view.show(ui, id, &mut session, context.motion);
+    // Cmd/Ctrl-click: go to the definition of what was clicked (the caret
+    // moved there).
+    #[cfg(unix)]
+    if let Ok(output) = &shown
+        && output.response.clicked()
+        && ui.input(|input| input.modifiers.command)
+        && crate::lsp::server_of(world, panel).is_some()
+    {
+        let byte = editor.view.selection().head();
+        world.entity_mut(panel).insert(editor);
+        if let Err(error) = crate::lsp::go_to_definition(world, panel, byte) {
+            world
+                .workbench_mut()
+                .notify(Notification::warning(format!("Go to Definition: {error}")));
+        }
+        return shown.map(|_| ());
+    }
     world.entity_mut(panel).insert(editor);
     result.and(shown.map(|_| ()))
 }
@@ -193,9 +217,18 @@ fn draw(
 fn navigation(snapshot: &TextSnapshot, state: &TextOpenState) -> Navigation {
     let text = &snapshot.text;
     let byte = |position: &TextPosition| match *position {
+        // The column counts characters (a tab is one), up to the line's end.
         TextPosition::LineColumn { line, column } => {
             let line = (line as usize).min(text.line_count().saturating_sub(1));
-            text.byte_at_column(line, column as usize)
+            let range = text.line_range(line);
+            let start = range.start;
+            let chars = text.range_text(range);
+            let chars = chars.trim_end_matches(['\n', '\r']);
+            start
+                + chars
+                    .char_indices()
+                    .nth(column as usize)
+                    .map_or(chars.len(), |(offset, _)| offset)
         }
         TextPosition::Byte(byte) => text.clamp_boundary(byte.min(text.len())),
     };
@@ -471,8 +504,8 @@ mod tests {
             &snapshot,
             &at(TextPosition::LineColumn { line: 1, column: 4 }),
         );
-        // The tab is four columns wide.
-        assert_eq!(line.selection.unwrap().head(), 5);
+        // Columns count characters: the tab is one.
+        assert_eq!(line.selection.unwrap().head(), 8);
         assert_eq!(
             (line.revision, line.reveal, line.focus),
             (3, Reveal::Center, false)
