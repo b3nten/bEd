@@ -264,9 +264,18 @@ fn begin(world: &mut World, session: &mut GitSession, operation: Operation) -> R
             Operation::Abort => true,
             _ => false,
         };
-        if (save || replaces) && (info.has_drafts || info.conflict || info.missing) {
+        if (save || replaces) && (info.has_drafts || info.conflict) {
             return Err(format!(
                 "Finish composition or resolve the source conflict in {} before changing Git state.",
+                path.display()
+            ));
+        }
+        // A file another checkout removed is harmless while the editor holds
+        // nothing unsaved for it: Git may bring it back, and the reload clears
+        // `missing`. Unsaved edits to it can't be saved, so they still block.
+        if (save || replaces) && info.missing && info.dirty {
+            return Err(format!(
+                "{} no longer exists on disk and has unsaved editor changes. Save it elsewhere or discard them before changing Git state.",
                 path.display()
             ));
         }
@@ -276,7 +285,7 @@ fn begin(world: &mut World, session: &mut GitSession, operation: Operation) -> R
                 path.display()
             ));
         }
-        if save {
+        if save && !info.missing {
             sources.push(SavedSource {
                 id: info.id,
                 revision: info.revision,
@@ -422,12 +431,9 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
                         | Operation::Resolve { path: p, .. } => path == root.join(p),
                         _ => true,
                     };
+                    // A clean `missing` document has nothing to lose (see `begin`).
                     if affected
-                        && (info.dirty
-                            || info.saving
-                            || info.has_drafts
-                            || info.conflict
-                            || info.missing)
+                        && (info.dirty || info.saving || info.has_drafts || info.conflict)
                     {
                         return Err(format!(
                             "{} changed while preparing Git. Save or resolve it and retry.",
