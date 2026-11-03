@@ -49,15 +49,20 @@ operation) and runs one operation at a time.
 
 ## Diff panels
 
-`DiffPanel` shows one file's working changes or staged changes as a unified
-diff with old and new line numbers. Each change has Stage (or Unstage) and
-Discard… (confirmed) in its header; Changes/Staged switch sides; the file
-opens from the bar. It reads the diff again after every scan. A new diff goes
-beside editors or diffs, else in the largest area without the Git panel or a
-file tree, else in a split of the Git panel's area.
+`DiffPanel` is an editor (bedtime-code's, hosted in the panel: `HostedViewer`,
+`draw_editor`) with one file's changes inline: old lines between the new, old
+and new line numbers, and above each change Stage (or Unstage) and Discard…
+(asked about first; only with the file saved). The working changes are shown
+over the file itself, so it can be edited right there and the comparison
+follows the edits; the staged changes over a read-only copy of what's staged.
+Changes/Staged switch sides; the file opens from the bar.
 
-Unlike the old inline comparison in the editor, the diff isn't editable:
-open the file to edit it.
+A change is applied exactly (`StageRange`, `UnstageRange`, `DiscardRange`).
+Staging saves the file first, then checks (`StageGuard`) that Git's baseline
+and the saved file are what the change was chosen in before applying it.
+The comparison is read again after every scan. A new diff goes beside
+editors or diffs, else in the largest area without the Git panel or a file
+tree, else in a split of the Git panel's area.
 
 ```sh
 cargo test -p bedtime-git

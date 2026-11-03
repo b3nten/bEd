@@ -284,7 +284,19 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Git**, 2026-11-02, awaiting review. `bedtime-git` ported from
+- **Inline comparison**, 2026-11-02, awaiting review. The old editor's
+  `diff` module is back in bedtime-code (`editor/diff.rs`, its 6 tests pass)
+  with its hooks restored in `layout.rs` (Geometry's `diff` mapping, which
+  replaces folding while comparing) and the editor's drawing (old rows,
+  action rows, tints, old line numbers, outputs). Editor panels take an
+  `EditorComparison` and report `ComparisonRequest`; `draw_editor` hosts an
+  editor in another panel; workbench `HostedViewer` keeps such panels out of
+  openers, reopening and document titles. LSP hover skips old rows. Git's
+  `DiffPanel` is now an editor over the working file (or a read-only staged
+  copy) with Stage/Unstage/Discard… per change (`StageRange` etc.), the old
+  `StageGuard` restored. `git.py` edits inside a diff and stages one change.
+
+- **Git**, 2026-11-02, committed (`01b073d`). `bedtime-git` ported from
   bedtime_old (its 20 regressions pass) with the old bed's Git session,
   panel, tree and presentation now in the crate (feature `workbench`):
   `GitPlugin`, `GitPanel` (saves its draft and view options), `GitSession`,

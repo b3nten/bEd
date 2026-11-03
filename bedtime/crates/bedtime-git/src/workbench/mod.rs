@@ -147,6 +147,8 @@ enum Pending {
     Saving {
         operation: Operation,
         sources: Vec<SavedSource>,
+        /// Staging a change from a diff: checked again before it's applied.
+        guard: Option<diff::StageGuard>,
     },
     Review {
         task: ManagedTask<Result<crate::Diff, String>>,
@@ -297,7 +299,11 @@ fn begin(world: &mut World, session: &mut GitSession, operation: Operation) -> R
         }
     }
     session.error = None;
-    session.pending = Some(Pending::Saving { operation, sources });
+    session.pending = Some(Pending::Saving {
+        operation,
+        sources,
+        guard: None,
+    });
     session.invalidate();
     Ok(())
 }
@@ -367,7 +373,11 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
             }
             Err(_) => return Err("Git review was cancelled.".into()),
         },
-        Pending::Saving { operation, sources } => {
+        Pending::Saving {
+            operation,
+            sources,
+            guard,
+        } => {
             let mut saving = false;
             for source in &sources {
                 let info = world
@@ -393,7 +403,11 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
                 }
             }
             if saving || session.scan.is_some() {
-                session.pending = Some(Pending::Saving { operation, sources });
+                session.pending = Some(Pending::Saving {
+                    operation,
+                    sources,
+                    guard,
+                });
                 return Ok(());
             }
             // Check destructive gates again after queued reads/saves. New edits
@@ -426,11 +440,29 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
                 .then(|| session.view.as_ref().unwrap().status.snapshot.clone());
             let requested = Arc::new(AtomicBool::new(false));
             let stop = requested.clone();
-            let op = operation.clone();
+            let mut op = operation.clone();
             let task = world.resource_mut::<ManagedWork>().spawn_task(None, "Git operation", move |cancel| {
                     if let Some(expected) = expected_commit {
                         let Output::Status(status) = git_job(root.clone(), Operation::Status, &cancel, &stop)? else { unreachable!() };
                         if status.snapshot != expected { return Err("Repository state changed before commit. Review the refreshed status and retry.".into()); }
+                    }
+                    if let Some(guard) = guard
+                        && let Operation::StageRange { path, snapshot, .. } = &mut op
+                    {
+                        let Output::Diff(fresh) = git_job(
+                            root.clone(),
+                            Operation::Diff {
+                                path: path.clone(),
+                                side: DiffSide::Unstaged,
+                            },
+                            &cancel,
+                            &stop,
+                        )?
+                        else {
+                            return Err("Git answered with something else".into());
+                        };
+                        guard.validate(&fresh)?;
+                        *snapshot = fresh.snapshot;
                     }
                     match git_job(root, op, &cancel, &stop)? { Output::Done { output } => Ok(output), _ => Err("Unexpected Git operation response".into()) }
             })?;
@@ -449,13 +481,15 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
                 match result {
                     Ok(output) => {
                         if let Operation::Commit { message, .. } = &operation
-                            && session.draft == *message {
-                                session.draft.clear();
-                            }
+                            && session.draft == *message
+                        {
+                            session.draft.clear();
+                        }
                         if let Operation::CreateBranch { name } = &operation
-                            && session.branch_input.trim() == name {
-                                session.branch_input.clear();
-                            }
+                            && session.branch_input.trim() == name
+                        {
+                            session.branch_input.clear();
+                        }
                         session.output = output;
                     }
                     Err(error) => session.error = Some(error),

@@ -89,6 +89,17 @@ impl Viewer<TextBuffer> for EditorPanel {
     }
 }
 
+/// Draw the editor of `panel` (which has an `EditorPanel` and a document) in
+/// `ui`: for a panel that hosts one in its own drawing (mark it
+/// `HostedViewer`).
+pub fn draw_editor(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+    if let Err(error) = draw(ui, world, context, panel) {
+        world
+            .workbench_mut()
+            .notify(Notification::warning(error.to_string()));
+    }
+}
+
 impl Panel for EditorPanel {
     const LABEL: &'static str = "Editor";
 
@@ -100,6 +111,20 @@ impl Panel for EditorPanel {
         }
     }
 }
+
+/// On an editor panel: show this comparison inline, over its document (old
+/// lines between the new, each change's `actions` above it). Whoever adds it
+/// reads `ComparisonRequest`s back.
+#[derive(Component, Clone)]
+pub struct EditorComparison {
+    pub comparison: super::diff::Comparison,
+    pub actions: Vec<super::diff::DiffAction>,
+}
+
+/// On an editor panel showing an `EditorComparison`: the action clicked
+/// (taken by whoever compares).
+#[derive(Component, Clone, Debug)]
+pub struct ComparisonRequest(pub super::diff::DiffRequest);
 
 /// The egui id of the editor in `panel` showing `document`.
 pub fn editor_id(panel: Entity, document: DocumentId) -> egui::Id {
@@ -195,8 +220,21 @@ fn draw(
                 .request_navigation(&snapshot, navigation(&snapshot, &state))
         });
     }
+    let comparison = session.world.get::<EditorComparison>(panel).cloned();
+    match comparison {
+        Some(comparison) => editor
+            .view
+            .set_comparison(Some(comparison.comparison), comparison.actions),
+        None if editor.view.comparing() => editor.view.set_comparison(None, Vec::new()),
+        None => {}
+    }
     let shown = editor.view.show(ui, id, &mut session, context.motion);
     world.entity_mut(panel).insert(editor);
+    if let Ok(output) = &shown
+        && let Some(request) = output.diff_request.clone()
+    {
+        world.entity_mut(panel).insert(ComparisonRequest(request));
+    }
     if let Ok(output) = &shown {
         context_menu(world, panel, &output.response);
     }

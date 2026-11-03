@@ -256,6 +256,9 @@ world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..defa
   as saving, so closing waits. The app answers `save_untitled_to(id, path)`
   (it's then that file's, history and all; its viewers get a `ViewerFile`)
   or `cancel_save_as(id)`. Without a picker, saving one is an error.
+- `HostedViewer` marks a panel that draws a viewer's component inside its
+  own (a diff panel with an editor): openers don't take it for that viewer,
+  restoring doesn't reopen it (its host does), and it titles itself.
 - `viewer_document::<M>(ui, world, panel)` is how a viewer's `draw` starts: it
   draws a spinner while the document loads, or why it couldn't be read, and
   otherwise returns its model (viewers' models are cheap to clone), handle and

@@ -654,7 +654,7 @@ pub(crate) fn install(app: &mut App) {
 /// it's in is renamed or moved (and the panel isn't drawn: a tab behind
 /// another).
 fn title_document_panels(
-    mut panels: Query<(&mut PanelInstance, &DocumentReference)>,
+    mut panels: Query<(&mut PanelInstance, &DocumentReference), Without<crate::HostedViewer>>,
     documents: Query<&Document>,
 ) {
     for (mut instance, reference) in &mut panels {

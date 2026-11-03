@@ -9,7 +9,7 @@ pub(super) fn key(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
         modifiers,
     }
 }
-pub(super) fn frame(
+pub(crate) fn frame(
     ctx: &egui::Context,
     view: &mut EditorView,
     document: &mut dyn TextSession,

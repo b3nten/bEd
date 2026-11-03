@@ -11,6 +11,12 @@ use bedtime_document::{DocumentModel, DocumentSource};
 use bevy::prelude::*;
 use std::any::TypeId;
 
+/// On a panel that draws a viewer's component inside its own (a diff panel
+/// with an editor in it): openers don't take it for that viewer, so opening
+/// the file still goes to (or makes) an ordinary one.
+#[derive(Component, Default)]
+pub struct HostedViewer;
+
 /// A panel that shows documents of model `M`.
 pub trait Viewer<M: DocumentModel>: Panel {
     /// A new panel showing `document`.
@@ -97,7 +103,9 @@ impl<M: DocumentModel> Opener<M> {
                 id: OpenerId::of::<P>(),
                 label,
                 model: TypeId::of::<M>(),
-                shows: |world, panel| world.get::<P>(panel).is_some(),
+                shows: |world, panel| {
+                    world.get::<P>(panel).is_some() && world.get::<HostedViewer>(panel).is_none()
+                },
                 apply: |world, panel, state| {
                     if let Some(state) = state.downcast_ref::<M::OpenState>() {
                         P::apply(world, panel, state);
@@ -207,7 +215,7 @@ pub struct ViewerFile(pub std::path::PathBuf);
 #[cfg(feature = "files")]
 pub(crate) fn reopen_viewers(world: &mut World) {
     let restored: Vec<(Entity, std::path::PathBuf)> = world
-        .query_filtered::<(Entity, &ViewerFile), Without<DocumentReference>>()
+        .query_filtered::<(Entity, &ViewerFile), (Without<DocumentReference>, Without<HostedViewer>)>()
         .iter(world)
         .map(|(panel, file)| (panel, file.0.clone()))
         .collect();

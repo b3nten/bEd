@@ -639,6 +639,9 @@ dependencies = [
 name = "bedtime-git"
 version = "0.1.0"
 dependencies = [
+ "bedtime-code",
+ "bedtime-document",
+ "bedtime-filesystem",
  "bedtime-filetree",
  "bedtime-ui",
  "bedtime-work",

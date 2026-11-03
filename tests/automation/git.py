@@ -29,10 +29,10 @@ with tempfile.TemporaryDirectory() as folder:
     git(root, "init", "-q", "-b", "main")
     git(root, "config", "user.email", "bed@example.com")
     git(root, "config", "user.name", "bed")
-    (root / "notes.txt").write_text("one\ntwo\nthree\n")
+    (root / "notes.txt").write_text("one\ntwo\nthree\nfour\nfive\n")
     git(root, "add", ".")
     git(root, "commit", "-q", "-m", "first")
-    (root / "notes.txt").write_text("one\nTWO\nthree\n")
+    (root / "notes.txt").write_text("one\nTWO\nthree\nfour\nfive\n")
     (root / "new.txt").write_text("new file\n")
 
     with Bed(folder) as bed:
@@ -47,8 +47,26 @@ with tempfile.TemporaryDirectory() as folder:
         bed.click(rightmost(bed, "notes.txt"))
         until(bed, lambda: bed.exists("Stage"), "the diff shows its change")
         bed.screenshot("git-diff")
-        bed.click(bed.find("Stage"))
+
+        # Edit in the diff: a second change shows inline.
+        editor = max((w for w in bed.widgets() if w["role"] in ("TextInput", "MultilineTextInput")),
+                     key=lambda widget: widget["rect"][0])
+        bed.click(editor)
+        bed.key("Primary+ArrowDown")
+        bed.key("ArrowUp")
+        bed.key("End")
+        bed.type(" more")  # on "five"
+        until(bed, lambda: len(bed.find_all("Stage")) == 2, "the edit shows as a second change")
+        bed.screenshot("git-diff-edited")
+
+        # Stage only the first change: the file is saved first; the edit stays unstaged.
+        first = min(bed.find_all("Stage"), key=lambda widget: widget["rect"][1])
+        bed.click(first)
         until(bed, lambda: "notes.txt" in git(root, "diff", "--cached", "--name-only"), "the change is staged")
+        assert (root / "notes.txt").read_text() == "one\nTWO\nthree\nfour\nfive more\n", \
+            (root / "notes.txt").read_text()
+        staged = git(root, "show", ":notes.txt")
+        assert staged == "one\nTWO\nthree\nfour\nfive\n", staged
 
         # Commit it.
         message = next(w for w in bed.widgets() if w["role"] == "MultilineTextInput")

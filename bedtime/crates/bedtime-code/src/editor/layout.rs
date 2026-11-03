@@ -153,18 +153,34 @@ pub(crate) struct Geometry<'a> {
     pub metrics: &'a Metrics,
     pub wrap: Option<&'a crate::editor::wrapping::WrapIndex>,
     pub folds: &'a crate::editor::folding::FoldMap,
+    pub diff: Option<&'a crate::editor::diff::Projection>,
 }
 impl Geometry<'_> {
     pub fn row_y(&self, row: usize) -> f32 {
+        if self.diff.is_some() {
+            return row as f32;
+        }
         self.folds.row_y(row)
     }
     pub fn row_height(&self, row: usize) -> f32 {
+        if self.diff.is_some() {
+            return 1.0;
+        }
         self.folds.row_height(row)
     }
     pub fn row_at(&self, y: f32) -> usize {
+        if self.diff.is_some() {
+            return y.floor().max(0.0) as usize;
+        }
         self.folds.row_at(y)
     }
     pub fn rows(&self) -> usize {
+        if let Some(diff) = self.diff {
+            return diff.rows(
+                self.wrap
+                    .map_or_else(|| self.text.line_count(), |w| w.rows()),
+            );
+        }
         self.folds.rows(
             self.wrap
                 .map_or_else(|| self.text.line_count(), |w| w.rows()),
@@ -176,6 +192,15 @@ impl Geometry<'_> {
         } else {
             self.metrics.content_size(self.text).x
         };
+        if let Some(diff) = self.diff {
+            let width = if self.wrap.is_none() {
+                width.max(diff.baseline.widest_line_cells() as f32 * self.metrics.cell + 16.0)
+            } else {
+                width
+            };
+            return egui::vec2(width, self.rows() as f32 * self.metrics.height + 12.0)
+                .max(viewport);
+        }
         egui::vec2(
             width,
             self.folds.height(
@@ -187,13 +212,23 @@ impl Geometry<'_> {
         .max(viewport)
     }
     pub fn visual_row(&self, byte: usize) -> usize {
+        if let Some(diff) = self.diff {
+            return diff.visual(
+                self.wrap
+                    .map_or_else(|| self.text.line_of(byte), |w| w.visual_row(byte)),
+            );
+        }
         self.folds.visible_row(
             self.wrap
                 .map_or_else(|| self.text.line_of(byte), |w| w.visual_row(byte)),
         )
     }
     pub fn segment(&self, row: usize) -> crate::editor::wrapping::Segment {
-        let row = self.folds.source_row(row);
+        let row = if let Some(diff) = self.diff {
+            diff.source(row)
+        } else {
+            self.folds.source_row(row)
+        };
         self.wrap.map_or_else(
             || crate::editor::wrapping::Segment {
                 line: row,
@@ -263,10 +298,21 @@ impl Geometry<'_> {
         step: isize,
         upstream: bool,
     ) -> (usize, bool) {
-        let row = self
+        let mut row = self
             .visual_row_for(byte, upstream)
             .saturating_add_signed(step)
             .min(self.rows() - 1);
+        if let Some(diff) = self.diff {
+            if step.unsigned_abs() == 1 {
+                let source = diff.source(self.visual_row_for(byte, upstream));
+                let total = self
+                    .wrap
+                    .map_or_else(|| self.text.line_count(), |w| w.rows());
+                row = diff.visual(source.saturating_add_signed(step).min(total - 1));
+            } else if !matches!(diff.row(row), crate::editor::diff::Row::Document(_)) && step < 0 {
+                row = diff.visual(diff.source(row).saturating_sub(1));
+            }
+        }
         let segment = self.segment(row);
         let at = self
             .text

@@ -59,6 +59,19 @@ wrapping run on background jobs.
 For screen readers and scripts, the editor reports its visible lines as its
 text value.
 
+## Comparisons
+
+`editor::diff` shows a comparison inline (the old editor's, brought back):
+put an `EditorComparison` (a `Comparison`: the old text, and the changed line
+ranges when known; and the `DiffAction` buttons) on an editor panel. Old lines
+show between the new, tinted, with old and new line numbers; each change has
+its buttons above it. A click comes back as a `ComparisonRequest` on the panel
+(the action, the comparison, the revision and the line ranges). While the
+text is edited the changes are worked out again on a worker (bounded line
+diff). Folding is off while comparing; language server hover and Cmd-click
+skip the old lines. `draw_editor` draws an editor panel's editor inside
+another panel (mark that panel `HostedViewer`).
+
 ## Syntax
 
 `syntax` is the old `bedtime-treesitter`: an `AnalysisSession` parses a
