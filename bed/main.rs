@@ -7,6 +7,8 @@ use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::PathBuf;
 use workspace::{Start, Workspace};
 
+#[cfg(target_os = "macos")]
+mod dock;
 mod effects;
 mod files;
 mod git;
@@ -81,6 +83,8 @@ pub fn app(start: Start) -> App {
         config.map(|config| config.join("global")),
     ))
     .add_systems(Startup, setup);
+    #[cfg(target_os = "macos")]
+    app.add_plugins(dock::DockMenuPlugin);
     app
 }
 
