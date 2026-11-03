@@ -646,6 +646,31 @@ fn linked_worktrees_share_repository_lock_and_remain_writable() {
 }
 
 #[test]
+fn nested_linked_worktrees_are_not_untracked_but_nested_repositories_are() {
+    let repo = Repo::new();
+    repo.initial();
+    repo.git(&[
+        "worktree",
+        "add",
+        "-b",
+        "nested",
+        ".claude/worktrees/nested",
+    ]);
+    repo.git(&["init", "vendor/other"]);
+    repo.write("vendor/other/file.txt", b"other\n");
+    repo.write("new.txt", b"new\n");
+    let paths: Vec<_> = repo.status().entries.into_iter().map(|e| e.path).collect();
+    assert_eq!(paths, ["new.txt", "vendor/other/"]);
+    // The worktree's own status is unaffected.
+    let Output::Status(status) =
+        execute(&repo.0.join(".claude/worktrees/nested"), &Operation::Status).unwrap()
+    else {
+        panic!()
+    };
+    assert!(status.entries.is_empty());
+}
+
+#[test]
 fn cancellation_remains_effective_after_git_exits_with_a_signal_ignoring_hook() {
     use std::os::unix::fs::PermissionsExt;
     let repo = Repo::new();

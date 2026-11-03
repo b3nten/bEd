@@ -367,6 +367,9 @@ pub(super) fn update(world: &mut World, session: &mut GitSession) {
             }
         }
         if fresh {
+            if hand_off(world, panel) {
+                continue;
+            }
             attach(world, panel);
         }
         show(world, session, panel);
@@ -380,6 +383,57 @@ pub(super) fn update(world: &mut World, session: &mut GitSession) {
             }
         }
     }
+}
+
+/// A file Git can't compare as text (an image, say) opens in whatever views
+/// it, in the diff's place. A deleted one, a symlink or a submodule stays,
+/// summarized: a viewer must never follow a link's target.
+fn hand_off(world: &mut World, panel: Entity) -> bool {
+    let diff = world.get::<DiffPanel>(panel).unwrap();
+    let Some(Ok(loaded)) = &diff.loaded else {
+        return false;
+    };
+    let file = diff.root.join(&diff.path);
+    let regular = std::fs::symlink_metadata(&file).is_ok_and(|m| m.file_type().is_file());
+    if loaded.comparison.is_some() || !regular {
+        return false;
+    }
+    let Some(area) = world.get::<InArea>(panel).map(|area| area.0) else {
+        return false;
+    };
+    let preview = world
+        .get::<PanelInstance>(panel)
+        .is_some_and(|instance| instance.preview);
+    let focused = world
+        .layouts()
+        .active()
+        .and_then(|layout| world.layouts().focused_panel(layout));
+    let options = PathOptions {
+        target: Target::New { area: Some(area) },
+        preview,
+        ..default()
+    };
+    match world.workbench_mut().open_path(&file, options) {
+        Ok(Some(_)) => {}
+        // Nothing opens it (the app said so): the diff says it's binary.
+        Ok(None) => return false,
+        Err(error) => {
+            world.get_mut::<DiffPanel>(panel).unwrap().error = Some(error);
+            return false;
+        }
+    }
+    // A preview viewer already replaced a preview diff.
+    if world.get::<DiffPanel>(panel).is_some() {
+        let _ = world.layouts_mut().close_panel(panel);
+    }
+    // Like a preview diff, a preview viewer leaves the Git panel focused.
+    if preview
+        && let Some(focused) = focused.filter(|&focused| focused != panel)
+        && world.get_entity(focused).is_ok()
+    {
+        let _ = world.layouts_mut().focus_panel(focused);
+    }
+    true
 }
 
 /// Give the panel its document: the working file, or what's staged.
