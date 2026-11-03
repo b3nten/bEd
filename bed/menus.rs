@@ -305,6 +305,11 @@ pub fn switch(world: &mut World, start: Start) {
 }
 
 fn new_window(_: &mut World, _: ActionInvocation) -> ActionResult {
+    spawn_window()
+}
+
+/// Start another bEd, as from the command line.
+pub fn spawn_window() -> Result<(), String> {
     std::env::current_exe()
         .and_then(|bed| std::process::Command::new(bed).spawn())
         .map(|_| ())
