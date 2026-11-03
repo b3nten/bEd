@@ -262,8 +262,22 @@ fn draw_outline(
                     egui::pos2(x + 16.0, rect.bottom()),
                 );
                 let children = has_children(index);
-                // The row first: the chevron, registered after, gets its clicks.
-                let response = ui.interact(rect, id, egui::Sense::click());
+                let selected = state.selected == Some(node.id);
+                let row = bedtime_ui::tree::Row {
+                    label: Some(&node.label),
+                    depth: node.depth,
+                    icon: None,
+                    expanded: children.then_some(!state.collapsed.contains(&node.id)),
+                    selected,
+                    ink: bedtime_ui::theme::color(context.theme.palette.text),
+                    icon_ink: context.theme.palette.text,
+                };
+                // Only the item takes the pointer, not the empty space after
+                // it. The item first: the chevron, registered after, gets its
+                // clicks.
+                let item =
+                    bedtime_ui::tree::item_rect(ui, context, &row, rect, bedtime_ui::tree::INDENT);
+                let response = ui.interact(item, id, egui::Sense::click());
                 let arrow_response = children.then(|| {
                     let response = ui.interact(arrow, id.with("arrow"), egui::Sense::click());
                     let verb = if state.collapsed.contains(&node.id) {
@@ -280,7 +294,6 @@ fn draw_outline(
                     });
                     response
                 });
-                let selected = state.selected == Some(node.id);
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(
                         egui::WidgetType::SelectableLabel,
@@ -294,15 +307,7 @@ fn draw_outline(
                     bedtime_ui::tree::paint_row(
                         ui,
                         context,
-                        bedtime_ui::tree::Row {
-                            label: Some(&node.label),
-                            depth: node.depth,
-                            icon: None,
-                            expanded: children.then_some(!state.collapsed.contains(&node.id)),
-                            selected,
-                            ink: bedtime_ui::theme::color(context.theme.palette.text),
-                            icon_ink: context.theme.palette.text,
-                        },
+                        row,
                         rect,
                         Some(&response),
                         1.0,
@@ -314,7 +319,7 @@ fn draw_outline(
                 } else if response.clicked() {
                     clicked = Some((editor, observation.key, node.id));
                 }
-                response.on_hover_text(&node.kind);
+                bedtime_ui::tree::tooltip(ui, context, &response, &node.kind);
             }
         });
     if let Some(id) = toggle

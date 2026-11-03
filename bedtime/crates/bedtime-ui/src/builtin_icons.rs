@@ -147,4 +147,6 @@ icon_catalog! {
     Grid => "grid",
     Type => "type",
     Box => "box",
+    Replace => "replace",
+    ReplaceAll => "replace-all",
 }

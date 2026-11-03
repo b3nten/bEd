@@ -6,4 +6,4 @@ pub use engine::*;
 #[cfg(feature = "workbench")]
 mod workbench;
 #[cfg(feature = "workbench")]
-pub use workbench::{FindInFiles, SearchPanel, SearchPlugin, SearchState, SearchSystems, seed};
+pub use workbench::{SearchPanel, SearchPlugin, SearchState, SearchSystems, SearchWorkspace, seed};

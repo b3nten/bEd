@@ -143,7 +143,7 @@ fn compose_menus(mut commands: Commands) {
     commands.spawn((MenuItem::action::<RedoDocument>(), InMenu(edit)));
     commands.spawn((MenuSeparator, InMenu(edit)));
     commands.spawn((
-        MenuItem::action::<bedtime_search::FindInFiles>(),
+        MenuItem::action::<bedtime_search::SearchWorkspace>(),
         InMenu(edit),
     ));
     commands.spawn((MenuSeparator, InMenu(edit)));
@@ -357,7 +357,7 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
             BuiltinIcon::Folder,
             PanelFactory::of::<FileTree>(),
         );
-        tool::<bedtime_search::FindInFiles>(
+        tool::<bedtime_search::SearchWorkspace>(
             ui,
             world,
             context,

@@ -247,8 +247,9 @@ impl Panel for ModelPanel {
             {
                 view.camera = None;
             }
-            let info = f.floating_button(BuiltinIcon::Info, "About This Model");
-            egui::Popup::menu(&info).show(|ui| info_menu(ui, &scene));
+            // Hovering shows what's in the model; there's nothing to click.
+            let info = f.icon_button(BuiltinIcon::Info);
+            f.tooltip_ui(&info, |f| info_menu(f.ui, &scene));
             let appearance = f.floating_button(BuiltinIcon::Sliders, "Appearance");
             egui::Popup::menu(&appearance)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -272,6 +273,7 @@ impl Panel for ModelPanel {
     }
 }
 
+/// What's in the model, for the info icon's tooltip.
 fn info_menu(ui: &mut egui::Ui, scene: &ModelScene) {
     match scene.info() {
         Some(info) => {

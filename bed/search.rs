@@ -1,7 +1,7 @@
 use crate::panels::PanelPolicy;
 use bedtime_code::EditorPanel;
 use bedtime_document::TextBuffer;
-use bedtime_search::{FindInFiles, SearchPanel, SearchPlugin};
+use bedtime_search::{SearchPanel, SearchPlugin, SearchWorkspace};
 use bedtime_workbench::{
     ActionAppExt, ActionInvocation, ActionResult, DocumentReference, Handler, PanelFactory,
     WorkbenchWorldExt,
@@ -19,11 +19,11 @@ pub struct BedSearchPlugin;
 impl Plugin for BedSearchPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(SearchPlugin)
-            .add_action_handler::<FindInFiles>(Handler::new(find_in_files));
+            .add_action_handler::<SearchWorkspace>(Handler::new(search_workspace));
     }
 }
 
-fn find_in_files(world: &mut World, invocation: ActionInvocation) -> ActionResult {
+fn search_workspace(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let selected = invocation.entity.and_then(|panel| selection(world, panel));
     let panel =
         crate::panels::open_panel::<SearchPanel>(world, (), PanelFactory::of::<SearchPanel>())?;

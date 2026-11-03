@@ -4,7 +4,7 @@ Project search and replace for workbench apps.
 
 ```rust,ignore
 app.add_plugins(SearchPlugin);
-// Find in Files: the app decides where the panel goes, then:
+// Search Workspace: the app decides where the panel goes, then:
 bedtime_search::seed(world, panel, selected_text);
 ```
 
@@ -31,20 +31,22 @@ groups filled in: `$1`, `${name}`), and checks it still matches there;
 ## The Search panel (feature `workbench`)
 
 `SearchPanel` searches the workbench's `Root` as you type (after 150 ms), on a
-`ManagedWork` task; results stream in. The query row has the toggles (`Aa`,
-`ab`, `.*`) and a filter button for the include/exclude row; the chevron shows
-the replace row. Results are grouped by file (click to collapse), each match
-its line number and line with the match marked. Clicking a match opens the
-file with the match selected (`PathOptions::select_to`): in the panel already
-showing it, else another area showing documents, else the search's area is
-split, so the results stay in view.
+`ManagedWork` task; results stream in. The query field holds the toggles
+(`Aa`, `ab`, `.*`); after it, Replace shows the replace row and Filter the
+include/exclude fields, all sharing the query's edges. Results are a tree
+like the other trees (`bedtime_ui::tree`): grouped by file (its name opens and
+closes it, its matches sliding under it), each match its line number and
+line with the match marked. Clicking a match opens the file with the match
+selected (`PathOptions::select_to`) where any file opens: the panel showing
+it, else an area with that kind of viewer, else the largest area. Dragging a
+file or a match onto the layout opens it there.
 
 Replace (on a hovered match) and Replace All change open documents as one
 undoable edit each, left unsaved, and other files on disk if they haven't
 changed since they were read; then it searches again. The query, the
 replacement and which rows show are saved with the panel (`persistence`).
 
-`FindInFiles` (Cmd/Ctrl+Shift+F) is registered; the app handles it.
+`SearchWorkspace` (Cmd/Ctrl+Shift+F) is registered; the app handles it.
 
 ```sh
 cargo test -p bedtime-search --all-features

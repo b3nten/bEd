@@ -32,7 +32,7 @@ impl EditorView {
                         ..
                     } = event
                     {
-                        // Cmd/Ctrl+Shift+F is Find in Files.
+                        // Cmd/Ctrl+Shift+F is Search Workspace.
                         if modifiers.command && !modifiers.shift && *key == egui::Key::F {
                             open = Some(modifiers.alt);
                             return false;

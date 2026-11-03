@@ -6,13 +6,13 @@
 //! other files on disk if they haven't changed since they were read.
 use crate::engine::{FileMatches, Match, Matcher, SearchQuery, Summary};
 use bedtime_document::{BufferEdit, TextBuffer};
-use bedtime_ui::{UiContext, egui, theme::color};
+use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    Action, ActionAppExt, Area, AreaFocusedAt, DocumentReference, EditOptions, InArea, LayoutAreas,
-    LayoutsWorldExt, ManagedTask, ManagedWork, Notification, Panel, PanelInstance,
-    PanelPresentation, PathOptions, Root, SplitAxis, Target, ViewerFile, WorkbenchWorldExt,
+    Action, ActionAppExt, DocumentReference, EditOptions, ManagedTask, ManagedWork, Notification,
+    Panel, PanelFactory, PanelFactoryPayload, PanelInstance, PanelPresentation, PathOptions, Root,
+    Target, ViewerFile, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 use std::{
@@ -28,7 +28,7 @@ impl Plugin for SearchPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<SearchPanel>()
             .register_type::<SearchQuery>()
-            .register_action::<FindInFiles>()
+            .register_action::<SearchWorkspace>()
             .init_resource::<Intents>()
             .add_systems(
                 Update,
@@ -45,10 +45,11 @@ pub struct SearchSystems;
 
 /// Open (or focus) the search panel, with the selection as the query. The
 /// app handles it: where the panel goes is its to say (`seed` fills it in).
-pub struct FindInFiles;
-impl Action for FindInFiles {
+pub struct SearchWorkspace;
+impl Action for SearchWorkspace {
+    // Kept from when it was "Find in Files": saved key bindings use it.
     const KEY: &'static str = "search.find_in_files";
-    const LABEL: &'static str = "Find in Files";
+    const LABEL: &'static str = "Search Workspace";
     const DEFAULT_KEYS: &'static [bedtime_workbench::KeyChord] =
         &[bedtime_workbench::KeyChord::new(
             bedtime_workbench::Modifiers::PRIMARY.union(bedtime_workbench::Modifiers::SHIFT),
@@ -99,6 +100,8 @@ pub struct SearchState {
     summary: Option<Summary>,
     error: Option<String>,
     collapsed: HashSet<PathBuf>,
+    /// The match last opened: its file and where it starts.
+    selected: Option<(PathBuf, usize)>,
     focus_query: bool,
 }
 
@@ -261,17 +264,11 @@ fn apply_intents(world: &mut World) {
         }
         match intent {
             Intent::Open(path, found) => {
-                let target = match beside(world, panel, &path) {
-                    Ok(target) => target,
-                    Err(error) => {
-                        world.workbench_mut().notify(Notification::error(error));
-                        continue;
-                    }
-                };
+                // Where any file opens: a panel already showing it, else an
+                // area showing its kind of viewer, else the largest area.
                 let options = PathOptions {
                     line: Some(found.start),
                     select_to: Some(found.end),
-                    target,
                     preview: true,
                     ..default()
                 };
@@ -326,59 +323,26 @@ fn apply_intents(world: &mut World) {
     }
 }
 
-/// Where a result opens: the panel already showing the file, else another
-/// area showing documents (the most recently focused), so the results stay
-/// in view. Without one, the search's area is split and the file opens on
-/// the right (not in a file tree's area, say).
-fn beside(world: &mut World, panel: Entity, path: &Path) -> Result<Target, String> {
-    let layouts = world.layouts();
-    let layout = layouts.active().ok_or("No layout is open")?;
-    let own = world.get::<InArea>(panel).map(|area| area.0);
-    if let Some(showing) = layouts.panels(layout).into_iter().find(|&other| {
-        world
-            .get::<ViewerFile>(other)
-            .is_some_and(|file| file.0 == path)
-            && world.get::<InArea>(other).map(|area| area.0) != own
-    }) {
-        return Ok(Target::Panel(showing));
-    }
-    let areas: Vec<Entity> = world
-        .get::<LayoutAreas>(layout)
-        .map_or(&[][..], |areas| areas.entities())
-        .iter()
-        .copied()
-        .filter(|&area| Some(area) != own)
-        .collect();
-    let shows_documents = |area: Entity| {
-        layouts
-            .panels_in_area(area)
-            .iter()
-            .any(|&p| world.get::<DocumentReference>(p).is_some())
-    };
-    let focused_at = |area: Entity| {
-        world
-            .get::<AreaFocusedAt>(area)
-            .copied()
-            .unwrap_or_default()
-    };
-    let chosen = areas
-        .iter()
-        .copied()
-        .filter(|&area| shows_documents(area))
-        .max_by_key(|&area| focused_at(area));
-    if let Some(area) = chosen {
-        return Ok(Target::New { area: Some(area) });
-    }
-    let own = own.ok_or("The search panel isn't in an area")?;
-    let rect = world
-        .get::<Area>(own)
-        .ok_or("The search panel isn't in an area")?
-        .rect();
-    let at = rect.min[0] + (rect.max[0] - rect.min[0]) * 2 / 5;
-    let area = world
-        .layouts_mut()
-        .split_area(own, SplitAxis::Horizontal, at, [1000, 1000])?;
-    Ok(Target::New { area: Some(area) })
+/// Opens `path` (at `found`, if given) in the area it's dropped in.
+fn open_factory(path: PathBuf, found: Option<Match>) -> PanelFactory {
+    PanelFactory::new("File", move |world, area| {
+        let options = PathOptions {
+            line: found.as_ref().map(|found| found.start),
+            select_to: found.as_ref().map(|found| found.end),
+            target: Target::New { area: Some(area) },
+            ..default()
+        };
+        match world.workbench_mut().open_path(&path, options) {
+            Ok(panel) => panel.unwrap_or(Entity::PLACEHOLDER),
+            Err(error) => {
+                let name = path.file_name().unwrap_or(path.as_os_str()).display();
+                world.workbench_mut().notify(Notification::error(format!(
+                    "Couldn't open {name}: {error}"
+                )));
+                Entity::PLACEHOLDER
+            }
+        }
+    })
 }
 
 /// Search again, and say what went wrong.
@@ -478,7 +442,7 @@ fn replace(
 }
 
 impl Panel for SearchPanel {
-    const LABEL: &'static str = "Search";
+    const LABEL: &'static str = "Search Workspace";
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         draw(ui, world, context, panel);
     }
@@ -543,14 +507,93 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         .extend(intents.into_iter().map(|intent| (panel, intent)));
 }
 
-/// A small text toggle ("Aa"), with what it does on hover.
-fn toggle(ui: &mut egui::Ui, on: &mut bool, text: &str, tip: &str) {
-    let label = egui::RichText::new(text).monospace();
-    if ui.selectable_label(*on, label).on_hover_text(tip).clicked() {
-        *on = !*on;
-    }
+/// An icon button's width in the bar (and on a match's row).
+fn button_width(ui: &egui::Ui, context: &UiContext<'_>) -> f32 {
+    context.metrics.font_size + 2.0 * ui.spacing().button_padding.x
 }
 
+/// A text field `width` wide, its text kept clear of `inset` points on the
+/// right (for the toggles drawn there).
+fn field(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    text: &mut String,
+    hint: &str,
+    width: f32,
+    inset: f32,
+) -> egui::Response {
+    ui.add(
+        egui::TextEdit::singleline(text)
+            .id(id)
+            .hint_text(hint)
+            .desired_width(width)
+            .margin(egui::Margin {
+                left: 6,
+                right: (6.0 + inset).min(127.0) as i8,
+                top: 3,
+                bottom: 3,
+            }),
+    )
+}
+
+/// A small text toggle ("Aa") drawn inside a field, with what it does on
+/// hover.
+fn option_toggle(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    rect: egui::Rect,
+    on: &mut bool,
+    text: &str,
+    tip: &str,
+) {
+    let response = ui.interact(rect, ui.id().with(("option", text)), egui::Sense::click());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, *on, text)
+    });
+    if response.clicked() {
+        *on = !*on;
+    }
+    let palette = &context.theme.palette;
+    let seconds = if context.motion.enabled {
+        context.motion.seconds
+    } else {
+        0.0
+    };
+    let t = ui
+        .ctx()
+        .animate_bool_with_time(response.id.with("on"), *on, seconds);
+    let hover =
+        ui.ctx()
+            .animate_bool_with_time(response.id.with("hover"), response.hovered(), seconds);
+    let mut fill = color(palette.accent).gamma_multiply(0.22 * t);
+    if hover > 0.0 {
+        fill = fill.blend(
+            ui.visuals()
+                .widgets
+                .hovered
+                .weak_bg_fill
+                .gamma_multiply(hover),
+        );
+    }
+    ui.painter().rect_filled(rect, 3.0, fill);
+    let ink = bedtime_ui::theme::mix(
+        bedtime_ui::theme::mix(palette.muted, palette.text, hover),
+        palette.accent,
+        t,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::monospace(context.metrics.font_size * 0.8),
+        color(ink),
+    );
+    context.frame(ui).tooltip(&response, tip);
+}
+
+/// The bar, as Zed's: the query with its options inside it, then Replace and
+/// Filter; under it the replacement with Replace All, and the filters. The
+/// fields share their edges; the buttons are a column on the right.
 fn fields(
     ui: &mut egui::Ui,
     context: &UiContext<'_>,
@@ -560,97 +603,104 @@ fn fields(
     focused: bool,
     intents: &mut Vec<Intent>,
 ) {
-    let row_height = ui.spacing().interact_size.y;
+    let gap = ui.spacing().item_spacing.x;
+    let button = button_width(ui, context);
+    let width = (ui.available_width() - 2.0 * (button + gap)).max(80.0);
+    let options = [
+        (&mut search.query.match_case, "Aa", "Match Case"),
+        (&mut search.query.whole_word, "ab", "Match Whole Word"),
+        (&mut search.query.regex, ".*", "Use Regular Expression"),
+    ];
+    let side = (ui.spacing().interact_size.y - 2.0).max(16.0);
+    let inset = options.len() as f32 * (side + 2.0) + 2.0;
     ui.horizontal(|ui| {
-        let chevron = if search.replacing {
-            bedtime_ui::BuiltinIcon::ChevronDown
-        } else {
-            bedtime_ui::BuiltinIcon::ChevronRight
-        };
-        if context
-            .frame(ui)
-            .icon_button_sized(chevron, 14.0)
-            .on_hover_text("Replace")
+        let query = field(
+            ui,
+            id.with("query"),
+            &mut search.query.text,
+            "Search",
+            width,
+            inset,
+        );
+        if state.focus_query && focused {
+            query.request_focus();
+            state.focus_query = false;
+        }
+        if query.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            state.rerun();
+        }
+        // The options, inside the field's right end; after it, so they take
+        // the clicks.
+        let side = side.min(query.rect.height() - 4.0);
+        let mut right = query.rect.right() - 3.0;
+        for (on, text, tip) in options.into_iter().rev() {
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(right - side, query.rect.center().y - side / 2.0),
+                egui::pos2(right, query.rect.center().y + side / 2.0),
+            );
+            option_toggle(ui, context, rect, on, text, tip);
+            right -= side + 2.0;
+        }
+        let mut frame = context.frame(ui);
+        if frame
+            .floating_toggle(BuiltinIcon::Replace, "Replace", search.replacing)
             .clicked()
         {
             search.replacing = !search.replacing;
         }
-        // The toggles on the right; the query takes the rest.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let filter = context
-                .frame(ui)
-                .icon_button_sized(bedtime_ui::BuiltinIcon::Filter, 14.0)
-                .on_hover_text("Include and Exclude Files");
-            if filter.clicked() {
-                search.filtering = !search.filtering;
-            }
-            toggle(ui, &mut search.query.regex, ".*", "Use Regular Expression");
-            toggle(ui, &mut search.query.whole_word, "ab", "Match Whole Word");
-            toggle(ui, &mut search.query.match_case, "Aa", "Match Case");
-            let query = ui.add(
-                egui::TextEdit::singleline(&mut search.query.text)
-                    .id(id.with("query"))
-                    .hint_text("Search")
-                    .desired_width(ui.available_width().max(60.0)),
-            );
-            if state.focus_query && focused {
-                query.request_focus();
-                state.focus_query = false;
-            }
-            if query.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                state.rerun();
-            }
-        });
+        if frame
+            .floating_toggle(
+                BuiltinIcon::Filter,
+                "Include and Exclude Files",
+                search.filtering,
+            )
+            .clicked()
+        {
+            search.filtering = !search.filtering;
+        }
     });
     if search.replacing {
         ui.horizontal(|ui| {
-            ui.add_space(row_height);
-            let button = "Replace All";
-            let width = ui.fonts_mut(|f| {
-                f.layout_no_wrap(
-                    button.into(),
-                    egui::TextStyle::Button.resolve(ui.style()),
-                    egui::Color32::WHITE,
-                )
-                .size()
-                .x
-            }) + 2.0 * ui.spacing().button_padding.x
-                + ui.spacing().item_spacing.x;
-            ui.add(
-                egui::TextEdit::singleline(&mut search.replacement)
-                    .id(id.with("replacement"))
-                    .hint_text("Replace with")
-                    .desired_width((ui.available_width() - width).max(60.0)),
+            field(
+                ui,
+                id.with("replacement"),
+                &mut search.replacement,
+                "Replace with",
+                width,
+                0.0,
             );
             let any = state.files.iter().any(|f| !f.matches.is_empty()) && state.task.is_none();
-            if ui.add_enabled(any, egui::Button::new(button)).clicked() {
-                intents.push(Intent::ReplaceAll);
-            }
+            ui.add_enabled_ui(any, |ui| {
+                if context
+                    .frame(ui)
+                    .floating_button(BuiltinIcon::ReplaceAll, "Replace All")
+                    .clicked()
+                {
+                    intents.push(Intent::ReplaceAll);
+                }
+            });
         });
     }
     if search.filtering {
-        ui.horizontal(|ui| {
-            ui.add_space(row_height);
-            let half = (ui.available_width() - ui.spacing().item_spacing.x) / 2.0;
-            ui.add(
-                egui::TextEdit::singleline(&mut search.query.include)
-                    .id(id.with("include"))
-                    .hint_text("Include: *.rs, src/")
-                    .desired_width(half),
-            );
-            ui.add(
-                egui::TextEdit::singleline(&mut search.query.exclude)
-                    .id(id.with("exclude"))
-                    .hint_text("Exclude")
-                    .desired_width(half),
-            );
-        });
-        ui.horizontal(|ui| {
-            ui.add_space(row_height);
-            context
-                .frame(ui)
-                .toggle(&mut search.query.ignored, "Files Git ignores");
-        });
+        field(
+            ui,
+            id.with("include"),
+            &mut search.query.include,
+            "Include: *.rs, src/",
+            width,
+            0.0,
+        );
+        field(
+            ui,
+            id.with("exclude"),
+            &mut search.query.exclude,
+            "Exclude",
+            width,
+            0.0,
+        );
+        context
+            .frame(ui)
+            .toggle(&mut search.query.ignored, "Files Git ignores");
     }
 }
 
@@ -690,6 +740,8 @@ fn status(ui: &mut egui::Ui, context: &UiContext<'_>, state: &SearchState) {
     });
 }
 
+/// The results as a tree, drawn as Structure draws its outline: a file's
+/// matches slide in and out under it as it opens and closes.
 fn results(
     ui: &mut egui::Ui,
     context: &UiContext<'_>,
@@ -699,22 +751,30 @@ fn results(
     state: &mut SearchState,
     intents: &mut Vec<Intent>,
 ) {
-    let rows: Vec<Row> = state
-        .files
-        .iter()
-        .enumerate()
-        .flat_map(|(file, found)| {
-            let open = !state.collapsed.contains(&found.path);
-            std::iter::once(Row::File(file)).chain(
-                (0..found.matches.len())
-                    .filter(move |_| open)
-                    .map(move |index| Row::Match(file, index)),
-            )
-        })
-        .collect();
-    let height = bedtime_ui::tree::row_height(context);
-    let palette = &context.theme.palette;
+    let height = tree::row_height(context);
+    // Where each row goes (and how much of it shows): work it out once, then
+    // draw only the rows in view.
+    let mut rows: Vec<(Row, f32, f32)> = Vec::new();
+    let mut top = 0.0;
+    for (file, found) in state.files.iter().enumerate() {
+        rows.push((Row::File(file), top, height));
+        top += height;
+        let openness = bedtime_ui::animate_expansion(
+            ui.ctx(),
+            egui::Id::new((panel, "search-open", &found.path)),
+            !state.collapsed.contains(&found.path),
+            context.motion,
+        );
+        if openness > 0.0 {
+            let shown = height * openness;
+            for index in 0..found.matches.len() {
+                rows.push((Row::Match(file, index), top, shown));
+                top += shown;
+            }
+        }
+    }
     let mut toggle_file = None;
+    let mut opened = None;
     // Under the rows (which take clicks first): Search Again, a right-click away.
     let background = ui.interact(
         ui.available_rect_before_wrap(),
@@ -729,175 +789,36 @@ fn results(
     egui::ScrollArea::vertical()
         .id_salt((panel, "search-results"))
         .auto_shrink([false, false])
-        .show_rows(ui, height, rows.len(), |ui, range| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for row in &rows[range] {
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), height),
-                    egui::Sense::hover(),
+        .show_viewport(ui, |ui, viewport| {
+            let origin = ui.cursor().min;
+            ui.set_min_size(egui::vec2(viewport.width(), top));
+            let first = rows.partition_point(|(_, y, h)| y + h < viewport.top());
+            for &(row, y, shown) in &rows[first..] {
+                if y > viewport.bottom() {
+                    break;
+                }
+                // A closing row is drawn whole, cut to what still shows.
+                let rect = egui::Rect::from_min_size(
+                    origin + egui::vec2(0.0, y),
+                    egui::vec2(viewport.width(), height),
                 );
-                match *row {
+                let visible = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), shown));
+                let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+                ui.set_clip_rect(ui.clip_rect().intersect(visible));
+                match row {
                     Row::File(file) => {
-                        let found = &state.files[file];
-                        let response = ui.interact(
-                            rect,
-                            egui::Id::new((panel, "file", &found.path)),
-                            egui::Sense::click(),
-                        );
-                        let name = found
-                            .path
-                            .file_name()
-                            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-                        response.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name)
-                        });
-                        bedtime_ui::tree::paint_row(
-                            ui,
-                            context,
-                            bedtime_ui::tree::Row {
-                                label: Some(&name),
-                                depth: 0,
-                                icon: Some(bedtime_filetree::file_icon(&found.path)),
-                                expanded: Some(!state.collapsed.contains(&found.path)),
-                                selected: false,
-                                ink: color(palette.text),
-                                icon_ink: palette.text,
-                            },
-                            rect,
-                            Some(&response),
-                            1.0,
-                            bedtime_ui::tree::INDENT,
-                        );
-                        // Where it is, and how many, after the name.
-                        let folder = found
-                            .path
-                            .parent()
-                            .and_then(|parent| parent.strip_prefix(root?).ok())
-                            .map(|p| p.display().to_string())
-                            .unwrap_or_default();
-                        let font = egui::FontId::proportional(context.metrics.font_size * 0.85);
-                        let count = ui.painter().layout_no_wrap(
-                            found.matches.len().to_string(),
-                            font.clone(),
-                            color(palette.muted),
-                        );
-                        let count_at = egui::pos2(
-                            rect.right() - 10.0 - count.size().x,
-                            rect.center().y - count.size().y / 2.0,
-                        );
-                        let name_width = ui
-                            .painter()
-                            .layout_no_wrap(
-                                name.clone(),
-                                egui::FontId::proportional(context.metrics.font_size),
-                                egui::Color32::WHITE,
-                            )
-                            .size()
-                            .x;
-                        let folder_left = rect.left()
-                            + bedtime_ui::tree::INSET
-                            + 18.0
-                            + context.metrics.font_size.min(18.0)
-                            + 5.0
-                            + name_width
-                            + 10.0;
-                        if !folder.is_empty() && folder_left < count_at.x - 20.0 {
-                            let mut job = egui::text::LayoutJob::simple_singleline(
-                                folder,
-                                font,
-                                color(palette.muted),
-                            );
-                            job.wrap.max_width = count_at.x - 10.0 - folder_left;
-                            job.wrap.max_rows = 1;
-                            job.wrap.break_anywhere = true;
-                            let galley = ui.fonts_mut(|f| f.layout_job(job));
-                            ui.painter().galley(
-                                egui::pos2(folder_left, rect.center().y - galley.size().y / 2.0),
-                                galley,
-                                color(palette.muted),
-                            );
-                        }
-                        ui.painter().galley(count_at, count, color(palette.muted));
-                        if response.clicked() {
-                            toggle_file = Some(found.path.clone());
+                        if file_row(&mut ui, context, panel, root, state, file, rect) {
+                            toggle_file = Some(state.files[file].path.clone());
                         }
                     }
                     Row::Match(file, index) => {
-                        let found = &state.files[file];
-                        let m = &found.matches[index];
-                        let response = ui.interact(
-                            rect,
-                            egui::Id::new((panel, "match", &found.path, m.range.start)),
-                            egui::Sense::click(),
-                        );
-                        response.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &m.preview)
-                        });
-                        if response.hovered() {
-                            ui.painter().rect_filled(
-                                rect.shrink2(egui::vec2(4.0, 1.0)),
-                                context.metrics.rounding,
-                                ui.visuals().widgets.hovered.weak_bg_fill,
-                            );
-                        }
-                        let mut right = rect.right() - 8.0;
-                        let mut replace = false;
-                        if search.replacing && response.hovered() && state.task.is_none() {
-                            let button = egui::Rect::from_min_max(
-                                egui::pos2(right - 64.0, rect.top() + 2.0),
-                                egui::pos2(right, rect.bottom() - 2.0),
-                            );
-                            replace = ui
-                                .put(button, egui::Button::new("Replace").small())
-                                .clicked();
-                            right = button.left() - 6.0;
-                        }
-                        let x =
-                            rect.left() + bedtime_ui::tree::INSET + bedtime_ui::tree::INDENT + 18.0;
-                        let mono = egui::FontId::monospace(context.metrics.font_size * 0.9);
-                        let number = ui.painter().layout_no_wrap(
-                            format!("{}", m.start.0 + 1),
-                            mono.clone(),
-                            color(palette.muted),
-                        );
-                        let number_width = number.size().x.max(context.metrics.font_size * 2.0);
-                        ui.painter().galley(
-                            egui::pos2(
-                                x + number_width - number.size().x,
-                                rect.center().y - number.size().y / 2.0,
-                            ),
-                            number,
-                            color(palette.muted),
-                        );
-                        // The line, its match marked.
-                        let text_x = x + number_width + 10.0;
-                        let mut job = egui::text::LayoutJob::default();
-                        let plain = egui::TextFormat {
-                            font_id: mono.clone(),
-                            color: color(palette.text),
-                            ..default()
-                        };
-                        let marked = egui::TextFormat {
-                            background: ui.visuals().selection.bg_fill,
-                            ..plain.clone()
-                        };
-                        let span = m.preview_range.clone();
-                        job.append(&m.preview[..span.start], 0.0, plain.clone());
-                        job.append(&m.preview[span.clone()], 0.0, marked);
-                        job.append(&m.preview[span.end..], 0.0, plain);
-                        job.wrap.max_width = (right - text_x).max(0.0);
-                        job.wrap.max_rows = 1;
-                        job.wrap.break_anywhere = true;
-                        let galley = ui.fonts_mut(|f| f.layout_job(job));
-                        ui.painter().with_clip_rect(rect).galley(
-                            egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
-                            galley,
-                            color(palette.text),
-                        );
-                        if replace {
-                            intents.push(Intent::Replace(found.path.clone(), m.clone()));
-                        } else if response.clicked() {
-                            intents.push(Intent::Open(found.path.clone(), m.clone()));
+                        if let Some(intent) =
+                            match_row(&mut ui, context, panel, search, state, file, index, rect)
+                        {
+                            if let Intent::Open(path, found) = &intent {
+                                opened = Some((path.clone(), found.range.start));
+                            }
+                            intents.push(intent);
                         }
                     }
                 }
@@ -908,4 +829,198 @@ fn results(
     {
         state.collapsed.insert(path);
     }
+    if opened.is_some() {
+        state.selected = opened;
+    }
+}
+
+/// A file's row: its name, folder and count of matches. Returns whether it
+/// was clicked (to open or close it).
+fn file_row(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    panel: Entity,
+    root: Option<&Path>,
+    state: &SearchState,
+    file: usize,
+    rect: egui::Rect,
+) -> bool {
+    let palette = &context.theme.palette;
+    let found = &state.files[file];
+    let name = found
+        .path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let row = tree::Row {
+        label: Some(&name),
+        depth: 0,
+        icon: Some(bedtime_filetree::file_icon(&found.path)),
+        expanded: Some(!state.collapsed.contains(&found.path)),
+        selected: false,
+        ink: color(palette.text),
+        icon_ink: palette.text,
+    };
+    let item = tree::item_rect(ui, context, &row, rect, tree::INDENT);
+    let response = ui.interact(
+        item,
+        egui::Id::new((panel, "file", &found.path)),
+        egui::Sense::click_and_drag(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &name));
+    tree::paint_row(ui, context, row, rect, Some(&response), 1.0, tree::INDENT);
+    // Where it is, and how many, after the name.
+    let relative = found
+        .path
+        .strip_prefix(root.unwrap_or(Path::new("")))
+        .unwrap_or(&found.path);
+    let folder = relative
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let font = egui::FontId::proportional(context.metrics.font_size * 0.85);
+    let count = ui.painter().layout_no_wrap(
+        found.matches.len().to_string(),
+        font.clone(),
+        color(palette.muted),
+    );
+    let count_at = egui::pos2(
+        rect.right() - 10.0 - count.size().x,
+        rect.center().y - count.size().y / 2.0,
+    );
+    let folder_left = item.right() + 6.0;
+    if !folder.is_empty() && folder_left < count_at.x - 20.0 {
+        let mut job = egui::text::LayoutJob::simple_singleline(folder, font, color(palette.muted));
+        job.wrap.max_width = count_at.x - 10.0 - folder_left;
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        let galley = ui.fonts_mut(|f| f.layout_job(job));
+        ui.painter().galley(
+            egui::pos2(folder_left, rect.center().y - galley.size().y / 2.0),
+            galley,
+            color(palette.muted),
+        );
+    }
+    ui.painter().galley(count_at, count, color(palette.muted));
+    // Drag it onto the layout to open it there.
+    if response.drag_started() {
+        response.dnd_set_drag_payload(PanelFactoryPayload::new(open_factory(
+            found.path.clone(),
+            None,
+        )));
+    }
+    tree::tooltip(ui, context, &response, relative.display().to_string());
+    response.clicked()
+}
+
+/// A match's row: its line number and line, the match marked; Replace on
+/// the right while it's hovered. Returns what it was asked.
+#[allow(clippy::too_many_arguments)]
+fn match_row(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    panel: Entity,
+    search: &SearchPanel,
+    state: &SearchState,
+    file: usize,
+    index: usize,
+    rect: egui::Rect,
+) -> Option<Intent> {
+    let palette = &context.theme.palette;
+    let found = &state.files[file];
+    let m = &found.matches[index];
+    // Replace sits over the row's end, without moving anything.
+    let button = button_width(ui, context);
+    let replacing = search.replacing && state.task.is_none() && ui.rect_contains_pointer(rect);
+    let right = rect.right() - 8.0 - if replacing { button + 6.0 } else { 0.0 };
+    let x = rect.left() + tree::INSET + tree::INDENT + 18.0;
+    let mono = egui::FontId::monospace(context.metrics.font_size * 0.9);
+    let number = ui.painter().layout_no_wrap(
+        format!("{}", m.start.0 + 1),
+        mono.clone(),
+        color(palette.muted),
+    );
+    let number_width = number.size().x.max(context.metrics.font_size * 2.0);
+    // The line, its match marked.
+    let text_x = x + number_width + 10.0;
+    let mut job = egui::text::LayoutJob::default();
+    let plain = egui::TextFormat {
+        font_id: mono,
+        color: color(palette.text),
+        ..default()
+    };
+    let marked = egui::TextFormat {
+        background: ui.visuals().selection.bg_fill,
+        ..plain.clone()
+    };
+    let span = m.preview_range.clone();
+    job.append(&m.preview[..span.start], 0.0, plain.clone());
+    job.append(&m.preview[span.clone()], 0.0, marked);
+    job.append(&m.preview[span.end..], 0.0, plain);
+    job.wrap.max_width = (right - text_x).max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    let galley = ui.fonts_mut(|f| f.layout_job(job));
+    // Only the number and line take the pointer, as a tree's item does.
+    let item = egui::Rect::from_min_max(
+        egui::pos2(x - 4.0, rect.top()),
+        egui::pos2(text_x + galley.size().x + 4.0, rect.bottom()),
+    );
+    let response = ui.interact(
+        item,
+        egui::Id::new((panel, "match", &found.path, m.range.start)),
+        egui::Sense::click_and_drag(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &m.preview));
+    let selected = state
+        .selected
+        .as_ref()
+        .is_some_and(|(path, start)| *path == found.path && *start == m.range.start);
+    tree::paint_highlight(
+        ui,
+        &ui.painter().clone(),
+        context,
+        item.shrink2(egui::vec2(0.0, 1.0)),
+        &response,
+        selected,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            x + number_width - number.size().x,
+            rect.center().y - number.size().y / 2.0,
+        ),
+        number,
+        color(palette.muted),
+    );
+    ui.painter().galley(
+        egui::pos2(text_x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        color(palette.text),
+    );
+    if response.drag_started() {
+        response.dnd_set_drag_payload(PanelFactoryPayload::new(open_factory(
+            found.path.clone(),
+            Some(m.clone()),
+        )));
+    }
+    if replacing {
+        let at = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 8.0 - button / 2.0, rect.center().y),
+            egui::vec2(button, rect.height()),
+        );
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(at)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        if context
+            .frame(&mut child)
+            .floating_button(BuiltinIcon::Replace, "Replace")
+            .clicked()
+        {
+            return Some(Intent::Replace(found.path.clone(), m.clone()));
+        }
+    }
+    response
+        .clicked()
+        .then(|| Intent::Open(found.path.clone(), m.clone()))
 }

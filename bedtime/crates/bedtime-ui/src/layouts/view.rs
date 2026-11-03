@@ -477,7 +477,10 @@ impl Tab {
         let (mut low, mut high) = (0, chars.len() - tail);
         while low < high {
             let mid = (low + high).div_ceil(2);
-            let width = self.layout_text(painter, font.clone(), elided(mid)).size().x;
+            let width = self
+                .layout_text(painter, font.clone(), elided(mid))
+                .size()
+                .x;
             if width <= max_width {
                 low = mid;
             } else {

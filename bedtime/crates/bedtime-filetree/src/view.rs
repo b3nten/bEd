@@ -240,6 +240,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         filter_menu(ui, filter, &mut intents);
     });
     let mut row_rects: Vec<(usize, egui::Rect)> = Vec::new();
+    let mut item_rects: Vec<(usize, egui::Rect)> = Vec::new();
     ui.spacing_mut().item_spacing.y = 0.0;
     let now = ui.input(|i| i.time);
     view.motions.update(&rows, height, now, context.motion);
@@ -263,8 +264,15 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             let rect =
                 egui::Rect::from_min_size(egui::pos2(left, top + y), egui::vec2(width, height));
             if rect.intersects(ui.clip_rect()) {
-                let response = ui.interact(
+                let item = tree::item_rect(
+                    ui,
+                    context,
+                    &tree_row(context, row, &view),
                     rect,
+                    tree::INDENT,
+                );
+                let response = ui.interact(
+                    item,
                     egui::Id::new((panel, "leaving", &row.path)),
                     egui::Sense::hover(),
                 );
@@ -281,12 +289,21 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             if !rect.intersects(ui.clip_rect()) {
                 continue;
             }
-            let response = ui.interact(
+            // Only the item takes the pointer, not the empty space after it.
+            let item = tree::item_rect(
+                ui,
+                context,
+                &tree_row(context, row, &view),
                 rect,
+                tree::INDENT,
+            );
+            let response = ui.interact(
+                item,
                 egui::Id::new((panel, &row.path)),
                 egui::Sense::click_and_drag(),
             );
             row_rects.push((index, rect));
+            item_rects.push((index, item));
             // Drag onto a folder in the tree to move it there; onto the layout
             // to open a file there (an area, beside a tab, a new split).
             if response.drag_started() && row.depth > 0 {
@@ -318,6 +335,12 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             below(ui, floor.map(|f| top + f), |ui| {
                 paint(ui, context, row, &view, rect, &response, alpha)
             });
+            if tree::rested(ui.ctx(), &response) {
+                let details = details(world.resource::<Folders>(), &mut view, &row.path);
+                context.frame(ui).tooltip_ui(&response, |frame| {
+                    describe(frame, context, row, details.as_ref())
+                });
+            }
             // egui counts a click on another row just before as part of a
             // triple click.
             if response.double_clicked() || response.triple_clicked() {
@@ -368,7 +391,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         ui,
         &ctx,
         &rows,
-        &row_rects,
+        &item_rects,
         whole,
         &root,
         context,
@@ -424,17 +447,9 @@ fn below(ui: &mut egui::Ui, floor: Option<f32>, draw: impl FnOnce(&mut egui::Ui)
     draw(&mut child);
 }
 
-fn paint(
-    ui: &mut egui::Ui,
-    context: &UiContext<'_>,
-    row: &Row,
-    view: &TreeView,
-    rect: egui::Rect,
-    response: &egui::Response,
-    alpha: f32,
-) {
+/// How `row` looks in the tree.
+fn tree_row<'a>(context: &UiContext<'_>, row: &'a Row, view: &TreeView) -> tree::Row<'a> {
     let palette = &context.theme.palette;
-    let directory = row.kind == EntryKind::Directory;
     let icon = match row.kind {
         EntryKind::Directory if row.expanded => BuiltinIcon::FolderOpen,
         EntryKind::Directory => BuiltinIcon::Folder,
@@ -448,25 +463,151 @@ fn paint(
     } else {
         palette.text
     };
+    tree::Row {
+        label: Some(&row.name),
+        depth: row.depth,
+        icon: Some(icon),
+        expanded: (row.kind == EntryKind::Directory).then_some(row.expanded),
+        selected: view.selected.as_ref() == Some(&row.path),
+        ink: color(ink),
+        icon_ink: palette.text,
+    }
+}
+
+fn paint(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    row: &Row,
+    view: &TreeView,
+    rect: egui::Rect,
+    response: &egui::Response,
+    alpha: f32,
+) {
     tree::paint_row(
         ui,
         context,
-        tree::Row {
-            label: Some(&row.name),
-            depth: row.depth,
-            icon: Some(icon),
-            expanded: directory.then_some(row.expanded),
-            selected: view.selected.as_ref() == Some(&row.path),
-            ink: color(ink),
-            icon_ink: palette.text,
-        },
+        tree_row(context, row, view),
         rect,
         Some(response),
         alpha * if row.loading { 0.6 } else { 1.0 },
         tree::INDENT,
     );
+}
+
+/// The hovered entry's metadata, read once while its tooltip shows.
+fn details(
+    folders: &Folders,
+    view: &mut TreeView,
+    path: &Path,
+) -> Option<bedtime_filesystem::Metadata> {
+    if view.details.as_ref().is_none_or(|(at, _)| at != path) {
+        let metadata = folders.filesystem.source(path).entry_metadata().ok();
+        view.details = Some((path.to_owned(), metadata));
+    }
+    view.details
+        .as_ref()
+        .and_then(|(_, metadata)| metadata.clone())
+}
+
+/// A row's tooltip: what it is, its size, when it changed, and why it's
+/// dimmed or red.
+fn describe(
+    frame: bedtime_ui::UiFrame<'_>,
+    context: &UiContext<'_>,
+    row: &Row,
+    metadata: Option<&bedtime_filesystem::Metadata>,
+) {
+    let palette = &context.theme.palette;
+    let ui = frame.ui;
+    ui.spacing_mut().item_spacing.y = 3.0;
+    ui.label(egui::RichText::new(&row.name).strong());
+    let mut kind = match row.kind {
+        EntryKind::Directory => "Folder".to_owned(),
+        EntryKind::Symlink => "Symbolic link".to_owned(),
+        _ => file_kind(&row.path),
+    };
+    if let Some(metadata) = metadata.filter(|m| m.kind == EntryKind::File) {
+        kind = format!("{kind} · {}", size(metadata.len));
+    }
+    ui.label(kind);
+    let muted = color(palette.muted);
+    if let Some(modified) = metadata.and_then(|m| m.modified) {
+        ui.colored_label(muted, format!("Modified {}", ago(modified)));
+    }
+    if row.hidden {
+        ui.colored_label(muted, "Hidden");
+    }
+    if row.ignored {
+        ui.colored_label(muted, "Ignored by Git");
+    }
     if let Some(error) = &row.error {
-        response.clone().on_hover_text(error);
+        ui.colored_label(color(palette.error), error);
+    }
+}
+
+/// "1.2 MB": decimal units, as Finder and Files show them.
+fn size(bytes: u64) -> String {
+    if bytes < 1000 {
+        return format!("{bytes} {}", if bytes == 1 { "byte" } else { "bytes" });
+    }
+    let mut value = bytes as f64;
+    for unit in ["KB", "MB", "GB", "TB"] {
+        value /= 1000.0;
+        if value < 1000.0 || unit == "TB" {
+            return if value < 10.0 {
+                format!("{value:.1} {unit}")
+            } else {
+                format!("{value:.0} {unit}")
+            };
+        }
+    }
+    unreachable!()
+}
+
+/// "3 minutes ago", "yesterday", "2 years ago".
+fn ago(time: std::time::SystemTime) -> String {
+    let Ok(elapsed) = std::time::SystemTime::now().duration_since(time) else {
+        return "just now".into();
+    };
+    let seconds = elapsed.as_secs();
+    let plural = |n: u64, unit: &str| format!("{n} {unit}{} ago", if n == 1 { "" } else { "s" });
+    match seconds {
+        0..60 => "just now".into(),
+        60..3600 => plural(seconds / 60, "minute"),
+        3600..86400 => plural(seconds / 3600, "hour"),
+        86400..172800 => "yesterday".into(),
+        172800..2592000 => plural(seconds / 86400, "day"),
+        2592000..31536000 => plural(seconds / 2592000, "month"),
+        _ => plural(seconds / 31536000, "year"),
+    }
+}
+
+/// What kind of file `path` is, by its extension ("PNG image"). Does no I/O.
+pub fn file_kind(path: &Path) -> String {
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    let of = |kind: &str| format!("{extension} {kind}");
+    match file_icon(path) {
+        BuiltinIcon::Rust => "Rust source".into(),
+        BuiltinIcon::Python => "Python source".into(),
+        BuiltinIcon::Javascript => "JavaScript".into(),
+        BuiltinIcon::Typescript => "TypeScript".into(),
+        BuiltinIcon::Json => "JSON".into(),
+        BuiltinIcon::Markdown => "Markdown".into(),
+        BuiltinIcon::Bash => "Shell script".into(),
+        BuiltinIcon::Text => "Plain text".into(),
+        BuiltinIcon::Config => of("configuration"),
+        BuiltinIcon::Image => of("image"),
+        BuiltinIcon::Audio => of("audio"),
+        BuiltinIcon::Video => of("video"),
+        BuiltinIcon::Font => of("font"),
+        BuiltinIcon::Spreadsheet => of("table"),
+        BuiltinIcon::Box => of("3D model"),
+        _ if extension.is_empty() => "File".into(),
+        _ => of("file"),
     }
 }
 
@@ -681,7 +822,7 @@ fn drop_into_tree(
     ui: &egui::Ui,
     ctx: &egui::Context,
     rows: &[Row],
-    row_rects: &[(usize, egui::Rect)],
+    item_rects: &[(usize, egui::Rect)],
     whole: egui::Rect,
     root: &Path,
     context: &UiContext<'_>,
@@ -722,9 +863,10 @@ fn drop_into_tree(
     let Some(pointer) = ctx.pointer_latest_pos().filter(|p| whole.contains(*p)) else {
         return;
     };
-    let hovered = row_rects
+    // Onto a folder's (or a file's) item; elsewhere, the root.
+    let hovered = item_rects
         .iter()
-        .find(|(_, rect)| rect.y_range().contains(pointer.y))
+        .find(|(_, rect)| rect.contains(pointer))
         .map(|(index, rect)| (&rows[*index], *rect));
     let folder = hovered.map_or_else(|| root.to_owned(), |(row, _)| folder_of(row));
     let fits = paths
@@ -738,7 +880,7 @@ fn drop_into_tree(
     let highlight = rows
         .iter()
         .position(|row| row.path == folder)
-        .and_then(|index| row_rects.iter().find(|(at, _)| *at == index))
+        .and_then(|index| item_rects.iter().find(|(at, _)| *at == index))
         .map_or(whole, |(_, rect)| *rect);
     let ink = color(context.theme.palette.accent);
     ui.painter().rect_stroke(
@@ -1084,6 +1226,25 @@ mod tests {
             loading: false,
             error: None,
         }
+    }
+
+    #[test]
+    fn tooltips_say_what_a_file_is_how_big_and_how_old() {
+        assert_eq!(file_kind(Path::new("a/photo.PNG")), "PNG image");
+        assert_eq!(file_kind(Path::new("main.rs")), "Rust source");
+        assert_eq!(file_kind(Path::new("data.xyz")), "XYZ file");
+        assert_eq!(file_kind(Path::new("Makefile")), "File");
+        assert_eq!(size(1), "1 byte");
+        assert_eq!(size(999), "999 bytes");
+        assert_eq!(size(4_200), "4.2 KB");
+        assert_eq!(size(42_000_000), "42 MB");
+        let now = std::time::SystemTime::now();
+        let before = |seconds| now - std::time::Duration::from_secs(seconds);
+        assert_eq!(ago(before(5)), "just now");
+        assert_eq!(ago(before(60)), "1 minute ago");
+        assert_eq!(ago(before(3 * 3600 + 5)), "3 hours ago");
+        assert_eq!(ago(before(90_000)), "yesterday");
+        assert_eq!(ago(before(800 * 86_400)), "2 years ago");
     }
 
     #[test]

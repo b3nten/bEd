@@ -146,3 +146,5 @@ filter lucide funnel
 grid lucide grid-3x3
 type lucide type
 box lucide box
+replace lucide replace
+replace-all lucide replace-all

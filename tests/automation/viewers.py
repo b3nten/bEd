@@ -108,6 +108,10 @@ with tempfile.TemporaryDirectory() as folder:
         bed.drag((x0 + 300, y1 + 300), (x0 + 380, y1 + 280))
         bed.wait(30)
         bed.screenshot("viewers-model")
+        # Hovering the info icon tells what's in the model.
+        bed.move(*[(a + b) / 2 for a, b in zip(bed.find("info")["rect"][:2], bed.find("info")["rect"][2:])])
+        until(bed, lambda: bed.exists(contains="triangles"), "the model's info shows")
+        bed.screenshot("viewers-model-info")
         assert not bed.status()["errors"], bed.status()["errors"]
 
         # A font: its preview, then every glyph; one is inspected.

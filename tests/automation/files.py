@@ -1,8 +1,9 @@
 """Files: a folder's layout 1 starts with the file tree. A click previews a
 text file beside it and leaves the tree focused; a double click keeps it
 open; binary data opens in hex. Open folders are
-saved with the workspace. Files are created from the menu, renamed with F2,
-and dragged into folders."""
+saved with the workspace. Only a row's item (not the space after it) takes
+the pointer; resting on one shows what it is. Files are created from the
+menu, renamed with F2, and dragged into folders."""
 import tempfile
 import time
 from pathlib import Path
@@ -58,7 +59,25 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: bed.exists(contains="first line of notes"), "notes.txt shows again")
         bed.click(row(bed, "other.txt"))
         until(bed, lambda: bed.exists("other.txt") and len(bed.find_all("other.txt")) == 2, "other.txt previews")
+
         assert len(bed.find_all("notes.txt")) == 2, "the double-clicked file was replaced"
+
+        # Only a row's item takes the pointer: the space after the name is
+        # the tree's background.
+        x0, y0, x1, y1 = row(bed, "data.bin")["rect"]
+        bed.click((x1 + 60, (y0 + y1) / 2))
+        bed.wait(20)
+        assert row(bed, "data.bin")["toggled"] != "True", "the space after a name selected it"
+        assert not bed.exists(contains="00 01 02"), "the space after a name opened it"
+
+        # Resting on a row tells what it is, after a moment.
+        x0, y0, x1, y1 = row(bed, "notes.txt")["rect"]
+        bed.move((x0 + x1) / 2, (y0 + y1) / 2)
+        bed.wait(2)
+        assert not bed.exists("Plain text · 27 bytes"), "the tooltip didn't wait"
+        until(bed, lambda: bed.exists("Plain text · 27 bytes"), "the tooltip shows")
+        assert bed.exists(contains="Modified just now")
+        bed.screenshot("files-tooltip")
 
         # Binary data opens in hex.
         bed.click(row(bed, "data.bin"))

@@ -21,6 +21,78 @@ pub struct Row<'a> {
     pub icon_ink: crate::theme::Rgba,
 }
 
+/// Where a row's parts go: the disclosure from `x`, the name from `name_x`.
+struct Placement {
+    x: f32,
+    name_x: f32,
+    galley: Option<std::sync::Arc<egui::Galley>>,
+}
+
+fn place(
+    ui: &egui::Ui,
+    context: &UiContext<'_>,
+    row: &Row<'_>,
+    rect: egui::Rect,
+    indent: f32,
+    ink: egui::Color32,
+) -> Placement {
+    let x = rect.left() + INSET + row.depth as f32 * indent;
+    let side = context.metrics.font_size.min(18.0);
+    // Where the name starts: after the icon, if there's one.
+    let name_x = x + 18.0 + row.icon.map_or(0.0, |_| side + 5.0);
+    let galley = row.label.map(|label| {
+        let font = egui::FontId::proportional(context.metrics.font_size);
+        let mut job = egui::text::LayoutJob::simple_singleline(label.to_owned(), font, ink);
+        job.wrap.max_width = (rect.right() - x - 42.0).max(0.0);
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        ui.fonts_mut(|fonts| fonts.layout_job(job))
+    });
+    Placement { x, name_x, galley }
+}
+
+/// The part of a row in `rect` that takes the pointer: the disclosure, the
+/// icon and the name, not the empty space after them.
+pub fn item_rect(
+    ui: &egui::Ui,
+    context: &UiContext<'_>,
+    row: &Row<'_>,
+    rect: egui::Rect,
+    indent: f32,
+) -> egui::Rect {
+    let placed = place(ui, context, row, rect, indent, row.ink);
+    let right = placed.name_x + placed.galley.map_or(0.0, |galley| galley.size().x) + 4.0;
+    egui::Rect::from_min_max(
+        egui::pos2(placed.x, rect.top()),
+        egui::pos2(right.min(rect.right()), rect.bottom()),
+    )
+}
+
+/// The rounded fill behind a hovered or selected item, fading with the
+/// motion policy. Every tree (and Search's matches) uses it.
+pub fn paint_highlight(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    context: &UiContext<'_>,
+    rect: egui::Rect,
+    response: &egui::Response,
+    selected: bool,
+) {
+    let visuals = ui.style().interact_selectable(response, selected);
+    let fill = ui.ctx().animate_color_with_time(
+        response.id.with("row-fill"),
+        visuals.bg_fill,
+        if context.motion.enabled {
+            context.motion.seconds
+        } else {
+            0.0
+        },
+    );
+    if selected || response.hovered() {
+        painter.rect_filled(rect, visuals.corner_radius, fill);
+    }
+}
+
 /// Paint inside an existing hit rectangle; selection fits the icon and name.
 pub fn paint_row(
     ui: &mut egui::Ui,
@@ -33,10 +105,13 @@ pub fn paint_row(
 ) {
     let mut painter = ui.painter().clone();
     painter.multiply_opacity(alpha.clamp(0.0, 1.0));
-    let x = rect.left() + INSET + row.depth as f32 * indent;
     let side = context.metrics.font_size.min(18.0);
-    // Where the name starts: after the icon, if there's one.
-    let name_x = x + 18.0 + row.icon.map_or(0.0, |_| side + 5.0);
+    let ink = if row.selected {
+        crate::rainbow_ink(ui, context.motion)
+    } else {
+        row.ink
+    };
+    let Placement { x, name_x, galley } = place(ui, context, &row, rect, indent, ink);
     if let Some(open) = row.expanded {
         // The caller's stable row ID also scopes its disclosure animation.
         let id = response.map_or_else(|| ui.id(), |response| response.id);
@@ -48,40 +123,20 @@ pub fn paint_row(
             row.ink,
         );
     }
-    if let Some(label) = row.label {
-        let ink = if row.selected {
-            crate::rainbow_ink(ui, context.motion)
-        } else {
-            row.ink
-        };
-        let font = egui::FontId::proportional(context.metrics.font_size);
-        let mut job = egui::text::LayoutJob::simple_singleline(label.to_owned(), font, ink);
-        job.wrap.max_width = (rect.right() - x - 42.0).max(0.0);
-        job.wrap.max_rows = 1;
-        job.wrap.break_anywhere = true;
-        let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    if let Some(galley) = galley {
         if let Some(response) = response {
-            let visuals = ui.style().interact_selectable(response, row.selected);
-            let fill = ui.ctx().animate_color_with_time(
-                response.id.with("row-fill"),
-                visuals.bg_fill,
-                if context.motion.enabled {
-                    context.motion.seconds
-                } else {
-                    0.0
-                },
+            let label_rect = egui::Rect::from_min_max(
+                egui::pos2(x + 14.0, rect.top() + 1.0),
+                egui::pos2(name_x + galley.size().x + 4.0, rect.bottom() - 1.0),
             );
-            if row.selected || response.hovered() {
-                let label_rect = egui::Rect::from_min_max(
-                    egui::pos2(x + 14.0, rect.top() + 1.0),
-                    egui::pos2(name_x + galley.size().x + 4.0, rect.bottom() - 1.0),
-                );
-                painter.rect_filled(
-                    label_rect.intersect(rect.shrink(1.0)),
-                    visuals.corner_radius,
-                    fill,
-                );
-            }
+            paint_highlight(
+                ui,
+                &painter,
+                context,
+                label_rect.intersect(rect.shrink(1.0)),
+                response,
+                row.selected,
+            );
         }
         painter.galley(
             egui::pos2(name_x, rect.center().y - galley.size().y / 2.0),
@@ -101,6 +156,64 @@ pub fn paint_row(
     let mut frame = context.frame(&mut icons_ui);
     frame.theme = &theme;
     frame.icon_at(icon, [x + 18.0, rect.center().y - side / 2.0], side);
+}
+
+/// How long the pointer rests on a row before its tooltip shows: passing
+/// over a tree shouldn't flash a tooltip per row.
+pub const TOOLTIP_DELAY: f64 = 0.5;
+
+/// Whether the pointer has rested on `response` for `TOOLTIP_DELAY`. Asks
+/// for a repaint when it will have.
+pub fn rested(ctx: &egui::Context, response: &egui::Response) -> bool {
+    let id = response.id.with("tree-tooltip-rest");
+    if !response.hovered() {
+        ctx.data_mut(|data| data.remove::<(f64, u64)>(id));
+        return false;
+    }
+    let now = ctx.input(|i| i.time);
+    let pass = ctx.cumulative_pass_nr();
+    let since = ctx.data_mut(|data| {
+        let rest = data.get_temp_mut_or_insert_with(id, || (now, pass));
+        // A row that wasn't drawn last pass starts over (it scrolled away).
+        if rest.1 + 1 < pass {
+            rest.0 = now;
+        }
+        rest.1 = pass;
+        rest.0
+    });
+    let wait = TOOLTIP_DELAY - (now - since);
+    if wait > 0.0 {
+        ctx.request_repaint_after_secs(wait as f32);
+        false
+    } else {
+        true
+    }
+}
+
+/// A themed tooltip for a row, once the pointer has rested on it.
+pub fn tooltip_ui<R>(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    response: &egui::Response,
+    draw: impl FnOnce(crate::UiFrame<'_>) -> R,
+) -> Option<R> {
+    if !rested(ui.ctx(), response) {
+        return None;
+    }
+    context.frame(ui).tooltip_ui(response, draw)
+}
+
+/// `tooltip_ui` with a line of text.
+pub fn tooltip(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    response: &egui::Response,
+    text: impl Into<String>,
+) {
+    let text = text.into();
+    tooltip_ui(ui, context, response, |frame| {
+        frame.ui.label(text);
+    });
 }
 
 /// The Files tree's timing (`ease`), also used for disappearing descendants.
@@ -235,6 +348,61 @@ mod tests {
         );
         assert_eq!(highlight, faded_highlight);
         assert!((faded as f32 - opaque as f32 * 0.25).abs() <= 1.0);
+    }
+
+    #[test]
+    fn only_the_item_takes_the_pointer_and_tooltips_wait_for_the_pointer_to_rest() {
+        let ctx = egui::Context::default();
+        let icons = std::sync::Mutex::new(crate::icon_cache::IconCache::default());
+        let theme = crate::Theme::dark();
+        let context = UiContext {
+            view: bevy::prelude::Entity::PLACEHOLDER,
+            surface: bevy::prelude::Entity::PLACEHOLDER,
+            theme: &theme,
+            metrics: &crate::Metrics::default(),
+            motion: MotionPolicy::default(),
+            icons: &icons,
+        };
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(600.0, 24.0));
+        let row = |depth| Row {
+            label: Some("file.txt"),
+            depth,
+            icon: Some(BuiltinIcon::Text),
+            expanded: None,
+            selected: false,
+            ink: egui::Color32::WHITE,
+            icon_ink: theme.palette.text,
+        };
+        let frame = |time: f64, pointer: egui::Pos2| {
+            let input = egui::RawInput {
+                time: Some(time),
+                events: vec![egui::Event::PointerMoved(pointer)],
+                ..Default::default()
+            };
+            let mut found = (egui::Rect::NOTHING, egui::Rect::NOTHING, false);
+            let mut output = ctx.run_ui(input, |ui| {
+                let item = item_rect(ui, &context, &row(0), rect, INDENT);
+                let deeper = item_rect(ui, &context, &row(2), rect, INDENT);
+                let response = ui.interact(item, egui::Id::new("item"), egui::Sense::click());
+                found = (item, deeper, rested(ui.ctx(), &response));
+            });
+            output.textures_delta.clear();
+            found
+        };
+        let (item, deeper, _) = frame(0.0, egui::pos2(30.0, 12.0));
+        assert_eq!(item.left(), INSET);
+        assert!(item.width() > 40.0 && item.width() < 150.0, "{item:?}");
+        assert_eq!(deeper.left(), item.left() + 2.0 * INDENT);
+        assert_eq!(deeper.width(), item.width());
+        let (_, _, early) = frame(0.1, egui::pos2(30.0, 12.0));
+        assert!(!early, "a tooltip waits");
+        let (_, _, rested) = frame(0.1 + TOOLTIP_DELAY, egui::pos2(30.0, 12.0));
+        assert!(rested);
+        // Past the name is empty space: nothing there, and the wait restarts.
+        let (_, _, away) = frame(1.0, egui::pos2(400.0, 12.0));
+        assert!(!away);
+        let (_, _, back) = frame(1.1, egui::pos2(30.0, 12.0));
+        assert!(!back);
     }
 
     #[test]

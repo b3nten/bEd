@@ -558,6 +558,33 @@ fn draw_header(
     ui.separator();
 }
 
+/// A tree row's place (up to the staging checkbox) and its item's response:
+/// only the folder or file's name takes the pointer.
+#[allow(clippy::too_many_arguments)]
+fn tree_item(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    view: &RepositoryView,
+    row: &Row,
+    selected: Option<&str>,
+    expanded: Option<bool>,
+    checkbox_width: f32,
+    height: f32,
+) -> (egui::Rect, egui::Response) {
+    let (rect, row_response) = ui.allocate_exact_size(
+        egui::vec2(
+            (ui.available_width() - checkbox_width - ui.spacing().item_spacing.x).max(1.0),
+            height,
+        ),
+        egui::Sense::hover(),
+    );
+    let item = tree::entry_row(context, view, row, selected, expanded).map_or(rect, |entry| {
+        bedtime_ui::tree::item_rect(ui, context, &entry, rect, bedtime_ui::tree::INDENT)
+    });
+    let response = ui.interact(item, row_response.id.with("item"), egui::Sense::click());
+    (rect, response)
+}
+
 fn draw_row(
     ui: &mut egui::Ui,
     context: &UiContext<'_>,
@@ -619,13 +646,15 @@ fn draw_row(
                     expanded,
                     conflicted,
                 } => {
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(
-                            (ui.available_width() - checkbox_width - ui.spacing().item_spacing.x)
-                                .max(1.0),
-                            height,
-                        ),
-                        egui::Sense::click(),
+                    let (rect, response) = tree_item(
+                        ui,
+                        context,
+                        view,
+                        row,
+                        panel.selected.as_deref(),
+                        Some(*expanded),
+                        checkbox_width,
+                        height,
                     );
                     tree::paint_entry(
                         ui,
@@ -646,7 +675,7 @@ fn draw_row(
                     {
                         *action = Some(Action::ToggleDirectory(key.clone()));
                     }
-                    response.on_hover_text(&key.path);
+                    bedtime_ui::tree::tooltip(ui, context, &response, &key.path);
                     let enabled = enabled && !conflicted;
                     let (response, operation) =
                         changes_checkbox(ui, view, changes, *staged, enabled);
@@ -667,15 +696,15 @@ fn draw_row(
                         _ => staging(entry),
                     };
                     let response = if view.options.view == ViewMode::Tree {
-                        let (rect, response) = ui.allocate_exact_size(
-                            egui::vec2(
-                                (ui.available_width()
-                                    - checkbox_width
-                                    - ui.spacing().item_spacing.x)
-                                    .max(1.0),
-                                height,
-                            ),
-                            egui::Sense::click(),
+                        let (rect, response) = tree_item(
+                            ui,
+                            context,
+                            view,
+                            row,
+                            panel.selected.as_deref(),
+                            None,
+                            checkbox_width,
+                            height,
                         );
                         tree::paint_entry(
                             ui,
@@ -734,9 +763,12 @@ fn draw_row(
                             .truncate(),
                         )
                     };
-                    response
-                        .clone()
-                        .on_hover_text(format!("{}\n{:?}", entry.path, stage));
+                    bedtime_ui::tree::tooltip(
+                        ui,
+                        context,
+                        &response,
+                        format!("{}\n{:?}", entry.path, stage),
+                    );
                     let side = match group {
                         Some(Group::Staged) => DiffSide::Staged,
                         Some(Group::Unstaged) => DiffSide::Unstaged,

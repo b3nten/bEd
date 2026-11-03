@@ -264,18 +264,14 @@ pub(super) fn draw(
     panel.tree = state;
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn paint_entry(
-    ui: &mut egui::Ui,
+/// How a directory or file row looks in the tree; `None` for a header.
+pub(super) fn entry_row<'a>(
     context: &UiContext<'_>,
-    view: &RepositoryView,
-    row: &Row,
-    rect: egui::Rect,
-    response: Option<&egui::Response>,
+    view: &'a RepositoryView,
+    row: &'a Row,
     selected: Option<&str>,
     expanded: Option<bool>,
-    alpha: f32,
-) {
+) -> Option<tree::Row<'a>> {
     let (path, depth, icon, expanded, selected, icon_ink) = match row {
         Row::Directory {
             key,
@@ -313,32 +309,43 @@ pub(super) fn paint_entry(
                 ink,
             )
         }
-        Row::Header(..) => return,
+        Row::Header(..) => return None,
+    };
+    Some(tree::Row {
+        label: Some(path.rsplit('/').next().unwrap_or(path)),
+        depth,
+        icon: Some(icon),
+        expanded,
+        selected,
+        ink: bedtime_ui::theme::color(context.theme.palette.text),
+        icon_ink,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn paint_entry(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    view: &RepositoryView,
+    row: &Row,
+    rect: egui::Rect,
+    response: Option<&egui::Response>,
+    selected: Option<&str>,
+    expanded: Option<bool>,
+    alpha: f32,
+) {
+    let Some(entry) = entry_row(context, view, row, selected, expanded) else {
+        return;
     };
     // Named for accessibility (and scripts) by its file or folder name.
     if let Some(response) = response {
-        let name = path.rsplit('/').next().unwrap_or(path).to_owned();
+        let name = entry.label.unwrap_or_default().to_owned();
+        let selected = entry.selected;
         response.widget_info(|| {
             egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &name)
         });
     }
-    tree::paint_row(
-        ui,
-        context,
-        tree::Row {
-            label: Some(path.rsplit('/').next().unwrap()),
-            depth,
-            icon: Some(icon),
-            expanded,
-            selected,
-            ink: bedtime_ui::theme::color(context.theme.palette.text),
-            icon_ink,
-        },
-        rect,
-        response,
-        alpha,
-        tree::INDENT,
-    );
+    tree::paint_row(ui, context, entry, rect, response, alpha, tree::INDENT);
 }
 
 #[cfg(test)]

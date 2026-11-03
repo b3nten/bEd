@@ -273,6 +273,30 @@ Each step must produce a usable app. Order is provisional.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
+- **Trees, Search Workspace, model info**, 2026-11-02, awaiting review.
+  bedtime-ui `tree`: `item_rect` (chevron, icon and name: the only part of a
+  row that takes the pointer), `paint_highlight` (the hover/selection fill),
+  and `rested`/`tooltip`/`tooltip_ui` (a row's tooltip after the pointer rests
+  0.5 s; egui's own delay stays 0 for buttons). Files, Git (tree mode) and
+  Structure hit-test the item only; Files drops onto a folder's item, else the
+  root. A Files row's tooltip: name, kind (`file_kind`, from the extension),
+  size, modified ("3 minutes ago"), hidden/ignored, error; metadata is read
+  once per hovered row. Git status in it is deferred (the Files tree doesn't
+  know Git, and Git status only runs with a Git panel). Find in Files is
+  **Search Workspace** (`SearchWorkspace`; the action key stays
+  `search.find_in_files` for saved bindings). Its bar follows Zed: Aa/ab/.*
+  inside the query field, Replace (new `replace` icon, a toggle) and Filter
+  after it; the replacement, include and exclude fields share the query's
+  edges; Replace All is a `replace-all` icon. Results draw like Structure:
+  rows at computed positions, a file's matches sliding in and out; matches
+  use the tree highlight (the last opened stays selected). Replace on a
+  hovered match is drawn in a child `Ui` (no extra line). A result opens as any
+  file does (`Target::Existing`: the panel showing it, else an area with that
+  kind of viewer, else the largest, which can be Search's own); dragging a
+  file or match onto the layout opens it there. The model viewer's info icon
+  shows the model's details as a tooltip instead of a menu.
+  `tests/automation/{search,files,viewers}.py` cover it.
+
 - **UI cleanup**, 2026-11-02, awaiting review. The status bar is a line of
   text with 5 points above and below, centred (it had control height, with
   labels stretched to it). The file tree hides hidden files by default

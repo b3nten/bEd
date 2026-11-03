@@ -19,7 +19,7 @@ mod ops;
 mod view;
 pub use bedtime_filesystem::operations::Operation;
 pub use ops::{FileOperations, copy_files, paste_files, run_file_operation};
-pub use view::{ToggleHiddenFiles, ToggleIgnoredFiles, file_icon, open_files_factory};
+pub use view::{ToggleHiddenFiles, ToggleIgnoredFiles, file_icon, file_kind, open_files_factory};
 
 #[cfg(test)]
 mod tests;
@@ -167,6 +167,8 @@ pub struct TreeView {
     naming: Option<view::Naming>,
     /// Rows moving as folders open and close.
     motions: motion::Motions,
+    /// The entry whose tooltip shows, and its metadata.
+    details: Option<(PathBuf, Option<bedtime_filesystem::Metadata>)>,
 }
 
 impl TreeView {
