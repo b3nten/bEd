@@ -141,6 +141,19 @@ impl Repository {
         Ok(fs::canonicalize(text_line(&key.stdout)?)?)
     }
 
+    /// Whether `folder` is a linked worktree of this repository: its `.git`
+    /// file names a gitdir in `worktrees` (the common dir's).
+    fn linked_worktree(&self, worktrees: &Path, folder: &str) -> bool {
+        let folder = self.root.join(folder);
+        let Ok(link) = fs::read_to_string(folder.join(".git")) else {
+            return false;
+        };
+        link.trim_end()
+            .strip_prefix("gitdir: ")
+            .and_then(|gitdir| fs::canonicalize(folder.join(gitdir)).ok())
+            .is_some_and(|gitdir| gitdir.parent() == Some(worktrees))
+    }
+
     fn operation(&self) -> Result<RepositoryOperation> {
         for (name, operation) in [
             ("rebase-merge", RepositoryOperation::Rebase),
@@ -268,6 +281,15 @@ impl Repository {
         status
             .entries
             .retain(|entry| self.root.join(&entry.path).starts_with(&self.workspace));
+        // This repository's linked worktrees nested in it (as agents make
+        // them) are other checkouts, not untracked folders.
+        let folder = |entry: &StatusEntry| entry.index_status == '?' && entry.path.ends_with('/');
+        if status.entries.iter().any(folder) {
+            let worktrees = self.key()?.join("worktrees");
+            status
+                .entries
+                .retain(|entry| !(folder(entry) && self.linked_worktree(&worktrees, &entry.path)));
+        }
         let refs = self.checked(
             &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
             None,
