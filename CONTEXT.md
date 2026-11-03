@@ -297,6 +297,19 @@ Each step must produce a usable app. Order is provisional.
   shows the model's details as a tooltip instead of a menu.
   `tests/automation/{search,files,viewers}.py` cover it.
 
+- **HTTP client, step 1 of 3 (engine)**, 2026-11-02, awaiting review. New
+  `bedtime-http-client`, which will also hold the panel (one crate, reusing
+  no other panel's pieces). `send(&Request, &Options, cancelled)` makes one
+  request with `ureq` (rustls, webpki roots, gzip): any method may carry a
+  body, an empty body sends none, any status is a `Response` (status, reason,
+  final URL after redirects, headers, body, `truncated`, elapsed), failures are
+  `Error::{Cancelled, Invalid, TimedOut, Failed}`. `Options`: one timeout for
+  the whole exchange (30 s), a body cap (16 MB, cut short past it),
+  following redirects. The exchange runs on its own thread so `cancelled`
+  (polled every 25 ms) returns at once; quitting needn't wait for a stalled
+  server. No Bevy. Next: step 2, saved requests (a persisted resource in the
+  store bed picks, not files in the repo) and the panel; step 3, bed wiring.
+
 - **UI cleanup**, 2026-11-02, awaiting review. The status bar is a line of
   text with 5 points above and below, centred (it had control height, with
   labels stretched to it). The file tree hides hidden files by default

@@ -1,0 +1,10 @@
+[package]
+name = "bedtime-http-client"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "An HTTP client panel: compose requests, send them and read the response"
+
+[dependencies]
+ureq.workspace = true
