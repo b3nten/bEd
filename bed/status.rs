@@ -1,6 +1,9 @@
 use crate::workspace::Workspace;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
-use bedtime_workbench::{Notification, NotificationLevel, Notifications, WorkbenchWorldExt, view};
+use bedtime_workbench::{
+    LayoutAreas, LayoutSurface, LayoutsWorldExt, Notification, NotificationLevel, Notifications,
+    WorkbenchWorldExt, view,
+};
 use bevy::prelude::*;
 use std::time::Duration;
 
@@ -17,8 +20,11 @@ const RECENT: usize = 10;
 pub fn body(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
     let available = ui.available_rect_before_wrap();
     // A compact strip: a line of text, with the same room above and below.
+    // The panels already leave their gap above the bar, so that counts
+    // towards the room above the text.
     let line = ui.text_style_height(&egui::TextStyle::Body);
-    let height = (line + 2.0 * STATUS_PADDING).min(available.height().max(0.0));
+    let above = (STATUS_PADDING - panel_gap(world, context)).max(0.0);
+    let height = (line + above + STATUS_PADDING).min(available.height().max(0.0));
     let bar = egui::Rect::from_min_max(
         egui::pos2(available.left(), available.bottom() - height),
         available.max,
@@ -29,7 +35,10 @@ pub fn body(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
 
     let background = bedtime_ui::theme::color(context.theme.palette.background);
     ui.painter().rect_filled(bar, 0.0, background);
-    let content = bar.shrink2(egui::vec2(10.0, 0.0));
+    let content = egui::Rect::from_min_max(
+        egui::pos2(bar.left() + 10.0, bar.top() + above),
+        egui::pos2(bar.right() - 10.0, bar.bottom() - STATUS_PADDING),
+    );
     if content.is_positive() {
         let mut row = ui.new_child(
             egui::UiBuilder::new()
@@ -37,14 +46,32 @@ pub fn body(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
                 .max_rect(content)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        // Rows centre on `interact_size.y`: the bar's height, so text sits
-        // in its middle.
+        // Rows centre on `interact_size.y`: the content's height, so text
+        // sits in its middle.
         row.spacing_mut().interact_size.y = content.height();
         row.spacing_mut().button_padding.y = 0.0;
         row.set_clip_rect(content);
         draw(&mut row, world, context);
     }
     ui.advance_cursor_after_rect(available);
+}
+
+/// The gap the panels leave between themselves and the bar: none when one
+/// area fills the window edge to edge (as the layout view draws it).
+fn panel_gap(world: &World, context: &UiContext<'_>) -> f32 {
+    let Some(surface) = world.get::<LayoutSurface>(context.surface) else {
+        return 0.0;
+    };
+    let single = world
+        .layouts()
+        .active()
+        .and_then(|layout| world.get::<LayoutAreas>(layout))
+        .is_some_and(|areas| areas.entities().len() == 1);
+    if surface.single_area_edge_to_edge && single {
+        0.0
+    } else {
+        surface.panel_gap
+    }
 }
 
 fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
