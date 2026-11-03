@@ -71,6 +71,14 @@ const BUILT_IN: &[(&str, &str)] = &[
 /// The default theme's id.
 pub const DEFAULT: &str = "everforest-dark-medium";
 
+/// A shipped theme's file, if `id` is one.
+pub fn built_in(id: &str) -> Option<&'static str> {
+    BUILT_IN
+        .iter()
+        .find(|(shipped, _)| *shipped == id)
+        .map(|(_, text)| *text)
+}
+
 /// Where themes are read from.
 pub fn folder() -> Option<PathBuf> {
     crate::config_directory().map(|config| config.join("themes"))
@@ -142,6 +150,7 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
     let mut value = chosen.clone();
     let mut reset = false;
     let mut open_folder = false;
+    let mut edit = false;
     columns(
         ui,
         "Theme",
@@ -159,6 +168,16 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
         },
         |ui| {
             reset = set_here && marks.reset(ui, context);
+            let mut frame = context.frame(ui);
+            let button = frame.icon_button_sized(BuiltinIcon::Sliders, 14.0);
+            button.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Edit theme")
+            });
+            frame.tooltip(
+                &button,
+                "Edit this theme's colors, or make your own from it",
+            );
+            edit = button.clicked();
             let mut frame = context.frame(ui);
             let button = frame.icon_button_sized(BuiltinIcon::FolderOpen, 14.0);
             frame.tooltip(&button, "Open the themes folder to edit or add themes");
@@ -190,6 +209,10 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
             .settings_mut()
             .clear::<crate::settings::ColorTheme>(layer);
         crate::status::notify_failure(world, "Couldn't reset the theme", result);
+    }
+    if edit {
+        let result = crate::theme_editor::open(world, Some(chosen.clone()));
+        crate::status::notify_failure(world, "Couldn't open the Theme Editor", result);
     }
     if open_folder && let Some(folder) = folder() {
         let opener = if cfg!(target_os = "macos") {

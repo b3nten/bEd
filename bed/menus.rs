@@ -182,6 +182,10 @@ fn compose_menus(mut commands: Commands) {
     commands.spawn((MenuItem::action::<crate::mascots::OpenBed>(), InMenu(view)));
     commands.spawn((MenuItem::action::<NewTerminal>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
+    commands.spawn((
+        MenuItem::action::<crate::theme_editor::OpenThemeEditor>(),
+        InMenu(view),
+    ));
     commands.spawn((MenuItem::action::<UseLayout<0>>(), InMenu(layout)));
     commands.spawn((MenuItem::action::<UseLayout<1>>(), InMenu(layout)));
     commands.spawn((MenuItem::action::<UseLayout<2>>(), InMenu(layout)));

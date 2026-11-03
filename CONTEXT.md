@@ -713,6 +713,20 @@ Each step must produce a usable app. Order is provisional.
   `appearance.theme` setting (`ColorTheme`) names a file.
   `tests/automation/themes.py`.
 
+- **Theme Editor**, implemented 2026-11-02, awaiting review. bed only
+  (`bed/theme_editor.rs`); bedtime is unchanged. One panel (View → Theme
+  Editor, or the sliders button on Settings' Theme row, which opens it on the
+  chosen theme) edits any theme in the folder, whether or not it's in use.
+  It shows a preview drawn in the theme, then every color as a swatch (egui's
+  picker, with alpha) and a hex field. Edits save to `<id>.ron` 0.4 s after
+  the last one and replace `ThemeFolder` so they show at once. Duplicate (+)
+  writes `slug(name).ron`. Renaming a custom theme renames its file and
+  updates the settings layers that chose it; shipped themes keep their id.
+  Shipped themes have Reset (rewrites the shipped text, enabled when
+  different); others have Delete (clears settings that chose it).
+  `tests/automation/theme_editor.py`. Open: other workspaces' settings that
+  named a renamed or deleted theme fall back to "Not found".
+
 - **Step 5.7 (automation)**, implemented 2026-10-27 and awaiting review.
   `bedtime-automation` (BRP methods: status, input, ui, screenshot, invoke,
   exit; does nothing unless its `enabled` feature is on and

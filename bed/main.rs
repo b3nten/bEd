@@ -21,6 +21,7 @@ mod search;
 mod settings;
 mod status;
 mod terminal;
+mod theme_editor;
 mod themes;
 mod workspace;
 
@@ -75,6 +76,7 @@ pub fn app(start: Start) -> App {
         git::BedGitPlugin,
         search::BedSearchPlugin,
         preview::BedPreviewPlugin,
+        theme_editor::ThemeEditorPlugin,
     ))
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     .insert_resource(settings::GlobalLocation(
