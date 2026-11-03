@@ -103,9 +103,24 @@ launch configuration and root on a worker (process, protocol, sync, progress,
 diagnostics, definitions; its bounds and protocol details are in the module
 docs), and `documents`, which connects it to workbench documents:
 
+- **Which servers.** `config` has the built-in servers (`KNOWN_SERVERS`,
+  Helix's defaults for the languages there's syntax for: rust-analyzer,
+  basedpyright, pyright, ruff, typescript-language-server, gopls, clangd, …).
+  An app that inserts a `ServerCatalog` (the built-ins changed by its
+  settings: `ServerSettings` per server, every field optional, merged layer by
+  layer with `config::resolve`; servers can be added) gets `LanguageServers`
+  worked out from it: each language's first enabled server whose program is
+  found. Programs are looked for on a worker (`InstalledServers`), on the
+  login shell's PATH (`environment::shell_environment`, read once: an app
+  started from Finder doesn't have the terminal's PATH), and launched by their
+  full path in that shell's PATH, HOME and LANG plus their own environment.
+  When the configuration changes, servers no longer configured stop and their
+  documents reconnect to the new ones. Without a catalog, the app sets
+  `LanguageServers` itself.
 - A text document gets a server while an editor shows it from a file
-  (`ViewerFile`) whose language has one in `LanguageServers` (Rust:
-  rust-analyzer), under the workbench's `Root`. Without a root, none run.
+  (`ViewerFile`) whose language has one in `LanguageServers`, under the
+  workbench's `Root`. Without a root, none run. `server_states` reports each
+  running server by name (its status and how many files it has).
   Documents with unsaved changes stay connected after their editor closes.
   Each document's connection is a `DocumentServer` on its entity; each server
   a `LanguageServer` entity, shared by its documents.

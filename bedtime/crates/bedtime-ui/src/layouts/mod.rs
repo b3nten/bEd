@@ -35,7 +35,7 @@ pub use templates::LayoutTemplate;
 pub use validation::PanelTabStyle;
 pub(crate) use validation::validate_layouts;
 pub use view::{
-    PanelFactoryPayload, SurfacePresentation, SurfaceShell, Titlebar, TitlebarOwnership,
+    FileDrops, PanelFactoryPayload, SurfacePresentation, SurfaceShell, Titlebar, TitlebarOwnership,
     panel_drag_source,
 };
 
@@ -500,6 +500,36 @@ impl PanelFactory {
     }
 }
 
+/// When an area was last focused (a count, not a time): the most recently
+/// focused of several areas is the one opening prefers.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AreaFocusedAt(pub u64);
+
+#[derive(Resource, Default)]
+struct FocusClock(u64);
+
+/// Stamp each layout's focused area when it changes.
+fn stamp_focused_areas(
+    layouts: Query<&Layout, Changed<Layout>>,
+    stamps: Query<&AreaFocusedAt>,
+    mut clock: ResMut<FocusClock>,
+    mut commands: Commands,
+) {
+    for layout in &layouts {
+        let Some(area) = layout.focused_area else {
+            continue;
+        };
+        // Already the latest: nothing changed but the layout's other fields.
+        if stamps.get(area).is_ok_and(|stamp| stamp.0 == clock.0) {
+            continue;
+        }
+        clock.0 += 1;
+        if let Ok(mut entity) = commands.get_entity(area) {
+            entity.try_insert(AreaFocusedAt(clock.0));
+        }
+    }
+}
+
 /// Layouts, and their drawing on `LayoutSurface` windows (which needs
 /// `UiPlugin`). Window chrome is `ChromePlugin`.
 pub struct LayoutsPlugin;
@@ -507,6 +537,7 @@ pub struct LayoutsPlugin;
 impl Plugin for LayoutsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LayoutOrder>()
+            .init_resource::<FocusClock>()
             .init_resource::<PendingEdits>()
             .init_resource::<view::LayoutsUi>()
             .init_resource::<CloseHooks>()
@@ -517,6 +548,7 @@ impl Plugin for LayoutsPlugin {
                 LayoutSystems::Apply.after(crate::UiSystems::Draw),
             )
             .add_systems(PreUpdate, apply_edits.in_set(LayoutSystems::Apply))
+            .add_systems(PostUpdate, stamp_focused_areas)
             .add_systems(
                 PreUpdate,
                 surface::configure.before(crate::UiSystems::Configure),
@@ -669,6 +701,40 @@ impl LayoutsRef {
                 (r.max[0] - r.min[0]) * (r.max[1] - r.min[1])
             })
             .ok_or("Layout has no areas")?)
+    }
+
+    /// Where a new panel goes: an area with a panel that `fits` (the focused
+    /// one, else the most recently focused), else the largest area.
+    pub fn area_for(
+        &self,
+        layout: Entity,
+        fits: impl Fn(&World, Entity) -> bool,
+    ) -> Result<Entity, String> {
+        let world = &self.world;
+        let focused = world.get::<Layout>(layout).and_then(Layout::focused_area);
+        let candidates: Vec<Entity> = world
+            .get::<LayoutAreas>(layout)
+            .map_or(&[][..], |a| a.entities())
+            .iter()
+            .copied()
+            .filter(|&area| self.panels_in_area(area).iter().any(|&p| fits(world, p)))
+            .collect();
+        let chosen = candidates
+            .iter()
+            .copied()
+            .find(|&area| Some(area) == focused)
+            .or_else(|| {
+                candidates.iter().copied().max_by_key(|&area| {
+                    world
+                        .get::<AreaFocusedAt>(area)
+                        .copied()
+                        .unwrap_or_default()
+                })
+            });
+        match chosen {
+            Some(area) => Ok(area),
+            None => self.destination_area(layout),
+        }
     }
 
     pub(crate) fn snapshot(&self, layout: Entity) -> Result<GeometrySnapshot, String> {
@@ -847,7 +913,15 @@ impl Layouts {
         self.world.get::<Area>(area).ok_or("Area is unavailable")?;
         let layout = self.world.get::<InLayout>(area).unwrap().0;
         self.world.get_mut::<Layout>(layout).unwrap().focused_area = Some(area);
+        self.stamp(area);
         Ok(())
+    }
+
+    fn stamp(&mut self, area: Entity) {
+        let mut clock = self.world.get_resource_or_insert_with(FocusClock::default);
+        clock.0 += 1;
+        let at = clock.0;
+        self.world.entity_mut(area).insert(AreaFocusedAt(at));
     }
 
     /// Select a tab without changing the layout's focused area.

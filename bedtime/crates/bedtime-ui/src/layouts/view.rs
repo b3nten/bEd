@@ -1470,6 +1470,49 @@ fn draw(
                 }
             }
         }
+    } else if let Some(FileDrops(drops)) = world.get_resource::<FileDrops>().copied()
+        && frame.ui.is_enabled()
+        && settings.layout_editing
+        && settings.panel_creation
+        && !PanelFactoryPayload::content_reserved(frame.ui.ctx())
+    {
+        // Files dragged in from outside the app: shown where they'd go, and
+        // opened there when dropped (the app says how).
+        state.payload_cancelled = false;
+        let (hovering, dropped) = frame.ui.input(|i| {
+            let dropped: Vec<std::path::PathBuf> = i
+                .raw
+                .dropped_files
+                .iter()
+                .map(|file| file.path().to_owned())
+                .collect();
+            (!i.raw.hovered_files.is_empty(), dropped)
+        });
+        if (hovering || !dropped.is_empty())
+            && let Some((mut edit, rect, _count)) = tab_target(
+                &groups,
+                &snapshot,
+                state,
+                None,
+                mouse,
+                bounds,
+                minimum,
+                settings.panel_gap,
+            )
+        {
+            preview = Some(rect);
+            if !dropped.is_empty() {
+                match drops(world, dropped) {
+                    Some(factory) => {
+                        if let LayoutEdit::DropPanel { factory: slot, .. } = &mut edit {
+                            *slot = factory;
+                        }
+                        edits.push(edit);
+                    }
+                    None => preview = None,
+                }
+            }
+        }
     } else {
         state.payload_cancelled = false;
     }
@@ -1514,6 +1557,13 @@ fn draw(
             .push((layout, edit));
     }
 }
+
+/// What files dragged in from outside the app become, where they're dropped
+/// on a layout: a panel factory (given the paths), or `None` when the app
+/// dealt with them itself. Content (a file tree) can take the drop first,
+/// with `PanelFactoryPayload::reserve_for_content`.
+#[derive(Resource, Clone, Copy)]
+pub struct FileDrops(pub fn(&mut World, Vec<std::path::PathBuf>) -> Option<PanelFactory>);
 
 /// Offer an application-provided constructor, not a registered panel type.
 /// The caller can attach ordinary egui tooltip content to the response.

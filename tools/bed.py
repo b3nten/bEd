@@ -273,6 +273,11 @@ class Bed:
         ]
         self.input({"move": {"x": x0, "y": y0}}, {"press": "Left"}, *moves, {"release": "Left"})
 
+    def drop_files(self, paths, at):
+        """Drop files from outside the app at (x, y)."""
+        x, y = at
+        self.input({"drop": {"x": x, "y": y, "paths": [str(p) for p in paths]}}, {"wait": 2})
+
     def key(self, chord):
         """Press a chord like 'Primary+Shift+Z', 'Escape' or 'Primary+,'."""
         if chord == "+" or chord.endswith("++"):

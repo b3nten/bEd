@@ -36,8 +36,25 @@ impl std::fmt::Debug for FsDocumentSource {
 }
 impl Filesystem {
     /// Worker-only: resolve aliases before interning a canonical source identity.
+    /// The source for a file that may not exist yet (to save to, as Save As
+    /// does): one that doesn't is found by its folder.
+    pub fn new_document_source(&self, path: impl AsRef<Path>) -> crate::Result<FsDocumentSource> {
+        let path = path.as_ref();
+        match (path.exists(), path.parent(), path.file_name()) {
+            (false, Some(parent), Some(name)) => {
+                let path = self.backend.canonicalize(parent)?.join(name);
+                Ok(self.source_at(path))
+            }
+            _ => self.document_source(path),
+        }
+    }
+
     pub fn document_source(&self, path: impl AsRef<Path>) -> crate::Result<FsDocumentSource> {
         let path = self.backend.canonicalize(path.as_ref())?;
+        Ok(self.source_at(path))
+    }
+
+    fn source_at(&self, path: PathBuf) -> FsDocumentSource {
         let mut sources = self.documents.lock().unwrap();
         sources.retain(|_, entry| entry.strong_count() != 0);
         let state = sources
@@ -54,10 +71,10 @@ impl Filesystem {
                 sources.insert(path, Arc::downgrade(&state));
                 state
             });
-        Ok(FsDocumentSource {
+        FsDocumentSource {
             filesystem: self.clone(),
             state,
-        })
+        }
     }
     /// Only confirmed native outcomes may transfer source identity.
     pub fn move_document_sources(&self, from: &Path, to: &Path) {

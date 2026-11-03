@@ -366,6 +366,17 @@ and managed work. Closing the last viewer retains the canonical document.
 Game entities need no layout components. Application-wide session data belongs
 in resources; optional panel/document owners give work a shorter lifetime.
 
+Where a new panel goes: `area_for(layout, fits)` is an area with a panel
+that `fits` (the focused one, else the most recently focused, by
+`AreaFocusedAt`), else the largest area (`destination_area`). Opening
+documents and bEd's panels both use it, so a new panel lands beside its kind.
+
+Files dragged in from outside the app (Finder) get the same drop preview as
+a panel drag when the app inserts `FileDrops`: given the dropped paths, it
+returns the panel factory to place there, or `None` when it dealt with them
+itself. Content can take the drop first (`reserve_for_content`), as a file
+tree does.
+
 No selected layout is normal: shell/titlebar/menu/status remain available and
 panel content is skipped. `world.layouts_mut()` works in that state. Operations
 that need a destination return an error. Deleting the last layout is allowed.

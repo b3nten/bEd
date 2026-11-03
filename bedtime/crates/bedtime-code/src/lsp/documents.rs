@@ -17,16 +17,10 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-/// The server for each language (by syntax's language names). Rust has
-/// rust-analyzer unless the app says otherwise.
-#[derive(Resource, Clone, Debug, PartialEq)]
+/// The server for each language (by syntax's language names), worked out
+/// from `ServerCatalog` and the programs found (`config`).
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct LanguageServers(pub BTreeMap<String, ServerConfig>);
-
-impl Default for LanguageServers {
-    fn default() -> Self {
-        Self([("rust".to_owned(), ServerConfig::default())].into())
-    }
-}
 
 /// A document's connection to its server, on the document's entity.
 #[derive(Component)]
@@ -68,6 +62,11 @@ enum Lifecycle {
 impl LanguageServer {
     pub fn program(&self) -> &str {
         &self.launch.config.program
+    }
+
+    /// Its name in the catalog (`rust-analyzer`), for showing.
+    pub fn name(&self) -> &str {
+        &self.launch.config.name
     }
 
     pub fn status(&self) -> ServerStatus {
@@ -127,6 +126,7 @@ impl Plugin for LanguageServersPlugin {
 fn install(app: &mut App) {
     super::actions::install(app);
     app.init_resource::<LanguageServers>()
+        .init_resource::<super::InstalledServers>()
         .init_resource::<Definitions>()
         .init_resource::<Queries>()
         .add_action_handler::<GoToDefinition>(
@@ -139,7 +139,7 @@ fn install(app: &mut App) {
                 panel.is_some_and(|p| server_of(world, p).is_some())
             }),
         )
-        .add_systems(Update, update);
+        .add_systems(Update, (super::config::update_servers, update).chain());
 }
 
 /// The server of the document `panel` shows.
@@ -190,7 +190,7 @@ pub(super) fn answering_server(
     let state = world
         .get::<LanguageServer>(server)
         .ok_or("The language server has stopped")?;
-    let program = state.program().to_owned();
+    let program = state.name().to_owned();
     match state.status() {
         ServerStatus::Ready => {}
         ServerStatus::Starting => return Err(format!("{program} is starting")),
@@ -330,6 +330,21 @@ pub fn restart(world: &mut World, server: Entity) -> Result<(), String> {
         .ok_or("The language server is gone")?
         .retire(Lifecycle::Restarting);
     Ok(())
+}
+
+/// Each running server's state, by its name in the catalog: the server,
+/// its status, and how many documents it has.
+pub fn server_states(world: &mut World) -> HashMap<String, (Entity, ServerStatus, usize)> {
+    world
+        .query::<(Entity, &LanguageServer)>()
+        .iter(world)
+        .map(|(entity, server)| {
+            (
+                server.launch.config.name.clone(),
+                (entity, server.status(), server.documents.len()),
+            )
+        })
+        .collect()
 }
 
 /// Stop a server until it's restarted.

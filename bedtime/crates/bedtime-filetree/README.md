@@ -37,6 +37,9 @@ world.spawn((FileTree::default(), InArea(area)));
   file in it, or the empty space for the root) to move them there; holding
   Alt/Option or Cmd/Ctrl copies. The folder is outlined; dropping where it
   already is, or into itself, does nothing.
+- **From outside.** Files dragged in from Finder onto a folder (or the empty
+  space, for the root) are copied there (holding Alt/Option or Cmd/Ctrl moves
+  them); dropped elsewhere, the layout opens them (`open_files_factory`).
 - **Keys.** Up/Down, Home/End and Page Up/Down move the selection; Right opens
   a folder or moves into it, Left closes it or moves to its parent; Enter
   opens; typing selects the next row starting with what was typed. F2

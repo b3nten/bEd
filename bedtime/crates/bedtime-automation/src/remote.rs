@@ -22,7 +22,8 @@ use std::{collections::VecDeque, path::PathBuf};
 /// pixels from the window's top left), `{"press": "Left"}`, `{"release":
 /// "Left"}`, `{"key_down": "KeyA"}`, `{"key_up": "SuperLeft"}` (Bevy
 /// `KeyCode` names), `{"text": "typed"}`, `{"scroll": {"x": 0, "y": -40}}`
-/// (pixels), `{"wait": 3}` (frames).
+/// (pixels), `{"wait": 3}` (frames), `{"drop": {"x": 10, "y": 20, "paths":
+/// ["/a.txt"]}}` (files dropped from outside the app, there).
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Step {
@@ -34,6 +35,7 @@ pub enum Step {
     Text(String),
     Scroll { x: f32, y: f32 },
     Wait(u32),
+    Drop { x: f32, y: f32, paths: Vec<PathBuf> },
 }
 
 #[derive(Resource, Default)]
@@ -244,6 +246,22 @@ fn run_step(world: &mut World) {
                 window,
                 phase: TouchPhase::Moved,
             });
+        }
+        Step::Drop { x, y, paths } => {
+            let position = Vec2::new(x, y);
+            let message = CursorMoved {
+                window,
+                position,
+                delta: Some(position - automation.cursor),
+            };
+            automation.cursor = position;
+            world.write_message(WindowEvent::CursorMoved(message.clone()));
+            world.write_message(message);
+            for path_buf in paths {
+                let drop = bevy::window::FileDragAndDrop::DroppedFile { window, path_buf };
+                world.write_message(WindowEvent::FileDragAndDrop(drop.clone()));
+                world.write_message(drop);
+            }
         }
         Step::Wait(frames) => {
             if frames > 1 {

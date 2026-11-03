@@ -13,7 +13,8 @@ pub trait PanelPolicy: Panel {
     fn key(world: &World, panel: Entity) -> Self::Key;
 }
 
-/// Focus an equivalent panel in the active layout, or create one in its largest area.
+/// Focus an equivalent panel in the active layout, or create one: in an area
+/// with a panel of its type, else the largest.
 pub fn open_panel<P: PanelPolicy>(
     world: &mut World,
     key: P::Key,
@@ -31,7 +32,8 @@ pub fn open_panel<P: PanelPolicy>(
     let panel = match existing {
         Some(panel) => panel,
         None => {
-            let area = workbench.destination_area(layout)?;
+            let area =
+                workbench.area_for(layout, |world, panel| world.get::<P>(panel).is_some())?;
             (factory.create)(workbench.world_mut(), area)
         }
     };

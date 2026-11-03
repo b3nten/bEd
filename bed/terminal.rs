@@ -27,13 +27,15 @@ impl Plugin for TerminalsPlugin {
     }
 }
 
-/// A new terminal in the current layout's largest area, focused.
+/// A new terminal, focused: beside another terminal, else in the largest area.
 fn new_terminal(world: &mut World, _: ActionInvocation) -> ActionResult {
     let layout = match world.layouts().active() {
         Some(layout) => layout,
         None => crate::layouts::switch(world, crate::layouts::LayoutSlot(0))?,
     };
-    let area = world.layouts().destination_area(layout)?;
+    let area = world.layouts().area_for(layout, |world, panel| {
+        world.get::<TerminalPanel>(panel).is_some()
+    })?;
     let panel = world.spawn((TerminalPanel::default(), InArea(area))).id();
     world.flush();
     world.layouts_mut().focus_panel(panel)

@@ -7,6 +7,7 @@ mod notifications;
 mod opening;
 #[cfg(feature = "persistence")]
 pub mod persistence;
+mod untitled;
 #[cfg(feature = "workspaces")]
 pub mod workspaces;
 /// Settings: [`bedtime-settings`](bedtime_settings), re-exported.
@@ -33,6 +34,7 @@ pub use documents::*;
 pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 pub use opening::*;
+pub use untitled::{SaveAs, Untitled};
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "clipboard")]

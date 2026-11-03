@@ -284,7 +284,28 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Mascots**, 2026-10-31, awaiting review. `bedtime-mascots` ported from
+- **Language servers, New, drops, opening policy**, 2026-11-02, awaiting
+  review. Opening: an area with a panel of the same kind (focused, else most
+  recently focused: `AreaFocusedAt`), else the largest (`area_for`, used by
+  the workbench's opener, bed's `open_panel` and New Terminal). Save/Reset
+  Layout already existed (Layout menu). Cmd+N (`app.new`, bed's `new.rs`):
+  another terminal beside a focused terminal, else an untitled text document
+  (workbench `new_untitled`/`Untitled`; Save asks with an rfd picker,
+  `save_untitled_to` swaps the document's source, `Typed::replace_source`;
+  `Filesystem::new_document_source` for files not yet there). Drops from
+  Finder: bedtime-ui `FileDrops` (same preview as panel drags), the tree
+  copies into folders (Cmd moves), a dropped folder opens as the workspace;
+  automation has a `drop` step (`bed.drop_files`). Language servers:
+  bedtime-code `lsp::config` (catalog, `ServerSettings` merged by layer,
+  `ServerCatalog`, `InstalledServers`), `lsp::environment` (login shell env);
+  bed's `language_servers.rs` has the `language_servers` setting (global and
+  workspace) and the panel (View ▸ Language Servers): cards with status,
+  enable, restart, expandable fields; menu Restart/Reset to Defaults/Remove;
+  collapsed Not installed with links. The status bar shows server names (not
+  program paths). Automation runs are now time-limited (`perl -e 'alarm N'`)
+  so a stuck script can't hang.
+
+- **Mascots**, 2026-10-31, committed (`55a26b4`). `bedtime-mascots` ported from
   bedtime_old (5 tests pass): `BedPanel` and `DuckPanel` are always-on panels
   now, saved with the layout. bed's `mascots.rs`: View ▸ Bed (`app.open_bed`)
   and `+ducky` in a terminal, one of each per layout. `mascots.py` opens both

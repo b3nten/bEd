@@ -232,6 +232,8 @@ pub enum DocumentError {
     Drafts,
     Dirty,
     Work(String),
+    /// An untitled document has nowhere to go yet.
+    NotSaved(String),
     InvalidGraph(String),
 }
 
@@ -265,7 +267,9 @@ impl fmt::Display for DocumentError {
             Self::NoConflict => f.write_str("The document has no conflict to resolve"),
             Self::Drafts => f.write_str("Finish typing before doing that"),
             Self::Dirty => f.write_str("The document has unsaved changes"),
-            Self::Work(error) | Self::InvalidGraph(error) => f.write_str(error),
+            Self::Work(error) | Self::InvalidGraph(error) | Self::NotSaved(error) => {
+                f.write_str(error)
+            }
         }
     }
 }
@@ -378,7 +382,10 @@ impl WorkbenchRef {
             status: info.status,
             revision: info.revision,
             dirty: info.dirty,
-            saving: info.saving,
+            saving: info.saving
+                || world
+                    .get::<crate::Untitled>(id.0)
+                    .is_some_and(|untitled| untitled.choosing),
             conflict: info.conflict,
             missing: info.missing,
             writable: info.writable,
@@ -536,6 +543,9 @@ impl Workbench {
     pub fn save_document(&mut self, id: DocumentId) -> Result<(), DocumentError> {
         let world = &mut self.world;
         validate_session(world)?;
+        if world.get::<crate::Untitled>(id.0).is_some() {
+            return crate::untitled::ask_where(world, id);
+        }
         reject_drafts(world, id)?;
         world.resource_scope(|world, mut work: Mut<ManagedWork>| {
             store_mut(world, id)?.start_save(&mut work, id.0)
@@ -713,6 +723,35 @@ fn poll_documents(world: &mut World) {
         }
     });
     world.write_message_batch(finished);
+}
+
+/// Keep document `id` (of model `M`) in `source` from now on.
+pub(crate) fn replace_source<M: DocumentModel>(
+    world: &mut World,
+    id: DocumentId,
+    source: std::sync::Arc<dyn DocumentSource<M>>,
+    expected: Option<bedtime_document::SourceVersion>,
+) -> Result<(), String> {
+    let mut document = world
+        .get_mut::<Document>(id.0)
+        .ok_or("The document is unavailable")?;
+    let typed = document
+        .store
+        .as_any_mut()
+        .downcast_mut::<Typed<M>>()
+        .ok_or("The document isn't that kind")?;
+    typed
+        .replace_source(source, expected)
+        .map_err(|e| e.to_string())
+}
+
+/// The document open for source `source`, if any.
+pub(crate) fn document_for_source(world: &mut World, source: SourceId) -> Option<DocumentId> {
+    world
+        .query::<(Entity, &Document)>()
+        .iter(world)
+        .find(|(_, document)| document.store.source_id() == source)
+        .map(|(entity, _)| DocumentId(entity))
 }
 
 fn get_document(world: &World, id: DocumentId) -> Result<&Document, DocumentError> {

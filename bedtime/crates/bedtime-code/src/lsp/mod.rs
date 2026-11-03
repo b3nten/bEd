@@ -3,6 +3,11 @@
 //! protocol state and I/O; `documents` connects it to workbench documents,
 //! diagnostics in the editor and go-to-definition.
 mod activity;
+pub mod config;
+pub mod environment;
+pub use config::{
+    InstalledServers, KNOWN_SERVERS, KnownServer, ServerCatalog, ServerEntry, ServerSettings,
+};
 mod edits;
 pub use edits::*;
 mod intelligence;
@@ -46,6 +51,8 @@ pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ServerConfig {
+    /// Its name in the catalog (`rust-analyzer`).
+    pub name: String,
     pub program: String,
     pub arguments: Vec<String>,
     pub environment: BTreeMap<String, String>,
@@ -56,6 +63,7 @@ pub struct ServerConfig {
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
+            name: "rust-analyzer".into(),
             program: "rust-analyzer".into(),
             arguments: Vec::new(),
             environment: BTreeMap::new(),

@@ -9,9 +9,11 @@ use workspace::{Start, Workspace};
 
 mod effects;
 mod files;
+mod language_servers;
 mod layouts;
 mod mascots;
 mod menus;
+mod new;
 mod panels;
 mod settings;
 mod status;
@@ -67,6 +69,7 @@ pub fn app(start: Start) -> App {
         automation,
     ))
     // Look for installed fonts now, so Settings can list them when opened.
+    .add_plugins((new::NewPlugin, language_servers::LanguageServersPanelPlugin))
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     .insert_resource(settings::GlobalLocation(
         config.map(|config| config.join("global")),

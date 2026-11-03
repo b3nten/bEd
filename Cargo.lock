@@ -488,6 +488,7 @@ dependencies = [
  "bedtime-audio",
  "bedtime-automation",
  "bedtime-code",
+ "bedtime-document",
  "bedtime-filetree",
  "bedtime-font",
  "bedtime-hex",
@@ -505,6 +506,7 @@ dependencies = [
  "rfd",
  "ron",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

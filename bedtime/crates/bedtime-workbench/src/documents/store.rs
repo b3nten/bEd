@@ -59,6 +59,9 @@ pub(super) struct Typed<M: DocumentModel> {
     /// A full read was asked for (initially, by `refresh`, or after a failed save).
     refresh: bool,
     next_check: Instant,
+    /// What the next save expects to find, after the source was replaced
+    /// (`None`: nothing there).
+    next_expected: Option<Option<SourceVersion>>,
 }
 
 enum State<M: DocumentModel> {
@@ -103,7 +106,30 @@ impl<M: DocumentModel> Typed<M> {
             task: None,
             refresh: true,
             next_check: Instant::now(),
+            next_expected: None,
         }
+    }
+
+    /// Keep the contents somewhere else from now on (Save As): the next save
+    /// writes there, expecting to find `expected`.
+    pub(super) fn replace_source(
+        &mut self,
+        source: Arc<dyn DocumentSource<M>>,
+        expected: Option<SourceVersion>,
+    ) -> Result<(), DocumentError> {
+        if self.saving() {
+            return Err(DocumentError::Saving);
+        }
+        if let Some(Task::Read(read)) = self.task.take() {
+            read.cancel();
+        }
+        let session = self.session_mut()?;
+        session.incoming = None;
+        session.missing = false;
+        session.error = None;
+        self.source = source;
+        self.next_expected = Some(expected);
+        Ok(())
     }
 
     pub(super) fn session(&self) -> Result<&Session<M>, DocumentError> {
@@ -323,12 +349,13 @@ impl<M: DocumentModel> Store for Typed<M> {
             return Err(DocumentError::Conflict);
         }
         let snapshot = session.history.content().clone();
-        let expected = session
+        let saved_version = session
             .saved
             .as_ref()
             .and_then(|saved| saved.version.clone());
         session.group = None;
         session.error = None;
+        let expected = self.next_expected.take().unwrap_or(saved_version);
         let source = self.source.clone();
         let model = snapshot.clone();
         let task = work

@@ -18,7 +18,7 @@ mod ops;
 mod view;
 pub use bedtime_filesystem::operations::Operation;
 pub use ops::{FileOperations, copy_files, paste_files, run_file_operation};
-pub use view::file_icon;
+pub use view::{file_icon, open_files_factory};
 
 #[cfg(test)]
 mod tests;

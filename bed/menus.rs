@@ -127,6 +127,7 @@ fn compose_menus(mut commands: Commands) {
     ));
     commands.spawn((MenuSeparator, InMenu(app)));
     commands.spawn((MenuItem::action::<Quit>(), InMenu(app)));
+    commands.spawn((MenuItem::action::<crate::new::New>(), InMenu(file)));
     commands.spawn((MenuItem::action::<NewWindow>(), InMenu(file)));
     commands.spawn((MenuSeparator, InMenu(file)));
     commands.spawn((MenuItem::action::<OpenFolder>(), InMenu(file)));
@@ -155,6 +156,10 @@ fn compose_menus(mut commands: Commands) {
     ));
     commands.spawn((MenuItem::action::<OpenFiles>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenStructure>(), InMenu(view)));
+    commands.spawn((
+        MenuItem::action::<crate::language_servers::OpenLanguageServers>(),
+        InMenu(view),
+    ));
     commands.spawn((MenuItem::action::<crate::mascots::OpenBed>(), InMenu(view)));
     commands.spawn((MenuItem::action::<NewTerminal>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
@@ -425,6 +430,8 @@ mod tests {
         assert_eq!(
             labels(file),
             [
+                // The test app has no New handler.
+                ("New".into(), false),
                 ("New Window".into(), true),
                 ("Open Folder…".into(), true),
                 ("Open Recent".into(), true),

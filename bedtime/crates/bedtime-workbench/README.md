@@ -230,8 +230,9 @@ world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..defa
 - `Target::Existing` (default) reuses a panel already showing the document in
   the current layout (the focused area's, else the first) and applies the
   state to it; with none, or with `Target::New { area }`, a new panel goes in
-  that area, else the focused area if it already shows a viewer, else the
-  largest (so opening from a file tree's sidebar doesn't land in the sidebar).
+  that area, else an area with the same viewer (the focused one, else the
+  most recently focused), else the largest (so opening from a file tree's
+  sidebar doesn't land in the sidebar).
   `Target::Panel(panel)` names the panel; it must show the document. Opening
   never switches layouts.
 - `preview: true` makes a new panel replace its area's preview. Opening
@@ -248,6 +249,13 @@ world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..defa
   saved with persistence). A restored panel with a path but no document gets
   it back from the opener whose viewer it is (`reopen_viewers`, in `Update`);
   one whose file can't be opened is closed, with a notification.
+- **Untitled documents.** `new_untitled::<M>(options)` opens an empty
+  "Untitled" (or "Untitled 2", …) document, marked `Untitled`. Saving one
+  (Save, or the close prompt's Save) asks the app where, with the function
+  given to `set_save_as` (a file picker); while it's open the document counts
+  as saving, so closing waits. The app answers `save_untitled_to(id, path)`
+  (it's then that file's, history and all; its viewers get a `ViewerFile`)
+  or `cancel_save_as(id)`. Without a picker, saving one is an error.
 - `viewer_document::<M>(ui, world, panel)` is how a viewer's `draw` starts: it
   draws a spinner while the document loads, or why it couldn't be read, and
   otherwise returns its model (viewers' models are cheap to clone), handle and

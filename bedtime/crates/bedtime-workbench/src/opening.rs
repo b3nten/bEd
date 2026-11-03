@@ -345,7 +345,17 @@ impl Workbench {
         source: impl DocumentSource<M>,
         options: OpenOptions<M>,
     ) -> Result<Entity, String> {
-        let document = self.load_document(source).map_err(|e| e.to_string())?.id();
+        let handle = self.load_document(source).map_err(|e| e.to_string())?;
+        self.open_document_handle(handle, options)
+    }
+
+    /// Show an open document, as `open_document` does.
+    pub fn open_document_handle<M: DocumentModel>(
+        &mut self,
+        handle: DocumentHandle<M>,
+        options: OpenOptions<M>,
+    ) -> Result<Entity, String> {
+        let document = handle.id();
         let world = &mut self.world;
         let opener_id = world
             .get_resource::<Openers>()
@@ -538,9 +548,9 @@ fn existing_panel(world: &World, document: DocumentId, opener: Option<OpenerId>)
         .or_else(|| candidates.first().copied())
 }
 
-/// A new viewer panel: in `area`, else the focused area if it shows a viewer,
-/// else the largest area (not a file tree's sidebar). A preview replaces that
-/// area's preview panel.
+/// A new viewer panel: in `area`, else an area with this opener's viewer
+/// (the focused one, else the most recently focused), else the largest
+/// area. A preview replaces that area's preview panel.
 fn new_panel(
     world: &mut World,
     document: DocumentId,
@@ -551,14 +561,10 @@ fn new_panel(
     let layout = world.layouts().active().ok_or("No layout is open")?;
     let area = match area {
         Some(area) => area,
-        None => match world
-            .get::<Layout>(layout)
-            .and_then(Layout::focused_area)
-            .filter(|&area| shows_viewer(world, area))
-        {
-            Some(area) => area,
-            None => world.layouts().destination_area(layout)?,
-        },
+        None => {
+            let shows = world.resource::<Openers>().get(opener).unwrap().shows;
+            world.layouts().area_for(layout, shows)?
+        }
     };
     let replaced = if preview {
         world
@@ -581,19 +587,6 @@ fn new_panel(
     }
     world.layouts_mut().focus_panel(panel)?;
     Ok(panel)
-}
-
-/// Whether any panel in `area` is a viewer.
-fn shows_viewer(world: &World, area: Entity) -> bool {
-    let Some(openers) = world.get_resource::<Openers>() else {
-        return false;
-    };
-    world.layouts().panels_in_area(area).iter().any(|&panel| {
-        openers
-            .openers
-            .iter()
-            .any(|opener| (opener.shows)(world, panel))
-    })
 }
 
 /// What a viewer panel shows, for drawing it: its document's model (viewers'
@@ -901,6 +894,112 @@ mod tests {
             .open_document(source, options)
             .unwrap();
         assert_eq!(world.get::<InArea>(panel).unwrap().0, big);
+    }
+
+    #[test]
+    fn new_viewers_go_beside_their_kind_most_recently_focused_first() {
+        let mut app = app();
+        let world = app.world_mut();
+        let layout = world.layouts().active().unwrap();
+        let main = world.layouts().destination_area(layout).unwrap();
+        let side = world
+            .layouts_mut()
+            .split_area(main, SplitAxis::Horizontal, 2500, [100, 100])
+            .unwrap();
+        let small = if world.layouts().destination_area(layout).unwrap() == main {
+            side
+        } else {
+            main
+        };
+        // A text viewer in the small area: the next goes there too, even
+        // with the sidebar focused.
+        let (source, options) = OpenOptions::<TextBuffer> {
+            target: Target::New { area: Some(small) },
+            ..default()
+        }
+        .with_source("one");
+        world
+            .workbench_mut()
+            .open_document(source, options)
+            .unwrap();
+        let sidebar = world.spawn((Sidebar, InArea(small))).id();
+        world.flush();
+        world.layouts_mut().focus_panel(sidebar).unwrap();
+        let (source, options) = OpenOptions::<TextBuffer>::default().with_source("two");
+        let panel = world
+            .workbench_mut()
+            .open_document(source, options)
+            .unwrap();
+        assert_eq!(world.get::<InArea>(panel).unwrap().0, small);
+    }
+
+    #[cfg(feature = "files")]
+    #[test]
+    fn untitled_documents_are_saved_where_the_app_says() {
+        use crate::documents::tests::{type_text, update_until};
+        #[derive(Resource, Default)]
+        struct Asked(Vec<DocumentId>);
+        let mut app = app();
+        app.init_resource::<Asked>();
+        let world = app.world_mut();
+        world
+            .workbench_mut()
+            .set_save_as(|world, id| world.resource_mut::<Asked>().0.push(id));
+        let panel = world
+            .workbench_mut()
+            .new_untitled::<TextBuffer>(OpenOptions::default())
+            .unwrap();
+        let second = world
+            .workbench_mut()
+            .new_untitled::<TextBuffer>(OpenOptions {
+                target: Target::New { area: None },
+                ..default()
+            })
+            .unwrap();
+        let document = world.get::<DocumentReference>(panel).unwrap().document();
+        let other = world.get::<DocumentReference>(second).unwrap().document();
+        assert_eq!(world.get::<Untitled>(document.0).unwrap().name, "Untitled");
+        assert_eq!(world.get::<Untitled>(other.0).unwrap().name, "Untitled 2");
+        update_until(&mut app, |world| {
+            world
+                .workbench()
+                .inspect_document(document)
+                .is_ok_and(|info| info.status == DocumentStatus::Ready)
+        });
+        let world = app.world_mut();
+        let handle = world
+            .workbench()
+            .cast_document::<TextBuffer>(document)
+            .unwrap();
+        type_text(world, handle, 0, "hello");
+        // Saving asks where, once; meanwhile it counts as saving.
+        world.workbench_mut().save_document(document).unwrap();
+        world.workbench_mut().save_document(document).unwrap();
+        assert_eq!(world.resource::<Asked>().0, [document]);
+        assert!(world.workbench().inspect_document(document).unwrap().saving);
+        let folder = std::env::temp_dir().join(format!("bedtime-untitled-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("notes.md");
+        let _ = std::fs::remove_file(&path);
+        world
+            .workbench_mut()
+            .save_untitled_to(document, &path)
+            .unwrap();
+        assert!(world.get::<Untitled>(document.0).is_none());
+        update_until(&mut app, |world| {
+            world
+                .workbench()
+                .inspect_document(document)
+                .is_ok_and(|info| !info.dirty && !info.saving)
+        });
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
+        let world = app.world();
+        assert_eq!(
+            world.workbench().inspect_document(document).unwrap().title,
+            "notes.md"
+        );
+        assert!(world.get::<ViewerFile>(panel).is_some());
+        std::fs::remove_dir_all(folder).unwrap();
     }
 
     impl OpenOptions<TextBuffer> {

@@ -18,6 +18,7 @@ automation = ["bedtime-automation/enabled"]
 bedtime-audio.workspace = true
 bedtime-automation.workspace = true
 bedtime-code.workspace = true
+bedtime-document.workspace = true
 bedtime-filetree.workspace = true
 bedtime-font.workspace = true
 bedtime-hex.workspace = true
@@ -35,3 +36,4 @@ bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded"
 rfd = { workspace = true }
 ron = "0.12.2"
 serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

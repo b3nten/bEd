@@ -551,9 +551,10 @@ fn draw_naming(
     }
 }
 
-/// While a tree drag is over the tree: the folder it would go into is
-/// highlighted (a file's folder, or the root over empty space), and letting
-/// go moves it there (Alt/Option, or Cmd/Ctrl, copies). Dropping it on itself,
+/// While a tree drag (or files from outside the app) is over the tree: the
+/// folder it would go into is highlighted (a file's folder, or the root over
+/// empty space), and letting go moves it there (Alt/Option or Cmd/Ctrl
+/// copies); files from outside are copied (Alt/Option or Cmd/Ctrl moves). Dropping it on itself,
 /// where it already is, or inside itself does nothing.
 #[allow(clippy::too_many_arguments)]
 fn drop_into_tree(
@@ -566,13 +567,38 @@ fn drop_into_tree(
     context: &UiContext<'_>,
     intents: &mut Vec<Intent>,
 ) {
-    let Some(payload) = egui::DragAndDrop::payload::<bedtime_workbench::PanelFactoryPayload>(ctx)
-    else {
-        return;
-    };
-    let Some(drag) = payload.content::<TreeDrag>() else {
-        return;
-    };
+    // A drag within the tree moves (Alt/Cmd copies); files from outside the
+    // app are copied in (Cmd moves them).
+    let (paths, outside, dropped) =
+        match egui::DragAndDrop::payload::<bedtime_workbench::PanelFactoryPayload>(ctx)
+            .and_then(|payload| payload.content::<TreeDrag>())
+        {
+            Some(drag) => (drag.paths.clone(), false, false),
+            None => {
+                let (hovered, dropped) = ctx.input(|i| {
+                    let path = |p: Option<&Path>| p.map(Path::to_owned);
+                    (
+                        i.raw
+                            .hovered_files
+                            .iter()
+                            .filter_map(|file| path(file.path.as_deref()))
+                            .collect::<Vec<_>>(),
+                        i.raw
+                            .dropped_files
+                            .iter()
+                            .map(|file| file.path().to_owned())
+                            .collect::<Vec<_>>(),
+                    )
+                });
+                if !dropped.is_empty() {
+                    (dropped, true, true)
+                } else if !hovered.is_empty() {
+                    (hovered, true, false)
+                } else {
+                    return;
+                }
+            }
+        };
     let Some(pointer) = ctx.pointer_latest_pos().filter(|p| whole.contains(*p)) else {
         return;
     };
@@ -581,8 +607,7 @@ fn drop_into_tree(
         .find(|(_, rect)| rect.y_range().contains(pointer.y))
         .map(|(index, rect)| (&rows[*index], *rect));
     let folder = hovered.map_or_else(|| root.to_owned(), |(row, _)| folder_of(row));
-    let fits = drag
-        .paths
+    let fits = paths
         .iter()
         .all(|path| path.parent() != Some(folder.as_path()) && !folder.starts_with(path));
     // The tree takes the drop (the layout doesn't make a panel of it).
@@ -602,15 +627,16 @@ fn drop_into_tree(
         egui::Stroke::new(1.5, ink),
         egui::StrokeKind::Inside,
     );
-    let (released, copy) = ui.input(|input| {
+    let (released, modified) = ui.input(|input| {
         (
             input.pointer.primary_released(),
             input.modifiers.alt || input.modifiers.command,
         )
     });
-    if released {
+    let copy = if outside { !modified } else { modified };
+    if (outside && dropped) || (!outside && released) {
         egui::DragAndDrop::clear_payload(ctx);
-        let sources = drag.paths.clone();
+        let sources = paths;
         intents.push(Intent::Operation(if copy {
             Operation::Copy {
                 sources,
@@ -850,22 +876,31 @@ pub(crate) fn apply(world: &mut World, panel: Entity, root: &Path, intent: Inten
 
 /// Opens `path` in the area it's dropped in (or does nothing if it can't).
 fn open_factory(path: PathBuf) -> bedtime_workbench::PanelFactory {
+    open_files_factory(vec![path])
+}
+
+/// A factory opening `paths` in the area it's given (the last one shows),
+/// for dropping files on a layout. Errors are notifications.
+pub fn open_files_factory(paths: Vec<PathBuf>) -> bedtime_workbench::PanelFactory {
     bedtime_workbench::PanelFactory::new("File", move |world, area| {
-        let options = PathOptions {
-            target: bedtime_workbench::Target::New { area: Some(area) },
-            ..default()
-        };
-        match world.workbench_mut().open_path(&path, options) {
-            Ok(Some(panel)) => panel,
-            Ok(None) => Entity::PLACEHOLDER,
-            Err(error) => {
-                let name = path.file_name().unwrap_or(path.as_os_str()).display();
-                world.workbench_mut().notify(Notification::error(format!(
-                    "Couldn't open {name}: {error}"
-                )));
-                Entity::PLACEHOLDER
+        let mut shown = Entity::PLACEHOLDER;
+        for path in &paths {
+            let options = PathOptions {
+                target: bedtime_workbench::Target::New { area: Some(area) },
+                ..default()
+            };
+            match world.workbench_mut().open_path(path, options) {
+                Ok(Some(panel)) => shown = panel,
+                Ok(None) => {}
+                Err(error) => {
+                    let name = path.file_name().unwrap_or(path.as_os_str()).display();
+                    world.workbench_mut().notify(Notification::error(format!(
+                        "Couldn't open {name}: {error}"
+                    )));
+                }
             }
         }
+        shown
     })
 }
 

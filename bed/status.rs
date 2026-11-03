@@ -120,7 +120,7 @@ fn language_server(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
     };
     let palette = &context.theme.palette;
     let activity = server.activity();
-    let program = server.program();
+    let program = server.name();
     let (text, tint, detail) = match server.status() {
         ServerStatus::Starting => (format!("{program} starting"), palette.muted, None),
         ServerStatus::Ready => match activity.progress.first() {
