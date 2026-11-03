@@ -341,9 +341,18 @@ pub(super) fn update(world: &mut World, session: &mut GitSession) {
         if let Some((scan, task)) = diff.task.take() {
             match task.try_recv() {
                 Ok(result) => {
-                    diff.loaded = Some(result.map(Arc::new));
                     diff.scan = scan;
-                    fresh = true;
+                    // The same changes as before keep their comparison: a new
+                    // identity would have the editor drop and rebuild its
+                    // inline rows, flickering after every scan.
+                    let unchanged = matches!(
+                        (&diff.loaded, &result),
+                        (Some(Ok(old)), Ok(new)) if old.git == new.git && old.exists == new.exists
+                    );
+                    if !unchanged {
+                        diff.loaded = Some(result.map(Arc::new));
+                        fresh = true;
+                    }
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => diff.task = Some((scan, task)),
                 Err(_) => diff.loaded = Some(Err("Reading the diff stopped".into())),
