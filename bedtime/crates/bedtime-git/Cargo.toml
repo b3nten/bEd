@@ -1,0 +1,32 @@
+[package]
+name = "bedtime-git"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Git for workbench apps: typed Git operations, and (feature `workbench`) the Git and diff panels"
+
+[features]
+default = ["workbench", "persistence"]
+# The Git panel, diff panels and the session behind them.
+workbench = ["dep:bevy", "dep:bedtime-ui", "dep:bedtime-work", "dep:bedtime-workbench", "dep:bedtime-filetree"]
+# Save Git and diff panels with the layout.
+persistence = ["workbench", "bedtime-workbench/persistence"]
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+bevy = { workspace = true, features = ["std"], optional = true }
+bedtime-ui = { workspace = true, optional = true }
+bedtime-work = { workspace = true, optional = true }
+bedtime-workbench = { workspace = true, features = ["files"], optional = true }
+bedtime-filetree = { workspace = true, optional = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[[test]]
+name = "regressions"
+path = "tests/regressions.rs"
+
+[dev-dependencies]
+ron = "0.12.2"

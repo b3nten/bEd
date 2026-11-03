@@ -491,6 +491,7 @@ dependencies = [
  "bedtime-document",
  "bedtime-filetree",
  "bedtime-font",
+ "bedtime-git",
  "bedtime-hex",
  "bedtime-image",
  "bedtime-mascots",
@@ -632,6 +633,20 @@ dependencies = [
  "bevy",
  "resvg",
  "skrifa 0.44.0",
+]
+
+[[package]]
+name = "bedtime-git"
+version = "0.1.0"
+dependencies = [
+ "bedtime-filetree",
+ "bedtime-ui",
+ "bedtime-work",
+ "bedtime-workbench",
+ "bevy",
+ "libc",
+ "ron",
+ "serde",
 ]
 
 [[package]]

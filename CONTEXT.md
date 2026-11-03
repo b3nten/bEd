@@ -144,7 +144,7 @@ Each step should produce a usable app. We can reorder at any point.
 9. Terminal.
 10. Structure panel (observation 7).
 11. LSP + status bar.
-12. Git panel + diff (observation 6).
+12. ✅ Git panel + diff (observation 6).
 13. Extras: fonts, mascots ✅, effects, shell `bed open`, automation.
 
 ## Step log
@@ -284,8 +284,20 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Language servers, New, drops, opening policy**, 2026-11-02, awaiting
-  review. Opening: an area with a panel of the same kind (focused, else most
+- **Git**, 2026-11-02, awaiting review. `bedtime-git` ported from
+  bedtime_old (its 20 regressions pass) with the old bed's Git session,
+  panel, tree and presentation now in the crate (feature `workbench`):
+  `GitPlugin`, `GitPanel` (saves its draft and view options), `GitSession`,
+  `GitHost` (the app's open-folder and terminal hooks). Old APIs mapped:
+  `Root`, the workbench's inspect/save, document files from `ViewerFile`,
+  plain managed tasks (no write leases or source-change tasks: editors reload
+  changed files). The diff panel is new: a unified diff with hunk Stage /
+  Unstage / Discard, not the old editor-embedded comparison (that needed 28
+  editor hooks the new editor, with folding, doesn't have). bed's `git.rs`:
+  View ▸ Git. `git.py` covers list, diff, staging a hunk and committing.
+
+- **Language servers, New, drops, opening policy**, 2026-11-02, committed
+  (`76799fc`). Opening: an area with a panel of the same kind (focused, else most
   recently focused: `AreaFocusedAt`), else the largest (`area_for`, used by
   the workbench's opener, bed's `open_panel` and New Terminal). Save/Reset
   Layout already existed (Layout menu). Cmd+N (`app.new`, bed's `new.rs`):

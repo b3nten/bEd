@@ -20,6 +20,7 @@ members = [
     "bedtime/crates/bedtime-filesystem",
     "bedtime/crates/bedtime-filetree",
     "bedtime/crates/bedtime-font",
+    "bedtime/crates/bedtime-git",
     "bedtime/crates/bedtime-grammars",
     "bedtime/crates/bedtime-mascots",
     "bedtime/crates/bedtime-menus",
@@ -59,6 +60,7 @@ bedtime-terminal = { path = "bedtime/crates/bedtime-terminal" }
 bedtime-actions = { path = "bedtime/crates/bedtime-actions" }
 bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
 bedtime-filetree = { path = "bedtime/crates/bedtime-filetree" }
+bedtime-git = { path = "bedtime/crates/bedtime-git" }
 bedtime-grammars = { path = "bedtime/crates/bedtime-grammars" }
 bedtime-mascots = { path = "bedtime/crates/bedtime-mascots" }
 bedtime-menus = { path = "bedtime/crates/bedtime-menus" }

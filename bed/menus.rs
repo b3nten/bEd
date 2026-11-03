@@ -156,6 +156,7 @@ fn compose_menus(mut commands: Commands) {
     ));
     commands.spawn((MenuItem::action::<OpenFiles>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenStructure>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<crate::git::OpenGit>(), InMenu(view)));
     commands.spawn((
         MenuItem::action::<crate::language_servers::OpenLanguageServers>(),
         InMenu(view),
