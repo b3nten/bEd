@@ -16,7 +16,8 @@ bedtime-document.workspace = true
 bedtime-filesystem.workspace = true
 bedtime-ui.workspace = true
 bedtime-workbench = { workspace = true, features = ["files"] }
-bevy = { workspace = true, features = ["std"] }
+bevy = { workspace = true, features = ["std", "bevy_render"] }
+bevy_egui.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true

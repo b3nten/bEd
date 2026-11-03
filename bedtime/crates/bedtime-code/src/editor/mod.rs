@@ -28,7 +28,8 @@ mod panel;
 use bedtime_ui::{MotionPolicy, egui};
 use bevy::prelude::Component;
 pub use panel::{
-    CodePlugin, ComparisonRequest, EditorComparison, EditorPanel, draw_editor, editor_id, text_fit,
+    CodePlugin, ComparisonRequest, EditorComparison, EditorDefaults, EditorPanel, ToggleWordWrap,
+    draw_editor, editor_id, text_fit,
 };
 use std::ops::Range;
 

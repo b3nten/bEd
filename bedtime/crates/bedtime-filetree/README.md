@@ -45,7 +45,15 @@ world.spawn((FileTree::default(), InArea(area)));
   opens; typing selects the next row starting with what was typed. F2
   renames, Cmd/Ctrl+Backspace or Delete trashes, and Copy, Cut and Paste
   work on the selected row.
-- **Saved.** Which folders are open is saved with the panel (feature
+- **Hidden and ignored files.** Hidden files (dot files, and those the system
+  marks hidden) and files Git ignores (its `.gitignore`s, `.git/info/exclude`
+  and global excludes, read with the `ignore` crate when a folder is read;
+  only on the local filesystem; what's in an ignored folder is ignored) are
+  shown dimmed. Each tree's menus have Show Hidden Files and Show Ignored
+  Files, also the `files.toggle_hidden` and `files.toggle_ignored` actions;
+  trees that haven't chosen follow `FileTreeDefaults`, which the app sets from
+  its settings. A changed `.gitignore` rereads every open folder.
+- **Saved.** Which folders are open, and what a tree hides, is saved with the panel (feature
   `persistence`, default), relative to the root. The root starts open.
 
 ## Reading and watching
@@ -70,11 +78,11 @@ being drawn.
 
 From the old tree (`bedtime_old/crates/bedtime-filetree`), still to come back
 as needed: multiple selection (operations take one row), progress for long
-operations, undoing them, hiding files, and row animation.
+operations, undoing them, hiding chosen files, and row animation.
 
 ## Tests
 
 ```sh
 cargo test -p bedtime-filetree --all-features
-python3 tools/bed.py run tests/automation/files.py
+python3 tools/bed.py run tests/automation/files.py tests/automation/files_hidden.py
 ```

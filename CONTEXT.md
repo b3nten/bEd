@@ -284,7 +284,23 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Inline comparison**, 2026-11-02, awaiting review. The old editor's
+- **Video flicker, word wrap, hidden files**, 2026-11-02, awaiting review.
+  Video: bevy_egui's managed textures make a new image asset on every full
+  update, which draws nothing until the GPU copy is ready, so playback
+  flickered; frames now go into one `Image` per size, shown as an egui user
+  texture. Word Wrap: `EditorPanel::wrap` (saved; `None` follows
+  `EditorDefaults`, set from bed's Editor settings), View ▸ Word Wrap,
+  Cmd/Ctrl+Alt+L (text fields keep every Cmd/Ctrl+Z chord for undo, so
+  Cmd+Alt+Z never reached the action). The file tree marks entries Git ignores
+  on its reading worker (the `ignore` crate, local filesystem only; an ignored
+  folder's contents are ignored; a changed `.gitignore` rereads every open
+  folder), dims hidden and ignored rows, and each tree can hide them
+  (`FileTree::show_hidden` / `show_ignored`, saved; defaults from
+  `FileTreeDefaults`, bed's Files settings) from its menus or the
+  `files.toggle_hidden` / `files.toggle_ignored` actions.
+  `tests/automation/files_hidden.py`; `editor.py` checks wrapping.
+
+- **Inline comparison**, 2026-11-02, committed (`538726e`). The old editor's
   `diff` module is back in bedtime-code (`editor/diff.rs`, its 6 tests pass)
   with its hooks restored in `layout.rs` (Geometry's `diff` mapping, which
   replaces folding while comparing) and the editor's drawing (old rows,

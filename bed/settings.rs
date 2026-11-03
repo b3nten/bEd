@@ -97,6 +97,37 @@ settings! {
             apply: |world, gap| world.resource_mut::<AppearanceSettings>().panel_gap = limit(*gap, PANEL_GAP, 5.0),
         }
     }
+    "Editor" {
+        /// Wrap long lines at the editor's width (View ▸ Word Wrap changes one editor).
+        pub WrapLines: bool {
+            default: false,
+            key: "editor.wrap",
+            label: "Wrap lines",
+            apply: |world, wrap| world.resource_mut::<bedtime_code::EditorDefaults>().wrap = *wrap,
+        }
+        pub LineNumbers: bool {
+            default: true,
+            key: "editor.line_numbers",
+            label: "Line numbers",
+            apply: |world, shown| world.resource_mut::<bedtime_code::EditorDefaults>().line_numbers = *shown,
+        }
+    }
+    "Files" {
+        /// Dot files and the like (a tree's menu changes that tree).
+        pub ShowHiddenFiles: bool {
+            default: true,
+            key: "files.show_hidden",
+            label: "Show hidden files",
+            apply: |world, shown| world.resource_mut::<bedtime_filetree::FileTreeDefaults>().show_hidden = *shown,
+        }
+        /// Files Git ignores.
+        pub ShowIgnoredFiles: bool {
+            default: true,
+            key: "files.show_ignored",
+            label: "Show ignored files",
+            apply: |world, shown| world.resource_mut::<bedtime_filetree::FileTreeDefaults>().show_ignored = *shown,
+        }
+    }
 }
 
 /// Hand-edited files can hold anything; bring numbers into range before use.
@@ -155,7 +186,21 @@ impl Plugin for BedSettingsPlugin {
         app.register_type::<SettingsPanel>()
             .init_resource::<AppearanceSettings>()
             // Startup is workbench's (reopening the last workspace).
-            .settings_sections(["Appearance", "Window", "Panels", "Startup", "Effects"])
+            .settings_sections([
+                "Appearance",
+                "Window",
+                "Panels",
+                "Editor",
+                "Files",
+                "Startup",
+                "Effects",
+            ])
+            .init_resource::<bedtime_code::EditorDefaults>()
+            .register_setting::<WrapLines>()
+            .register_setting::<LineNumbers>()
+            .init_resource::<bedtime_filetree::FileTreeDefaults>()
+            .register_setting::<ShowHiddenFiles>()
+            .register_setting::<ShowIgnoredFiles>()
             .register_setting::<ColorTheme>()
             .register_setting::<FontFamily>()
             .register_setting::<FontSize>()

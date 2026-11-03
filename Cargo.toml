@@ -90,6 +90,7 @@ rio-graphics = "=0.5.28"
 polling = "=3.11.0"
 unicode-width = "=0.2.2"
 trash = "=5.2.9"
+ignore = "=0.4.33"
 rodio = { version = "=0.21.1", default-features = false, features = ["playback", "symphonia-all"] }
 libc = "=0.2.190"
 muda = { version = "=0.21.0", default-features = false }

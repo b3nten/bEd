@@ -19,9 +19,16 @@ def row(bed, name):
     return min(bed.find_all(name), key=lambda widget: widget["rect"][0])
 
 
+def wrap(bed):
+    """The editor's own Word Wrap: None follows the setting."""
+    editor = "bedtime_code::editor::panel::EditorPanel"
+    rows = bed.call("world.query", {"data": {"components": [editor]}})
+    return rows[0]["components"][editor]["wrap"]
+
+
 with tempfile.TemporaryDirectory() as folder:
     notes = Path(folder) / "notes.txt"
-    notes.write_text("first line\nsecond line\n")
+    notes.write_text("first line\nsecond line\n" + "a long line " * 8 + "end\n")
 
     with Bed(folder) as bed:
         until(bed, lambda: bed.exists("notes.txt"), "the root is listed")
@@ -62,9 +69,16 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: "hello first line" in value(), "paste puts it back")
         assert not bed.status()["errors"], bed.status()["errors"]
 
+        # Word Wrap (Cmd+Alt+L) wraps the long line at the editor's width.
+        bed.screenshot("editor-unwrapped")
+        bed.key("Primary+Alt+L")
+        until(bed, lambda: wrap(bed) is True, "the editor wraps")
+        bed.screenshot("editor-wrapped")
+
         # Away and back: the editor shows the file again.
         bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
         bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
         until(bed, lambda: bed.exists(contains="hello first line"), "the editor is restored")
+        assert wrap(bed) is True, "Word Wrap comes back with the editor"
         bed.wait(30)
         bed.screenshot("editor-restored")

@@ -18,7 +18,8 @@ with Bed() as bed:
     for _ in range(20):
         if bed.exists("Screen effects"):
             break
-        bed.scroll(-150, at="Theme" if bed.exists("Theme") else "Opacity")
+        # The middle of the settings page (the window's own panel).
+        bed.scroll(-150, at={"rect": [480, 320, 480, 320]})
     assert bed.exists("Screen effects") and not bed.exists("Scanlines")
 
     bed.click(toggle_beside(bed, "Screen effects"))

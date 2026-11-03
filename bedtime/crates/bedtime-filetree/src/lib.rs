@@ -18,7 +18,7 @@ mod ops;
 mod view;
 pub use bedtime_filesystem::operations::Operation;
 pub use ops::{FileOperations, copy_files, paste_files, run_file_operation};
-pub use view::{file_icon, open_files_factory};
+pub use view::{ToggleHiddenFiles, ToggleIgnoredFiles, file_icon, open_files_factory};
 
 #[cfg(test)]
 mod tests;
@@ -28,6 +28,7 @@ pub struct FileTreePlugin;
 impl Plugin for FileTreePlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<FileTree>()
+            .init_resource::<FileTreeDefaults>()
             .init_resource::<Folders>()
             .init_resource::<view::Intents>()
             .init_resource::<FileOperations>()
@@ -37,6 +38,7 @@ impl Plugin for FileTreePlugin {
                     .chain()
                     .in_set(FileTreeSystems),
             );
+        view::install_actions(app);
     }
 }
 
@@ -44,7 +46,27 @@ impl Plugin for FileTreePlugin {
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FileTreeSystems;
 
-/// The file tree panel. Which folders are open is saved with it.
+/// What trees show unless one is told otherwise (`FileTree::show_hidden`,
+/// `show_ignored`). Both are shown by default, dimmed.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct FileTreeDefaults {
+    /// Hidden files: dot files, and those the system marks hidden.
+    pub show_hidden: bool,
+    /// Files Git ignores (`.gitignore`, `.git/info/exclude`, the global excludes).
+    pub show_ignored: bool,
+}
+
+impl Default for FileTreeDefaults {
+    fn default() -> Self {
+        Self {
+            show_hidden: true,
+            show_ignored: true,
+        }
+    }
+}
+
+/// The file tree panel. Which folders are open, and whether it shows hidden
+/// and ignored files, is saved with it.
 #[derive(Component, Reflect, Clone, Debug)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
@@ -52,6 +74,12 @@ pub struct FileTreeSystems;
 pub struct FileTree {
     /// Open folders, relative to the root; the empty path is the root itself.
     expanded: Vec<PathBuf>,
+    /// Show hidden files; `None` follows `FileTreeDefaults`.
+    #[reflect(default)]
+    pub show_hidden: Option<bool>,
+    /// Show files Git ignores; `None` follows `FileTreeDefaults`.
+    #[reflect(default)]
+    pub show_ignored: Option<bool>,
     /// Bumped when `expanded` changes, so the rows are worked out again.
     #[reflect(ignore)]
     generation: u64,
@@ -62,6 +90,8 @@ impl Default for FileTree {
     fn default() -> Self {
         Self {
             expanded: vec![PathBuf::new()],
+            show_hidden: None,
+            show_ignored: None,
             generation: 0,
         }
     }
@@ -84,6 +114,14 @@ impl FileTree {
         self.generation += 1;
     }
 
+    /// Whether hidden and ignored files show, given the defaults.
+    pub fn filter(&self, defaults: &FileTreeDefaults) -> TreeFilter {
+        TreeFilter {
+            hidden: self.show_hidden.unwrap_or(defaults.show_hidden),
+            ignored: self.show_ignored.unwrap_or(defaults.show_ignored),
+        }
+    }
+
     /// The open folders, as paths under `root`.
     pub fn expanded_folders<'a>(&'a self, root: &'a Path) -> impl Iterator<Item = PathBuf> + 'a {
         self.expanded.iter().map(|relative| {
@@ -96,12 +134,27 @@ impl FileTree {
     }
 }
 
+/// Which kinds of files a tree shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeFilter {
+    pub hidden: bool,
+    pub ignored: bool,
+}
+
+impl TreeFilter {
+    pub const ALL: Self = Self {
+        hidden: true,
+        ignored: true,
+    };
+}
+
 /// What's drawn: the rows, the selection, scrolling. Not saved.
 #[derive(Component, Default)]
 pub struct TreeView {
     rows: Arc<[Row]>,
-    /// What `rows` was worked out from: root, tree generation, folders revision.
-    rows_from: Option<(PathBuf, u64, u64)>,
+    /// What `rows` was worked out from: root, tree generation, folders
+    /// revision, what shows.
+    rows_from: Option<(PathBuf, u64, u64, TreeFilter)>,
     selected: Option<PathBuf>,
     /// Scroll so this row shows, on the next draw.
     reveal: Option<PathBuf>,
@@ -130,7 +183,10 @@ pub struct Row {
     pub name: String,
     pub depth: usize,
     pub kind: EntryKind,
+    /// Hidden, or in a hidden folder.
     pub hidden: bool,
+    /// Ignored by Git, or in an ignored folder.
+    pub ignored: bool,
     /// A folder that's open.
     pub expanded: bool,
     /// For an open folder: still being read, or why it couldn't be.
@@ -145,6 +201,8 @@ pub struct Entry {
     pub name: String,
     pub kind: EntryKind,
     pub hidden: bool,
+    /// Git ignores it. Only worked out on the local filesystem.
+    pub ignored: bool,
 }
 
 /// The folders open in any file tree, shared by them all: their last listing,
@@ -307,6 +365,11 @@ fn update_folders(world: &mut World) {
                     if let Some(error) = batch.error {
                         folders.watch_error = Some(error);
                     }
+                    // A changed .gitignore can change what's ignored below it.
+                    let ignores_changed = batch
+                        .events
+                        .iter()
+                        .any(|event| event.path.file_name().is_some_and(|n| n == ".gitignore"));
                     for event in batch.events {
                         // A changed folder, or a changed entry in one.
                         for path in [Some(event.path.as_path()), event.path.parent()]
@@ -318,7 +381,7 @@ fn update_folders(world: &mut World) {
                             }
                         }
                     }
-                    if batch.rescan {
+                    if batch.rescan || ignores_changed {
                         folders.folders.values_mut().for_each(|f| f.stale = true);
                     }
                 }
@@ -405,7 +468,7 @@ fn same(old: &[Entry], new: &[Entry]) -> bool {
         && old
             .iter()
             .zip(new)
-            .all(|(a, b)| a.path == b.path && a.kind == b.kind)
+            .all(|(a, b)| a.path == b.path && a.kind == b.kind && a.ignored == b.ignored)
 }
 
 /// A folder's entries: folders first, then by name ignoring case.
@@ -425,8 +488,12 @@ fn read(
             path: entry.path,
             kind: entry.kind,
             hidden: entry.hidden,
+            ignored: false,
         })
         .collect();
+    if filesystem.is_local() {
+        mark_ignored(folder, &mut entries);
+    }
     entries.sort_by(|a, b| {
         (b.kind == EntryKind::Directory)
             .cmp(&(a.kind == EntryKind::Directory))
@@ -436,8 +503,30 @@ fn read(
     Ok(entries)
 }
 
-/// The rows a tree shows: the root, then each open folder's entries.
-pub fn rows(root: &Path, tree: &FileTree, folders: &Folders) -> Vec<Row> {
+/// Mark the entries Git ignores: those a walk of `folder` that applies Git's
+/// ignore files (its own, its parents', `.git/info/exclude`, the global
+/// excludes) leaves out. Outside a Git repository nothing is ignored.
+fn mark_ignored(folder: &Path, entries: &mut [Entry]) {
+    let kept: std::collections::HashSet<PathBuf> = ignore::WalkBuilder::new(folder)
+        .max_depth(Some(1))
+        .standard_filters(false)
+        .git_ignore(true)
+        .git_exclude(true)
+        .git_global(true)
+        .parents(true)
+        .require_git(true)
+        .build()
+        .filter_map(Result::ok)
+        .map(ignore::DirEntry::into_path)
+        .collect();
+    for entry in entries {
+        entry.ignored = !kept.contains(&entry.path);
+    }
+}
+
+/// The rows a tree shows: the root, then each open folder's entries that
+/// `filter` lets through.
+pub fn rows(root: &Path, tree: &FileTree, folders: &Folders, filter: TreeFilter) -> Vec<Row> {
     let mut rows = Vec::new();
     let name = root.file_name().map_or_else(
         || root.display().to_string(),
@@ -450,9 +539,10 @@ pub fn rows(root: &Path, tree: &FileTree, folders: &Folders) -> Vec<Row> {
         name,
         0,
         EntryKind::Directory,
-        false,
+        (false, false),
         tree,
         folders,
+        filter,
     );
     rows
 }
@@ -465,9 +555,10 @@ fn push(
     name: String,
     depth: usize,
     kind: EntryKind,
-    hidden: bool,
+    (hidden, ignored): (bool, bool),
     tree: &FileTree,
     folders: &Folders,
+    filter: TreeFilter,
 ) {
     let open = kind == EntryKind::Directory
         && path
@@ -480,6 +571,7 @@ fn push(
         depth,
         kind,
         hidden,
+        ignored,
         expanded: open,
         loading: open && entries.is_none() && folders.error(path).is_none(),
         error: open
@@ -487,6 +579,11 @@ fn push(
             .flatten(),
     });
     for entry in entries.into_iter().flatten() {
+        let hidden = hidden || entry.hidden;
+        let ignored = ignored || entry.ignored;
+        if hidden && !filter.hidden || ignored && !filter.ignored {
+            continue;
+        }
         push(
             rows,
             root,
@@ -494,18 +591,25 @@ fn push(
             entry.name.clone(),
             depth + 1,
             entry.kind,
-            entry.hidden,
+            (hidden, ignored),
             tree,
             folders,
+            filter,
         );
     }
 }
 
 /// Bring `view.rows` up to date.
-fn refresh_rows(root: &Path, tree: &FileTree, folders: &Folders, view: &mut TreeView) {
-    let from = (root.to_owned(), tree.generation, folders.revision);
+fn refresh_rows(
+    root: &Path,
+    tree: &FileTree,
+    folders: &Folders,
+    filter: TreeFilter,
+    view: &mut TreeView,
+) {
+    let from = (root.to_owned(), tree.generation, folders.revision, filter);
     if view.rows_from.as_ref() != Some(&from) {
-        view.rows = rows(root, tree, folders).into();
+        view.rows = rows(root, tree, folders, filter).into();
         view.rows_from = Some(from);
     }
 }

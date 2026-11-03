@@ -16,6 +16,8 @@ bedtime-filesystem.workspace = true
 bedtime-ui.workspace = true
 bedtime-workbench = { workspace = true, features = ["files"] }
 bevy = { workspace = true, features = ["std"] }
+# Which entries Git ignores, read like Git does.
+ignore.workspace = true
 
 [dev-dependencies]
 bedtime-document.workspace = true

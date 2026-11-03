@@ -1,7 +1,6 @@
 //! Playing a file with AVFoundation: an `AVPlayer` for timing, sound and
 //! seeking, and an `AVPlayerItemVideoOutput` that hands over each new frame
 //! as BGRA pixels, copied into an egui image. Main thread only.
-use bedtime_ui::egui;
 use objc2::{AnyThread, MainThreadMarker, rc::Retained, runtime::AnyObject};
 use objc2_av_foundation::{
     AVPlayer, AVPlayerItem, AVPlayerItemStatus, AVPlayerItemVideoOutput, AVURLAsset,
@@ -111,8 +110,8 @@ impl Player {
         }
     }
 
-    /// The frame to show now, if it's new.
-    pub fn frame(&self) -> Option<egui::ColorImage> {
+    /// The frame to show now, if it's new: RGBA pixels and their size.
+    pub fn frame(&self) -> Option<(Vec<u8>, [u32; 2])> {
         unsafe {
             let now = objc2_quartz_core::CACurrentMediaTime();
             let time = self.output.itemTimeForHostTime(now);
@@ -131,13 +130,13 @@ impl Player {
             let base = CVPixelBufferGetBaseAddress(&buffer) as *const u8;
             let image = (!base.is_null() && width > 0 && height > 0).then(|| {
                 let bytes = std::slice::from_raw_parts(base, stride * height);
-                let mut pixels = Vec::with_capacity(width * height);
+                let mut pixels = Vec::with_capacity(width * height * 4);
                 for row in bytes.chunks_exact(stride) {
-                    pixels.extend(row[..width * 4].as_chunks::<4>().0.iter().map(|bgra| {
-                        egui::Color32::from_rgba_premultiplied(bgra[2], bgra[1], bgra[0], 255)
-                    }));
+                    for bgra in row[..width * 4].as_chunks::<4>().0 {
+                        pixels.extend_from_slice(&[bgra[2], bgra[1], bgra[0], 255]);
+                    }
                 }
-                egui::ColorImage::new([width, height], pixels)
+                (pixels, [width as u32, height as u32])
             });
             CVPixelBufferUnlockBaseAddress(&buffer, CVPixelBufferLockFlags::ReadOnly);
             image

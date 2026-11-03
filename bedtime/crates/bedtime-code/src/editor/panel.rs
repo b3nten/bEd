@@ -17,8 +17,63 @@ use bevy::prelude::*;
 /// documents editors show, and keeps Structure following the focused editor.
 pub struct CodePlugin;
 
+/// How editors start out (the app's settings set them).
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct EditorDefaults {
+    /// Wrap long lines at the editor's width.
+    pub wrap: bool,
+    pub line_numbers: bool,
+}
+
+impl Default for EditorDefaults {
+    fn default() -> Self {
+        Self {
+            wrap: false,
+            line_numbers: true,
+        }
+    }
+}
+
+/// Wrap long lines in the focused editor, or stop.
+pub struct ToggleWordWrap;
+impl bedtime_workbench::Action for ToggleWordWrap {
+    const KEY: &'static str = "editor.toggle_word_wrap";
+    const LABEL: &'static str = "Word Wrap";
+    /// Cmd/Ctrl+Alt+L: Alt+letter types a character on macOS, and text
+    /// fields keep every Cmd/Ctrl+Z chord for undo.
+    const DEFAULT_KEYS: &'static [bedtime_workbench::KeyChord] =
+        &[bedtime_workbench::KeyChord::new(
+            bedtime_workbench::Modifiers::PRIMARY.union(bedtime_workbench::Modifiers::ALT),
+            KeyCode::KeyL,
+        )];
+}
+
+fn toggle_word_wrap(
+    world: &mut World,
+    invocation: bedtime_workbench::ActionInvocation,
+) -> bedtime_workbench::ActionResult {
+    let panel = invocation.entity.ok_or("No editor is focused")?;
+    let defaults = world
+        .get_resource::<EditorDefaults>()
+        .copied()
+        .unwrap_or_default();
+    let mut editor = world
+        .get_mut::<EditorPanel>(panel)
+        .ok_or("No editor is focused")?;
+    let wrapping = editor.wrap.unwrap_or(defaults.wrap);
+    editor.wrap = Some(!wrapping);
+    Ok(())
+}
+
 impl Plugin for CodePlugin {
     fn build(&self, app: &mut App) {
+        use bedtime_workbench::ActionAppExt;
+        app.init_resource::<EditorDefaults>()
+            .add_action_handler::<ToggleWordWrap>(
+                bedtime_workbench::Handler::new(toggle_word_wrap).available_when(|world, panel| {
+                    panel.is_some_and(|p| world.get::<EditorPanel>(p).is_some())
+                }),
+            );
         app.register_type::<EditorPanel>()
             .register_opener(
                 Opener::<TextBuffer>::new::<EditorPanel>("Text Editor").files(text_fit),
@@ -56,6 +111,9 @@ pub fn text_fit(_: &std::path::Path, head: &[u8]) -> Fit {
 #[cfg_attr(feature = "persistence", reflect(Persist))]
 #[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct EditorPanel {
+    /// Wrap long lines in this editor; `None` follows `EditorDefaults`.
+    #[reflect(default)]
+    pub wrap: Option<bool>,
     #[reflect(ignore)]
     pub view: EditorView,
     #[reflect(ignore)]
@@ -169,10 +227,17 @@ fn draw(
         editor = EditorPanel {
             state_for: Some(document),
             pending: editor.pending.take(),
+            wrap: editor.wrap,
             ..default()
         };
     }
     editor.view.settings.read_only = !info.writable;
+    let defaults = world
+        .get_resource::<EditorDefaults>()
+        .copied()
+        .unwrap_or_default();
+    editor.view.settings.wrap = editor.wrap.unwrap_or(defaults.wrap);
+    editor.view.settings.line_numbers = defaults.line_numbers;
     editor.view.has_syntax = crate::syntax::language_name(&info.title).is_some();
     match world.get::<crate::syntax::DocumentSyntax>(document.entity()) {
         Some(syntax) => editor.view.set_analysis(&syntax.session),

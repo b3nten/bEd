@@ -11,7 +11,10 @@ app.add_plugins(VideoPlugin);
   the document only knows its revision; a new revision (the file changed)
   opens it again where it was.
 - **Playing.** An `AVPlayer` plays it; an `AVPlayerItemVideoOutput` hands
-  each new frame over as BGRA pixels, copied to an egui texture. Players
+  each new frame over as BGRA pixels, written into one Bevy `Image` (per
+  frame size) shown as an egui user texture. Not an egui-managed texture:
+  bevy_egui makes those a new image on every full update, which shows nothing
+  until it's on the GPU, so the picture flickered. Players
   belong to their panels (`Players`, a non-send resource: AVFoundation stays
   on the main thread) and go when the panel does.
 - **Viewing.** The picture fills its panel, letterboxed. Click or Space plays

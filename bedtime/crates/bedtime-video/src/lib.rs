@@ -111,7 +111,9 @@ struct Playing {
     file: PathBuf,
     revision: u64,
     player: Result<Player, String>,
-    texture: Option<egui::TextureHandle>,
+    /// The picture: one image, written over with each new frame (a new
+    /// texture each frame would be missing on the GPU for a frame, and flicker).
+    picture: Option<(Handle<Image>, egui::TextureId, [u32; 2])>,
     /// While dragging the scrubber: play again after.
     resume: bool,
 }
@@ -169,11 +171,24 @@ impl Panel for VideoPanel {
                     file,
                     revision: document.revision,
                     player,
-                    texture: None,
+                    picture: None,
                     resume: false,
                 },
             );
         }
+        #[cfg(target_os = "macos")]
+        let frame = players
+            .0
+            .get(&panel)
+            .and_then(|playing| playing.player.as_ref().ok())
+            .filter(|player| player.ready() == Ok(true))
+            .and_then(|player| player.frame());
+        #[cfg(not(target_os = "macos"))]
+        let frame: Option<(Vec<u8>, [u32; 2])> = None;
+        if let Some((pixels, size)) = frame {
+            show_frame(world, panel, pixels, size);
+        }
+        let mut players = world.non_send_mut::<Players>();
         let playing = players.0.get_mut(&panel).unwrap();
         let mut settings = VideoPanel {
             looping,
@@ -184,6 +199,47 @@ impl Panel for VideoPanel {
         if let Some(mut video) = world.get_mut::<VideoPanel>(panel) {
             *video = settings;
         }
+    }
+}
+
+/// Put a frame's pixels in the panel's picture: written over the image
+/// already there (the same texture, so nothing flickers), or a new one when
+/// the size changes.
+fn show_frame(world: &mut World, panel: Entity, pixels: Vec<u8>, size: [u32; 2]) {
+    use bevy::{
+        asset::RenderAssetUsages,
+        render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    };
+    let current = world
+        .non_send::<Players>()
+        .0
+        .get(&panel)
+        .and_then(|playing| playing.picture.clone());
+    if let Some((handle, _, at)) = &current
+        && *at == size
+        && let Some(mut image) = world.resource_mut::<Assets<Image>>().get_mut(handle)
+    {
+        image.data = Some(pixels);
+        return;
+    }
+    let image = Image::new(
+        Extent3d {
+            width: size[0],
+            height: size[1],
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        pixels,
+        TextureFormat::Rgba8UnormSrgb,
+        // Kept in the main world too, to write the next frame over.
+        RenderAssetUsages::RENDER_WORLD | RenderAssetUsages::MAIN_WORLD,
+    );
+    let handle = world.resource_mut::<Assets<Image>>().add(image);
+    let id = world
+        .resource_mut::<bevy_egui::EguiUserTextures>()
+        .add_image(bevy_egui::EguiTextureHandle::Weak(handle.id()));
+    if let Some(playing) = world.non_send_mut::<Players>().0.get_mut(&panel) {
+        playing.picture = Some((handle, id, size));
     }
 }
 
@@ -300,32 +356,20 @@ fn draw(
     if is_playing {
         ui.ctx().request_repaint();
     }
-    if let Some(image) = player.frame() {
-        match &mut playing.texture {
-            Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
-            None => {
-                playing.texture = Some(ui.ctx().load_texture(
-                    format!("{id:?}-frame"),
-                    image,
-                    egui::TextureOptions::LINEAR,
-                ))
-            }
-        }
-    }
     // The picture, fit to the panel.
     let size = player.size();
     let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
     painter.rect_filled(rect, 0.0, egui::Color32::from_gray(8));
-    if let Some(texture) = &playing.texture {
+    if let Some((_, texture, pixels)) = &playing.picture {
         let natural = if size[0] > 0.0 && size[1] > 0.0 {
             egui::vec2(size[0], size[1])
         } else {
-            texture.size_vec2()
+            egui::vec2(pixels[0] as f32, pixels[1] as f32)
         };
         let scale = (rect.width() / natural.x).min(rect.height() / natural.y);
         let picture = egui::Rect::from_center_size(rect.center(), natural * scale);
         painter.image(
-            texture.id(),
+            *texture,
             picture,
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,

@@ -33,6 +33,10 @@ read-only.
   Shift-Tab indentation, smart newline indentation and closing-bracket
   outdent, wrapping (`EditorSettings::wrap`), line numbers, the animated
   caret.
+- **Word wrap and line numbers.** `EditorDefaults` (a resource the app sets
+  from its settings) wraps lines and shows line numbers in every editor;
+  Word Wrap (`ToggleWordWrap`, Cmd/Ctrl+Alt+L) changes one editor, saved with
+  it (`EditorPanel::wrap`).
 - **Right-click menu.** A right-click outside the selection moves the caret
   there; the menu offers the language server's actions (Go to Definition,
   Find References, Rename, Code Actions, Format Document) when the file has

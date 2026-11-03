@@ -168,6 +168,10 @@ impl Filesystem {
         static LOCAL: OnceLock<Filesystem> = OnceLock::new();
         LOCAL.get_or_init(|| Self::new(LocalFilesystem)).clone()
     }
+    /// This is the local filesystem (`local`), whose paths are the disk's.
+    pub fn is_local(&self) -> bool {
+        self.id == Self::local().id
+    }
     pub fn source(&self, path: impl Into<PathBuf>) -> FileSource {
         FileSource {
             filesystem: self.clone(),

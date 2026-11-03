@@ -1,6 +1,6 @@
 //! Drawing the tree. Drawing only reads; what the user asks for comes back as
 //! intents, applied after.
-use crate::{FileTree, Folders, Row, TreeView, refresh_rows};
+use crate::{FileTree, FileTreeDefaults, Folders, Row, TreeView, refresh_rows};
 use bedtime_filesystem::{EntryKind, operations::Operation};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 use bedtime_workbench::{
@@ -17,6 +17,47 @@ impl Panel for FileTree {
     }
 }
 
+/// Show hidden files in the focused tree, or stop.
+pub struct ToggleHiddenFiles;
+impl bedtime_workbench::Action for ToggleHiddenFiles {
+    const KEY: &'static str = "files.toggle_hidden";
+    const LABEL: &'static str = "Show Hidden Files";
+}
+
+/// Show files Git ignores in the focused tree, or stop.
+pub struct ToggleIgnoredFiles;
+impl bedtime_workbench::Action for ToggleIgnoredFiles {
+    const KEY: &'static str = "files.toggle_ignored";
+    const LABEL: &'static str = "Show Ignored Files";
+}
+
+pub(crate) fn install_actions(app: &mut App) {
+    use bedtime_workbench::{ActionAppExt, Handler};
+    let tree = |world: &World, panel: Option<Entity>| {
+        panel.is_some_and(|panel| world.get::<FileTree>(panel).is_some())
+    };
+    app.add_action_handler::<ToggleHiddenFiles>(
+        Handler::new(|world, invocation| toggle(world, invocation.entity, Intent::ToggleHidden))
+            .available_when(tree),
+    )
+    .add_action_handler::<ToggleIgnoredFiles>(
+        Handler::new(|world, invocation| toggle(world, invocation.entity, Intent::ToggleIgnored))
+            .available_when(tree),
+    );
+}
+
+fn toggle(
+    world: &mut World,
+    panel: Option<Entity>,
+    intent: Intent,
+) -> bedtime_workbench::ActionResult {
+    let panel = panel
+        .filter(|&panel| world.get::<FileTree>(panel).is_some())
+        .ok_or("No file tree is focused")?;
+    apply(world, panel, Path::new(""), intent);
+    Ok(())
+}
+
 /// What the user asked for.
 #[derive(Debug)]
 pub(crate) enum Intent {
@@ -27,6 +68,8 @@ pub(crate) enum Intent {
         opener: Option<OpenerId>,
     },
     Refresh,
+    ToggleHidden,
+    ToggleIgnored,
     Operation(Operation),
     Copy {
         paths: Vec<PathBuf>,
@@ -132,9 +175,17 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
     let Some(mut view) = world.entity_mut(panel).take::<TreeView>() else {
         return;
     };
-    if let Some(tree) = world.get::<FileTree>(panel) {
-        refresh_rows(&root, tree, world.resource::<Folders>(), &mut view);
+    let defaults = world
+        .get_resource::<FileTreeDefaults>()
+        .copied()
+        .unwrap_or_default();
+    let filter = world
+        .get::<FileTree>(panel)
+        .map(|tree| tree.filter(&defaults));
+    if let (Some(tree), Some(filter)) = (world.get::<FileTree>(panel), filter) {
+        refresh_rows(&root, tree, world.resource::<Folders>(), filter, &mut view);
     }
+    let filter = filter.unwrap_or(crate::TreeFilter::ALL);
     let mut intents = Vec::new();
     let focused = world
         .get::<PanelPresentation>(panel)
@@ -186,6 +237,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
     );
     background.context_menu(|ui| {
         folder_menu(ui, &root, &mut view.naming, &mut intents);
+        filter_menu(ui, filter, &mut intents);
     });
     let mut row_rects: Vec<(usize, egui::Rect)> = Vec::new();
     ui.spacing_mut().item_spacing.y = 0.0;
@@ -270,6 +322,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
                     .map(|(_, openers)| openers.clone())
                     .unwrap_or_default();
                 menu(ui, row, &openers, &mut view.naming, &mut intents);
+                filter_menu(ui, filter, &mut intents);
             });
         }
     });
@@ -338,7 +391,7 @@ fn paint(
     };
     let ink = if row.error.is_some() {
         palette.error
-    } else if row.hidden {
+    } else if row.hidden || row.ignored {
         palette.muted
     } else {
         palette.text
@@ -471,6 +524,21 @@ fn folder_menu(
     ui.separator();
     if ui.button("Refresh").clicked() {
         intents.push(Intent::Refresh);
+    }
+}
+
+/// Showing hidden and ignored files, at the end of each menu.
+fn filter_menu(ui: &mut egui::Ui, filter: crate::TreeFilter, intents: &mut Vec<Intent>) {
+    ui.separator();
+    let mut hidden = filter.hidden;
+    if ui.checkbox(&mut hidden, "Show Hidden Files").clicked() {
+        intents.push(Intent::ToggleHidden);
+        ui.close();
+    }
+    let mut ignored = filter.ignored;
+    if ui.checkbox(&mut ignored, "Show Ignored Files").clicked() {
+        intents.push(Intent::ToggleIgnored);
+        ui.close();
     }
 }
 
@@ -860,6 +928,20 @@ pub(crate) fn apply(world: &mut World, panel: Entity, root: &Path, intent: Inten
             }
         }
         Intent::Refresh => world.resource_mut::<Folders>().refresh(),
+        Intent::ToggleHidden | Intent::ToggleIgnored => {
+            let defaults = world
+                .get_resource::<FileTreeDefaults>()
+                .copied()
+                .unwrap_or_default();
+            if let Some(mut tree) = world.get_mut::<FileTree>(panel) {
+                let shown = tree.filter(&defaults);
+                if matches!(intent, Intent::ToggleHidden) {
+                    tree.show_hidden = Some(!shown.hidden);
+                } else {
+                    tree.show_ignored = Some(!shown.ignored);
+                }
+            }
+        }
         Intent::Operation(operation) => {
             if let Err(error) = crate::ops::run_file_operation(world, operation, Some(panel)) {
                 world.workbench_mut().notify(Notification::error(error));
@@ -945,6 +1027,7 @@ mod tests {
             depth: 1,
             kind,
             hidden: false,
+            ignored: false,
             expanded: false,
             loading: false,
             error: None,

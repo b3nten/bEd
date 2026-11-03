@@ -55,6 +55,8 @@ with tempfile.TemporaryDirectory() as folder:
         toggle = next(w for w in bed.widgets() if w["role"] == "CheckBox")
         bed.click(toggle)
         until(bed, lambda: card_status(bed) == "Disabled", "disabling stops it")
+        # Past the double-click time, so the second click isn't half of one.
+        time.sleep(0.6)
         bed.click(next(w for w in bed.widgets() if w["role"] == "CheckBox"))
         until(bed, lambda: (card_status(bed) or "").startswith(("Starting", "Running")), "enabling starts it", 120)
         until(bed, lambda: (card_status(bed) or "").startswith("Running"), "it runs again", 120)

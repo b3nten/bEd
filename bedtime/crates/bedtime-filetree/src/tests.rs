@@ -83,10 +83,15 @@ fn eventually(app: &mut App, tree: Entity, done: impl Fn(&[String]) -> bool) -> 
         let world = app.world_mut();
         let root = root(world).unwrap();
         let mut view = world.entity_mut(tree).take::<TreeView>().unwrap();
+        let filter = world
+            .get::<FileTree>(tree)
+            .unwrap()
+            .filter(world.resource::<FileTreeDefaults>());
         refresh_rows(
             &root,
             world.get::<FileTree>(tree).unwrap(),
             world.resource::<Folders>(),
+            filter,
             &mut view,
         );
         names = view
@@ -147,6 +152,82 @@ fn folders_are_listed_folders_first_and_open_folders_are_read() {
             .entries(&project.0)
             .is_none()
     );
+}
+
+#[test]
+fn hidden_and_ignored_files_show_dimmed_until_hidden() {
+    let project = Project::new("ignored");
+    std::fs::create_dir_all(project.0.join(".git")).unwrap();
+    std::fs::create_dir_all(project.0.join("target/debug")).unwrap();
+    std::fs::write(project.0.join(".gitignore"), "target/\n*.log\n").unwrap();
+    std::fs::write(project.0.join("build.log"), "").unwrap();
+    std::fs::write(project.0.join("Docs/.secret"), "").unwrap();
+    let (mut app, tree) = app(&project);
+    apply(
+        app.world_mut(),
+        tree,
+        &project.0,
+        Intent::Toggle(project.0.join("target")),
+    );
+    apply(
+        app.world_mut(),
+        tree,
+        &project.0,
+        Intent::Toggle(project.0.join("Docs")),
+    );
+    let all = eventually(&mut app, tree, |rows| {
+        rows.iter().any(|row| row == "    debug") && rows.iter().any(|row| row == "    .secret")
+    });
+    let view = app.world().get::<TreeView>(tree).unwrap();
+    let row = |name: &str| view.rows().iter().find(|row| row.name == name).unwrap();
+    assert!(row("build.log").ignored && !row("build.log").hidden);
+    // What's in an ignored folder is ignored too.
+    assert!(row("target").ignored && row("debug").ignored);
+    assert!(row(".gitignore").hidden && !row(".gitignore").ignored);
+    assert!(!row("A.txt").ignored && !row("src").ignored);
+    assert!(all.iter().any(|row| row == "  .git"));
+
+    apply(app.world_mut(), tree, &project.0, Intent::ToggleIgnored);
+    let rows = eventually(&mut app, tree, |rows| {
+        !rows.iter().any(|row| row == "  target")
+    });
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains("build.log") || row.contains("debug"))
+    );
+    assert!(rows.iter().any(|row| row == "  .gitignore"));
+
+    apply(app.world_mut(), tree, &project.0, Intent::ToggleHidden);
+    let rows = eventually(&mut app, tree, |rows| {
+        !rows.iter().any(|row| row == "  .gitignore")
+    });
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.contains(".git") || row.contains(".secret"))
+    );
+    assert!(rows.iter().any(|row| row == "  A.txt"));
+    let saved = app.world().get::<FileTree>(tree).unwrap();
+    assert_eq!(
+        (saved.show_hidden, saved.show_ignored),
+        (Some(false), Some(false))
+    );
+
+    // Outside a Git repository nothing is ignored.
+    std::fs::remove_dir_all(project.0.join(".git")).unwrap();
+    apply(app.world_mut(), tree, &project.0, Intent::ToggleIgnored);
+    app.world_mut().resource_mut::<Folders>().refresh();
+    for _ in 0..400 {
+        eventually(&mut app, tree, |rows| {
+            rows.iter().any(|row| row == "  build.log")
+        });
+        let view = app.world().get::<TreeView>(tree).unwrap();
+        if view.rows().iter().all(|row| !row.ignored) {
+            return;
+        }
+    }
+    panic!("ignored files stayed ignored without a repository");
 }
 
 #[test]

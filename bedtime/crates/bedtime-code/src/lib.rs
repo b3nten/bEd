@@ -6,5 +6,8 @@ pub mod lsp;
 pub mod structure;
 pub mod syntax;
 
-pub use editor::{CodePlugin, ComparisonRequest, EditorComparison, EditorPanel, draw_editor};
+pub use editor::{
+    CodePlugin, ComparisonRequest, EditorComparison, EditorDefaults, EditorPanel, ToggleWordWrap,
+    draw_editor,
+};
 pub use structure::StructurePanel;
