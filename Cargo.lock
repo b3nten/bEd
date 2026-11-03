@@ -284,9 +284,12 @@ name = "arboard"
 version = "3.6.1"
 dependencies = [
  "clipboard-win",
+ "image",
  "log",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
@@ -817,10 +820,12 @@ dependencies = [
 name = "bedtime-terminal"
 version = "0.1.0"
 dependencies = [
+ "bedtime-clipboard",
  "bedtime-ui",
  "bedtime-workbench",
  "bevy",
  "bevy_egui",
+ "image",
  "libc",
  "polling",
  "rio-graphics",

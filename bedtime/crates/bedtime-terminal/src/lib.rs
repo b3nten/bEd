@@ -5,6 +5,7 @@ mod color;
 mod input;
 #[cfg(unix)]
 mod integration;
+mod paste;
 mod process_title;
 mod shell;
 pub mod shell_bridge;
@@ -221,6 +222,10 @@ impl Panel for TerminalPanel {
             && !ui.ctx().any_popup_open()
             && ui.ctx().memory(|m| m.top_modal_layer().is_none());
         let reserved = reserved_shortcuts(world, panel);
+        let mut clipboard = world
+            .get_resource::<bedtime_clipboard::Clipboard>()
+            .cloned();
+        let mut paste_error = None;
         let mut panel_state = world.get_mut::<Self>(panel).unwrap();
         let state = &mut *panel_state;
         state.drawn = true;
@@ -307,7 +312,28 @@ impl Panel for TerminalPanel {
         if let Some(link) = output.link {
             state.links.push(link);
         }
-        send_inputs(state, output.inputs);
+        let inputs = output
+            .inputs
+            .into_iter()
+            .filter_map(|input| match input {
+                TerminalInput::PasteClipboard(bridged) => {
+                    match paste::clipboard_paste(clipboard.as_mut(), bridged) {
+                        Ok(text) => {
+                            text.map(|text| TerminalInput::Command(TerminalCommand::Paste(text)))
+                        }
+                        Err(error) => {
+                            paste_error = Some(format!("Couldn't paste: {error}"));
+                            None
+                        }
+                    }
+                }
+                input => Some(input),
+            })
+            .collect();
+        send_inputs(state, inputs);
+        if let Some(error) = paste_error {
+            world.write_message(bedtime_ui::UiError(error));
+        }
     }
 }
 
@@ -370,6 +396,8 @@ fn send_inputs(state: &mut TerminalPanel, inputs: Vec<TerminalInput>) {
                 .write(&bytes)
                 .map_err(|error| (TerminalInput::Bytes(bytes), error)),
             TerminalInput::Bytes(_) => continue,
+            // Resolved by `draw` before inputs are sent.
+            TerminalInput::PasteClipboard(_) => continue,
         };
         if let Err((input, error)) = result {
             if error.kind() == io::ErrorKind::WouldBlock {

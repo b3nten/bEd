@@ -15,6 +15,10 @@ use std::collections::BTreeMap;
 pub(crate) enum TerminalInput {
     Command(TerminalCommand),
     Bytes(Vec<u8>),
+    /// Paste the clipboard: its files, text or image, whichever it offers
+    /// (see `paste::clipboard_paste`). Carries the text UI's clipboard bridge
+    /// read for the chord, if any. The panel resolves this before sending.
+    PasteClipboard(Option<String>),
 }
 
 pub(crate) enum KeyboardAction {
@@ -233,7 +237,10 @@ impl InputMapper {
                         self.held.entry(identity).or_default().reserve_release = false;
                         match shortcut {
                             LocalShortcut::Copy => mapped[index].action(KeyboardAction::Copy),
-                            // The clipboard bridge supplies the text separately.
+                            // The panel reads the clipboard (files, text or
+                            // an image); the bridge's text joins it below.
+                            LocalShortcut::Paste if allow_input => mapped[index]
+                                .action(KeyboardAction::Input(TerminalInput::PasteClipboard(None))),
                             LocalShortcut::Paste => mapped[index].consume(),
                             LocalShortcut::SelectAll => {
                                 mapped[index].action(KeyboardAction::SelectAll)
@@ -334,8 +341,12 @@ impl InputMapper {
                         // paste at its originating key, before a later Enter
                         // or pointer action, rather than at the end of frame.
                         mapped[index].consume();
-                        if allow_input {
-                            mapped[press].command(TerminalCommand::Paste(text.clone()));
+                        for action in &mut mapped[press].actions {
+                            if let KeyboardAction::Input(TerminalInput::PasteClipboard(bridged)) =
+                                action
+                            {
+                                *bridged = Some(text.clone());
+                            }
                         }
                     }
                     None if allow_input => {
@@ -697,9 +708,10 @@ mod tests {
                 KeyboardAction::Input(TerminalInput::Command(TerminalCommand::Text(text))) => {
                     Some(encode_text(&text, KeyboardModes::default()))
                 }
-                KeyboardAction::Input(TerminalInput::Command(TerminalCommand::Paste(text))) => {
-                    Some(encode_paste(&text, true))
-                }
+                KeyboardAction::Input(
+                    TerminalInput::Command(TerminalCommand::Paste(text))
+                    | TerminalInput::PasteClipboard(Some(text)),
+                ) => Some(encode_paste(&text, true)),
                 _ => None,
             })
             .filter(|bytes| !bytes.is_empty())
@@ -747,6 +759,32 @@ mod tests {
                 [KeyboardAction::Copy]
             ));
             assert_eq!(encoded(mapped), [b"\x1b[200~a\rb\x1b[201~".to_vec()]);
+        }
+    }
+
+    #[test]
+    fn a_paste_chord_without_clipboard_text_still_asks_for_the_clipboard() {
+        // A file- or image-only clipboard has no text for the bridge to send.
+        let modifiers = Modifiers::MAC_CMD | Modifiers::COMMAND;
+        for (allow_input, expected) in [(true, 1), (false, 0)] {
+            let mapped = InputMapper::default().map_events(
+                &[key(Key::V, modifiers, true, false)],
+                allow_input,
+                &[],
+                true,
+            );
+            assert!(mapped[0].consumed);
+            let requests = mapped[0]
+                .actions
+                .iter()
+                .filter(|action| {
+                    matches!(
+                        action,
+                        KeyboardAction::Input(TerminalInput::PasteClipboard(None))
+                    )
+                })
+                .count();
+            assert_eq!(requests, expected);
         }
     }
 

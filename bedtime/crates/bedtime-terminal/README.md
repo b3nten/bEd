@@ -211,6 +211,14 @@ Shift+PageUp/PageDown/Home/End navigate scrollback. Double/triple click select
 words/lines, and Alt-drag selects a rectangle. Focus loss, hidden panels and modal
 UI release this canvas's held input without consuming another widget's events.
 
+Paste types whatever the clipboard offers, in this order: copied files as
+shell-escaped paths (a Finder copy's bare filename text is ignored), then text,
+then an image. An image alone (a screenshot, a browser's "Copy Image") is saved
+as a PNG under `$TMPDIR/bedtime-paste/` and its escaped path is pasted, which is
+how CLI tools such as coding agents accept images. Files dragged from outside the
+app onto a terminal type their escaped paths plus a trailing space, instead of
+opening as a panel. Both use bracketed paste when the program enables it.
+
 ## Initial scope
 
 - Native backend: macOS/Linux (Unix PTY); Windows PTY support is not implemented.

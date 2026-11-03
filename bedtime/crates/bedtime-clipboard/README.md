@@ -1,6 +1,6 @@
 # bedtime-clipboard
 
-Independent text and file-list clipboard support for Bevy. No workbench, window,
+Independent text, file-list and image clipboard support for Bevy. No workbench, window,
 renderer or UI is required. The API uses a shared `Clipboard` resource:
 
 ```rust,ignore
@@ -20,9 +20,12 @@ native build. The native workbench feature enables OS access for normal apps.
 
 Reads/writes on an initialized native backend return their errors. They do not
 silently return old local contents. Memory mode holds one current payload, either
-text or files, or is empty after `clear()`; writing another format replaces it.
+text, files or an image, or is empty after `clear()`; writing another format replaces it.
 File lists contain references, not file contents, and this crate performs no
-filesystem operations.
+filesystem operations. Images are `ClipboardImage` RGBA pixels:
+`read_image_if_present()` decodes the platform's format (PNG/TIFF on macOS, PNG
+on Linux, DIB on Windows) and `write_image()` rejects a size/data mismatch.
+Encoding to a file format is the application's job.
 `read_text_if_present()` returns `Ok(None)` for an absent text representation,
 including a file-only clipboard, while native access/conversion errors remain
 errors. `read_text()` retains its required-text API and reports absence as

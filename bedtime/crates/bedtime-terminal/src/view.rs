@@ -928,7 +928,59 @@ impl TerminalView {
                 },
             );
         }
+        // Files dragged in from outside the app type their paths here rather
+        // than opening as a panel. The window is usually unfocused (and this
+        // canvas disabled) mid-drag, so only popups and a stopped shell refuse.
+        if visible && allow_input && !blocked {
+            self.file_drop(ui, rect, clip, theme, &mut output.inputs);
+        }
         output
+    }
+
+    fn file_drop(
+        &mut self,
+        ui: &egui::Ui,
+        rect: Rect,
+        clip: Rect,
+        theme: &Theme,
+        inputs: &mut Vec<TerminalInput>,
+    ) {
+        let (hovering, dropped) = ui.input(|input| {
+            (
+                !input.raw.hovered_files.is_empty(),
+                input
+                    .raw
+                    .dropped_files
+                    .iter()
+                    .map(|file| file.path().to_owned())
+                    .collect::<Vec<_>>(),
+            )
+        });
+        if !hovering && dropped.is_empty() {
+            return;
+        }
+        if !ui
+            .ctx()
+            .pointer_latest_pos()
+            .is_some_and(|pos| hit(ui, clip, pos))
+        {
+            return;
+        }
+        bedtime_workbench::PanelFactoryPayload::reserve_for_content(ui.ctx());
+        if dropped.is_empty() {
+            bedtime_ui::paint_drop_overlay(
+                &ui.painter().with_clip_rect(clip),
+                &theme.palette,
+                rect.shrink(2.0),
+                4.0,
+            );
+            return;
+        }
+        // A trailing space separates this from what's typed (or dropped) next,
+        // as Terminal.app and iTerm do.
+        let mut text = crate::paste::paths_text(&dropped);
+        text.push(' ');
+        inputs.push(TerminalInput::Command(TerminalCommand::Paste(text)));
     }
 
     fn end_application_gestures(&mut self, allow_input: bool, inputs: &mut Vec<TerminalInput>) {
