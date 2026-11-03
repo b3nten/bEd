@@ -2,6 +2,9 @@
 
 Bundled themes are installed in `~/.config/bed/themes/` when missing at
 startup; existing files are preserved. Edit or copy files in this directory.
+The Theme Editor (View → Theme Editor, or the sliders button beside Settings →
+Theme) edits these files: duplicate a theme under a new name, change its
+colors (saved as you go), and reset a shipped theme to how bEd ships it.
 Deleted bundled themes return on restart. Settings → Theme → folder opens
 the directory. Changes are loaded at runtime. Invalid files produce an error
 in Settings and fall back to bedtime-ui's dark theme.
