@@ -48,7 +48,7 @@ impl Plugin for FileTreePlugin {
 pub struct FileTreeSystems;
 
 /// What trees show unless one is told otherwise (`FileTree::show_hidden`,
-/// `show_ignored`). Both are shown by default, dimmed.
+/// `show_ignored`). By default ignored files show, dimmed; hidden ones don't.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct FileTreeDefaults {
     /// Hidden files: dot files, and those the system marks hidden.
@@ -60,7 +60,7 @@ pub struct FileTreeDefaults {
 impl Default for FileTreeDefaults {
     fn default() -> Self {
         Self {
-            show_hidden: true,
+            show_hidden: false,
             show_ignored: true,
         }
     }

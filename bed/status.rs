@@ -8,6 +8,9 @@ use bedtime_workbench::{Notification, NotificationLevel, Notifications, Workbenc
 use bevy::prelude::*;
 use std::time::Duration;
 
+/// Room above and below the status bar's text.
+const STATUS_PADDING: f32 = 5.0;
+
 /// How long a notification stays in the status bar.
 const SHOWN_FOR: Duration = Duration::from_secs(8);
 
@@ -17,14 +20,9 @@ const RECENT: usize = 10;
 /// The window's body: the panels, with the status bar along the bottom.
 pub fn body(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
     let available = ui.available_rect_before_wrap();
-    // A compact strip, independent of roomy panel buttons.
-    let button_padding_y = ui.spacing().button_padding.y.min(1.0);
-    let height = (ui
-        .text_style_height(&egui::TextStyle::Body)
-        .max(ui.text_style_height(&egui::TextStyle::Button) + 2.0 * button_padding_y)
-        .max(ui.spacing().interact_size.y)
-        + 4.0)
-        .min(available.height().max(0.0));
+    // A compact strip: a line of text, with the same room above and below.
+    let line = ui.text_style_height(&egui::TextStyle::Body);
+    let height = (line + 2.0 * STATUS_PADDING).min(available.height().max(0.0));
     let bar = egui::Rect::from_min_max(
         egui::pos2(available.left(), available.bottom() - height),
         available.max,
@@ -35,15 +33,18 @@ pub fn body(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
 
     let background = bedtime_ui::theme::color(context.theme.palette.background);
     ui.painter().rect_filled(bar, 0.0, background);
-    let content = bar.shrink2(egui::vec2(10.0, 2.0));
+    let content = bar.shrink2(egui::vec2(10.0, 0.0));
     if content.is_positive() {
         let mut row = ui.new_child(
             egui::UiBuilder::new()
                 .id_salt("status-content")
                 .max_rect(content)
-                .layout(egui::Layout::left_to_right(egui::Align::Center).with_cross_justify(true)),
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        row.spacing_mut().button_padding.y = button_padding_y;
+        // Rows centre on `interact_size.y`: the bar's height, so text sits
+        // in its middle.
+        row.spacing_mut().interact_size.y = content.height();
+        row.spacing_mut().button_padding.y = 0.0;
         row.set_clip_rect(content);
         draw(&mut row, world, context);
     }

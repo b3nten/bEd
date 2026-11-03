@@ -59,7 +59,7 @@ pub(crate) fn install(app: &mut App) {
         .add_systems(Update, opening::reopen_viewers);
     closing::install(app);
     document_actions::install(app);
-    zoom_actions::install(app);
+    panel_actions::install(app);
     // A gesture's layout edit applies before shortcuts are read.
     app.configure_sets(
         PreUpdate,

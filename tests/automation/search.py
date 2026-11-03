@@ -96,3 +96,8 @@ with tempfile.TemporaryDirectory() as folder:
             "the open document isn't saved"
         bed.screenshot("search-replaced")
         assert not bed.status()["errors"], bed.status()["errors"]
+
+        # Cmd+W closes the focused panel: Search.
+        bed.click(query_field(bed))
+        bed.key("Primary+W")
+        until(bed, lambda: not bed.exists("Replace All"), "Cmd+W closes Search")

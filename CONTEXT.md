@@ -283,7 +283,15 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Titlebar, tree motion, fixes**, 2026-11-02, awaiting review. The
+- **UI cleanup**, 2026-11-02, awaiting review. The status bar is a line of
+  text with 5 points above and below, centred (it had control height, with
+  labels stretched to it). The file tree hides hidden files by default
+  (`FileTreeDefaults`, bed's `files.show_hidden`). Workbench's Close Panel
+  (Cmd/Ctrl+W, File menu) closes the focused panel through the close checks
+  (`panel_actions.rs`, was `zoom_actions.rs`). Screen effects are in
+  Settings' Appearance section.
+
+- **Titlebar, tree motion, fixes**, 2026-11-02, committed (`0c20e54`). The
   titlebar has terminal, search, files, git, structure and settings, closer
   together, with bedtime-ui's new `icon_ink_button` (no hover background).
   File tree rows move again (`bedtime-filetree/src/motion.rs`): rows drawn at

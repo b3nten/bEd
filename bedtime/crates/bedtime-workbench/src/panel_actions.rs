@@ -1,8 +1,16 @@
-//! Zoom In, Zoom Out and Reset Zoom for the focused panel (`PanelZoom`). A
-//! panel with a zoom of its own (an image's) handles them itself, with an
-//! `ActionHandler` for each.
+//! Actions on the focused panel: Close Panel (Cmd/Ctrl+W, through the close
+//! checks, as its tab's × does), and Zoom In, Zoom Out and Reset Zoom
+//! (`PanelZoom`). A panel with a zoom of its own (an image's) handles those
+//! itself, with an `ActionHandler` for each.
 use crate::*;
 use bevy::prelude::*;
+
+pub struct ClosePanel;
+impl Action for ClosePanel {
+    const KEY: &'static str = "panel.close";
+    const LABEL: &'static str = "Close Panel";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyW)];
+}
 
 pub struct ZoomIn;
 impl Action for ZoomIn {
@@ -38,6 +46,10 @@ impl Action for ResetZoom {
 }
 
 pub(crate) fn install(app: &mut App) {
+    app.add_action_handler::<ClosePanel>(
+        Handler::new(close_panel)
+            .available_when(|world, panel| focused_zoom(world, panel).is_some()),
+    );
     app.add_action_handler::<ZoomIn>(
         Handler::new(|world, invocation| zoom(world, invocation, PanelZoom::bigger))
             .available_when(|world, panel| {
@@ -58,6 +70,18 @@ pub(crate) fn install(app: &mut App) {
         Handler::new(|world, invocation| zoom(world, invocation, |_| Some(1.0)))
             .available_when(|world, panel| focused_zoom(world, panel).is_some_and(|z| z != 1.0)),
     );
+}
+
+/// Close the focused panel as its tab's × would: unsaved changes are asked
+/// about, and a panel can refuse.
+fn close_panel(world: &mut World, invocation: ActionInvocation) -> ActionResult {
+    let panel = invocation
+        .entity
+        .filter(|&panel| world.get::<PanelInstance>(panel).is_some())
+        .ok_or("No panel is focused")?;
+    let layouts = world.layouts_mut();
+    let layout = layouts.panel_layout(panel)?;
+    layouts.user_edit(layout, &LayoutEdit::ClosePanels(vec![panel]))
 }
 
 /// The zoom of `panel`, if it's a panel.
@@ -133,6 +157,35 @@ mod tests {
             )));
         assert_eq!(run(&mut app, ActionId::of::<ZoomIn>(), 1), None);
         assert!(app.world().get::<ZoomedItself>(panel).is_some());
+    }
+
+    #[test]
+    fn close_panel_closes_the_focused_panel() {
+        let mut app = App::new();
+        app.add_plugins(WorkbenchCorePlugins);
+        let world = app.world_mut();
+        let layout = crate::tests::layout(world);
+        let area = world.layouts().destination_area(layout).unwrap();
+        let first = world
+            .layouts_mut()
+            .create_panel_in_area(area, "First")
+            .unwrap();
+        let second = world
+            .layouts_mut()
+            .create_panel_in_area(area, "Second")
+            .unwrap();
+        world
+            .resource_mut::<ActionRequests>()
+            .submit(ActionRequest {
+                action: ActionId::of::<ClosePanel>(),
+                context: InvocationContext::Entity(second),
+                source: None,
+            });
+        app.update();
+        app.update();
+        let world = app.world();
+        assert!(world.get_entity(second).is_err(), "the panel closes");
+        assert_eq!(world.layouts().panels_in_area(area), [first]);
     }
 
     #[test]

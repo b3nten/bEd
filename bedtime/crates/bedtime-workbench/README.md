@@ -281,8 +281,9 @@ Actions are [`bedtime-actions`](../bedtime-actions/README.md), re-exported.
 Workbench makes `ActionFocus` the focused panel, so a panel's
 `ActionHandler<A>` wins while it's focused, and shows a handler's error as a
 notification (an action that isn't available isn't an error). Document
-actions (Save, Undo, Redo) are workbench's own, and so are Zoom In, Zoom Out
-and Reset Zoom (Cmd/Ctrl+=, - and 0): they step the focused panel's
+actions (Save, Undo, Redo) are workbench's own, and so are the focused
+panel's: Close Panel (Cmd/Ctrl+W, through the close checks as its tab's ×),
+and Zoom In, Zoom Out and Reset Zoom (Cmd/Ctrl+=, - and 0), which step its
 `PanelZoom`. A panel with a zoom of its own (an image, a model) gives itself
 an `ActionHandler` for each.
 

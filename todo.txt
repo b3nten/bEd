@@ -1,0 +1,6 @@
+- theme creation panel
+- docs & shortcuts panel
+- csv viewer
+- http request panel
+- sqlite viewer
+- debugger panels

@@ -17,10 +17,10 @@ use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
-    ActionsWorldExt, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext, Invokes,
-    KeyChord, LayoutSurface, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator, NativeMenuBar,
-    PanelFactory, RedoDocument, ResetZoom, SaveDocument, UndoDocument, ZoomIn, ZoomOut,
-    draw_menu_bar, panel_drag_source,
+    ActionsWorldExt, ClosePanel, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext,
+    Invokes, KeyChord, LayoutSurface, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator,
+    NativeMenuBar, PanelFactory, RedoDocument, ResetZoom, SaveDocument, UndoDocument, ZoomIn,
+    ZoomOut, draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -142,6 +142,7 @@ fn compose_menus(mut commands: Commands) {
     commands.spawn((MenuItem::action::<CloseFolder>(), InMenu(file)));
     commands.spawn((MenuSeparator, InMenu(file)));
     commands.spawn((MenuItem::action::<SaveDocument>(), InMenu(file)));
+    commands.spawn((MenuItem::action::<ClosePanel>(), InMenu(file)));
     commands.spawn((MenuItem::action::<UndoDocument>(), InMenu(edit)));
     commands.spawn((MenuItem::action::<RedoDocument>(), InMenu(edit)));
     commands.spawn((MenuSeparator, InMenu(edit)));
@@ -467,7 +468,7 @@ mod tests {
             ]
         );
         let file = menu(&bar.entries, "File");
-        // Save is greyed out: no document is focused.
+        // Save is greyed out: no document is focused (a panel is).
         assert_eq!(
             labels(file),
             [
@@ -477,7 +478,8 @@ mod tests {
                 ("Open Folder…".into(), true),
                 ("Open Recent".into(), true),
                 ("Close Folder".into(), true),
-                ("Save".into(), false)
+                ("Save".into(), false),
+                ("Close Panel".into(), true)
             ]
         );
         assert_eq!(labels(menu(file, "Open Recent")), [("/b".into(), true)]);

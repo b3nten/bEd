@@ -5,12 +5,12 @@ mod documents;
 mod lifecycle;
 mod notifications;
 mod opening;
+mod panel_actions;
 #[cfg(feature = "persistence")]
 pub mod persistence;
 mod untitled;
 #[cfg(feature = "workspaces")]
 pub mod workspaces;
-mod zoom_actions;
 /// Settings: [`bedtime-settings`](bedtime_settings), re-exported.
 #[cfg(feature = "persistence")]
 pub mod settings {
@@ -35,8 +35,8 @@ pub use documents::*;
 pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 pub use opening::*;
+pub use panel_actions::{ClosePanel, ResetZoom, ZoomIn, ZoomOut};
 pub use untitled::{SaveAs, Untitled};
-pub use zoom_actions::{ResetZoom, ZoomIn, ZoomOut};
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "clipboard")]

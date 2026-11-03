@@ -1,5 +1,5 @@
-"""Files: hidden and Git-ignored files show (dimmed) until the tree's menu
-hides them; the choice is saved with the tree."""
+"""Files: Git-ignored files show (dimmed), hidden ones don't, by default; the
+tree's menu and actions change that, and the choice is saved with the tree."""
 import subprocess
 import tempfile
 from pathlib import Path
@@ -23,7 +23,10 @@ with tempfile.TemporaryDirectory() as folder:
     (root / "notes.txt").write_text("notes\n")
 
     with Bed(folder) as bed:
-        until(bed, lambda: bed.exists("build.log") and bed.exists(".gitignore"), "everything is listed")
+        until(bed, lambda: bed.exists("build.log") and bed.exists("notes.txt"), "the root is listed")
+        assert not bed.exists(".gitignore"), "hidden files show by default"
+        bed.invoke("files.toggle_hidden")
+        until(bed, lambda: bed.exists(".gitignore"), "hidden files show when asked")
         bed.screenshot("files-hidden-shown")
 
         # The empty space's menu hides ignored files.

@@ -129,7 +129,7 @@ settings! {
     "Files" {
         /// Dot files and the like (a tree's menu changes that tree).
         pub ShowHiddenFiles: bool {
-            default: true,
+            default: false,
             key: "files.show_hidden",
             label: "Show hidden files",
             apply: |world, shown| world.resource_mut::<bedtime_filetree::FileTreeDefaults>().show_hidden = *shown,
@@ -207,7 +207,6 @@ impl Plugin for BedSettingsPlugin {
                 "Editor",
                 "Files",
                 "Startup",
-                "Effects",
             ])
             .init_resource::<bedtime_code::EditorDefaults>()
             .register_setting::<Autosave>()

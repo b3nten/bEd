@@ -41,7 +41,7 @@ const INTENSITY: RangeInclusive<f32> = 0.0..=1.0;
 macro_rules! effect_settings {
     ($($name:ident: $default:expr, $key:literal, $field:ident $(, $label:literal)?;)*) => {
         $(settings! {
-            "Effects" {
+            "Appearance" {
                 pub $name: f32 {
                     default: $default,
                     key: $key,
@@ -62,7 +62,7 @@ macro_rules! effect_settings {
 }
 
 settings! {
-    "Effects" {
+    "Appearance" {
         pub EffectsEnabled: bool {
             default: false,
             key: "effects.enabled",

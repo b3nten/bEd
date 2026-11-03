@@ -49,7 +49,7 @@ world.spawn((FileTree::default(), InArea(area)));
   marks hidden) and files Git ignores (its `.gitignore`s, `.git/info/exclude`
   and global excludes, read with the `ignore` crate when a folder is read;
   only on the local filesystem; what's in an ignored folder is ignored) are
-  shown dimmed. Each tree's menus have Show Hidden Files and Show Ignored
+  shown dimmed; hidden files aren't, by default. Each tree's menus have Show Hidden Files and Show Ignored
   Files, also the `files.toggle_hidden` and `files.toggle_ignored` actions;
   trees that haven't chosen follow `FileTreeDefaults`, which the app sets from
   its settings. A changed `.gitignore` rereads every open folder.

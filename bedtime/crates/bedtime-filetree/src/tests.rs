@@ -163,6 +163,11 @@ fn hidden_and_ignored_files_show_dimmed_until_hidden() {
     std::fs::write(project.0.join("build.log"), "").unwrap();
     std::fs::write(project.0.join("Docs/.secret"), "").unwrap();
     let (mut app, tree) = app(&project);
+    // Hidden files don't show by default: start with both shown.
+    app.insert_resource(FileTreeDefaults {
+        show_hidden: true,
+        show_ignored: true,
+    });
     apply(
         app.world_mut(),
         tree,
