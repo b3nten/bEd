@@ -140,21 +140,36 @@ impl Panel for GitPanel {
                 ui.weak(format!("{count} staged"));
             });
         });
-        let hint = view
-            .as_ref()
-            .and_then(|v| v.single_staged.as_ref())
-            .map(|path| format!("update {path}"))
+        let suggestion = view.as_ref().and_then(|v| v.suggested_message.clone());
+        let hint = suggestion
+            .clone()
             .unwrap_or_else(|| "Describe your changes…".into());
-        let input_height = (composer.available_height() - height * 3.4).max(height);
-        let input = composer.add_sized(
+        // An empty draft commits with the suggested message, when there is one.
+        let message = if session.draft.trim().is_empty() {
+            suggestion.unwrap_or_default()
+        } else {
+            session.draft.clone()
+        };
+        let button_height = height * 1.6;
+        let spacing = composer.spacing().item_spacing.y;
+        let progress = session.progress();
+        // Leave room below the message for the commit row (and progress row).
+        let mut reserved = spacing + button_height.max(composer.spacing().interact_size.y);
+        if progress.is_some() {
+            reserved += spacing + composer.spacing().interact_size.y;
+        }
+        let input_height = (composer.available_height() - reserved).max(height);
+        composer.add_sized(
             [composer.available_width(), input_height],
+            // `desired_rows(1)`: the default of 4 rows sets a minimum height that can
+            // exceed `input_height` and push the commit row past the footer clip.
             egui::TextEdit::multiline(&mut session.draft)
+                .desired_rows(1)
                 .hint_text(hint)
                 .id_salt(("git-commit", panel)),
         );
-        let _ = input;
         let can_commit = session.writable()
-            && !session.draft.trim().is_empty()
+            && !message.trim().is_empty()
             && view.as_ref().is_some_and(|v| {
                 !v.has_conflicts
                     && match session.commit_mode {
@@ -167,7 +182,6 @@ impl Panel for GitPanel {
             });
         let accepts_actions = accepts_user_actions(world);
         composer.horizontal(|ui| {
-            let button_height = height * 1.6;
             let menu_width = button_height;
             let width = (ui.available_width() - menu_width - ui.spacing().item_spacing.x).max(1.0);
             let label = match session.commit_mode {
@@ -185,7 +199,7 @@ impl Panel for GitPanel {
             );
             if response.clicked() {
                 action = Some(Action::Operation(Operation::Commit {
-                    message: session.draft.clone(),
+                    message: message.clone(),
                     mode: session.commit_mode,
                 }));
             }
@@ -229,14 +243,14 @@ impl Panel for GitPanel {
                 response.on_hover_text("Commit action");
             });
         });
-        composer.horizontal(|ui| {
-            if let Some(progress) = session.progress() {
+        if let Some(progress) = progress {
+            composer.horizontal(|ui| {
                 ui.weak(progress);
                 if ui.small_button("Cancel").clicked() {
                     action = Some(Action::Cancel);
                 }
-            }
-        });
+            });
+        }
         world.entity_mut(panel).insert(state);
         if let Some(action) = action {
             let result = if accepts_user_actions(world) {

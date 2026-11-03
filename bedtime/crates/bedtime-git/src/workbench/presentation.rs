@@ -148,7 +148,8 @@ pub(super) struct RepositoryView {
     pub rows: Vec<Row>,
     pub row_index: HashMap<String, usize>,
     pub staged_count: usize,
-    pub single_staged: Option<String>,
+    /// A message summing up the staged files, when there are one to three.
+    pub suggested_message: Option<String>,
     pub has_conflicts: bool,
 }
 impl RepositoryView {
@@ -233,15 +234,7 @@ impl RepositoryView {
             .iter()
             .filter(|entry| staging(entry) != Staging::Unstaged)
             .count();
-        let single_staged = if staged_count == 1 {
-            status
-                .entries
-                .iter()
-                .find(|e| staging(e) != Staging::Unstaged)
-                .map(|e| e.path.rsplit('/').next().unwrap().to_owned())
-        } else {
-            None
-        };
+        let suggested_message = suggest_message(&status);
         let has_conflicts = status.entries.iter().any(|entry| entry.conflicted);
         let row_index = if options.view == ViewMode::Tree {
             rows.iter()
@@ -258,10 +251,35 @@ impl RepositoryView {
             rows,
             row_index,
             staged_count,
-            single_staged,
+            suggested_message,
             has_conflicts,
         }
     }
+}
+/// "create foo.md, update bar.rs" for up to three staged files.
+fn suggest_message(status: &Status) -> Option<String> {
+    let staged: Vec<_> = status
+        .entries
+        .iter()
+        .filter(|entry| staging(entry) != Staging::Unstaged)
+        .collect();
+    if staged.is_empty() || staged.len() > 3 {
+        return None;
+    }
+    let name = |path: &str| path.rsplit('/').next().unwrap().to_owned();
+    let parts: Vec<_> = staged
+        .iter()
+        .map(|entry| match entry.index_status {
+            'A' => format!("create {}", name(&entry.path)),
+            'D' => format!("delete {}", name(&entry.path)),
+            'R' => match &entry.old_path {
+                Some(old) => format!("rename {} to {}", name(old), name(&entry.path)),
+                None => format!("rename {}", name(&entry.path)),
+            },
+            _ => format!("update {}", name(&entry.path)),
+        })
+        .collect();
+    Some(parts.join(", "))
 }
 #[derive(Default)]
 struct Folder {
@@ -361,6 +379,41 @@ mod tests {
             .collect(),
             ..Default::default()
         })
+    }
+    #[test]
+    fn up_to_three_staged_files_suggest_a_commit_message() {
+        let entry = |path: &str, index_status, old_path: Option<&str>| StatusEntry {
+            path: path.into(),
+            old_path: old_path.map(Into::into),
+            index_status,
+            worktree_status: ' ',
+            conflicted: false,
+        };
+        let status = |entries: Vec<StatusEntry>| Status {
+            entries,
+            ..Default::default()
+        };
+        // The fixture stages readme.md, brand/new.txt and part of src/lib.rs.
+        assert_eq!(
+            RepositoryView::prepare(fixture(), GitPanelOptions::default(), BTreeSet::new())
+                .suggested_message
+                .as_deref(),
+            Some("update lib.rs, update readme.md, create new.txt")
+        );
+        assert_eq!(
+            RepositoryView::new(status(vec![
+                entry("docs/foo.md", 'A', None),
+                entry("gone.rs", 'D', None),
+                entry("src/b.rs", 'R', Some("src/a.rs")),
+                entry("untracked.rs", '?', None),
+            ]))
+            .suggested_message
+            .as_deref(),
+            Some("create foo.md, delete gone.rs, rename a.rs to b.rs")
+        );
+        let four = (0..4).map(|i| entry(&format!("{i}.rs"), 'M', None)).collect();
+        assert_eq!(RepositoryView::new(status(four)).suggested_message, None);
+        assert_eq!(RepositoryView::new(status(vec![])).suggested_message, None);
     }
     #[test]
     fn missing_preferences_use_tree_and_tracked_groups_but_saved_choices_survive() {
