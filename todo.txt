@@ -1,2 +1,9 @@
 - sqlite viewer
 - debugger panels
+
+- git needs to filter out worktrees
+- git should open non-text files in an associated viewer, instead of an error panel
+
+- would like to support formatting (and autoformat) with lsp
+
+- drop support for old version of theme files
