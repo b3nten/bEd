@@ -283,7 +283,16 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Project search**, 2026-11-02, awaiting review. New `bedtime-search`:
+- **Titlebar, tree motion, fixes**, 2026-11-02, awaiting review. The
+  titlebar has terminal, search, files, git, structure and settings, closer
+  together, with bedtime-ui's new `icon_ink_button` (no hover background).
+  File tree rows move again (`bedtime-filetree/src/motion.rs`): rows drawn at
+  animated positions instead of `show_rows`. Structure's chevrons collapse
+  again (registered after the row, which had taken their clicks; they're
+  labelled "Collapse X" for scripts). `+open` alone, or with one folder,
+  opens that folder as the workspace again (lost when the terminal came back).
+
+- **Project search**, 2026-11-02, committed (`6671a88`). New `bedtime-search`:
   the engine (one `regex` from the query: escaped unless Regular Expression,
   `\b…\b` for Whole Word, a case flag; include/exclude globs; walks with
   `ignore`, Git's ignores unless Ignored Files; open documents' unsaved text

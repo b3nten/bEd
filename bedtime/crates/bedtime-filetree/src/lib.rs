@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod motion;
 mod ops;
 mod view;
 pub use bedtime_filesystem::operations::Operation;
@@ -164,6 +165,8 @@ pub struct TreeView {
     typed_at: f64,
     /// A name being typed (new file or folder, rename).
     naming: Option<view::Naming>,
+    /// Rows moving as folders open and close.
+    motions: motion::Motions,
 }
 
 impl TreeView {

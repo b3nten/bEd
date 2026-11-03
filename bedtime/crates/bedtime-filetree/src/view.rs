@@ -241,19 +241,52 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
     });
     let mut row_rects: Vec<(usize, egui::Rect)> = Vec::new();
     ui.spacing_mut().item_spacing.y = 0.0;
-    let output = scroll.show_rows(ui, height, rows.len(), |ui, range| {
-        let first = range.start;
-        for (offset, row) in rows[range].iter().enumerate() {
-            let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), height),
-                egui::Sense::hover(),
-            );
+    let now = ui.input(|i| i.time);
+    view.motions.update(&rows, height, now, context.motion);
+    let output = scroll.show_viewport(ui, |ui, viewport| {
+        let width = ui.available_width();
+        ui.set_min_height(rows.len() as f32 * height);
+        ui.set_min_width(width);
+        let top = ui.max_rect().top();
+        let left = ui.max_rect().left();
+        // The rows in view, and any moving into or out of it.
+        let first = ((viewport.min.y / height).floor().max(0.0) as usize).saturating_sub(1);
+        let last = ((viewport.max.y / height).ceil().max(0.0) as usize + 1).min(rows.len());
+        let mut shown: Vec<usize> = (first.min(last)..last).collect();
+        shown.extend(
+            view.motions
+                .moving(&rows)
+                .filter(|&i| i < first || i >= last),
+        );
+        // Rows on their way out, under the rest.
+        for (row, y, alpha, floor) in view.motions.leaving(now, context.motion) {
+            let rect =
+                egui::Rect::from_min_size(egui::pos2(left, top + y), egui::vec2(width, height));
+            if rect.intersects(ui.clip_rect()) {
+                let response = ui.interact(
+                    rect,
+                    egui::Id::new((panel, "leaving", &row.path)),
+                    egui::Sense::hover(),
+                );
+                below(ui, floor.map(|f| top + f), |ui| {
+                    paint(ui, context, row, &view, rect, &response, alpha)
+                });
+            }
+        }
+        for index in shown {
+            let row = &rows[index];
+            let (y, alpha, floor) = view.motions.sample(row, index, height, now, context.motion);
+            let rect =
+                egui::Rect::from_min_size(egui::pos2(left, top + y), egui::vec2(width, height));
+            if !rect.intersects(ui.clip_rect()) {
+                continue;
+            }
             let response = ui.interact(
                 rect,
                 egui::Id::new((panel, &row.path)),
                 egui::Sense::click_and_drag(),
             );
-            row_rects.push((first + offset, rect));
+            row_rects.push((index, rect));
             // Drag onto a folder in the tree to move it there; onto the layout
             // to open a file there (an area, beside a tab, a new split).
             if response.drag_started() && row.depth > 0 {
@@ -282,7 +315,9 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
                     &row.name,
                 )
             });
-            paint(ui, context, row, &view, rect, &response);
+            below(ui, floor.map(|f| top + f), |ui| {
+                paint(ui, context, row, &view, rect, &response, alpha)
+            });
             // egui counts a click on another row just before as part of a
             // triple click.
             if response.double_clicked() || response.triple_clicked() {
@@ -326,6 +361,9 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             });
         }
     });
+    if view.motions.settle(now, context.motion) {
+        ui.ctx().request_repaint();
+    }
     drop_into_tree(
         ui,
         &ctx,
@@ -373,6 +411,19 @@ pub(crate) fn apply_intents(world: &mut World) {
     }
 }
 
+/// Draw with what's above `floor` hidden: a row coming out of (or going
+/// into) its folder's row passes under it.
+fn below(ui: &mut egui::Ui, floor: Option<f32>, draw: impl FnOnce(&mut egui::Ui)) {
+    let Some(floor) = floor else {
+        return draw(ui);
+    };
+    let mut clip = ui.clip_rect();
+    clip.min.y = clip.min.y.max(floor);
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(ui.max_rect()));
+    child.set_clip_rect(clip);
+    draw(&mut child);
+}
+
 fn paint(
     ui: &mut egui::Ui,
     context: &UiContext<'_>,
@@ -380,6 +431,7 @@ fn paint(
     view: &TreeView,
     rect: egui::Rect,
     response: &egui::Response,
+    alpha: f32,
 ) {
     let palette = &context.theme.palette;
     let directory = row.kind == EntryKind::Directory;
@@ -410,7 +462,7 @@ fn paint(
         },
         rect,
         Some(response),
-        if row.loading { 0.6 } else { 1.0 },
+        alpha * if row.loading { 0.6 } else { 1.0 },
         tree::INDENT,
     );
     if let Some(error) = &row.error {

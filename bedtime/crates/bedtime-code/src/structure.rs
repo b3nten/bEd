@@ -262,9 +262,24 @@ fn draw_outline(
                     egui::pos2(x + 16.0, rect.bottom()),
                 );
                 let children = has_children(index);
-                let arrow_response =
-                    children.then(|| ui.interact(arrow, id.with("arrow"), egui::Sense::click()));
+                // The row first: the chevron, registered after, gets its clicks.
                 let response = ui.interact(rect, id, egui::Sense::click());
+                let arrow_response = children.then(|| {
+                    let response = ui.interact(arrow, id.with("arrow"), egui::Sense::click());
+                    let verb = if state.collapsed.contains(&node.id) {
+                        "Expand"
+                    } else {
+                        "Collapse"
+                    };
+                    response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            true,
+                            format!("{verb} {}", node.label),
+                        )
+                    });
+                    response
+                });
                 let selected = state.selected == Some(node.id);
                 response.widget_info(|| {
                     egui::WidgetInfo::selected(

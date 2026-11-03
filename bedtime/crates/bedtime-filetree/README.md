@@ -53,6 +53,10 @@ world.spawn((FileTree::default(), InArea(area)));
   Files, also the `files.toggle_hidden` and `files.toggle_ignored` actions;
   trees that haven't chosen follow `FileTreeDefaults`, which the app sets from
   its settings. A changed `.gitignore` rereads every open folder.
+- **Moving.** When rows change, they move (`motion.rs`, bedtime-ui's
+  `RowMotion` and `ease`): an opened folder's rows slide out from under it
+  and fade in, a closed folder's slide back under it and fade out, and the
+  rows below slide to their new places. The first listing doesn't move.
 - **Saved.** Which folders are open, and what a tree hides, is saved with the panel (feature
   `persistence`, default), relative to the root. The root starts open.
 
@@ -78,7 +82,7 @@ being drawn.
 
 From the old tree (in git history before bed_old was removed), still to come back
 as needed: multiple selection (operations take one row), progress for long
-operations, undoing them, hiding chosen files, and row animation.
+operations, undoing them, and hiding chosen files.
 
 ## Tests
 

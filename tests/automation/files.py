@@ -4,6 +4,7 @@ open; binary data opens in hex. Open folders are
 saved with the workspace. Files are created from the menu, renamed with F2,
 and dragged into folders."""
 import tempfile
+import time
 from pathlib import Path
 from bed import Bed
 
@@ -102,7 +103,9 @@ with tempfile.TemporaryDirectory() as folder:
         # Its tabs follow, even one behind another.
         until(bed, lambda: not bed.exists("other.txt"), "no tab keeps the old name")
 
-        # Drag it onto src: it moves there.
+        # Drag it onto src: it moves there. (Rows slide into place first.)
+        time.sleep(0.3)
+        bed.wait(3)
         x0, y0, x1, y1 = row(bed, "renamed.txt")["rect"]
         sx0, sy0, sx1, sy1 = row(bed, "src")["rect"]
         bed.drag(((x0 + x1) / 2, (y0 + y1) / 2), ((sx0 + sx1) / 2, (sy0 + sy1) / 2))

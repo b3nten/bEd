@@ -33,6 +33,8 @@ def screen(bed):
 with tempfile.TemporaryDirectory() as folder:
     root = Path(folder)
     (root / "notes.txt").write_text("one\ntwo\nthree\n")
+    (root / "other").mkdir()
+    (root / "other" / "inside.txt").write_text("inside\n")
 
     with Bed(folder) as bed:
         bed.invoke("app.new_terminal")
@@ -84,3 +86,14 @@ with tempfile.TemporaryDirectory() as folder:
         bed.key("Enter")
         until(bed, lambda: "again-42" in screen(bed), "the restored shell runs")
         assert not bed.status()["errors"], bed.status()["errors"]
+
+        # `+open` alone opens the shell's folder as the workspace.
+        bed.type("cd other")
+        bed.key("Enter")
+        bed.wait(20)
+        def open_here():
+            bed.type("+open")
+            bed.key("Enter")
+        bed.relaunched(open_here)
+        until(bed, lambda: bed.exists("inside.txt"), "the folder is the workspace")
+        bed.screenshot("terminal-open-folder")

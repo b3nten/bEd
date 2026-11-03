@@ -890,6 +890,8 @@ and selected tree labels. `paint_chevron` and `animate_expansion` share filled
 right/down disclosure triangles and reversible 160 ms `ease` timing.
 `icon_button` animates its background and ink through hover, focus and press;
 with `visuals.button_frame = false` its resting background is transparent.
+`icon_ink_button` draws no background: hovering brightens the icon and pressing
+tints it (titlebar tools).
 `icon_button_sized` fixes the artwork's point size independently of the font;
 egui button padding still supplies the hit rectangle.
 Callers attach descriptive tooltips through the existing themed tooltip helper.

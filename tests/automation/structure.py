@@ -38,6 +38,12 @@ with tempfile.TemporaryDirectory() as folder:
         assert bed.exists(contains="cat"), [w.get("label") for w in bed.widgets()]
         bed.screenshot("structure")
 
+        # Its chevron collapses an entry, and expands it again.
+        bed.click("Collapse Dog")
+        until(bed, lambda: not bed.exists(contains="name"), "Dog collapses")
+        bed.click("Expand Dog")
+        until(bed, lambda: bed.exists(contains="name"), "Dog expands")
+
         bed.click(bed.find(contains="Dog"))
         until(bed, lambda: any(w["role"] == "TextInput" for w in bed.widgets()), "the editor is back")
         until(bed, lambda: editor(bed)["focused"], "the editor has focus")

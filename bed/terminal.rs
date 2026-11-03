@@ -1,5 +1,7 @@
 //! Terminals: New Terminal opens a shell in the workspace's folder. In it,
-//! `+open path[:line[:column]]` (or `+o`) opens files in bed.
+//! `+open path[:line[:column]]` (or `+o`) opens files in bed; `+open` alone,
+//! or with one folder, opens that folder (the shell's, alone) as the
+//! workspace.
 use bedtime_terminal::{ShellCommandsAppExt, ShellInvocation, TerminalPanel, TerminalPlugin};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, InArea, KeyChord,
@@ -41,13 +43,31 @@ fn new_terminal(world: &mut World, _: ActionInvocation) -> ActionResult {
     world.layouts_mut().focus_panel(panel)
 }
 
-/// `+open a.rs b.rs:12 c.rs:3:5`, relative to the shell's directory.
+/// `+open a.rs b.rs:12 c.rs:3:5`, relative to the shell's directory;
+/// `+open` or `+open folder` opens the folder as the workspace.
 fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
-    let mut result = Ok(());
-    if invocation.arguments.is_empty() {
-        result = Err(format!("usage: {} path[:line[:column]]…", invocation.alias));
+    let folder = match invocation.arguments.as_slice() {
+        [] => Some(invocation.directory.clone()),
+        [only] => Some(invocation.directory.join(only)).filter(|path| path.is_dir()),
+        _ => None,
+    };
+    if let Some(folder) = folder {
+        invocation.reply.complete(Ok(()));
+        // After this frame: switching relaunches the app.
+        world.commands().queue(move |world: &mut World| {
+            crate::menus::switch(world, crate::workspace::Start::Folder(folder));
+        });
+        return;
     }
+    let mut result = Ok(());
     for argument in &invocation.arguments {
+        if invocation.directory.join(argument).is_dir() {
+            result = Err(format!(
+                "{}: open a folder on its own",
+                argument.to_string_lossy()
+            ));
+            continue;
+        }
         let (path, line) = location(&invocation.directory, &argument.to_string_lossy());
         let options = PathOptions { line, ..default() };
         if let Err(error) = world.workbench_mut().open_path(&path, options) {

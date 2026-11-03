@@ -439,7 +439,21 @@ impl<'services> UiFrame<'services> {
 
     /// Fixed artwork size in points; button padding still comes from egui spacing.
     pub fn icon_button_sized(&mut self, icon: impl Into<IconSource>, side: f32) -> egui::Response {
-        let icon = icon.into();
+        self.icon_button_with(icon.into(), side, true)
+    }
+
+    /// An icon button with no background: hovering brightens the icon,
+    /// pressing tints it (titlebar tools).
+    pub fn icon_ink_button(&mut self, icon: impl Into<IconSource>, side: f32) -> egui::Response {
+        self.icon_button_with(icon.into(), side, false)
+    }
+
+    fn icon_button_with(
+        &mut self,
+        icon: IconSource,
+        side: f32,
+        background: bool,
+    ) -> egui::Response {
         let size = egui::vec2(side, side);
         let pixels = (side * self.ui.ctx().pixels_per_point()).ceil().max(1.0) as u32;
         let texture = self.icons.lock().unwrap().texture(&icon, pixels);
@@ -478,7 +492,9 @@ impl<'services> UiFrame<'services> {
         } else {
             fill.gamma_multiply(t.max(pressed))
         };
-        self.ui.painter().rect_filled(rect, 4.0, fill);
+        if background {
+            self.ui.painter().rect_filled(rect, 4.0, fill);
+        }
         if let Some(texture) = texture {
             self.ui.painter().image(
                 texture,

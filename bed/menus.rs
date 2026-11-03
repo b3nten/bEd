@@ -323,9 +323,11 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
         let result = draw_menu_bar(&mut context.frame(ui), world, root, inset);
         crate::status::notify_failure(world, "Menu", result);
     }
+    // Right to left: terminal, search, files, git, structure, settings.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.add_space(4.0);
-        ui.visuals_mut().button_frame = false;
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.spacing_mut().button_padding = egui::vec2(5.0, 4.0);
         tool::<OpenSettings>(
             ui,
             world,
@@ -333,12 +335,33 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
             BuiltinIcon::Settings,
             PanelFactory::of::<SettingsPanel>(),
         );
+        tool::<OpenStructure>(
+            ui,
+            world,
+            context,
+            BuiltinIcon::Structure,
+            PanelFactory::of::<bedtime_code::StructurePanel>(),
+        );
+        tool::<crate::git::OpenGit>(
+            ui,
+            world,
+            context,
+            BuiltinIcon::GitBranch,
+            PanelFactory::of::<bedtime_git::GitPanel>(),
+        );
         tool::<OpenFiles>(
             ui,
             world,
             context,
             BuiltinIcon::Folder,
             PanelFactory::of::<FileTree>(),
+        );
+        tool::<bedtime_search::FindInFiles>(
+            ui,
+            world,
+            context,
+            BuiltinIcon::Search,
+            PanelFactory::of::<bedtime_search::SearchPanel>(),
         );
         tool::<NewTerminal>(
             ui,
@@ -373,7 +396,7 @@ fn tool<C: Action>(
     ui.add_enabled_ui(enabled, |ui| {
         let response = context
             .frame(ui)
-            .icon_button_sized(icon, 16.0)
+            .icon_ink_button(icon, 16.0)
             .interact(egui::Sense::click_and_drag());
         context.frame(ui).tooltip(&response, tooltip);
         panel_drag_source(&response, factory);
