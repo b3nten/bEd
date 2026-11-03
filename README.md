@@ -4,6 +4,8 @@ bEd is a next-generation IDE built with [Bevy](https://bevy.org/). it brings cod
 
 **work in progress:** currently supported on macOS with Apple silicon. Linux support is planned.
 
+[screenshot of bed](bed/assets/screenshot_01.png)
+
 ## features
 
 - **code editing** — tree-sitter syntax highlighting, folding, a structure outline, find and replace, and undo/redo.
@@ -16,6 +18,10 @@ bEd is a next-generation IDE built with [Bevy](https://bevy.org/). it brings cod
 - **media viewers** — images (including SVG and animated formats), audio with waveform and spectrum views, video playback on macOS, glTF/GLB/STL models, and fonts.
 - **a workbench that remembers** — tabs and split panels, saved layout slots, recent workspaces, and persisted workspace state.
 - **make it yours** — bundled color themes, configurable fonts and keybindings, global and workspace settings, visual effects, and a couple of 3D mascots.
+
+[screenshot of bed](bed/assets/screenshot_02.png)
+
+[screenshot of bed](bed/assets/screenshot_03.png)
 
 ## installation
 
