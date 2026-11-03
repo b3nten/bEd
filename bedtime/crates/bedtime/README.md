@@ -15,4 +15,3 @@ Feature-gated re-exports for Bevy desktop applications.
 | `workspaces` | bedtime-workbench | Workspaces (needs the bevy_winit fork) |
 | `native` | | macOS window chrome and menu bar |
 
-See [docs/architecture.md](../../../docs/architecture.md).
