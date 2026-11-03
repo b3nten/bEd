@@ -28,58 +28,68 @@ pub(crate) fn update_analysis(
 }
 
 /// Syntax colors affect glyph color only; font and layout metrics stay fixed.
+/// One per role a theme names (`Palette::syntax`).
 #[derive(Clone)]
 pub struct SyntaxPalette {
+    pub text: egui::Color32,
     pub comment: egui::Color32,
-    pub string: egui::Color32,
     pub keyword: egui::Color32,
+    pub string: egui::Color32,
     pub number: egui::Color32,
     pub function: egui::Color32,
     pub r#type: egui::Color32,
     pub variable: egui::Color32,
+    pub parameter: egui::Color32,
+    pub property: egui::Color32,
+    pub constant: egui::Color32,
+    pub operator: egui::Color32,
     pub punctuation: egui::Color32,
+    pub special: egui::Color32,
 }
 impl Default for SyntaxPalette {
     fn default() -> Self {
-        Self {
-            comment: egui::Color32::from_rgb(133, 146, 137),
-            string: egui::Color32::from_rgb(167, 192, 128),
-            keyword: egui::Color32::from_rgb(230, 126, 128),
-            number: egui::Color32::from_rgb(211, 153, 182),
-            function: egui::Color32::from_rgb(219, 188, 127),
-            r#type: egui::Color32::from_rgb(131, 192, 146),
-            variable: egui::Color32::from_rgb(127, 187, 179),
-            punctuation: egui::Color32::from_rgb(157, 169, 160),
-        }
+        Self::from_theme(&bedtime_ui::Theme::default())
     }
 }
 impl SyntaxPalette {
     pub fn from_theme(theme: &bedtime_ui::Theme) -> Self {
-        let colors = &theme.palette.terminal;
+        let syntax = &theme.palette.syntax;
         let c = bedtime_ui::theme::color;
         Self {
-            comment: c(theme.palette.muted),
-            string: c(colors[2]),
-            keyword: c(colors[1]),
-            number: c(colors[5]),
-            function: c(colors[3]),
-            r#type: c(colors[6]),
-            variable: c(colors[4]),
-            punctuation: c(theme.palette.text),
+            text: c(syntax.text),
+            comment: c(syntax.comment),
+            keyword: c(syntax.keyword),
+            string: c(syntax.string),
+            number: c(syntax.number),
+            function: c(syntax.function),
+            r#type: c(syntax.r#type),
+            variable: c(syntax.variable),
+            parameter: c(syntax.parameter),
+            property: c(syntax.property),
+            constant: c(syntax.constant),
+            operator: c(syntax.operator),
+            punctuation: c(syntax.punctuation),
+            special: c(syntax.special),
         }
     }
     /// Resolve the shared capture palette for editor and documentation syntax.
     pub fn color(&self, capture: &str, normal: egui::Color32) -> egui::Color32 {
         match capture.split('.').next().unwrap_or(capture) {
             "comment" => self.comment,
+            // `text.*`: Markdown titles, code and links.
             "string" | "character" | "text" => self.string,
-            "keyword" | "operator" | "conditional" | "repeat" | "exception" | "include"
-            | "preproc" => self.keyword,
-            "number" | "float" | "boolean" | "constant" => self.number,
+            "keyword" | "conditional" | "repeat" | "exception" | "include" | "preproc"
+            | "storageclass" => self.keyword,
+            "operator" => self.operator,
+            "number" | "float" | "boolean" => self.number,
+            "constant" => self.constant,
             "function" | "method" | "constructor" => self.function,
             "type" | "namespace" | "module" | "tag" | "attribute" => self.r#type,
-            "variable" | "property" | "field" | "parameter" => self.variable,
-            "punctuation" => self.punctuation,
+            "variable" | "field" => self.variable,
+            "parameter" => self.parameter,
+            "property" => self.property,
+            "punctuation" | "delimiter" => self.punctuation,
+            "label" | "escape" | "special" | "embedded" | "macro" => self.special,
             _ => normal,
         }
     }

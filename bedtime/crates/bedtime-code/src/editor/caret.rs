@@ -15,8 +15,7 @@ impl Motion {
     fn sample(self, now: f64) -> (Pos2, Pos2, f32) {
         let elapsed = (now - self.started).max(0.0);
         let at = |from: Pos2, seconds: f64| {
-            let t = (elapsed / seconds).min(1.0) as f32;
-            from + (self.target - from) * (1.0 - (1.0 - t).powi(3))
+            from + (self.target - from) * bedtime_ui::ease((elapsed / seconds) as f32)
         };
         (
             at(self.leading, 0.035),

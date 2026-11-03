@@ -89,6 +89,13 @@ starts a fresh opening. State belongs to the popup's context and ID, and
 `Context::clear_animations` clears it. No application widget call changes are
 required. Dialogs keep their existing Area motion.
 
+## Scroll-to easing
+
+`ScrollArea`'s animated `scroll_to` (revealing a row or the caret) uses
+`approach` in `src/containers/scroll_area.rs` instead of `ease_in_ease_out`: an
+exponential approach (`1 - 2^(-7t)`, scaled to end at 1), matching
+bedtime-ui's `ease`. Durations (`Style::scroll_animation`) are unchanged.
+
 ## Verification and upgrades
 
 Custom text canvases can call the additive `Context::register_text_input(id)`.

@@ -193,9 +193,6 @@ fn draw_outline(
 ) -> Option<(Entity, ObservationKey, u64)> {
     let outline = &observation.outline;
     let height = bedtime_ui::tree::row_height(context);
-    ui.spacing_mut().button_padding = egui::vec2(4.0, 0.0);
-    ui.spacing_mut().interact_size.y = height - 2.0;
-    ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
     let has_children = |index: usize| {
         outline
             .get(index + 1)
@@ -232,7 +229,9 @@ fn draw_outline(
     }
     let mut toggle = None;
     let mut clicked = None;
-    egui::ScrollArea::both()
+    // Rows as the file tree draws them: a long name is cut short at the
+    // panel's edge, rather than the panel scrolling sideways.
+    egui::ScrollArea::vertical()
         .id_salt((panel, "structure"))
         .auto_shrink([false, false])
         .show_viewport(ui, |ui, viewport| {
@@ -244,7 +243,7 @@ fn draw_outline(
             let origin = ui.cursor().min;
             ui.set_min_size(egui::vec2(viewport.width(), top));
             let first = rows.partition_point(|(_, y, h, _)| y + h < viewport.top());
-            for &(index, y, row_height, openness) in &rows[first..] {
+            for &(index, y, row_height, _) in &rows[first..] {
                 if y > viewport.bottom() {
                     break;
                 }
@@ -253,56 +252,54 @@ fn draw_outline(
                     origin + egui::vec2(0.0, y),
                     egui::vec2(viewport.width(), row_height),
                 );
-                ui.scope_builder(
-                    egui::UiBuilder::new().id_salt(node.id).max_rect(rect),
-                    |ui| {
-                        ui.set_clip_rect(ui.clip_rect().intersect(rect));
-                        let x = rect.left() + 8.0 + node.depth.min(24) as f32 * 16.0;
-                        if has_children(index) {
-                            let arrow = egui::Rect::from_min_size(
-                                egui::pos2(x, rect.top()),
-                                egui::vec2(14.0, height),
-                            );
-                            let response =
-                                ui.interact(arrow, ui.id().with("arrow"), egui::Sense::click());
-                            bedtime_ui::paint_chevron(
-                                ui.painter(),
-                                arrow.center(),
-                                openness,
-                                ui.visuals().text_color(),
-                            );
-                            if response.clicked() {
-                                toggle = Some(node.id);
-                            }
-                        }
-                        let selected = state.selected == Some(node.id);
-                        let ink = if selected {
-                            bedtime_ui::rainbow_ink(ui, context.motion)
-                        } else {
-                            ui.visuals().text_color()
-                        };
-                        let font = egui::TextStyle::Body.resolve(ui.style());
-                        let text = ui.painter().layout_no_wrap(node.label.clone(), font, ink);
-                        let label = egui::Rect::from_center_size(
-                            egui::pos2(x + 18.0 + text.size().x / 2.0, rect.center().y),
-                            egui::vec2(
-                                text.size().x + 2.0 * ui.spacing().button_padding.x,
-                                height - 2.0,
-                            ),
-                        );
-                        let response = ui.put(
-                            label,
-                            egui::Button::selectable(
-                                selected,
-                                egui::RichText::new(&node.label).color(ink),
-                            ),
-                        );
-                        if response.clicked() {
-                            clicked = Some((editor, observation.key, node.id));
-                        }
-                        response.on_hover_text(&node.kind);
-                    },
+                let id = egui::Id::new((panel, editor, node.id, "structure-row"));
+                // The chevron toggles; the rest of the row reveals.
+                let x = rect.left()
+                    + bedtime_ui::tree::INSET
+                    + node.depth as f32 * bedtime_ui::tree::INDENT;
+                let arrow = egui::Rect::from_min_max(
+                    egui::pos2(x, rect.top()),
+                    egui::pos2(x + 16.0, rect.bottom()),
                 );
+                let children = has_children(index);
+                let arrow_response =
+                    children.then(|| ui.interact(arrow, id.with("arrow"), egui::Sense::click()));
+                let response = ui.interact(rect, id, egui::Sense::click());
+                let selected = state.selected == Some(node.id);
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        true,
+                        selected,
+                        &node.label,
+                    )
+                });
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    ui.set_clip_rect(ui.clip_rect().intersect(rect));
+                    bedtime_ui::tree::paint_row(
+                        ui,
+                        context,
+                        bedtime_ui::tree::Row {
+                            label: Some(&node.label),
+                            depth: node.depth,
+                            icon: None,
+                            expanded: children.then_some(!state.collapsed.contains(&node.id)),
+                            selected,
+                            ink: bedtime_ui::theme::color(context.theme.palette.text),
+                            icon_ink: context.theme.palette.text,
+                        },
+                        rect,
+                        Some(&response),
+                        1.0,
+                        bedtime_ui::tree::INDENT,
+                    );
+                });
+                if arrow_response.is_some_and(|arrow| arrow.clicked()) {
+                    toggle = Some(node.id);
+                } else if response.clicked() {
+                    clicked = Some((editor, observation.key, node.id));
+                }
+                response.on_hover_text(&node.kind);
             }
         });
     if let Some(id) = toggle

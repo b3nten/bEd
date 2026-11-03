@@ -111,7 +111,11 @@ pub(crate) fn configure(world: &mut World) {
             .unwrap()
             .get_mut()
             .clone();
-        ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
+        ctx.options_mut(|o| {
+            o.max_passes = std::num::NonZeroUsize::new(1).unwrap();
+            // Cmd/Ctrl +, - and 0 zoom a panel (`PanelZoom`), not the window.
+            o.zoom_with_keyboard = false;
+        });
         ctx.set_fonts(crate::fonts::definitions());
     }
 }

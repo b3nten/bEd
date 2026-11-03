@@ -10,6 +10,7 @@ pub mod persistence;
 mod untitled;
 #[cfg(feature = "workspaces")]
 pub mod workspaces;
+mod zoom_actions;
 /// Settings: [`bedtime-settings`](bedtime_settings), re-exported.
 #[cfg(feature = "persistence")]
 pub mod settings {
@@ -35,6 +36,7 @@ pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 pub use opening::*;
 pub use untitled::{SaveAs, Untitled};
+pub use zoom_actions::{ResetZoom, ZoomIn, ZoomOut};
 #[cfg(feature = "native")]
 mod native;
 #[cfg(feature = "clipboard")]

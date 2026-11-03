@@ -14,8 +14,9 @@ reading a `.gltf`'s other files from beside it, up to 64 MiB each) and shown
 once ready, keeping the camera. The scene fills the panel; floating at the top
 right are Frame All, About This Model (counts, size, compression, warnings,
 and how to move around) and Appearance. The right-click menu has Frame All,
-Display, Lighting, Skybox, Shadows and Reset Appearance. Cmd/Ctrl+=, - and 0
-zoom and reframe. Changes to a `.gltf`'s other files aren't watched.
+Display, Lighting, Skybox, Shadows and Reset Appearance. Zoom In, Zoom Out
+and Reset Zoom (Cmd/Ctrl+=, - and 0) move the camera and reframe: it handles
+workbench's actions, rather than the panel zooming. Changes to a `.gltf`'s other files aren't watched.
 
 The rest of this describes the embeddable scene underneath.
 

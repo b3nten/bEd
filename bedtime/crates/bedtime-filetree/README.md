@@ -76,7 +76,7 @@ being drawn.
 
 ## Not yet
 
-From the old tree (`bedtime_old/crates/bedtime-filetree`), still to come back
+From the old tree (in git history before bed_old was removed), still to come back
 as needed: multiple selection (operations take one row), progress for long
 operations, undoing them, hiding chosen files, and row animation.
 

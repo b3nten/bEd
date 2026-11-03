@@ -15,6 +15,7 @@ mod whitespace;
 mod wrapping;
 pub use search::SearchQuery;
 pub use whitespace::Indentation;
+mod colors;
 mod diagnostics;
 mod document;
 mod layout;
@@ -117,6 +118,8 @@ pub struct EditorView {
     /// it (go to definition) instead of moving the caret.
     pub language_tools: bool,
     assistance: completion::Assistance,
+    /// Colors in the text: underlined, with a picker on hover.
+    color_picker: colors::Picker,
     /// Whether the text has a language: reserves the fold column before its
     /// first analysis arrives, so text doesn't shift.
     pub has_syntax: bool,
@@ -589,7 +592,16 @@ impl EditorView {
         } else {
             gutter_width
         };
-        let gutter_width = gutter_width + if fold_gutter { 14.0 } else { 0.0 };
+        // The fold column, or (numbers are drawn 7 points in from the right)
+        // the same inset on the left as with one.
+        let gutter_width = gutter_width
+            + if fold_gutter {
+                14.0
+            } else if self.settings.line_numbers && !self.diff_active() {
+                7.0
+            } else {
+                0.0
+            };
         let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
         let wheel = if hovered {
             let delta = ui.input(|i| {
@@ -626,6 +638,7 @@ impl EditorView {
         let mut caret_rect = egui::Rect::NOTHING;
         let mut hovered_symbol = None;
         let mut hovered_text = None;
+        let mut color_hits: Vec<colors::Hit> = Vec::new();
         let mut definition_clicked = None;
         let mut rendered_lines = 0;
         let mut laid_out_bytes = 0;
@@ -1326,6 +1339,54 @@ impl EditorView {
                                     }
                                 }
                             }
+                            // Colors written in the line: underlined in their color.
+                            if self.composition.is_none() {
+                                let line_start = display.line_start(segment.line);
+                                let line_end =
+                                    display.line_start(segment.line + 1).min(display.len());
+                                let scan = if line_end - line_start > colors::LONGEST_LINE {
+                                    display.clamp_boundary(
+                                        line.start.saturating_sub(96).max(line_start),
+                                    )
+                                        ..display.clamp_boundary((line.end + 96).min(line_end))
+                                } else {
+                                    line_start..line_end
+                                };
+                                for mut literal in colors::find(&display.range_text(scan.clone())) {
+                                    literal.range = scan.start + literal.range.start
+                                        ..scan.start + literal.range.end;
+                                    if literal.range.end <= line.start
+                                        || literal.range.start >= line.end
+                                    {
+                                        continue;
+                                    }
+                                    let left = line.x_at(literal.range.start.max(line.start));
+                                    let right = line.x_at(literal.range.end.min(line.end));
+                                    let underline = y + metrics.height - 1.0;
+                                    painter.line_segment(
+                                        [
+                                            egui::pos2(origin.x + 8.0 + left, underline),
+                                            egui::pos2(origin.x + 8.0 + right, underline),
+                                        ],
+                                        egui::Stroke::new(
+                                            2.0,
+                                            colors::to_color32(literal.color).to_opaque(),
+                                        ),
+                                    );
+                                    let rect = egui::Rect::from_min_max(
+                                        egui::pos2(origin.x + 8.0 + left, y),
+                                        egui::pos2(origin.x + 8.0 + right, y + metrics.height),
+                                    )
+                                    .intersect(painter.clip_rect());
+                                    if rect.is_positive() {
+                                        color_hits.push(colors::Hit {
+                                            range: literal.range.clone(),
+                                            literal,
+                                            rect,
+                                        });
+                                    }
+                                }
+                            }
                             if caret_row == row {
                                 local_caret = egui::Rect::from_min_size(
                                     egui::pos2(
@@ -1538,6 +1599,11 @@ impl EditorView {
         if let Some(error) = failure {
             return Err(error);
         }
+        if self.color_picker(ui, id, session, &mut snapshot, &color_hits, now)? {
+            // The picker is what's hovered, not a symbol to ask the server about.
+            hovered_symbol = None;
+            hovered_text = None;
+        }
         self.completion_popup(
             ui,
             id,
@@ -1567,6 +1633,125 @@ impl EditorView {
             rendered_lines,
             laid_out_bytes,
         })
+    }
+
+    /// Open, draw and close the color picker; a new color replaces the text,
+    /// written as it was. Returns whether the pointer is on a color or the
+    /// picker.
+    fn color_picker(
+        &mut self,
+        ui: &egui::Ui,
+        id: egui::Id,
+        session: &mut dyn TextSession,
+        snapshot: &mut TextSnapshot,
+        hits: &[colors::Hit],
+        now: f64,
+    ) -> Result<bool, EditorError> {
+        let (pointer, down) = ui.input(|i| (i.pointer.hover_pos(), i.pointer.primary_down()));
+        // An edit from elsewhere (typing, another view) ends it.
+        let keep = self.color_picker.open.as_ref().is_some_and(|open| {
+            open.revision == snapshot.revision
+                && (open.dragging || pointer.is_some_and(|p| self.color_picker.holds(p)))
+        });
+        if !keep
+            && let Some(open) = self.color_picker.open.take()
+            && open.edited
+        {
+            session.end_undo_group();
+        }
+        if self.color_picker.open.is_none()
+            && !self.settings.read_only
+            && self.composition.is_none()
+            && !down
+            && let Some(hit) = self.color_picker.rest(ui.ctx(), hits, pointer, now)
+        {
+            self.color_picker.open = Some(colors::Open {
+                range: hit.range.clone(),
+                revision: snapshot.revision,
+                form: hit.literal.form.clone(),
+                color: colors::to_hsva(hit.literal.color),
+                anchor: hit.rect,
+                popup: None,
+                dragging: false,
+                edited: false,
+            });
+        }
+        let on_color = pointer.is_some_and(|p| {
+            hits.iter().any(|hit| hit.rect.contains(p)) || self.color_picker.holds(p)
+        });
+        let Some(open) = self.color_picker.open.as_mut() else {
+            return Ok(on_color);
+        };
+        let alpha = if open.form.has_alpha() {
+            egui::color_picker::Alpha::OnlyBlend
+        } else {
+            egui::color_picker::Alpha::Opaque
+        };
+        let mut color = open.color;
+        let mut changed = false;
+        // The editor's style: its panel's zoom, as the completions are.
+        let style = ui.style().clone();
+        let shown = egui::Area::new(id.with("color-picker"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(open.anchor.left_bottom() + egui::vec2(0.0, 2.0))
+            .constrain_to(ui.ctx().content_rect().shrink(8.0))
+            .show(ui.ctx(), |ui| {
+                ui.set_style(style);
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    // A square big enough to pick from, not much past the numbers.
+                    ui.spacing_mut().slider_width =
+                        ui.text_style_height(&egui::TextStyle::Body) * 8.0;
+                    changed = egui::color_picker::color_picker_hsva_2d(ui, &mut color, alpha);
+                });
+            });
+        open.popup = Some(shown.response.rect);
+        open.dragging = down && (open.dragging || shown.response.contains_pointer());
+        if !changed {
+            return Ok(true);
+        }
+        open.color = color;
+        let replacement = colors::write(colors::from_hsva(color), &open.form);
+        let range = open.range.clone();
+        if snapshot.text.range_text(range.clone()) == replacement {
+            return Ok(true);
+        }
+        if !open.edited {
+            session.end_undo_group();
+            open.edited = true;
+        }
+        let end = range.start + replacement.len();
+        // The selection keeps its place around the color.
+        let map = |byte: usize| {
+            if byte >= range.end {
+                byte - range.len() + replacement.len()
+            } else {
+                byte.min(range.start + replacement.len())
+            }
+        };
+        let selection = self.selection;
+        let mapped = TextSelection {
+            anchor: map(selection.anchor),
+            head: map(selection.head),
+        };
+        self.apply_edit(
+            id,
+            session,
+            snapshot,
+            TextEdit {
+                range: range.clone(),
+                replacement,
+            },
+            mapped,
+            now,
+        )?;
+        if let Some(open) = self.color_picker.open.as_mut() {
+            open.range = range.start..end;
+            open.revision = snapshot.revision;
+        }
+        // This view's own edit: the next frame mustn't take it for another's
+        // (which would end the undo group, splitting the drag into steps).
+        self.observed_revision = Some(snapshot.revision);
+        Ok(true)
     }
 
     fn handle_event(

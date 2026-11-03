@@ -23,7 +23,7 @@ pub use egui;
 pub use embedded::{EmbeddedRenderPlugin, ViewportHostPlugin, ViewportOutput};
 pub use floating::Floating;
 pub use icons::{BuiltinIcon, Icon, IconSet, IconSource, UiIconStatus, UiIcons};
-pub use motion::MotionPolicy;
+pub use motion::{MotionPolicy, ease};
 use std::sync::Mutex;
 pub use theme::{Metrics, Theme};
 pub use viewport::{UiViewport, viewport_image};
@@ -78,16 +78,14 @@ pub fn paint_chevron(
     ));
 }
 
-/// bEd's 160 ms smoothstep expansion, including reversals and reduced motion.
+/// bEd's 160 ms expansion (`ease`), including reversals and reduced motion.
 pub fn animate_expansion(
     ctx: &egui::Context,
     id: egui::Id,
     open: bool,
     motion: MotionPolicy,
 ) -> f32 {
-    ctx.animate_bool_with_time_and_easing(id, open, if motion.enabled { 0.16 } else { 0.0 }, |t| {
-        t * t * (3.0 - 2.0 * t)
-    })
+    ctx.animate_bool_with_time_and_easing(id, open, if motion.enabled { 0.16 } else { 0.0 }, ease)
 }
 
 /// Shared destination treatment for panel and content drag-and-drop. The caller

@@ -310,6 +310,64 @@ impl LayoutAreas {
     }
 }
 
+/// How much bigger than the rest of the app a panel's content is drawn: its
+/// text, spacing and controls (not its tab, or the menus and tooltips it
+/// opens). No component is 100%. Saved with the panel.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[cfg_attr(feature = "persistence", derive(Reflect))]
+#[cfg_attr(feature = "persistence", reflect(Component, Persist))]
+pub struct PanelZoom(pub f32);
+
+impl PanelZoom {
+    /// The zoom levels stepped through, as browsers do.
+    pub const STEPS: [f32; 13] = [
+        0.5, 0.67, 0.75, 0.8, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0,
+    ];
+
+    /// The next step up from `zoom`, if there's one.
+    pub fn bigger(zoom: f32) -> Option<f32> {
+        Self::STEPS.into_iter().find(|&step| step > zoom + 0.001)
+    }
+
+    /// The next step down from `zoom`, if there's one.
+    pub fn smaller(zoom: f32) -> Option<f32> {
+        Self::STEPS
+            .into_iter()
+            .rev()
+            .find(|&step| step < zoom - 0.001)
+    }
+
+    /// `panel`'s zoom.
+    pub fn of(world: &World, panel: Entity) -> f32 {
+        world.get::<Self>(panel).map_or(1.0, |zoom| zoom.0)
+    }
+
+    /// Set `panel`'s zoom (within the steps' range); 100% removes the
+    /// component. Returns the zoom it has now.
+    pub fn set(world: &mut World, panel: Entity, zoom: f32) -> f32 {
+        let zoom = if zoom.is_finite() {
+            zoom.clamp(Self::STEPS[0], Self::STEPS[Self::STEPS.len() - 1])
+        } else {
+            1.0
+        };
+        let Ok(mut entity) = world.get_entity_mut(panel) else {
+            return 1.0;
+        };
+        entity.insert(ZoomChanged(std::time::Instant::now()));
+        if (zoom - 1.0).abs() < 0.001 {
+            entity.remove::<Self>();
+            1.0
+        } else {
+            entity.insert(Self(zoom));
+            zoom
+        }
+    }
+}
+
+/// When a panel's zoom last changed: its new zoom shows in a corner for a moment.
+#[derive(Component, Clone, Copy, Debug)]
+pub struct ZoomChanged(pub std::time::Instant);
+
 #[derive(Component, Debug)]
 #[cfg_attr(feature = "persistence", derive(Reflect, Clone))]
 #[cfg_attr(feature = "persistence", reflect(Component, Persist))]

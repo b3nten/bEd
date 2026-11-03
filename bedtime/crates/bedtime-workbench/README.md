@@ -118,8 +118,7 @@ commands.queue(move |world: &mut World| {
 The host owns project/session admission, application storage and process services. Document sources own document I/O.
 Workbench provides composition, checked structural transitions and optional
 [reflected persistence](#optional-reflected-persistence). It has no panel factory
-catalog or built-in project/window manager. See the
-[world/session decision](../../../MIGRATION/workbench-world-session-plan.md).
+catalog or built-in project/window manager.
 
 ## Closing and quitting
 
@@ -282,7 +281,10 @@ Actions are [`bedtime-actions`](../bedtime-actions/README.md), re-exported.
 Workbench makes `ActionFocus` the focused panel, so a panel's
 `ActionHandler<A>` wins while it's focused, and shows a handler's error as a
 notification (an action that isn't available isn't an error). Document
-actions (Save, Undo, Redo) are workbench's own.
+actions (Save, Undo, Redo) are workbench's own, and so are Zoom In, Zoom Out
+and Reset Zoom (Cmd/Ctrl+=, - and 0): they step the focused panel's
+`PanelZoom`. A panel with a zoom of its own (an image, a model) gives itself
+an `ActionHandler` for each.
 
 ## Menus
 

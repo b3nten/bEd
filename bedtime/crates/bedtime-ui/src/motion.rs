@@ -1,5 +1,23 @@
 use bevy::prelude::*;
 
+/// How sharply `ease` approaches: 2^-7 (under 1%) is left just before the end.
+const SHARPNESS: f32 = 7.0;
+
+/// bEd's easing, as the RAD Debugger moves things: each moment covers the
+/// same fraction of what's left (`1 - 2^(-k·t)`), so motion starts quickly
+/// and settles gently. Scaled to land exactly on 1 at `t = 1`; `t` is the
+/// fraction of the animation's time gone.
+pub fn ease(t: f32) -> f32 {
+    // Finished, or no time to take (0/0).
+    if t.is_nan() || t >= 1.0 {
+        return 1.0;
+    }
+    if t <= 0.0 {
+        return 0.0;
+    }
+    (1.0 - (-SHARPNESS * t).exp2()) / (1.0 - (-SHARPNESS).exp2())
+}
+
 /// Surface policy, independent of its color theme. Disable to settle immediately.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct MotionPolicy {
@@ -66,8 +84,7 @@ impl Transition {
         }
         self.elapsed = (self.elapsed + delta).min(policy.seconds);
         let t = self.elapsed / policy.seconds;
-        let ease = 1.0 - (1.0 - t).powi(3);
-        self.value = self.from + (self.target - self.from) * ease;
+        self.value = self.from + (self.target - self.from) * ease(t);
     }
 }
 
@@ -137,4 +154,24 @@ pub(crate) fn active(ctx: &egui::Context) -> usize {
     ctx.data(|d| d.get_temp::<Active>(egui::Id::new("bedtime.motion")))
         .filter(|state| state.frame == ctx.cumulative_frame_nr())
         .map_or(0, |state| state.count)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ease;
+
+    #[test]
+    fn ease_starts_fast_settles_gently_and_ends_exactly() {
+        assert_eq!(ease(0.0), 0.0);
+        assert_eq!(ease(1.0), 1.0);
+        assert_eq!(ease(f32::NAN), 1.0);
+        assert_eq!(ease(2.0), 1.0);
+        // Half the time covers most of the way: faster than a cubic ease out.
+        assert!(ease(0.5) > 1.0 - 0.5_f32.powi(3));
+        let steps: Vec<f32> = (0..=20).map(|i| ease(i as f32 / 20.0)).collect();
+        assert!(steps.windows(2).all(|pair| pair[1] >= pair[0]));
+        // Each step covers less than the last.
+        let gains: Vec<f32> = steps.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        assert!(gains.windows(2).all(|pair| pair[1] <= pair[0]));
+    }
 }

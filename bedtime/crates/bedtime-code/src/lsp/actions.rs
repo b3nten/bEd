@@ -519,40 +519,48 @@ fn draw_menu(ui: &mut egui::Ui, world: &mut World, panel: Entity, at: egui::Pos2
         menu.selected = (menu.selected + count - 1) % count;
     }
     let mut chosen = enter.then_some(menu.selected);
-    let area = egui::Area::new(egui::Id::new((panel, "code-actions")))
-        .order(egui::Order::Foreground)
-        .fixed_pos(at)
-        .constrain_to(ui.ctx().content_rect().shrink(8.0))
-        .show(ui.ctx(), |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(320.0)
-                    .show(ui, |ui| {
-                        for (index, action) in menu.actions.iter().enumerate() {
-                            let enabled = action.disabled.is_none();
-                            let response = ui.add_enabled(
-                                enabled,
-                                egui::Button::selectable(index == menu.selected, &action.title),
-                            );
-                            if index == menu.selected && (down || up) {
-                                response.scroll_to_me(None);
-                            }
-                            if response.clicked() {
-                                chosen = Some(index);
-                            }
-                            if let Some(reason) = &action.disabled {
-                                response.on_disabled_hover_text(reason);
-                            }
-                        }
-                    });
+    // Drawn as egui draws menus (style, frame, layout, opening), so it looks
+    // like the right-click menu; the keyboard's row looks hovered.
+    let popup = egui::Popup::new(
+        egui::Id::new((panel, "code-actions")),
+        ui.ctx().clone(),
+        at,
+        ui.layer_id(),
+    )
+    .kind(egui::PopupKind::Menu)
+    .layout(egui::Layout::top_down_justified(egui::Align::Min))
+    .style(egui::containers::menu::menu_style)
+    .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
+    .show(|ui| {
+        egui::ScrollArea::vertical()
+            .max_height(320.0)
+            .show(ui, |ui| {
+                for (index, action) in menu.actions.iter().enumerate() {
+                    let selected = index == menu.selected;
+                    let mut button = egui::Button::new(&action.title);
+                    if selected {
+                        button = button.fill(ui.visuals().widgets.hovered.weak_bg_fill);
+                    }
+                    let response = ui.add_enabled(action.disabled.is_none(), button);
+                    if selected && (down || up) {
+                        response.scroll_to_me(None);
+                    }
+                    if response.clicked() {
+                        chosen = Some(index);
+                    }
+                    if let Some(reason) = &action.disabled {
+                        response.on_disabled_hover_text(reason);
+                    }
+                }
             });
-        });
+    });
+    let popup_rect = popup.map(|shown| shown.response.rect);
     let clicked_outside = ui.input(|input| {
         input.pointer.any_pressed()
             && input
                 .pointer
                 .interact_pos()
-                .is_some_and(|pointer| !area.response.rect.contains(pointer))
+                .is_some_and(|pointer| !popup_rect.is_some_and(|rect| rect.contains(pointer)))
     });
     if escape || clicked_outside || chosen.is_some() {
         let menu = asks.menu.take().unwrap();

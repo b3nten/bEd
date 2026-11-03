@@ -1,4 +1,4 @@
-//! File-list presentation shared by Files and Git. Callers own rows, identity,
+//! Tree rows shared by Files, Git and Structure. Callers own rows, identity,
 //! viewport culling and actions; this module never reads a filesystem.
 use crate::{BuiltinIcon, MotionPolicy, UiContext, egui};
 
@@ -13,7 +13,8 @@ pub fn row_height(context: &UiContext<'_>) -> f32 {
 pub struct Row<'a> {
     pub label: Option<&'a str>,
     pub depth: usize,
-    pub icon: BuiltinIcon,
+    /// Drawn before the name; `None` puts the name there (an outline).
+    pub icon: Option<BuiltinIcon>,
     pub expanded: Option<bool>,
     pub selected: bool,
     pub ink: egui::Color32,
@@ -34,6 +35,8 @@ pub fn paint_row(
     painter.multiply_opacity(alpha.clamp(0.0, 1.0));
     let x = rect.left() + INSET + row.depth as f32 * indent;
     let side = context.metrics.font_size.min(18.0);
+    // Where the name starts: after the icon, if there's one.
+    let name_x = x + 18.0 + row.icon.map_or(0.0, |_| side + 5.0);
     if let Some(open) = row.expanded {
         // The caller's stable row ID also scopes its disclosure animation.
         let id = response.map_or_else(|| ui.id(), |response| response.id);
@@ -71,10 +74,7 @@ pub fn paint_row(
             if row.selected || response.hovered() {
                 let label_rect = egui::Rect::from_min_max(
                     egui::pos2(x + 14.0, rect.top() + 1.0),
-                    egui::pos2(
-                        x + 18.0 + side + 5.0 + galley.size().x + 4.0,
-                        rect.bottom() - 1.0,
-                    ),
+                    egui::pos2(name_x + galley.size().x + 4.0, rect.bottom() - 1.0),
                 );
                 painter.rect_filled(
                     label_rect.intersect(rect.shrink(1.0)),
@@ -84,14 +84,14 @@ pub fn paint_row(
             }
         }
         painter.galley(
-            egui::pos2(
-                x + 18.0 + side + 5.0,
-                rect.center().y - galley.size().y / 2.0,
-            ),
+            egui::pos2(name_x, rect.center().y - galley.size().y / 2.0),
             galley,
             ink,
         );
     }
+    let Some(icon) = row.icon else {
+        return;
+    };
     // A painter must not advance the caller's cursor: Git places a staging
     // checkbox after this rectangle. `scope` would add another item spacing.
     let mut icons_ui = ui.new_child(egui::UiBuilder::new().id_salt("tree-icon").max_rect(rect));
@@ -100,16 +100,15 @@ pub fn paint_row(
     theme.palette.text = row.icon_ink;
     let mut frame = context.frame(&mut icons_ui);
     frame.theme = &theme;
-    frame.icon_at(row.icon, [x + 18.0, rect.center().y - side / 2.0], side);
+    frame.icon_at(icon, [x + 18.0, rect.center().y - side / 2.0], side);
 }
 
-/// The Files tree's smoothstep timing, also used for disappearing descendants.
+/// The Files tree's timing (`ease`), also used for disappearing descendants.
 pub fn animation_fraction(now: f64, started: f64, policy: MotionPolicy) -> f32 {
     if !policy.enabled {
         return 1.0;
     }
-    let t = ((now - started) as f32 / policy.seconds.max(0.001)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
+    crate::ease((now - started) as f32 / policy.seconds.max(0.001))
 }
 
 /// One visible row's movement/fade. Retargeting preserves its displayed values.
@@ -187,7 +186,7 @@ mod tests {
                     Row {
                         label: Some("file.txt"),
                         depth: 0,
-                        icon: BuiltinIcon::Text,
+                        icon: Some(BuiltinIcon::Text),
                         expanded: None,
                         selected: true,
                         ink: egui::Color32::WHITE,
@@ -244,8 +243,9 @@ mod tests {
         let mut row = RowMotion::new(120.0, 120.0, 1.0, 0.0);
         row.retarget(24.0, 0.0, 1.0, policy);
         let halfway = row.sample(1.08, policy);
-        assert!((halfway.0 - 72.0).abs() < 0.001);
-        assert!((halfway.1 - 0.5).abs() < 0.001);
+        let eased = crate::ease(0.5);
+        assert!((halfway.0 - (120.0 - 96.0 * eased)).abs() < 0.001);
+        assert!((halfway.1 - (1.0 - eased)).abs() < 0.001);
         row.retarget(144.0, 1.0, 1.08, policy);
         assert_eq!(row.sample(1.08, policy), halfway);
         row.shift(48.0);

@@ -75,6 +75,10 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: wrap(bed) is True, "the editor wraps")
         bed.screenshot("editor-wrapped")
 
+        # Autosave (on by default) writes an edit a second after it, unasked.
+        bed.type("auto ")
+        until(bed, lambda: "auto " in notes.read_text(), "the edit is autosaved")
+
         # Away and back: the editor shows the file again.
         bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
         bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))

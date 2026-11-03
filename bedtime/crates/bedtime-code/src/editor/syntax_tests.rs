@@ -167,6 +167,10 @@ fn wrapping_folding_theme_and_composition_preserve_geometry_and_canonical_text()
         thread::sleep(Duration::from_millis(1));
     }
     view.toggle_fold(&doc.snapshot().unwrap(), 0).unwrap();
+    // Let the fold finish closing: only the theme changes between these frames.
+    for _ in 0..60 {
+        frame(&ctx, &mut view, &mut doc, id, vec![]);
+    }
     let first = frame(&ctx, &mut view, &mut doc, id, vec![]);
     let syntax = view.syntax().unwrap().clone();
     view.syntax_palette.keyword = egui::Color32::MAGENTA;

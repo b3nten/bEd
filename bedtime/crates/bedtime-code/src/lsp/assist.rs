@@ -164,6 +164,10 @@ fn resolve(world: &mut World, panel: Entity, state: &mut Assist, index: usize, a
 
 pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: &EditorOutput) {
     let mut state = world.entity_mut(panel).take::<Assist>().unwrap_or_default();
+    // Hovers and documentation take the editor's style (its panel's zoom).
+    let style = ui.style().clone();
+    let body = |style: &egui::Style| egui::TextStyle::Body.resolve(style).size;
+    let zoom = body(&style) / body(&ui.ctx().global_style());
     state.completion_rect = output.completion_rect;
     state.documentation_rect = None;
     let activity = language_activity(world, panel);
@@ -362,9 +366,10 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
                 .fixed_pos(hit.rect.left_bottom())
                 .constrain_to(ui.ctx().content_rect().shrink(8.0))
                 .show(ui.ctx(), |ui| {
+                    ui.set_style(style.clone());
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         super::documentation::style(ui);
-                        ui.set_width((ui.ctx().content_rect().width() - 40.0).min(460.0));
+                        ui.set_width((ui.ctx().content_rect().width() - 40.0).min(460.0 * zoom));
                         super::documentation::scroll_area(ui, 320.0).show(ui, |ui| {
                             if let Some(documentation) = &mut state.documentation {
                                 documentation.show(ui, &palette);
@@ -396,7 +401,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
         if let Some(menu) = output.completion_rect {
             let screen = ui.ctx().content_rect().shrink(8.0);
             if let Some(region) = documentation_region(screen, menu) {
-                let width = region.width().min(400.0) - 16.0;
+                let width = region.width().min(400.0 * zoom) - 16.0;
                 let position = if region.right() <= menu.left() {
                     egui::pos2(region.right() - width - 16.0, menu.top())
                 } else if region.bottom() <= menu.top() {
@@ -409,6 +414,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
                     .fixed_pos(position)
                     .constrain_to(region)
                     .show(ui.ctx(), |ui| {
+                        ui.set_style(style.clone());
                         egui::Frame::popup(ui.style()).show(ui, |ui| {
                             super::documentation::style(ui);
                             ui.set_width(width.max(100.0));

@@ -71,7 +71,8 @@ with tempfile.TemporaryDirectory() as folder:
     (root / "src" / "main.rs").write_text(MAIN)
     (root / "src" / "other.rs").write_text("pub fn helper() {}\n")
 
-    with Bed(folder) as bed:
+    # Autosave off: the open file has to stay unsaved after the rename.
+    with Bed(folder, settings={"editor.autosave": False}) as bed:
         until(bed, lambda: bed.exists("src"), "the root is listed")
         bed.click(row(bed, "src"))
         until(bed, lambda: bed.exists("main.rs"), "src opens")
@@ -114,8 +115,11 @@ with tempfile.TemporaryDirectory() as folder:
         bed.key("Primary+Period")
         until(bed, lambda: {w.get("label") for w in bed.widgets()} - before - {None},
               "code actions are offered")
+        bed.wait(20)  # past its opening animation
         bed.screenshot("code-actions-menu")
-        offered = {w.get("label") for w in bed.widgets()} - before - {None}
+        # Fold arrows can come and go as the file is reanalysed: not offers.
+        offered = {label for label in {w.get("label") for w in bed.widgets()} - before - {None}
+                   if not label.startswith(("Fold line", "Unfold line"))}
         bed.key("Escape")
         until(bed, lambda: not ({w.get("label") for w in bed.widgets()} & offered), "the menu closes")
         # Again, and Enter takes the first: rust-analyzer fills in its edit only

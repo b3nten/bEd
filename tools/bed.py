@@ -58,6 +58,13 @@ KEYS = {
 }
 
 
+def ron(value):
+    """A setting's value as RON: booleans are lowercase there."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return value
+
+
 def key_code(name):
     """'a' -> 'KeyA', '1' -> 'Digit1', ',' -> 'Comma'; Bevy names pass through."""
     if name in KEYS:
@@ -109,7 +116,7 @@ class Bed:
         global_dir = self.config / "global"
         global_dir.mkdir()
         (global_dir / "settings.ron").write_text(
-            "{\n" + "".join(f"    {json.dumps(k)}: {v},\n" for k, v in values.items()) + "}\n"
+            "{\n" + "".join(f"    {json.dumps(k)}: {ron(v)},\n" for k, v in values.items()) + "}\n"
         )
         if recent:
             folders = [str(Path(folder).resolve()) for folder in recent]

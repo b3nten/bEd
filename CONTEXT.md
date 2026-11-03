@@ -1,12 +1,13 @@
 # Project context
 
-Last updated: 2026-10-31. Keep this file short and current. Update the step log
+Last updated: 2026-11-02. Keep this file short and current. Update the step log
 and open questions as work proceeds; delete anything that turns out to be wrong.
 
 ## Goal
 
-Rebuild **bEd** (the app in `bed/`) from scratch, using `bed_old/` only as a
-reference, one feature at a time. After each step we review the code together
+Rebuild **bEd** (the app in `bed/`) from scratch, one feature at a time, with
+the previous app as reference (`bed_old/` and `bedtime_old/` were removed on
+2026-11-02; they're in git history before then). After each step we review the code together
 and decide whether Bedtime/Workbench should change so the integration is cleaner.
 
 End state: `bed` is small and easy to follow. Complexity that any desktop app
@@ -30,16 +31,14 @@ need to write this again?* If yes, it probably belongs in Bedtime.
   (`workspace.rs`), panel opening policy (`panels.rs`), menus, toolbar and app
   commands (`menus.rs`), Files and what opens which file (`files.rs`).
   Run `bed [folder]`.
-- `bed_old/` — the previous app, kept as reference only. Not in the workspace.
 - `bedtime/crates/` — the maintained library (see
   [docs/architecture.md](docs/architecture.md) for the crates and layers).
 - `tools/bed.py` — drive bed from Python scripts (launch unfocused, click, type,
   read widgets, screenshot). Saved scripts: `tests/automation/`.
-- `bedtime_old/` — the other plugins (editor, filesystem, filetree, terminal, hex,
-  image, model, LSP, git, tree-sitter, grammars, mascots, automation) plus the old
-  smoke-test tools and fixtures. Reference only, not in the workspace, and they
-  won't build against the new workbench. Each plugin is brought back into
-  `bedtime/crates/` when bed needs it, cleaned up against the new workbench APIs.
+- `tools/package-macos.sh [--skip-build] [--install]` — build `bEd.app` and its
+  ZIP in `target/dist/`, with every notice (`tools/collect-licenses.py`);
+  `--install` puts it in `/Applications`.
+- `licenses/` — notices of source adapted into bEd (`bevy_stl`).
 - `vendor/` — patched `bevy_render`, `bevy_winit`, `egui`, `rio-vt`, `arboard` (see
   root `Cargo.toml` and `vendor/README.md`).
 - `references/zed/` — local Zed checkout for reference; gitignored.
@@ -284,7 +283,38 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Video flicker, word wrap, hidden files**, 2026-11-02, awaiting review.
+- **Polish batch and cleanup**, 2026-11-02, awaiting review. Autosave is a
+  bed setting (`editor.autosave`, on: a second after the last edit). The code
+  actions list is an egui menu popup (style, frame, opening), its keyboard row
+  painted hovered. Structure rows are `tree::paint_row` (icon now optional):
+  long names end in "…", no sideways scrolling. The gutter keeps a 5-point
+  inset without a fold column. bedtime-ui `ease` (exponential approach,
+  RAD Debugger-style) replaces the cubic and smoothstep curves (transitions,
+  expansion, tree rows, content fades, caret, terminal cursor, folds) and
+  egui's `scroll_to` (vendored patch). Theme files name the terminal colors
+  (the 16-item list still reads); the editor colors highlights from the
+  theme's `syntax` roles (it had used terminal positions). bed's workspace
+  panel is in `workspace.rs`. `bed_old/` and `bedtime_old/` are removed (the
+  app icon moved to `bed/assets/`); `tools/package-macos.sh` and
+  `tools/collect-licenses.py` are back; `licenses/bevy_stl` restored.
+  Colors in text (`editor/colors.rs`): underlined in their color, a picker
+  on hover that rewrites them in their own form, one undo step per picking
+  (`tests/automation/colors.py`). `tools/bed.py` writes boolean settings as
+  RON (`false`, not `False`): `editor.autosave: False` had been ignored.
+
+- **Panel zoom**, 2026-11-02, awaiting review. bedtime-ui `PanelZoom`
+  (saved; steps 50%–300%) scales a panel's content where layouts draw it:
+  `Theme::style` (split out of `apply`) with `Metrics::zoomed`, on the
+  panel's `Ui` and `UiContext`. Tabs, other panels, menus and tooltips stay;
+  the editor's completion, hover and completion docs take the editor's style.
+  A badge shows the new zoom for 1.2 s (`ZoomChanged`). Workbench's Zoom In /
+  Zoom Out / Reset Zoom (Cmd/Ctrl+=, -, 0; bed's View menu) step the focused
+  panel; image and model give themselves `ActionHandler`s (the first
+  per-panel handlers) instead of reading the keys. egui's
+  `zoom_with_keyboard` was zooming the whole window on those keys: off.
+  `tests/automation/zoom.py`.
+
+- **Video flicker, word wrap, hidden files**, 2026-11-02, committed (`83f15eb`).
   Video: bevy_egui's managed textures make a new image asset on every full
   update, which draws nothing until the GPU copy is ready, so playback
   flickered; frames now go into one `Image` per size, shown as an egui user

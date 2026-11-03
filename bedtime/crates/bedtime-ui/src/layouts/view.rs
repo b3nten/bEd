@@ -378,8 +378,7 @@ impl ContentFade {
             self.started_at = now - f64::from(motion.seconds);
             return 1.0;
         }
-        let progress = ((now - self.started_at) / f64::from(motion.seconds)).clamp(0.0, 1.0);
-        (1.0 - (1.0 - progress).powi(3)) as f32
+        crate::ease(((now - self.started_at) / f64::from(motion.seconds)) as f32)
     }
 }
 
@@ -1389,7 +1388,22 @@ fn draw(
                                 world.get::<PanelInstance>(panel).and_then(|p| p.draw)
                             {
                                 let context = content_frame.context();
-                                draw(content_frame.ui, world, &context, panel);
+                                let zoom = PanelZoom::of(world, panel);
+                                if zoom == 1.0 {
+                                    draw(content_frame.ui, world, &context, panel);
+                                } else {
+                                    let metrics = context.metrics.zoomed(zoom);
+                                    let ui = &mut *content_frame.ui;
+                                    ui.set_style(
+                                        context.theme.style(&metrics, &ui.ctx().global_style()),
+                                    );
+                                    let context = crate::UiContext {
+                                        metrics: &metrics,
+                                        ..context
+                                    };
+                                    draw(ui, world, &context, panel);
+                                }
+                                show_zoom(content_frame.ui, world, &context, panel, er(content));
                             } else {
                                 content_frame.ui.weak("This panel has no content renderer.");
                             }
@@ -1865,6 +1879,55 @@ fn paints_background(background: AreaBackground, areas: usize) -> bool {
     }
 }
 
+/// How long a panel's new zoom shows, and how much of that is fading out.
+const ZOOM_SHOWN: f32 = 1.2;
+const ZOOM_FADE: f32 = 0.3;
+
+/// A panel's zoom, in its top right corner, for a moment after it changes.
+fn show_zoom(
+    ui: &mut egui::Ui,
+    world: &World,
+    context: &crate::UiContext<'_>,
+    panel: Entity,
+    content: egui::Rect,
+) {
+    let Some(changed) = world.get::<ZoomChanged>(panel) else {
+        return;
+    };
+    let age = changed.0.elapsed().as_secs_f32();
+    if age >= ZOOM_SHOWN {
+        return;
+    }
+    ui.ctx().request_repaint();
+    let opacity = ((ZOOM_SHOWN - age) / ZOOM_FADE).min(1.0);
+    let palette = &context.theme.palette;
+    let metrics = context.metrics;
+    let text = format!("{:.0}%", PanelZoom::of(world, panel) * 100.0);
+    let galley = ui.painter().layout_no_wrap(
+        text,
+        egui::FontId::proportional(metrics.font_size),
+        crate::theme::color(palette.text).gamma_multiply(opacity),
+    );
+    let padding = egui::vec2(metrics.padding[0], metrics.padding[1]);
+    let size = galley.size() + 2.0 * padding;
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(content.right() - size.x - 10.0, content.top() + 10.0),
+        size,
+    );
+    let painter = ui.painter_at(content);
+    painter.rect(
+        rect,
+        metrics.rounding,
+        crate::theme::color(palette.elevated).gamma_multiply(opacity),
+        egui::Stroke::new(
+            1.0,
+            crate::theme::color(palette.border).gamma_multiply(opacity),
+        ),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(rect.min + padding, galley, egui::Color32::WHITE);
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1909,8 +1972,14 @@ mod tests {
         assert_eq!(fade.opacity(area, placement, now, motion), 0.0);
         assert_eq!(fade.opacity(area, placement, now, motion), 0.0);
         let halfway = now + f64::from(motion.seconds) * 0.5;
-        assert_eq!(fade.opacity(area, placement, halfway, motion), 0.875);
-        assert_eq!(fade.opacity(area, placement, halfway, motion), 0.875);
+        assert_eq!(
+            fade.opacity(area, placement, halfway, motion),
+            crate::ease(0.5)
+        );
+        assert_eq!(
+            fade.opacity(area, placement, halfway, motion),
+            crate::ease(0.5)
+        );
         assert_eq!(fade.opacity(area, placement, now + 1.0, motion), 1.0);
 
         let moved = geometry::Rect {

@@ -105,6 +105,20 @@ settings! {
             label: "Wrap lines",
             apply: |world, wrap| world.resource_mut::<bedtime_code::EditorDefaults>().wrap = *wrap,
         }
+        /// Save a document a second after the last edit (and when closing it,
+        /// rather than asking).
+        pub Autosave: bool {
+            default: true,
+            key: "editor.autosave",
+            label: "Autosave",
+            apply: |world, on| {
+                world.insert_resource(bedtime_workbench::DocumentAutosave(if *on {
+                    bedtime_workbench::DocumentAutosavePolicy::AfterIdle(std::time::Duration::from_secs(1))
+                } else {
+                    bedtime_workbench::DocumentAutosavePolicy::Never
+                }))
+            },
+        }
         pub LineNumbers: bool {
             default: true,
             key: "editor.line_numbers",
@@ -196,6 +210,7 @@ impl Plugin for BedSettingsPlugin {
                 "Effects",
             ])
             .init_resource::<bedtime_code::EditorDefaults>()
+            .register_setting::<Autosave>()
             .register_setting::<WrapLines>()
             .register_setting::<LineNumbers>()
             .init_resource::<bedtime_filetree::FileTreeDefaults>()

@@ -13,7 +13,9 @@ app.add_plugins(ImagePlugin);
   pixels are scaled down for the GPU. SVGs never read other files.
 - **Viewing.** The image fills its panel, over a checkerboard. Scroll or pinch
   zooms around the pointer, dragging pans, a double click switches between
-  fitting and actual size (a point per pixel); Cmd/Ctrl+=, -, 0 and 1 too.
+  fitting and actual size (a point per pixel); Cmd/Ctrl+1 too, and Zoom In,
+  Zoom Out and Reset Zoom (Cmd/Ctrl+=, - and 0: it handles workbench's
+  actions, so they zoom the picture, not the panel).
   Zoomed in, pixels show sharp (unless Smooth When Zoomed In). Animations play;
   Space pauses.
 - **Floating:** play (animations), zoom out, the zoom (click: actual size),

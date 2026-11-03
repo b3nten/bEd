@@ -29,8 +29,7 @@ members = [
     "bedtime/crates/bedtime-workbench",
 ]
 default-members = ["bed"]
-# bed_old and bedtime_old are kept as reference source only; they no longer build.
-exclude = ["bed_old", "bedtime_old", "vendor/arboard", "vendor/egui", "vendor/rio-vt"]
+exclude = ["vendor/arboard", "vendor/egui", "vendor/rio-vt"]
 resolver = "3"
 
 [workspace.package]

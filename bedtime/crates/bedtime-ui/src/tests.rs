@@ -134,6 +134,43 @@ fn themes_roundtrip_through_theme_files() {
 }
 
 #[test]
+fn terminal_colors_are_named_and_the_earlier_list_still_reads() {
+    let theme = Theme::dark();
+    let text = theme.to_ron();
+    assert!(text.contains("bright_white:"), "{text}");
+    // The earlier format: a list of sixteen.
+    let named = text[text.find("terminal:").unwrap()..]
+        .split_once("),")
+        .unwrap()
+        .0
+        .to_owned()
+        + "),";
+    let colors: Vec<String> = named
+        .lines()
+        .filter_map(|line| {
+            line.split_once(": ")
+                .map(|(_, color)| color.trim_end_matches(',').to_owned())
+        })
+        .filter(|color| color.starts_with('"'))
+        .collect();
+    assert_eq!(colors.len(), 16);
+    let list = format!("terminal: [{}],", colors.join(", "));
+    assert_eq!(
+        Theme::from_ron(&text.replace(&named, &list)).unwrap(),
+        theme
+    );
+    // A mistake says what it is.
+    let typo = text.replace("bright_red:", "brigt_red:");
+    assert!(Theme::from_ron(&typo).unwrap_err().contains("brigt_red"));
+    let short = text.replace(&named, &format!("terminal: [{}],", colors[..15].join(", ")));
+    assert!(
+        Theme::from_ron(&short)
+            .unwrap_err()
+            .contains("needs 16 colors")
+    );
+}
+
+#[test]
 fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widgets() {
     for theme in [Theme::dark(), Theme::light()] {
         let ctx = egui::Context::default();

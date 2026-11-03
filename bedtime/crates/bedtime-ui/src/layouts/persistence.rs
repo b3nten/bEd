@@ -17,6 +17,7 @@ pub(crate) fn install(app: &mut App) {
         .register_type::<InLayout>()
         .register_type::<LayoutAreas>()
         .register_type::<InArea>()
+        .register_type::<PanelZoom>()
         .register_type::<AreaPanels>()
         .register_type::<LayoutOrder>()
         .register_type::<LayoutTemplate>()
@@ -59,13 +60,17 @@ fn put_back_selection_and_focus(
     validate_layouts(world)
 }
 
-/// A panel entity saved with nothing but its place in an area couldn't be
-/// rebuilt, so it's dropped from the save, along with references to it.
+/// A panel entity saved with nothing but its place in an area (and its
+/// zoom) couldn't be rebuilt, so it's dropped from the save, along with
+/// references to it.
 pub(super) fn leave_out_unsaved_panels(dynamic: &mut DynamicWorld) {
     let unsaved: HashSet<Entity> = dynamic
         .entities
         .iter()
-        .filter(|e| e.components.len() == 1 && value::<InArea>(e).is_some())
+        .filter(|e| {
+            value::<InArea>(e).is_some()
+                && e.components.len() == 1 + usize::from(value::<PanelZoom>(e).is_some())
+        })
         .map(|e| e.entity)
         .collect();
     leave_out_panels(dynamic, &unsaved);

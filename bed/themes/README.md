@@ -33,8 +33,9 @@ required; colors are `"#rrggbb"`, or `"#rrggbbaa"` when not opaque.
         success: "#a7c080",
         warning: "#dbbc7f",
         error: "#e67e80",
-        // Black, red, green, yellow, blue, magenta, cyan, white; then bright.
-        terminal: ["#475258", "#e67e80", ...],   // 16 colors
+        terminal: (black: "#475258", red: "#e67e80", green: ..., yellow: ...,
+                   blue: ..., magenta: ..., cyan: ..., white: ...,
+                   bright_black: ..., bright_red: ..., ... bright_white: ...),
         syntax: (text: ..., comment: ..., keyword: ..., string: ..., number: ...,
                  function: ..., type: ..., variable: ..., parameter: ...,
                  property: ..., constant: ..., operator: ..., punctuation: ...,
@@ -42,6 +43,10 @@ required; colors are `"#rrggbb"`, or `"#rrggbbaa"` when not opaque.
     ),
 )
 ```
+
+`syntax` colors the editor (and documentation popups) by role; `terminal` is
+for terminals. A list of sixteen terminal colors in the order above (the
+earlier format) still reads.
 
 Font, size, opacity and effects are settings, not part of a theme.
 

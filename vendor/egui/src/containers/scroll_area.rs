@@ -913,7 +913,7 @@ impl ScrollArea {
                         scroll_target.animation_time_span,
                         ui.input(|i| i.time),
                         dt,
-                        emath::ease_in_ease_out,
+                        approach,
                     );
                     if t < 1.0 {
                         state.offset[d] =
@@ -1642,4 +1642,17 @@ fn paint_fade_areas_impl(ui: &Ui, inner_rect: Rect, content_size: Vec2, offset: 
             [bg_faded, Color32::TRANSPARENT],
         ));
     }
+}
+
+/// bEd patch: scrolling to a target covers the same fraction of what's left
+/// each moment (`1 - 2^(-7t)`, scaled to end at 1), as the RAD Debugger
+/// scrolls, rather than easing in and out.
+fn approach(t: f32) -> f32 {
+    if !(t < 1.0) {
+        return 1.0;
+    }
+    if t <= 0.0 {
+        return 0.0;
+    }
+    (1.0 - (-7.0 * t).exp2()) / (1.0 - (-7.0_f32).exp2())
 }

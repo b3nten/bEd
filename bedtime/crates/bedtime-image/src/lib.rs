@@ -7,7 +7,8 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, Fit, Opener, OpenersAppExt, Panel, PanelInstance, PanelPresentation, Viewer,
+    ActionHandler, ActionInvocation, ActionResult, DocumentHandle, Fit, Handler, Opener,
+    OpenersAppExt, Panel, PanelInstance, PanelPresentation, ResetZoom, Viewer, ZoomIn, ZoomOut,
     viewer_document,
 };
 use bevy::prelude::*;
@@ -50,7 +51,13 @@ pub enum Backdrop {
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
+#[require(
+    PanelInstance = PanelInstance::of::<Self>(),
+    // Zooming zooms the picture, rather than the panel's zoom.
+    ActionHandler<ZoomIn> = ActionHandler::new(Handler::new(|w, i| ask(w, i, ZoomAsk::In))),
+    ActionHandler<ZoomOut> = ActionHandler::new(Handler::new(|w, i| ask(w, i, ZoomAsk::Out))),
+    ActionHandler<ResetZoom> = ActionHandler::new(Handler::new(|w, i| ask(w, i, ZoomAsk::Fit))),
+)]
 pub struct ImagePanel {
     pub backdrop: Backdrop,
     /// Smooth pixels when zoomed in, rather than showing them sharp.
@@ -61,6 +68,25 @@ pub struct ImagePanel {
     shown: Option<Shown>,
     #[reflect(ignore)]
     pub paused: bool,
+    /// A zoom asked for by an action, done when it's next drawn.
+    #[reflect(ignore)]
+    zoom_asked: Option<ZoomAsk>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ZoomAsk {
+    In,
+    Out,
+    Fit,
+}
+
+fn ask(world: &mut World, invocation: ActionInvocation, zoom: ZoomAsk) -> ActionResult {
+    let mut image = invocation
+        .entity
+        .and_then(|panel| world.get_mut::<ImagePanel>(panel))
+        .ok_or("No image is focused")?;
+    image.zoom_asked = Some(zoom);
+    Ok(())
 }
 
 /// The picture on the GPU, and where its animation is.
@@ -171,20 +197,16 @@ fn draw(
     let size = egui::vec2(picture.size[0] as f32, picture.size[1] as f32);
     let animated = picture.frames.len() > 1;
     let mut asked = Asked::default();
+    match image.zoom_asked.take() {
+        Some(ZoomAsk::In) => asked.zoom = Some(true),
+        Some(ZoomAsk::Out) => asked.zoom = Some(false),
+        Some(ZoomAsk::Fit) => asked.fit = true,
+        None => {}
+    }
 
     // Keys, while focused.
     if focused && !ui.ctx().egui_wants_keyboard_input() && !egui::Popup::is_any_open(ui.ctx()) {
         ui.input_mut(|i| {
-            asked.zoom = if i.consume_key(egui::Modifiers::COMMAND, egui::Key::Plus)
-                || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Equals)
-            {
-                Some(true)
-            } else if i.consume_key(egui::Modifiers::COMMAND, egui::Key::Minus) {
-                Some(false)
-            } else {
-                None
-            };
-            asked.fit = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num0);
             asked.actual = i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num1);
             asked.toggle_play = animated && i.consume_key(egui::Modifiers::NONE, egui::Key::Space);
         });

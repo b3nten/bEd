@@ -33,6 +33,12 @@ read-only.
   Shift-Tab indentation, smart newline indentation and closing-bracket
   outdent, wrapping (`EditorSettings::wrap`), line numbers, the animated
   caret.
+- **Colors in the text** (`#rgb`, `#rrggbb` and with alpha, `rgb()`/`rgba()`,
+  `hsl()`/`hsla()`, commas or CSS 4 spaces) are underlined in their color.
+  Resting the pointer on one for 0.3 s opens a picker; dragging in it rewrites
+  the color as it was written (hex stays hex, a short `#f00` stays short when
+  it can). The picker closes when the pointer leaves it and the color, and its
+  edits are one undo step. Not in read-only text.
 - **Word wrap and line numbers.** `EditorDefaults` (a resource the app sets
   from its settings) wraps lines and shows line numbers in every editor;
   Word Wrap (`ToggleWordWrap`, Cmd/Ctrl+Alt+L) changes one editor, saved with
@@ -93,7 +99,8 @@ isn't analysed. When no editor shows the document, the analysis stops.
 The editor reads its document's `DocumentSyntax` when drawing:
 
 - **Colours** from the highlights, mapped by the theme (`SyntaxPalette`: the
-  terminal colours). While a newer analysis runs, the last one's colours are
+  fourteen roles a theme's `syntax` names, so a `keyword` capture is
+  `syntax.keyword`, an `operator` `syntax.operator`). While a newer analysis runs, the last one's colours are
   kept, mapped through the edits since (only for the visible lines).
 - **Folds**: a fold column (reserved for any text with a language, so text
   doesn't shift when analysis arrives) with a disclosure arrow where each fold
@@ -106,7 +113,9 @@ The editor reads its document's `DocumentSyntax` when drawing:
 `StructurePanel` lists the outline (declarations, from the syntax analysis)
 of the focused editor's text, or of the last editor focused while another
 kind of panel has focus (`StructureSource`, updated after `update_syntax`).
-Entries collapse and expand, animated. While an edit is reanalysed the last
+Rows are the file tree's (`bedtime_ui::tree::paint_row`, without an icon): a
+long name is cut short at the panel's edge. Entries collapse and expand,
+animated. While an edit is reanalysed the last
 outline stays, so it doesn't flicker as you type; another editor or language
 clears it. Clicking an entry selects its name in that editor and focuses the
 editor (`reveal_entry`); an entry from an older analysis, or an editor that's

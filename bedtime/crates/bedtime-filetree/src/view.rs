@@ -402,7 +402,7 @@ fn paint(
         tree::Row {
             label: Some(&row.name),
             depth: row.depth,
-            icon,
+            icon: Some(icon),
             expanded: directory.then_some(row.expanded),
             selected: view.selected.as_ref() == Some(&row.path),
             ink: color(ink),

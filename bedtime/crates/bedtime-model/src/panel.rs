@@ -10,8 +10,9 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, DocumentReference, DocumentStatus, Fit, ManagedTask, ManagedWork, Opener,
-    OpenersAppExt, Panel, PanelInstance, PanelPresentation, Viewer, ViewerFile, WorkbenchWorldExt,
+    ActionHandler, ActionInvocation, ActionResult, DocumentHandle, DocumentReference,
+    DocumentStatus, Fit, Handler, ManagedTask, ManagedWork, Opener, OpenersAppExt, Panel,
+    PanelInstance, ResetZoom, Viewer, ViewerFile, WorkbenchWorldExt, ZoomIn, ZoomOut,
     viewer_document,
 };
 use bevy::prelude::*;
@@ -71,7 +72,14 @@ impl FileModel for ModelFile {
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>(), ModelScene)]
+#[require(
+    PanelInstance = PanelInstance::of::<Self>(),
+    ModelScene,
+    // Zooming moves the camera, rather than the panel's zoom.
+    ActionHandler<ZoomIn> = ActionHandler::new(Handler::new(|w, i| zoom_camera(w, i, Some(1.0)))),
+    ActionHandler<ZoomOut> = ActionHandler::new(Handler::new(|w, i| zoom_camera(w, i, Some(-1.0)))),
+    ActionHandler<ResetZoom> = ActionHandler::new(Handler::new(|w, i| zoom_camera(w, i, None))),
+)]
 pub struct ModelPanel {
     #[reflect(ignore)]
     preparing: Option<(u64, Preparing)>,
@@ -185,36 +193,25 @@ pub fn prepare(
     Ok(Arc::new(model))
 }
 
+/// Zoom the camera in or out a step, or (`None`) put it back.
+fn zoom_camera(world: &mut World, invocation: ActionInvocation, step: Option<f32>) -> ActionResult {
+    let mut scene = invocation
+        .entity
+        .and_then(|panel| world.get_mut::<ModelScene>(panel))
+        .ok_or("No model is focused")?;
+    match step {
+        Some(step) => scene.zoom(step),
+        None => scene.view.camera = None,
+    }
+    Ok(())
+}
+
 impl Panel for ModelPanel {
     const LABEL: &'static str = "3D Model";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         if viewer_document::<ModelFile>(ui, world, panel).is_none() {
             return;
-        }
-        let focused = world
-            .get::<PanelPresentation>(panel)
-            .is_some_and(|presentation| presentation.focused);
-        if focused && !ui.ctx().egui_wants_keyboard_input() && !egui::Popup::is_any_open(ui.ctx()) {
-            let (zoom_in, zoom_out, reset) = ui.input_mut(|i| {
-                (
-                    i.consume_key(egui::Modifiers::COMMAND, egui::Key::Plus)
-                        || i.consume_key(egui::Modifiers::COMMAND, egui::Key::Equals),
-                    i.consume_key(egui::Modifiers::COMMAND, egui::Key::Minus),
-                    i.consume_key(egui::Modifiers::COMMAND, egui::Key::Num0),
-                )
-            });
-            if let Some(mut scene) = world.get_mut::<ModelScene>(panel) {
-                if zoom_in {
-                    scene.zoom(1.0);
-                }
-                if zoom_out {
-                    scene.zoom(-1.0);
-                }
-                if reset {
-                    scene.view.camera = None;
-                }
-            }
         }
         let Some(response) = ModelView::show(ui, world, panel) else {
             return;

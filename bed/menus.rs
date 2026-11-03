@@ -19,7 +19,8 @@ use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
     ActionsWorldExt, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext, Invokes,
     KeyChord, LayoutSurface, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator, NativeMenuBar,
-    PanelFactory, RedoDocument, SaveDocument, UndoDocument, draw_menu_bar, panel_drag_source,
+    PanelFactory, RedoDocument, ResetZoom, SaveDocument, UndoDocument, ZoomIn, ZoomOut,
+    draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -162,6 +163,11 @@ fn compose_menus(mut commands: Commands) {
         MenuItem::action::<bedtime_code::ToggleWordWrap>(),
         InMenu(view),
     ));
+    commands.spawn((MenuSeparator, InMenu(view)));
+    // The focused panel's (an image's or a model's own zoom, for those).
+    commands.spawn((MenuItem::action::<ZoomIn>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<ZoomOut>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<ResetZoom>(), InMenu(view)));
     commands.spawn((MenuSeparator, InMenu(view)));
     commands.spawn((
         MenuItem::action::<crate::language_servers::OpenLanguageServers>(),

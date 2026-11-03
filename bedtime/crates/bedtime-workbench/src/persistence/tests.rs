@@ -65,12 +65,15 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
     note(world, left, "a");
     let b = note(world, left, "b");
     note(world, left, "c");
-    note(world, right, "d");
-    // A panel with nothing persisted can't be rebuilt, so it's left out.
-    world
+    let d = note(world, right, "d");
+    world.entity_mut(d).insert(PanelZoom(1.5));
+    // A panel with nothing persisted can't be rebuilt, so it's left out, even
+    // zoomed.
+    let bare = world
         .layouts_mut()
         .create_panel_in_area(left, "Bare")
         .unwrap();
+    world.entity_mut(bare).insert(PanelZoom(2.0));
     world.get_mut::<Area>(left).unwrap().selected = Some(b);
     world.get_mut::<Layout>(layout).unwrap().focused_area = Some(right);
     let saved = world.persistence().capture().unwrap();
@@ -95,6 +98,8 @@ fn a_round_trip_restores_layouts_tabs_selection_focus_and_panel_data() {
     let (left, right) = (areas[0], areas[1]);
     assert_eq!(texts(world, left), ["a", "b", "c"]);
     assert_eq!(texts(world, right), ["d"]);
+    let d = world.layouts().panels_in_area(right)[0];
+    assert_eq!(world.get::<PanelZoom>(d), Some(&PanelZoom(1.5)));
     let selected = world.get::<Area>(left).unwrap().selected.unwrap();
     assert_eq!(world.get::<Note>(selected).unwrap().text, "b");
     assert_eq!(

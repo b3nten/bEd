@@ -582,7 +582,7 @@ The default workspace isn't treated as a workspace you manage: it has no
 settings layer (Settings shows only Global there) and isn't listed. Its layout
 is still saved.
 
-`bed/workspace/panel.rs`: `WorkspacesPanel` (View → Workspaces,
+`bed/workspace.rs`: `WorkspacesPanel` (View → Workspaces,
 `app.open_workspaces`), a list of folder workspaces: recent folders, then any
 other folder with a saved store (its `path.txt`). Each row: name, path, then
 "This window" / "Open in another window" / "Folder missing" or Open (switches

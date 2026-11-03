@@ -573,11 +573,14 @@ impl EditorView {
             return;
         };
         let mut accepted = None;
+        // The editor's style: its panel's zoom, unlike other popups.
+        let style = ui.style().clone();
         let popup = egui::Area::new(id.with("completion"))
             .order(egui::Order::Foreground)
             .fixed_pos(caret.left_bottom())
             .constrain_to(ui.ctx().content_rect().shrink(8.0))
             .show(ui.ctx(), |ui| {
+                ui.set_style(style);
                 let size = egui::TextStyle::Body.resolve(ui.style()).size;
                 egui::Frame::popup(ui.style())
                     .inner_margin(egui::Margin::symmetric(

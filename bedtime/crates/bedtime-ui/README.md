@@ -77,9 +77,10 @@ popups on separate layers keep their own bounds. Direct GPU paint callbacks
 crossing a rounded boundary must render into a `UiViewport` image.
 Content can opt into `frame.padded([14.0, 12.0], draw)`.
 
-`tree` owns the Files and Git trees' shared row geometry, filename/icon painter,
-item-sized hover/selection backgrounds, rainbow selection text and rotating
-disclosures. `RowMotion` supplies smoothstep movement/fading with continuous
+`tree` owns the Files, Git and Structure trees' shared row geometry,
+name/icon painter (the icon is optional; a name too long for the row ends in
+"…"), item-sized hover/selection backgrounds, rainbow selection text and
+rotating disclosures. `RowMotion` supplies `ease`d movement/fading with continuous
 retargeting and reduced-motion settling. Callers own their data, row identity,
 viewport culling, scroll anchors and actions; painting performs no filesystem I/O.
 The painter multiplies its fade with the parent's opacity, including icons.
@@ -161,8 +162,11 @@ identity as `tooltip`. Runtime tooltips have zero delay and do not require a
 stationary pointer; feature controllers may impose their own delay (bEd LSP
 hover uses 200 ms).
 
-`MotionPolicy` is independent of theme. Default duration is 160 ms. Toggle motion
-uses cubic ease-out with continuous retargeting; disabling motion settles
+`MotionPolicy` is independent of theme. Default duration is 160 ms. Motion uses
+`ease`, an exponential approach as the RAD Debugger moves things (each moment
+covers the same fraction of what's left, `1 - 2^(-7t)`, scaled to land at the
+duration): quick to start, gentle to settle. Toggle motion retargets
+continuously; disabling motion settles
 immediately and disables popup growth/fading. Stable egui IDs retain identity.
 `UiFrame::animate_bool(id, target)` supplies the same transition for custom
 shell geometry. The vendored egui crate fades widget interaction/selection colors
@@ -708,6 +712,19 @@ and `LayoutSystems::Apply` applies them after drawing, before keyboard routing.
 An edit is dropped if that layout is no longer active, if anything it names has
 left the layout, or (for a border resize) if that border no longer exists.
 
+## Panel zoom
+
+`PanelZoom` on a panel draws its content bigger or smaller than the rest of
+the app: the panel's `Ui` gets the theme's style for `Metrics::zoomed`, and
+its `UiContext` those metrics (text, padding and spacing; not rounding). Its
+tab, other panels, and the menus and tooltips it opens (new egui areas, in the
+window's style) aren't zoomed; a popup that's part of the content takes the
+panel's style itself (the editor's completions). No component is 100%;
+`PanelZoom::set` keeps it within `STEPS` (50%–300%), `bigger` and `smaller`
+step, and `ZoomChanged` shows the new zoom in the panel's corner for a moment.
+Saved with the panel (`persistence`), though a zoom alone doesn't keep an
+otherwise unsaved panel. egui's own keyboard zoom (the whole window) is off.
+
 ## Shortcuts and direct panel input
 
 The UI adapter reads only the explicit LayoutCamera's egui context, after
@@ -729,8 +746,6 @@ their drawing functions. They own gating using window focus, panel visibility,
 `Layouts::has_focus`, viewport hover/egui responses and the surface's
 `UiCapture` summary. Layouts don't filter Bevy events or provide a second
 held-key state. Consuming an egui shortcut leaves Bevy input unchanged.
-
-See [stage 4](../../../MIGRATION/application-composition.md) for migration and validation.
 
 ## Window transparency and macOS blur
 
@@ -807,15 +822,6 @@ paints the rectangles registered with egui; egui's normal interaction radius als
 allows nearby presses in the gutter. Hover cursors and drag startup use the same
 egui response, with priority over panel content and below popups/modals.
 
-The native corner regression scenario exercises all four corners, including a
-four-area junction, at 0-, 5-, 16- and 32-point gaps. It splits and rejoins through
-real pointer input, including presses just into the gutter:
-
-```sh
-cargo build --offline --locked -p bed --features automation
-python3 bedtime_old/tools/smoke_corners.py  # drives bed_old; not maintained
-```
-
 ## Error dialogs and the modal layer
 
 Request user-facing errors independently of the panel that noticed
@@ -881,7 +887,7 @@ when allocating application controls directly.
 
 `rainbow_ink` supplies bEd's RGB sine cycle for editor carets/active line numbers
 and selected tree labels. `paint_chevron` and `animate_expansion` share filled
-right/down disclosure triangles and reversible 160 ms smoothstep timing.
+right/down disclosure triangles and reversible 160 ms `ease` timing.
 `icon_button` animates its background and ink through hover, focus and press;
 with `visuals.button_frame = false` its resting background is transparent.
 `icon_button_sized` fixes the artwork's point size independently of the font;

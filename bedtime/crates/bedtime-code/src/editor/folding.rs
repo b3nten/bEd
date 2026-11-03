@@ -34,8 +34,8 @@ struct FoldMotion {
 impl FoldMotion {
     fn value(&self, now: f64) -> f32 {
         let duration = 0.16 * f64::from((self.to - self.from).abs());
-        let t = ((now - self.started) / duration).clamp(0.0, 1.0) as f32;
-        self.from + (self.to - self.from) * t * t * (3.0 - 2.0 * t)
+        self.from
+            + (self.to - self.from) * bedtime_ui::ease(((now - self.started) / duration) as f32)
     }
 }
 impl FoldMap {

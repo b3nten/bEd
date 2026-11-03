@@ -328,7 +328,7 @@ pub(super) fn paint_entry(
         tree::Row {
             label: Some(path.rsplit('/').next().unwrap()),
             depth,
-            icon,
+            icon: Some(icon),
             expanded,
             selected,
             ink: bedtime_ui::theme::color(context.theme.palette.text),

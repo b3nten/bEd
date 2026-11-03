@@ -11,38 +11,133 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<
     parse(&text).ok_or_else(|| D::Error::custom(format!("{text:?} isn't a #rrggbb color")))
 }
 
-/// A list of colors, such as the terminal's sixteen.
-pub(super) mod list {
+/// The terminal's sixteen colors, by name: `black` … `white`, then
+/// `bright_black` … `bright_white`. A list of sixteen in that order (the
+/// earlier format) is read too.
+pub(super) mod terminal {
     use super::*;
-    use serde::ser::SerializeSeq;
+    use serde::Serialize;
 
-    pub(in crate::theme) fn serialize<S: Serializer, const N: usize>(
-        colors: &[Rgba; N],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        let mut seq = serializer.serialize_seq(Some(N))?;
-        for color in colors {
-            seq.serialize_element(&format(color))?;
-        }
-        seq.end()
+    #[derive(Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Named {
+        #[serde(with = "super")]
+        black: Rgba,
+        #[serde(with = "super")]
+        red: Rgba,
+        #[serde(with = "super")]
+        green: Rgba,
+        #[serde(with = "super")]
+        yellow: Rgba,
+        #[serde(with = "super")]
+        blue: Rgba,
+        #[serde(with = "super")]
+        magenta: Rgba,
+        #[serde(with = "super")]
+        cyan: Rgba,
+        #[serde(with = "super")]
+        white: Rgba,
+        #[serde(with = "super")]
+        bright_black: Rgba,
+        #[serde(with = "super")]
+        bright_red: Rgba,
+        #[serde(with = "super")]
+        bright_green: Rgba,
+        #[serde(with = "super")]
+        bright_yellow: Rgba,
+        #[serde(with = "super")]
+        bright_blue: Rgba,
+        #[serde(with = "super")]
+        bright_magenta: Rgba,
+        #[serde(with = "super")]
+        bright_cyan: Rgba,
+        #[serde(with = "super")]
+        bright_white: Rgba,
     }
 
-    pub(in crate::theme) fn deserialize<'de, D: Deserializer<'de>, const N: usize>(
+    pub(in crate::theme) fn serialize<S: Serializer>(
+        colors: &[Rgba; 16],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        Named {
+            black: colors[0],
+            red: colors[1],
+            green: colors[2],
+            yellow: colors[3],
+            blue: colors[4],
+            magenta: colors[5],
+            cyan: colors[6],
+            white: colors[7],
+            bright_black: colors[8],
+            bright_red: colors[9],
+            bright_green: colors[10],
+            bright_yellow: colors[11],
+            bright_blue: colors[12],
+            bright_magenta: colors[13],
+            bright_cyan: colors[14],
+            bright_white: colors[15],
+        }
+        .serialize(serializer)
+    }
+
+    pub(in crate::theme) fn deserialize<'de, D: Deserializer<'de>>(
         deserializer: D,
-    ) -> Result<[Rgba; N], D::Error> {
-        let texts = Vec::<String>::deserialize(deserializer)?;
-        if texts.len() != N {
-            return Err(D::Error::custom(format!(
-                "needs {N} colors, not {}",
-                texts.len()
-            )));
+    ) -> Result<[Rgba; 16], D::Error> {
+        deserializer.deserialize_any(Colors)
+    }
+
+    /// Named (a map), or the earlier list. Not `untagged`, so a mistake in
+    /// either says what it is.
+    struct Colors;
+
+    impl<'de> serde::de::Visitor<'de> for Colors {
+        type Value = [Rgba; 16];
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("the sixteen terminal colors, by name")
         }
-        let mut colors = [[0.0; 4]; N];
-        for (color, text) in colors.iter_mut().zip(&texts) {
-            *color = parse(text)
-                .ok_or_else(|| D::Error::custom(format!("{text:?} isn't a #rrggbb color")))?;
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<Self::Value, A::Error> {
+            let named = Named::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+            Ok([
+                named.black,
+                named.red,
+                named.green,
+                named.yellow,
+                named.blue,
+                named.magenta,
+                named.cyan,
+                named.white,
+                named.bright_black,
+                named.bright_red,
+                named.bright_green,
+                named.bright_yellow,
+                named.bright_blue,
+                named.bright_magenta,
+                named.bright_cyan,
+                named.bright_white,
+            ])
         }
-        Ok(colors)
+
+        fn visit_seq<A: serde::de::SeqAccess<'de>>(
+            self,
+            mut seq: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut colors = [[0.0; 4]; 16];
+            let mut count = 0;
+            while let Some(text) = seq.next_element::<String>()? {
+                let color = parse(&text)
+                    .ok_or_else(|| A::Error::custom(format!("{text:?} isn't a #rrggbb color")))?;
+                if let Some(slot) = colors.get_mut(count) {
+                    *slot = color;
+                }
+                count += 1;
+            }
+            if count != 16 {
+                return Err(A::Error::custom(format!("needs 16 colors, not {count}")));
+            }
+            Ok(colors)
+        }
     }
 }
 

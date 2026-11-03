@@ -45,9 +45,9 @@ pub struct Palette {
     #[serde(with = "hex")]
     pub error: Rgba,
     /// ANSI colors: 0..=7 normal, 8..=15 bright, each ordered black, red, green,
-    /// yellow, blue, magenta, cyan, white. Host default foreground and background
-    /// colors are independent of these entries.
-    #[serde(with = "hex::list")]
+    /// yellow, blue, magenta, cyan, white (named so in theme files). Host default
+    /// foreground and background colors are independent of these entries.
+    #[serde(with = "hex::terminal")]
     pub terminal: [Rgba; 16],
     /// Code colors, for editors and viewers.
     pub syntax: Syntax,
@@ -222,6 +222,18 @@ impl Theme {
 }
 
 impl Metrics {
+    /// These metrics `zoom` times bigger: text and the space around it.
+    /// Rounding and popups (menus, tooltips) stay as they are.
+    pub fn zoomed(&self, zoom: f32) -> Self {
+        let scale = |[x, y]: [f32; 2]| [x * zoom, y * zoom];
+        Self {
+            font_size: self.font_size * zoom,
+            padding: scale(self.padding),
+            spacing: scale(self.spacing),
+            ..self.clone()
+        }
+    }
+
     pub fn validate(&self) -> Result<(), String> {
         let m = self;
         if !m.font_size.is_finite()
@@ -245,9 +257,14 @@ impl Metrics {
 
 impl Theme {
     pub(crate) fn apply(&self, metrics: &Metrics, context: &Context) {
+        context.set_global_style(self.style(metrics, &context.global_style()));
+    }
+
+    /// `base` with this theme's colours and `metrics`' sizes.
+    pub fn style(&self, metrics: &Metrics, base: &egui::Style) -> egui::Style {
         let p = &self.palette;
         let m = metrics;
-        let mut style = (*context.global_style()).clone();
+        let mut style = base.clone();
         style.animation_time = 0.16;
         style.interaction.selectable_labels = false;
         style.spacing.item_spacing = egui::vec2(m.spacing[0], m.spacing[1]);
@@ -303,7 +320,7 @@ impl Theme {
             widget.fg_stroke = egui::Stroke::new(1.0, color(p.text));
             widget.corner_radius = egui::CornerRadius::same(m.rounding as u8);
         }
-        context.set_global_style(style);
+        style
     }
 }
 
