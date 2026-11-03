@@ -12,6 +12,7 @@ mod dock;
 mod effects;
 mod files;
 mod git;
+mod http_client;
 mod language_servers;
 mod layouts;
 mod mascots;
@@ -76,6 +77,7 @@ pub fn app(start: Start) -> App {
         new::NewPlugin,
         language_servers::LanguageServersPanelPlugin,
         git::BedGitPlugin,
+        http_client::BedHttpClientPlugin,
         search::BedSearchPlugin,
         preview::BedPreviewPlugin,
         theme_editor::ThemeEditorPlugin,

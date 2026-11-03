@@ -21,6 +21,7 @@ bedtime-code.workspace = true
 bedtime-document.workspace = true
 bedtime-filetree.workspace = true
 bedtime-font.workspace = true
+bedtime-http-client.workspace = true
 bedtime-git.workspace = true
 bedtime-search.workspace = true
 bedtime-hex.workspace = true

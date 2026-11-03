@@ -496,6 +496,7 @@ dependencies = [
  "bedtime-font",
  "bedtime-git",
  "bedtime-hex",
+ "bedtime-http-client",
  "bedtime-image",
  "bedtime-mascots",
  "bedtime-model",
@@ -685,6 +686,12 @@ dependencies = [
 name = "bedtime-http-client"
 version = "0.1.0"
 dependencies = [
+ "bedtime-persistence",
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
+ "serde",
+ "serde_json",
  "ureq",
 ]
 

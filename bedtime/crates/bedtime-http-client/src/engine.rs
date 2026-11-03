@@ -17,7 +17,9 @@ use std::{
 };
 use ureq::{Agent, ResponseExt, http};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum Method {
     #[default]
     Get,
