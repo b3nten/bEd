@@ -30,6 +30,7 @@ bedtime-mascots.workspace = true
 bedtime-table.workspace = true
 bedtime-terminal.workspace = true
 bedtime-persistence.workspace = true
+bedtime-preview.workspace = true
 bedtime-video.workspace = true
 bedtime-ui = { workspace = true, features = ["system-fonts"] }
 bedtime-workbench = { workspace = true, features = ["persistence", "workspaces"] }

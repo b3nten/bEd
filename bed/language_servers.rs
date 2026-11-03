@@ -1,14 +1,3 @@
-//! Language servers: their configuration (a setting, `language_servers`: a
-//! map from server name to what changes about it, in the global and
-//! workspace layers, merged field by field over the built-in servers), and
-//! the Language Servers panel that edits it and shows how each is doing.
-//!
-//! The panel lists the servers that are installed (or added), each with a
-//! status light, the languages it serves, an enable toggle and a restart
-//! button; expanded, its program, arguments, languages, environment and
-//! settings. The right-click menu restarts it, resets this layer's changes
-//! to it, or removes an added server. Known servers that aren't installed
-//! are listed, collapsed, with where to get them.
 use crate::panels::PanelPolicy;
 use bedtime_code::lsp::{
     InstalledServers, ServerCatalog, ServerEntry, ServerSettings, ServerStatus, config::resolve,

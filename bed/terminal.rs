@@ -1,7 +1,3 @@
-//! Terminals: New Terminal opens a shell in the workspace's folder. In it,
-//! `+open path[:line[:column]]` (or `+o`) opens files in bed; `+open` alone,
-//! or with one folder, opens that folder (the shell's, alone) as the
-//! workspace.
 use bedtime_terminal::{ShellCommandsAppExt, ShellInvocation, TerminalPanel, TerminalPlugin};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, InArea, KeyChord,

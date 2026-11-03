@@ -1,6 +1,3 @@
-//! Files: the workspace folder's file tree, what opens which file, saving
-//! them, and Structure. Text opens in the editor; images, models, fonts,
-//! sound, video and tables in their viewers; anything else in hex.
 use crate::panels::PanelPolicy;
 use bedtime_audio::AudioPlugin;
 use bedtime_code::{CodePlugin, StructurePanel};

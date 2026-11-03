@@ -1,7 +1,3 @@
-//! bEd's settings: what they are, how they reach the window, and the panel.
-//!
-//! Each setting writes into `AppearanceSettings` when its value changes; one system
-//! applies `AppearanceSettings` to the theme and workbench surface.
 use crate::{
     panels::PanelPolicy,
     workspace::{GlobalStore, Workspace},

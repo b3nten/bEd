@@ -1,9 +1,3 @@
-//! bEd's color themes. bEd ships twenty (`bed/themes/`); each launch writes
-//! any whose file is missing into `<config>/themes`, which is where themes
-//! are read from. Users edit them there, or add their own: the folder is
-//! watched while bed runs. Without a config directory, bed uses bedtime-ui's
-//! dark theme.
-//! See `bed/themes/README.md` for the format and the themes' sources.
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::ThemeFolder};
 use bedtime_workbench::{
     persistence::StoreId,

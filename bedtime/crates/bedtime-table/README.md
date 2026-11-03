@@ -6,12 +6,15 @@ Workbench CSV and TSV editor.
 app.add_plugins(TablePlugin);
 ```
 
-- **The document** is the table (`Table`): rows of text fields, and how its
-  file was written (delimiter, sniffed from the first lines; line endings;
-  final newline), so it saves the same way. RFC 4180: quoted fields, doubled
-  quotes, line breaks in fields, rows of different lengths. Edits
-  (`TableChange`: a cell, inserting and deleting rows and columns) undo, redo
-  and save as for any document. Clones share rows until changed.
+- **The document** is text (`TextBuffer`), the one a text editor shows, so
+  the table and an editor (another panel, from "Open With") follow each
+  other's edits. The table (`Table`) is read from it on a worker: rows of
+  text fields, the delimiter (sniffed from the first lines), line endings,
+  and where each row starts. RFC 4180: quoted fields, doubled quotes, line
+  breaks in fields, rows of different lengths. Table edits (`TableChange`: a
+  cell, inserting and deleting rows and columns) become text edits touching
+  only that field or row (`Table::edit`), so undo, redo and save work as for
+  any text, and the file keeps its own quoting elsewhere.
 - **The first row** is the header if it looks like one (different, not
   numbers); the menus switch it, and the choice is saved.
 - **Viewing.** Only the rows and columns on screen are drawn; the header and

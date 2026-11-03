@@ -1,5 +1,3 @@
-//! Find in Files (Cmd/Ctrl+Shift+F) opens the layout's Search panel, with the
-//! focused editor's selection as its query.
 use crate::panels::PanelPolicy;
 use bedtime_code::EditorPanel;
 use bedtime_document::TextBuffer;

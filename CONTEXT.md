@@ -281,6 +281,46 @@ Each step must produce a usable app. Order is provisional.
   (`panel_actions.rs`, was `zoom_actions.rs`). Screen effects are in
   Settings' Appearance section.
 
+- **Previews**, 2026-11-02, awaiting review. New `bedtime-preview`:
+  Markdown Preview (pulldown-cmark into blocks: headings with GitHub anchors,
+  lists and task boxes, quotes and `[!NOTE]` callouts, tables, code, rules,
+  HTML shown raw, comments hidden; links open in the browser, relative
+  files with `open_path`, `#anchors` scroll) and Tree View for JSON and TOML
+  (one serde `Value` keeping the file's key order; datetimes; parsed on a
+  `ManagedWork` task; rows virtualised; open paths saved; Copy Value/Path,
+  Expand/Collapse All; a failed parse keeps the last tree under a banner).
+  Both are `Viewer<TextBuffer>`s, so they share the editor's document and
+  follow unsaved edits. Their fit equals the editor's, so the editor stays
+  the default and they're in "Open With". bedtime-code: `SyntaxViewer`
+  marker makes `update_syntax` analyse a document for non-editor panels; the
+  preview colours code blocks from that analysis (fenced code is injected
+  by the Markdown grammar) and waits up to 0.3 s for it after an edit. bed's
+  `preview.rs`: Open Preview to the Side (Cmd/Ctrl+Shift+M; every
+  Cmd/Ctrl+V chord is reserved for text), View menu: reuses an area showing
+  previews, else splits the editor's; the editor keeps focus.
+  `tests/automation/previews.py`.
+
+- **Markdown images, tables as text**, 2026-11-02, awaiting review.
+  Markdown Preview shows images beside the file (or at absolute paths) in
+  place: `Run.image` holds the source (so `[![badge](x.svg)](url)` keeps its
+  link), decoded with `bedtime_image::decode` on a `ManagedWork` task, kept as
+  egui textures, at their own size or the text's width; web and `data:`
+  images show their description (no HTTP client yet); an image file edited
+  later isn't re-read until the preview reopens. bedtime-table is now a
+  `Viewer<TextBuffer>` (fit `Specific`, so CSV/TSV open as tables; Text
+  Editor in "Open With" is a separate panel on the same document). The text
+  is parsed on a worker with each row's byte offset; `Table::edit` turns a
+  `TableChange` into a `BufferEdit` touching only that field or row (column
+  changes rewrite the rows, keeping a BOM) and updates the offsets, so its
+  own edits don't reparse. Fixes: clicking a cell took egui focus, which
+  made `egui_wants_keyboard_input` true and disabled every table key (arrows
+  never moved or scrolled); header names scrolled under the row numbers now
+  move with their column instead of sticking to its edge. bedtime-ui: tab
+  titles over 210 px are shortened in the middle keeping the extension
+  ("customers-…000.csv", the full title on hover) instead of being clipped
+  (".cs"). `viewers.py` checks the editor and table share a document;
+  `previews.py` checks an image shows.
+
 - **Titlebar, tree motion, fixes**, 2026-11-02, committed (`0c20e54`). The
   titlebar has terminal, search, files, git, structure and settings, closer
   together, with bedtime-ui's new `icon_ink_button` (no hover background).
@@ -414,7 +454,8 @@ Each step must produce a usable app. Order is provisional.
   spectrogram from a load-time analysis), `bedtime-video` (macOS
   AVFoundation via objc2; scrubber; `FileModel::UNREAD` so videos aren't read
   into memory) and `bedtime-table` (CSV/TSV editor: `TableChange` edits with
-  undo; sort, filter, resize; saves with its delimiter). Workbench:
+  undo; sort, filter, resize; saves with its delimiter; now a view of the
+  text document, see "Markdown images, tables as text"). Workbench:
   `Fit::Specific` and best-fit opener choice (default among equals),
   `viewer_document`. Fixtures moved to `tests/fixtures` (plus a Swift-made
   clip). `tests/automation/viewers.py` covers every viewer (audio isn't played

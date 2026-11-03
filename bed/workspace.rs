@@ -1,8 +1,3 @@
-//! Workspaces are workbench's (`bedtime_workbench::workspaces`); bed adds the
-//! Workspaces panel: every folder bed has a workspace for, to open in this
-//! window or delete. Deleting removes bed's saved layout and settings for the
-//! folder, never the folder. The default workspace isn't listed: it's where bed
-//! is without a project, not a workspace you manage.
 use crate::panels::PanelPolicy;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;

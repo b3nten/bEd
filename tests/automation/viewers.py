@@ -177,3 +177,23 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: bed.exists(contains="1 of 6 rows"), "the filter shows one row")
         bed.screenshot("viewers-table")
         assert not bed.status()["errors"], bed.status()["errors"]
+        bed.click([w for w in bed.find_all("close") if w["rect"][0] > 800][0])
+
+        # The table is a view of the text: the editor, in its own panel,
+        # shows the same document, and the table follows its edits.
+        bed.click(row(bed, "people.csv"), button="Right")
+        bed.click(bed.find("Open With ⏵"))
+        bed.click(bed.find("Text Editor"))
+        until(bed, lambda: len(bed.find_all("people.csv")) >= 3, "people.csv opens in the editor too")
+        tabs = sorted(bed.find_all("people.csv"), key=lambda widget: widget["rect"][0])
+        x0, y0, x1, y1 = tabs[-1]["rect"]
+        bed.click((x0 + 40, y1 + 120))
+        bed.key("Primary+A")
+        bed.type("name,age,city")
+        bed.key("Enter")
+        bed.type("Zed,1,Oslo")
+        bed.click(tabs[1])
+        until(bed, lambda: bed.exists("Oslo"), "the table shows the editor's text")
+        assert not bed.exists("Helsinki"), "the old rows are gone"
+        bed.screenshot("viewers-table-text")
+        assert not bed.status()["errors"], bed.status()["errors"]

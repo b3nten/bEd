@@ -1,7 +1,3 @@
-//! bEd's panel opening policy. Callers say how to build a panel (a `PanelFactory`);
-//! this module decides whether an existing panel is focused instead, and where a
-//! new one goes. Drag-and-drop bypasses this on purpose: dragging a panel out
-//! always creates a new one where the user dropped it.
 use crate::layouts::{self, LayoutSlot};
 use bedtime_workbench::LayoutsWorldExt;
 use bedtime_workbench::{Panel, PanelFactory};

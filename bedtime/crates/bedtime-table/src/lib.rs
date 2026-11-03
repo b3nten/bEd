@@ -1,19 +1,23 @@
-//! A table editor for workbench apps: CSV and TSV files as a grid. Click a
+//! A table editor for workbench apps: CSV and TSV text as a grid. Click a
 //! cell to select it; double-click, Enter or typing edits it (Enter keeps
 //! it, Escape doesn't); arrows move, Delete clears. Click a column's header
 //! to sort by it (again to reverse, a third time to stop), drag its edge to
 //! resize. The floating filter shows only rows containing some text.
 //! Sorting and filtering change only the view. The right-click menus insert
-//! and delete rows and columns. Edits are the document's, so Undo, Redo and
-//! Save work as for any file; it's saved with its own delimiter.
+//! and delete rows and columns. The table is a view of a text document, the
+//! one a text editor shows, so the two follow each other's edits; Undo, Redo
+//! and Save work as for any file. Edits change only the text they need to.
+use bedtime_document::{TextBuffer, TextOpenState};
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, EditOptions, Fit, Notification, Opener, OpenersAppExt, Panel, PanelInstance,
-    PanelPresentation, Viewer, WorkbenchWorldExt, viewer_document,
+    DocumentHandle, EditOptions, Fit, ManagedTask, ManagedWork, Notification, Opener,
+    OpenersAppExt, Panel, PanelInstance, PanelPresentation, Viewer, WorkbenchWorldExt,
+    viewer_document,
 };
 use bevy::prelude::*;
+use std::{path::Path, time::Duration};
 
 pub mod csv;
 mod model;
@@ -27,16 +31,32 @@ pub struct TablePlugin;
 
 impl Plugin for TablePlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<TablePanel>().register_opener(
-            Opener::<Table>::new::<TablePanel>("Table").files(|path, _| {
-                let known = path.extension().is_some_and(|ext| {
-                    SUPPORTED_EXTENSIONS
-                        .iter()
-                        .any(|known| ext.eq_ignore_ascii_case(known))
-                });
-                if known { Fit::Specific } else { Fit::No }
-            }),
-        );
+        app.register_type::<TablePanel>()
+            .register_opener(Opener::<TextBuffer>::new::<TablePanel>("Table").files(table_fit));
+    }
+}
+
+/// Whether `path` is named as a table (by its extension).
+fn is_table(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| {
+        SUPPORTED_EXTENSIONS
+            .iter()
+            .any(|known| ext.eq_ignore_ascii_case(known))
+    })
+}
+
+/// Text named as a table: made for it, so it opens as one (the editor is in
+/// "Open With").
+fn table_fit(path: &Path, head: &[u8]) -> Fit {
+    let text = match std::str::from_utf8(head) {
+        Ok(_) => true,
+        // Cut off mid-character at the end of the sample.
+        Err(error) => error.error_len().is_none(),
+    };
+    if is_table(path) && text && !head.contains(&0) {
+        Fit::Specific
+    } else {
+        Fit::No
     }
 }
 
@@ -53,6 +73,10 @@ pub struct TablePanel {
 
 #[derive(Default)]
 struct State {
+    /// The table, and the text revision it was read from (or edited to).
+    table: Option<(u64, Table)>,
+    /// Reading a newer revision.
+    parsing: Option<(u64, ManagedTask<Table>)>,
     sort: Option<Sort>,
     filter: String,
     filtering: bool,
@@ -88,54 +112,106 @@ impl TablePanel {
     }
 }
 
-impl Viewer<Table> for TablePanel {
-    fn new(_: DocumentHandle<Table>) -> Self {
+impl Viewer<TextBuffer> for TablePanel {
+    fn new(_: DocumentHandle<TextBuffer>) -> Self {
         Self::default()
     }
-    fn apply(_: &mut World, _: Entity, _: &()) {}
+    fn apply(_: &mut World, _: Entity, _: &TextOpenState) {}
 }
 
 impl Panel for TablePanel {
     const LABEL: &'static str = "Table";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let Some(document) = viewer_document::<Table>(ui, world, panel) else {
+        let Some(document) = viewer_document::<TextBuffer>(ui, world, panel) else {
             return;
         };
+        update(world, panel, &document.model, document.revision);
         let focused = world
             .get::<PanelPresentation>(panel)
             .is_some_and(|presentation| presentation.focused);
         let Some(mut table_panel) = world.get_mut::<TablePanel>(panel) else {
             return;
         };
-        let edits = draw(
-            ui,
-            context,
-            panel,
-            &mut table_panel,
-            &document.model,
-            document.revision,
-            focused,
-        );
+        if table_panel.state.parsing.is_some() {
+            ui.ctx().request_repaint_after(Duration::from_millis(16));
+        }
+        let Some((read, mut table)) = table_panel.state.table.take() else {
+            ui.centered_and_justified(|ui| ui.spinner());
+            return;
+        };
+        let edits = draw(ui, context, panel, &mut table_panel, &table, read, focused);
+        if edits.is_empty() {
+            table_panel.state.table = Some((read, table));
+            return;
+        }
+        // Edits are made to the text the table was read from; while a newer
+        // revision is being read, they'd land in the wrong places.
+        if read != document.revision {
+            table_panel.state.table = Some((read, table));
+            world.workbench_mut().notify(Notification::warning(
+                "The table is still reading the latest text; try again",
+            ));
+            return;
+        }
+        let mut text = document.model;
         let mut revision = document.revision;
         for (change, label) in edits {
             let options = EditOptions {
                 viewer: Some(panel),
                 ..EditOptions::new(label)
             };
-            match world
-                .workbench_mut()
-                .edit_document(document.handle, revision, change, options)
-            {
+            let made = table.edit(&text, &change).and_then(|edit| {
+                let next = world
+                    .workbench_mut()
+                    .edit_document(document.handle, revision, edit.clone(), options)
+                    .map_err(|error| error.to_string())?;
+                edit.apply(&mut text)?;
+                Ok(next)
+            });
+            match made {
                 Ok(next) => revision = next,
                 Err(error) => {
-                    world
-                        .workbench_mut()
-                        .notify(Notification::warning(error.to_string()));
+                    world.workbench_mut().notify(Notification::warning(error));
+                    // Read the text again, as it is.
+                    revision = u64::MAX;
                     break;
                 }
             }
         }
+        if let Some(mut table_panel) = world.get_mut::<TablePanel>(panel) {
+            table_panel.state.table = Some((revision, table));
+        }
+    }
+}
+
+/// Collect a finished read, and start one for a newer revision.
+fn update(world: &mut World, panel: Entity, text: &TextBuffer, revision: u64) {
+    let Some(mut table_panel) = world.get_mut::<TablePanel>(panel) else {
+        return;
+    };
+    let state = &mut table_panel.state;
+    if let Some((read, task)) = &state.parsing {
+        match task.try_recv() {
+            Ok(table) => {
+                state.table = Some((*read, table));
+                state.parsing = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => state.parsing = None,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+        }
+    }
+    if state.table.as_ref().is_some_and(|(read, _)| *read == revision) {
+        return;
+    }
+    let text = text.clone();
+    let task = world.resource_mut::<ManagedWork>().spawn_task(
+        Some(panel),
+        "Reading the table",
+        move |_| Table::parse(&text.range_text(0..text.len())),
+    );
+    if let (Ok(task), Some(mut table_panel)) = (task, world.get_mut::<TablePanel>(panel)) {
+        table_panel.state.parsing = Some((revision, task));
     }
 }
 
@@ -304,6 +380,7 @@ fn draw(
                 x + widths[column] >= viewport.left() + gutter && x <= viewport.right()
             })
             .collect();
+        let gutter_left = origin.x + viewport.left();
         // The cells.
         for (index, &row) in order.iter().enumerate().take(last).skip(first) {
             let y = origin.y + header_top + index as f32 * row_height;
@@ -320,7 +397,12 @@ fn draw(
                     egui::vec2(widths[column], row_height),
                 );
                 let value = table.cell(row, column);
-                let response = ui.interact(cell, id.with((row, column)), egui::Sense::click());
+                // Not under the row numbers.
+                let response = ui.interact(
+                    cell.intersect(egui::Rect::everything_right_of(gutter_left + gutter)),
+                    id.with((row, column)),
+                    egui::Sense::click(),
+                );
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::WidgetType::Other, true, value)
                 });
@@ -346,10 +428,10 @@ fn draw(
                         egui::StrokeKind::Inside,
                     );
                 }
+                // No egui focus: it would hide the keys from `keys`.
                 if response.clicked() || response.secondary_clicked() {
                     commit(state, &mut edits);
                     state.cursor = Some((row, column));
-                    response.request_focus();
                 }
                 // egui counts a double click soon after another click as a triple.
                 if response.double_clicked() || response.triple_clicked() {
@@ -387,23 +469,30 @@ fn draw(
                 egui::vec2(viewport.width(), row_height),
             );
             painter.rect_filled(band, 0.0, head_fill);
+            // Scrolled under the row numbers like the cells below.
+            let names = painter.with_clip_rect(
+                painter
+                    .clip_rect()
+                    .intersect(egui::Rect::everything_right_of(gutter_rect.right())),
+            );
             for &column in &visible_columns {
                 let cell = egui::Rect::from_min_size(
                     egui::pos2(origin.x + gutter + lefts[column], top),
                     egui::vec2(widths[column], row_height),
-                )
-                .intersect(egui::Rect::everything_right_of(gutter_rect.right()));
-                if !cell.is_positive() {
+                );
+                let shown = cell.intersect(egui::Rect::everything_right_of(gutter_rect.right()));
+                if !shown.is_positive() {
                     continue;
                 }
                 let name = table.cell(0, column);
-                let response = ui.interact(cell, id.with(("header", column)), egui::Sense::click());
+                let response =
+                    ui.interact(shown, id.with(("header", column)), egui::Sense::click());
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name)
                 });
                 if response.hovered() {
-                    painter.rect_filled(
-                        cell,
+                    names.rect_filled(
+                        shown,
                         0.0,
                         theme::color(theme::mix(p.panel_background, p.text, 0.09)),
                     );
@@ -417,7 +506,7 @@ fn draw(
                 } else {
                     let sorted = state.sort.filter(|sort| sort.column == column);
                     text(
-                        &painter,
+                        &names,
                         cell,
                         name,
                         if sorted.is_some() { accent } else { ink },
@@ -431,7 +520,7 @@ fn draw(
                         } else {
                             (-4.0, 3.0)
                         };
-                        painter.add(egui::Shape::convex_polygon(
+                        names.add(egui::Shape::convex_polygon(
                             vec![
                                 egui::pos2(c.x, c.y + tip),
                                 egui::pos2(c.x + 4.0, c.y + base),
@@ -442,7 +531,7 @@ fn draw(
                         ));
                     }
                 }
-                painter.vline(cell.right(), cell.y_range(), egui::Stroke::new(1.0, line));
+                names.vline(cell.right(), cell.y_range(), egui::Stroke::new(1.0, line));
                 if response.clicked() {
                     state.sort = match state.sort {
                         Some(sort) if sort.column == column && !sort.descending => Some(Sort {

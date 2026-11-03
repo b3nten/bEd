@@ -1,5 +1,4 @@
-// CRT formulas adapted from nealmick/ned and the former application; MIT/X Consortium, see NOTICE.
-// Bed2 owns linear/premultiplied conversion, history timing and input mapping.
+// CRT formulas adapted from nealmick/ned and the former application, see NOTICE.
 import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput;
 import bevy_render::color_operations::{linear_to_srgb, srgb_to_linear};
 
@@ -8,6 +7,7 @@ struct Parameters {
     geometry: vec4<f32>,
     clock: vec4<f32>,
 }
+
 @group(0) @binding(0) var source: texture_2d<f32>;
 @group(0) @binding(1) var source_sampler: sampler;
 @group(0) @binding(2) var<uniform> params: Parameters;
@@ -18,10 +18,12 @@ fn display_color(color: vec4<f32>) -> vec4<f32> {
     if color.a <= 0.0 { return vec4<f32>(0.0); }
     return vec4<f32>(linear_to_srgb(max(color.rgb / color.a, vec3<f32>(0.0))) * color.a, color.a);
 }
+
 fn linear_color(color: vec4<f32>) -> vec4<f32> {
     if color.a <= 0.0 { return vec4<f32>(0.0); }
     return vec4<f32>(srgb_to_linear(clamp(color.rgb / color.a, vec3<f32>(0.0), vec3<f32>(1.0))) * color.a, color.a);
 }
+
 fn sample_display(uv: vec2<f32>) -> vec4<f32> {
     return display_color(textureSampleLevel(source, source_sampler, uv, 0.0));
 }
@@ -32,6 +34,7 @@ fn curvature(uv: vec2<f32>) -> vec2<f32> {
     let center = uv - vec2<f32>(0.5);
     return clamp(vec2<f32>(0.5) + center * (1.0 + params.geometry.x * 0.25 * dot(center, center)), vec2<f32>(0.001), vec2<f32>(0.999));
 }
+
 // Bloom intermediates store display-premultiplied color in float textures.
 // Convert only during downsampling; blur and final sampling need no gamma math.
 @fragment
@@ -51,14 +54,17 @@ fn blur(uv: vec2<f32>, axis: vec2<f32>) -> vec4<f32> {
          + textureSampleLevel(source, source_sampler, uv - offset, 0.0) * 0.3125
          + textureSampleLevel(source, source_sampler, uv + offset, 0.0) * 0.3125;
 }
+
 @fragment
 fn bloom_horizontal(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return blur(in.uv, vec2<f32>(1.0, 0.0));
 }
+
 @fragment
 fn bloom_vertical(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
     return blur(in.uv, vec2<f32>(0.0, 1.0));
 }
+
 fn scanline(uv: vec2<f32>, resolution: vec2<f32>, time: f32) -> f32 {
     let cycle = time - 8.0 * floor(time / 8.0);
     if cycle >= 5.0 || params.light.x == 0.0 { return 1.0; }
@@ -68,10 +74,12 @@ fn scanline(uv: vec2<f32>, resolution: vec2<f32>, time: f32) -> f32 {
     let fade_in = smoothstep(0.0, 1.0, min(distance / 7.0, 1.0));
     return mix(1.0, 1.7, fade_in * fade_out * params.light.x);
 }
+
 fn random(co: vec2<f32>) -> f32 {
     let dt = dot(co, vec2<f32>(12.9898, 78.233));
     return fract(sin(dt - 3.14 * floor(dt / 3.14)) * 43758.5453);
 }
+
 fn noise(uv: vec2<f32>, time: f32) -> f32 {
     let t = vec3<f32>(time * 60.0, time * 55.0, time * 0.1);
     let wrapped = t - vec3<f32>(10.0, 10.0, 5.0) * floor(t / vec3<f32>(10.0, 10.0, 5.0));

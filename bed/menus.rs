@@ -1,7 +1,3 @@
-//! bEd's menus and titlebar toolbar, and the app-level commands they run.
-//!
-//! Menus and tools only name commands: labels, shortcuts and whether they're
-//! enabled all come from the command and its handler.
 use crate::{
     files::{OpenFiles, OpenStructure},
     layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
@@ -167,6 +163,10 @@ fn compose_menus(mut commands: Commands) {
     commands.spawn((MenuSeparator, InMenu(view)));
     commands.spawn((
         MenuItem::action::<bedtime_code::ToggleWordWrap>(),
+        InMenu(view),
+    ));
+    commands.spawn((
+        MenuItem::action::<crate::preview::OpenPreview>(),
         InMenu(view),
     ));
     commands.spawn((MenuSeparator, InMenu(view)));

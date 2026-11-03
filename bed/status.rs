@@ -1,7 +1,3 @@
-//! The status bar along the bottom of the window: the latest notification for
-//! a few seconds, with the recent ones in its tooltip; the language server of
-//! the editor you're in, and its problems; and the workspace's name.
-//! It's part of the window's body (`body`), under the panels.
 use crate::workspace::Workspace;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::{Notification, NotificationLevel, Notifications, WorkbenchWorldExt, view};

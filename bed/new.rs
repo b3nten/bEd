@@ -1,7 +1,3 @@
-//! New (Cmd+N), by what's focused: in a terminal, another terminal beside it;
-//! anywhere else, a new untitled text document (beside the focused one, or
-//! where documents open). Saving an untitled document asks where, starting
-//! in the workspace's folder; its name then says its language.
 use bedtime_code::EditorPanel;
 use bedtime_document::TextBuffer;
 use bedtime_terminal::TerminalPanel;

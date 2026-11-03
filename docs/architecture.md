@@ -42,6 +42,7 @@ Bevy desktop libraries. Each layer is independent of higher layers:
 | `bedtime-code` | workbench, filesystem, grammars | Code editing: the editor, syntax, Structure and language servers |
 | `bedtime-grammars` | — | Bundled tree-sitter grammars (compiled C) |
 | `bedtime-search` | (workbench, filetree) | Project search and replace: the engine, and the Search panel |
+| `bedtime-preview` | workbench, code, image | Markdown Preview (with local images), and Tree View for JSON and TOML, over the editor's text document |
 | `bedtime-terminal` | workbench | Terminal panels (PTY, emulator), and the shell bridge for app commands |
 | `bedtime-automation` | ui | Driving an app from scripts (exists) |
 | `bedtime` | — | Re-exports the others behind features, as `bevy` does |

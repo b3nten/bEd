@@ -1,5 +1,3 @@
-//! The mascots: Bed (View ▸ Bed), and Ducky, an easter egg opened from a
-//! terminal with `+ducky`. One of each per layout; opening again focuses it.
 use crate::panels::PanelPolicy;
 use bedtime_mascots::{BedPanel, DuckPanel, MascotPlugin};
 use bedtime_terminal::{ShellCommandsAppExt, ShellInvocation};

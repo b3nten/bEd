@@ -1,0 +1,24 @@
+[package]
+name = "bedtime-preview"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Viewers for text documents: Markdown rendered (with its images), JSON and TOML as trees. They show the editor's document, so they follow edits"
+
+[features]
+default = ["persistence"]
+# Save preview panels with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-code.workspace = true
+bedtime-document.workspace = true
+bedtime-image.workspace = true
+bedtime-ui.workspace = true
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }
+pulldown-cmark.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml = { workspace = true, features = ["std", "parse", "serde", "preserve_order"] }

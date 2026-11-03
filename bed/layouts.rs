@@ -1,9 +1,3 @@
-//! Five numbered layouts per workspace, switched with Cmd+1…5. Each is an
-//! ordinary workbench layout saved with the workspace; `LayoutSlot` says which
-//! number it is. A slot's layout is made the first time it's opened, from that
-//! slot's default: a template saved in the global store with "Save Layout as
-//! Default", or a single empty area. Layout 1 starts with the Workspaces panel
-//! in the default workspace, and with Files beside an empty area in a folder's.
 use crate::workspace::{GlobalStore, Workspace, WorkspacesPanel};
 use bedtime_filetree::FileTree;
 use bedtime_workbench::{

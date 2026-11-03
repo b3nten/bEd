@@ -497,6 +497,7 @@ dependencies = [
  "bedtime-mascots",
  "bedtime-model",
  "bedtime-persistence",
+ "bedtime-preview",
  "bedtime-search",
  "bedtime-table",
  "bedtime-terminal",
@@ -751,6 +752,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedtime-preview"
+version = "0.1.0"
+dependencies = [
+ "bedtime-code",
+ "bedtime-document",
+ "bedtime-image",
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "bedtime-search"
 version = "0.1.0"
 dependencies = [
@@ -781,7 +798,6 @@ name = "bedtime-table"
 version = "0.1.0"
 dependencies = [
  "bedtime-document",
- "bedtime-filesystem",
  "bedtime-ui",
  "bedtime-workbench",
  "bevy",

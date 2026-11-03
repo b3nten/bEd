@@ -118,11 +118,10 @@ pub fn looks_like_header(table: &Table) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bedtime_filesystem::FileModel;
 
     #[test]
     fn filters_and_sorts_without_the_header() {
-        let table = Table::decode(b"name,size\nb10,10\na2,2\nB9,\nc,100\n").unwrap();
+        let table = Table::parse("name,size\nb10,10\na2,2\nB9,\nc,100\n");
         assert!(looks_like_header(&table));
         assert_eq!(shown_rows(&table, true, "", None), [1, 2, 3, 4]);
         let by_name = Some(Sort {

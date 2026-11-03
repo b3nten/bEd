@@ -1,6 +1,3 @@
-//! Git: View ▸ Git opens the Git panel for the workspace's folder. From it,
-//! a terminal opens in the repository, and a repository whose root isn't
-//! the workspace's folder can be opened as the workspace.
 use crate::panels::PanelPolicy;
 use bedtime_git::{GitHost, GitPanel, GitPlugin};
 use bedtime_terminal::{TerminalOptions, TerminalPanel};

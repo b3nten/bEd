@@ -16,6 +16,7 @@ mod mascots;
 mod menus;
 mod new;
 mod panels;
+mod preview;
 mod search;
 mod settings;
 mod status;
@@ -24,7 +25,6 @@ mod themes;
 mod workspace;
 
 fn main() -> AppExit {
-    // Run from a terminal's `+open`: hand it to the running bed and exit.
     if let Some(exit) = bedtime_terminal::handle_shell_command() {
         return exit;
     }
@@ -32,8 +32,6 @@ fn main() -> AppExit {
     app(Start::CommandLine(argument)).run()
 }
 
-/// The App for one workspace. Switching workspace drops it and builds another
-/// in the same window (`bevy::winit::relaunch`).
 pub fn app(start: Start) -> App {
     let config = config_directory();
     let workspaces = workspace::WorkspacesPlugin::new(start, config.clone(), app);
@@ -76,6 +74,7 @@ pub fn app(start: Start) -> App {
         language_servers::LanguageServersPanelPlugin,
         git::BedGitPlugin,
         search::BedSearchPlugin,
+        preview::BedPreviewPlugin,
     ))
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     .insert_resource(settings::GlobalLocation(

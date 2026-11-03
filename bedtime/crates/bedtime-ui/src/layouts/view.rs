@@ -12,6 +12,8 @@ use bevy::prelude::*;
 use std::{collections::HashMap, sync::Arc};
 
 const PANEL_BORDER_WIDTH: f32 = 1.0;
+/// Longer titles are shortened in the middle.
+const MAX_TAB_WIDTH: f32 = 210.0;
 
 fn allows_panel_edit(settings: LayoutSurface, edit: &LayoutEdit) -> bool {
     match edit {
@@ -443,8 +445,56 @@ impl Tab {
     }
 
     fn layout_label(&self, painter: &egui::Painter, font: egui::FontId) -> Arc<egui::Galley> {
+        self.layout_text(painter, font, self.title.clone())
+    }
+
+    /// The label, shortened in the middle to fit `max_width` when it's too
+    /// wide, keeping its end ("customers-1…000.csv"); and whether it was.
+    fn fitted_label(
+        &self,
+        painter: &egui::Painter,
+        font: egui::FontId,
+        max_width: f32,
+    ) -> (Arc<egui::Galley>, bool) {
+        let galley = self.layout_label(painter, font.clone());
+        if galley.size().x <= max_width {
+            return (galley, false);
+        }
+        let chars: Vec<char> = self.title.chars().collect();
+        // Keep the extension and a few characters before it.
+        let tail = self
+            .title
+            .rfind('.')
+            .map_or(4, |dot| self.title[dot..].chars().count() + 3)
+            .min(chars.len() / 2);
+        let elided = |head: usize| -> String {
+            let mut text: String = chars[..head].iter().collect();
+            text.push('…');
+            text.extend(&chars[chars.len() - tail..]);
+            text
+        };
+        // The longest head that fits.
+        let (mut low, mut high) = (0, chars.len() - tail);
+        while low < high {
+            let mid = (low + high).div_ceil(2);
+            let width = self.layout_text(painter, font.clone(), elided(mid)).size().x;
+            if width <= max_width {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        (self.layout_text(painter, font, elided(low)), true)
+    }
+
+    fn layout_text(
+        &self,
+        painter: &egui::Painter,
+        font: egui::FontId,
+        text: String,
+    ) -> Arc<egui::Galley> {
         painter.layout_job(egui::text::LayoutJob::single_section(
-            self.title.clone(),
+            text,
             egui::TextFormat {
                 font_id: font,
                 italics: self.style.italic,
@@ -1087,20 +1137,20 @@ fn draw(
             .iter()
             .map(|t| {
                 // Measure and paint the same shaped label, including italics.
-                let galley = t.layout_label(&painter, font.clone());
-                let width = (galley.size().x
-                    + 37.0
+                let extra = 37.0
                     + if t.dirty { 8.0 } else { 0.0 }
                     + if t.icon.is_some() {
                         frame.metrics.font_size + 5.0
                     } else {
                         0.0
-                    })
-                .clamp(70.0, 210.0);
-                (t, galley, width)
+                    };
+                let (galley, elided) =
+                    t.fitted_label(&painter, font.clone(), MAX_TAB_WIDTH - extra);
+                let width = (galley.size().x + extra).clamp(70.0, MAX_TAB_WIDTH);
+                (t, galley, width, elided)
             })
             .collect();
-        let total: f32 = labels.iter().map(|(_, _, w)| *w).sum();
+        let total: f32 = labels.iter().map(|(_, _, w, _)| *w).sum();
         let available = (bar.max.x - tabs_min.x).max(1.0);
         let scroll = state.tab_scroll.entry(group.entity).or_default();
         if Rect::from_corners(tabs_min, bar.max).contains(mouse) {
@@ -1119,7 +1169,7 @@ fn draw(
         }
         if scroll.selected != group.selected {
             let mut left = 0.0;
-            for (tab, _, width) in &labels {
+            for (tab, _, width, _) in &labels {
                 if Some(tab.entity) == group.selected {
                     if left < scroll.offset {
                         scroll.offset = left;
@@ -1139,7 +1189,7 @@ fn draw(
             tabs_min,
             bar.max + Vec2::Y / frame.ui.ctx().pixels_per_point(),
         )));
-        for (tab, galley, width) in labels {
+        for (tab, galley, width, elided) in labels {
             let target = Rect::from_corners(
                 Vec2::new(x, bar.min.y + PANEL_BORDER_WIDTH),
                 Vec2::new(
@@ -1188,6 +1238,9 @@ fn draw(
                 )
             });
             let hovered = response.hovered();
+            if elided && hovered {
+                response.clone().on_hover_text(&tab.title);
+            }
             let pressed = response.is_pointer_button_down_on()
                 && frame
                     .ui

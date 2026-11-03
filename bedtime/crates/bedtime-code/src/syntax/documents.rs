@@ -1,5 +1,6 @@
-//! Analysis for the documents editors show: one session and worker per
-//! document, owned by its entity, fed each new revision.
+//! Analysis for the documents editors (and `SyntaxViewer`s) show: one
+//! session and worker per document, owned by its entity, fed each new
+//! revision.
 use super::*;
 use crate::editor::EditorPanel;
 use bedtime_document::TextBuffer;
@@ -7,8 +8,14 @@ use bedtime_workbench::{DocumentReference, DocumentStatus, ManagedWork, Workbenc
 use bevy::prelude::*;
 use std::collections::HashSet;
 
+/// A panel, other than an editor, that reads the `DocumentSyntax` of the text
+/// document it shows (a Markdown preview colouring its code).
+#[derive(Component, Default)]
+pub struct SyntaxViewer;
+
 /// A text document's syntax analysis, on the document's entity while an editor
-/// shows it. The language comes from the document's title (its file name).
+/// or `SyntaxViewer` shows it. The language comes from the document's title
+/// (its file name).
 #[derive(Component)]
 pub struct DocumentSyntax {
     pub session: AnalysisSession,
@@ -26,7 +33,7 @@ impl DocumentSyntax {
 /// Start, feed and stop analysis, in `Update`.
 pub(crate) fn update_syntax(world: &mut World) {
     let shown: HashSet<Entity> = world
-        .query_filtered::<&DocumentReference, With<EditorPanel>>()
+        .query_filtered::<&DocumentReference, Or<(With<EditorPanel>, With<SyntaxViewer>)>>()
         .iter(world)
         .map(|reference| reference.document().entity())
         .collect();

@@ -1,11 +1,3 @@
-//! Screen effects: a CRT look over the whole window (scanlines, vignette,
-//! bloom, noise, curvature, pixel grid, phosphor burn-in, pulse). Each is a
-//! setting, so a workspace can have its own look.
-//!
-//! The main world copies the settings into a uniform on the workbench camera
-//! and bends pointer input to match curvature. The render world runs the
-//! passes over the finished frame, after egui draws and before bedtime-ui's
-//! final colour conversion (`UiSystems::PrepareOutput`).
 use bedtime_ui::{UiSystems, egui};
 use bedtime_workbench::{
     ActiveLayout, LayoutCamera,

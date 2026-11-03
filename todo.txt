@@ -1,6 +1,20 @@
 - theme creation panel
 - docs & shortcuts panel
-- csv viewer
 - http request panel
 - sqlite viewer
 - debugger panels
+
+- support for open new window in macos bar
+- model viewer
+    - tooltip for info, not button
+- trees (file tree, structure, git)
+    - only hittest on item, not the entire row
+    - add a small tooltip delay
+    - for file tree, hover tooltip should provide basic information (file type, git status, last modifed, etc)
+- find in files
+    - rename to Search Workspace
+    - improve layout of top bar (alignment, replace icon instead of chevron, take inspo from zed)
+    - clicking on an item should open
+    - fix open strategy when clicking on an item: it does not seem to be going into the largest space. it can open in the same area as the seatch panel itself if thats the largest
+    - when hovering an item with replace, it creates an extra newline with the button which is jarring
+    - use the same animations and styles as other trees
