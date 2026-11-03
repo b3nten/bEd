@@ -307,7 +307,7 @@ impl Execution<'_> {
                         self.source(&path, false)?;
                         // Do not canonicalize the final component: deleting a link
                         // to an outside directory must only trash the link itself.
-                        trash::delete(&path).map_err(io::Error::other)?;
+                        move_to_trash(&path)?;
                         Ok(Some(Change::Trashed { path }))
                     })();
                     self.finish_one(&path, outcome);
@@ -920,6 +920,24 @@ mod native_path_tests {
             copy_name(&name, false, 2).as_bytes(),
             b"native-\xff copy 2.bin"
         );
+    }
+}
+
+/// Moves `path` to the Trash. On macOS this uses `NSFileManager` instead of the
+/// `trash` crate's default, which scripts Finder through `osascript` and fails
+/// intermittently (Finder busy, AppleEvent timeouts, Automation permission
+/// prompts). The trade-off is that Finder's "Put Back" isn't offered.
+fn move_to_trash(path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        let mut context = trash::TrashContext::default();
+        context.set_delete_method(DeleteMethod::NsFileManager);
+        context.delete(path).map_err(io::Error::other)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        trash::delete(path).map_err(io::Error::other)
     }
 }
 
