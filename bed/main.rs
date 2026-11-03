@@ -10,6 +10,7 @@ use workspace::{Start, Workspace};
 mod effects;
 mod files;
 mod layouts;
+mod mascots;
 mod menus;
 mod panels;
 mod settings;
@@ -62,6 +63,7 @@ pub fn app(start: Start) -> App {
         workspace::WorkspacesPanelPlugin,
         files::FilesPlugin,
         terminal::TerminalsPlugin,
+        mascots::MascotsPlugin,
         automation,
     ))
     // Look for installed fonts now, so Settings can list them when opened.

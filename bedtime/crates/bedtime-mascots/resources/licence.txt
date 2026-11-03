@@ -1,0 +1,11 @@
+bed.glb — Bed Low Poly
+
+Author: mezuna
+Author profile: https://sketchfab.com/mezuna
+Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+Licence terms: https://creativecommons.org/licenses/by/4.0/
+
+Original model:
+https://sketchfab.com/3d-models/bed-low-poly-d58eea1a6ee746d29fd18f2d9e1a559d
+
+The model is used in bEd's mascot scene.

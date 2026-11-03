@@ -23,6 +23,7 @@ bedtime-font.workspace = true
 bedtime-hex.workspace = true
 bedtime-image.workspace = true
 bedtime-model.workspace = true
+bedtime-mascots.workspace = true
 bedtime-table.workspace = true
 bedtime-terminal.workspace = true
 bedtime-persistence.workspace = true

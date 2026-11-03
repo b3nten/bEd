@@ -145,7 +145,7 @@ Each step should produce a usable app. We can reorder at any point.
 10. Structure panel (observation 7).
 11. LSP + status bar.
 12. Git panel + diff (observation 6).
-13. Extras: fonts, mascots, effects, shell `bed open`, automation.
+13. Extras: fonts, mascots ✅, effects, shell `bed open`, automation.
 
 ## Step log
 
@@ -284,7 +284,13 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Viewers**, 2026-10-31, awaiting review. New crates, each a plugin with an
+- **Mascots**, 2026-10-31, awaiting review. `bedtime-mascots` ported from
+  bedtime_old (5 tests pass): `BedPanel` and `DuckPanel` are always-on panels
+  now, saved with the layout. bed's `mascots.rs`: View ▸ Bed (`app.open_bed`)
+  and `+ducky` in a terminal, one of each per layout. `mascots.py` opens both
+  and checks they come back (doesn't click: that plays sound).
+
+- **Viewers**, 2026-10-31, committed (`ef604bb`). New crates, each a plugin with an
   opener, a model decoded on the load worker, and a panel whose content fills
   it with `Floating` controls (new in bedtime-ui) and right-click menus:
   `bedtime-hex` (any file, `Fit::Can`: the last resort; find, go to offset),

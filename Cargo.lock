@@ -492,6 +492,7 @@ dependencies = [
  "bedtime-font",
  "bedtime-hex",
  "bedtime-image",
+ "bedtime-mascots",
  "bedtime-model",
  "bedtime-persistence",
  "bedtime-table",
@@ -662,6 +663,17 @@ dependencies = [
  "bevy",
  "image",
  "resvg",
+]
+
+[[package]]
+name = "bedtime-mascots"
+version = "0.1.0"
+dependencies = [
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
+ "gltf",
+ "rodio 0.21.1",
 ]
 
 [[package]]
