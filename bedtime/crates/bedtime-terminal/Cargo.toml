@@ -12,6 +12,7 @@ default = ["persistence"]
 persistence = ["bedtime-workbench/persistence"]
 
 [dependencies]
+bedtime-clipboard.workspace = true
 bedtime-ui.workspace = true
 bedtime-workbench.workspace = true
 bevy = { workspace = true, features = ["std"] }
@@ -23,6 +24,8 @@ polling.workspace = true
 unicode-width.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+# Pasted images are saved as PNG files whose paths are typed into the shell.
+image.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

@@ -4,11 +4,11 @@ version.workspace = true
 edition = "2024"
 publish = false
 license = "MIT OR Apache-2.0"
-description = "Independent text and file clipboard with an in-process fallback for Bevy"
+description = "Independent text, file and image clipboard with an in-process fallback for Bevy"
 
 [features]
 default = []
-system_clipboard = ["dep:arboard"]
+system_clipboard = ["dep:arboard", "arboard/image-data"]
 
 [dependencies]
 bevy_app = { version = "=0.20.0", default-features = false, features = ["std"] }

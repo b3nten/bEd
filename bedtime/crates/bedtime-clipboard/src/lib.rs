@@ -1,7 +1,8 @@
-//! A clipboard usable by games, UI and workbench independently.
+//! A clipboard usable by games, UI and workbench independently: text, file
+//! lists and images.
 //!
 //! Adapted from Bevy 0.20's `bevy_clipboard` resource/plugin design, distributed
-//! under MIT OR Apache-2.0 (see the accompanying licenses). File lists, shared
+//! under MIT OR Apache-2.0 (see the accompanying licenses). File lists, images, shared
 //! ownership and fallback after native initialization failure are Bedtime additions.
 //! `system_clipboard` opts into OS access on desktop targets. Otherwise the same
 //! API uses an in-process clipboard. An operation on a working native backend
@@ -32,6 +33,16 @@ enum Contents {
     Empty,
     Text(String),
     Files(Vec<PathBuf>),
+    Image(ClipboardImage),
+}
+
+/// Pixels on the clipboard: `rgba` holds `width * height` 8-bit RGBA pixels,
+/// row-major without padding. Encoding (PNG, …) is left to the application.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipboardImage {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
 }
 enum Backend {
     #[cfg(all(
@@ -189,6 +200,60 @@ impl Clipboard {
             Backend::System(clipboard) => {
                 clipboard.set().file_list(files).map_err(io::Error::other)?;
             }
+        }
+        state.local_write_generation = next_generation;
+        Ok(())
+    }
+
+    /// An absent image representation is `None`; native failures remain errors.
+    /// Natively this decodes whatever image format the platform offers (PNG or
+    /// TIFF on macOS, PNG on Linux, DIB on Windows) into RGBA.
+    pub fn read_image_if_present(&mut self) -> io::Result<Option<ClipboardImage>> {
+        match &mut self.0.lock().expect("Clipboard lock poisoned").backend {
+            Backend::Memory(Contents::Image(image)) => Ok(Some(image.clone())),
+            Backend::Memory(_) => Ok(None),
+            #[cfg(all(
+                feature = "system_clipboard",
+                any(unix, windows),
+                not(any(target_os = "android", target_os = "ios"))
+            ))]
+            Backend::System(clipboard) => Ok(native_if_present(clipboard.get().image())?.map(
+                |image| ClipboardImage {
+                    width: image.width,
+                    height: image.height,
+                    rgba: image.bytes.into_owned(),
+                },
+            )),
+        }
+    }
+    pub fn write_image(&mut self, image: &ClipboardImage) -> io::Result<()> {
+        if image
+            .width
+            .checked_mul(image.height)
+            .and_then(|n| n.checked_mul(4))
+            != Some(image.rgba.len())
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Clipboard image size does not match its RGBA data",
+            ));
+        }
+        let mut state = self.0.lock().expect("Clipboard lock poisoned");
+        let next_generation = next_generation(&state)?;
+        match &mut state.backend {
+            Backend::Memory(value) => *value = Contents::Image(image.clone()),
+            #[cfg(all(
+                feature = "system_clipboard",
+                any(unix, windows),
+                not(any(target_os = "android", target_os = "ios"))
+            ))]
+            Backend::System(clipboard) => clipboard
+                .set_image(arboard::ImageData {
+                    width: image.width,
+                    height: image.height,
+                    bytes: std::borrow::Cow::Borrowed(&image.rgba),
+                })
+                .map_err(io::Error::other)?,
         }
         state.local_write_generation = next_generation;
         Ok(())
@@ -389,6 +454,34 @@ mod tests {
             clipboard.read_text_if_present().unwrap(),
             Some(String::new())
         );
+    }
+
+    #[test]
+    fn memory_image_is_one_more_exclusive_representation() {
+        let mut clipboard = Clipboard::memory();
+        assert_eq!(clipboard.read_image_if_present().unwrap(), None);
+        let image = ClipboardImage {
+            width: 2,
+            height: 1,
+            rgba: vec![255, 0, 0, 255, 0, 0, 255, 128],
+        };
+        clipboard.write_image(&image).unwrap();
+        assert_eq!(clipboard.revision(), 1);
+        assert_eq!(clipboard.read_image_if_present().unwrap(), Some(image));
+        assert_eq!(clipboard.read_text_if_present().unwrap(), None);
+        assert!(clipboard.read_files().is_err());
+        clipboard.write_text("replaced").unwrap();
+        assert_eq!(clipboard.read_image_if_present().unwrap(), None);
+        let malformed = ClipboardImage {
+            width: 2,
+            height: 2,
+            rgba: vec![0; 4],
+        };
+        assert_eq!(
+            clipboard.write_image(&malformed).unwrap_err().kind(),
+            io::ErrorKind::InvalidInput
+        );
+        assert_eq!(clipboard.revision(), 2);
     }
 
     #[test]
