@@ -1,22 +1,18 @@
 # bedtime-video
 
-A video player for workbench apps, on macOS: AVFoundation plays it (what
-QuickTime plays: MP4, MOV, M4V, 3GP), with its sound.
+macOS workbench video player using AVFoundation. Supports MP4, MOV, M4V
+and 3GP with audio.
 
 ```rust,ignore
 app.add_plugins(VideoPlugin);
 ```
 
-- **The file isn't read into memory:** its model (`VideoFile`) is `UNREAD`, so
-  the document only knows its revision; a new revision (the file changed)
-  opens it again where it was.
-- **Playing.** An `AVPlayer` plays it; an `AVPlayerItemVideoOutput` hands
-  each new frame over as BGRA pixels, written into one Bevy `Image` (per
-  frame size) shown as an egui user texture. Not an egui-managed texture:
-  bevy_egui makes those a new image on every full update, which shows nothing
-  until it's on the GPU, so the picture flickered. Players
-  belong to their panels (`Players`, a non-send resource: AVFoundation stays
-  on the main thread) and go when the panel does.
+- **Loading:** `VideoFile::UNREAD` avoids loading file bytes into the document.
+  A revision change reopens playback at the previous position.
+- **Playback:** `AVPlayerItemVideoOutput` supplies BGRA frames from `AVPlayer`
+  to a persistent Bevy `Image` per frame size, displayed as an egui user
+  texture. Reusing the image avoids upload flicker. `Players` is non-send;
+  AVFoundation runs on the main thread. Panel closure releases its player.
 - **Viewing.** The picture fills its panel, letterboxed. Click or Space plays
   and pauses; Left and Right skip five seconds; Home goes to the start.
 - **Floating:** play, a scrubber (dragging pauses, and plays again after),
@@ -25,7 +21,7 @@ app.add_plugins(VideoPlugin);
   right-click menu plays, restarts, loops and mutes. Looping, muting and the
   volume are saved.
 
-Elsewhere than macOS there's no opener (files go to the next fit).
+No opener is registered on other platforms; files use the next matching viewer.
 
 ```sh
 cargo test -p bedtime-video

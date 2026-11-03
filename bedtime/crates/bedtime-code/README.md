@@ -1,10 +1,8 @@
 # bedtime-code
 
-Code editing for workbench apps, in one crate: the text editor, syntax
-(tree-sitter), Structure and language servers.
-They call each other directly instead of through contribution APIs. The
-grammars are their own crate, `bedtime-grammars` (30 languages, compiled C;
-about 25 s on a clean build, cached after).
+Workbench text editor, tree-sitter syntax analysis, Structure panel and
+language servers. Modules call each other directly. `bedtime-grammars`
+provides compiled C parsers for 30 languages.
 
 ```rust,ignore
 app.add_plugins(CodePlugin);
@@ -71,8 +69,7 @@ text value.
 
 ## Comparisons
 
-`editor::diff` shows a comparison inline (the old editor's, brought back):
-put an `EditorComparison` (a `Comparison`: the old text, and the changed line
+`editor::diff` displays inline comparisons. Attach an `EditorComparison` (a `Comparison`: the old text, and the changed line
 ranges when known; and the `DiffAction` buttons) on an editor panel. Old lines
 show between the new, tinted, with old and new line numbers; each change has
 its buttons above it. A click comes back as a `ComparisonRequest` on the panel
@@ -84,9 +81,8 @@ another panel (mark that panel `HostedViewer`).
 
 ## Syntax
 
-`syntax` is the old `bedtime-treesitter`: an `AnalysisSession` parses a
-text's revision on a worker (incrementally from the previous tree while every
-change since is known) and produces an `Observation`: highlights, folds and an
+`syntax::AnalysisSession` parses a text revision on a worker
+(incrementally when all changes since the previous tree are available) and produces an `Observation`: highlights, folds and an
 outline, all at that revision. Sources over 8 MiB aren't analysed; editing is
 unaffected.
 
@@ -115,8 +111,7 @@ of the focused editor's text, or of the last editor focused while another
 kind of panel has focus (`StructureSource`, updated after `update_syntax`).
 Rows are the file tree's (`bedtime_ui::tree::paint_row`, without an icon): a
 long name is cut short at the panel's edge. Entries collapse and expand,
-animated. While an edit is reanalysed the last
-outline stays, so it doesn't flicker as you type; another editor or language
+animated. The previous outline remains during reanalysis; switching editor or language
 clears it. Clicking an entry selects its name in that editor and focuses the
 editor (`reveal_entry`); an entry from an older analysis, or an editor that's
 gone or composing, does nothing. Its byte ranges are never mapped through
@@ -124,10 +119,10 @@ edits.
 
 ## Language servers
 
-`lsp` is the old `bedtime-lsp`: a backend that runs a local stdio server per
-launch configuration and root on a worker (process, protocol, sync, progress,
-diagnostics, definitions; its bounds and protocol details are in the module
-docs), and `documents`, which connects it to workbench documents:
+`lsp` runs a local stdio server per launch configuration and root on a worker.
+It handles process lifecycle, protocol, synchronization, progress, diagnostics
+and definitions; see module docs for limits and protocol details. `documents`
+connects servers to workbench documents:
 
 - **Which servers.** `config` has the built-in servers (`KNOWN_SERVERS`,
   Helix's defaults for the languages there's syntax for: rust-analyzer,
@@ -155,11 +150,9 @@ docs), and `documents`, which connects it to workbench documents:
   server (rust-analyzer runs `cargo check` then).
 - Diagnostics are drawn in the document's editors (underlined, with the
   message on hover) while the text is at their revision.
-- **Nothing waits.** A request goes to the server at once, or fails at once
-  when the server can't answer now: starting, failed, loading the project
-  (rust-analyzer says so), or without the document's latest text (which is
-  sent right then if it hadn't been yet). One request, one answer: no queues,
-  no retries, no waiting for a server to settle.
+- **Requests** dispatch immediately or fail if the server is starting, failed,
+  loading the project, or missing the latest document text. Missing text is
+  sent immediately. Requests are not queued or retried.
 - Go to Definition (F12, or Cmd/Ctrl-click a name) opens the first answer
   with `open_path`; a newer request replaces an older one. Positions are
   taken as characters, which is exact for ASCII before the target.
@@ -171,8 +164,8 @@ docs), and `documents`, which connects it to workbench documents:
   selected entry is resolved for its documentation, shown beside the menu.
   Accepting applies its edits (an import too) as one change; a snippet's tab
   stops are then visited with Tab.
-- Errors from what you asked for (F12, Cmd-click, Ctrl-Space) go to
-  notifications; what's asked for you while typing just doesn't happen.
+- Explicit request errors (F12, Cmd-click, Ctrl-Space) produce notifications.
+  Automatic request errors are suppressed.
 - `request_query`, `query_is_current`, `cancel_query` and
   `take_query_answers` are there for other callers; the editor's own
   queries are answered straight to it (`assist`).

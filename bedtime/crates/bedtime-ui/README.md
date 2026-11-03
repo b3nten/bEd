@@ -56,8 +56,8 @@ labels, callbacks or entity IDs. Use `()` when no props are needed.
 belongs to ECS data; local presentation state can use scoped egui IDs. Do not
 hold a component/resource borrow while passing the same world mutably to a child.
 
-`UiContext` supplies instance identity, prepared theme, motion and drawing
-services separately from `&mut egui::Ui`. That allows normal composition:
+`UiContext` supplies instance identity, theme, motion and drawing services
+separately from `&mut egui::Ui`:
 
 ```rust,ignore
 ui.horizontal(|ui| Details::draw(ui, world, context, props.details));
@@ -162,10 +162,8 @@ identity as `tooltip`. Runtime tooltips have zero delay and do not require a
 stationary pointer; feature controllers may impose their own delay (bEd LSP
 hover uses 200 ms).
 
-`MotionPolicy` is independent of theme. Default duration is 160 ms. Motion uses
-`ease`, an exponential approach as the RAD Debugger moves things (each moment
-covers the same fraction of what's left, `1 - 2^(-7t)`, scaled to land at the
-duration): quick to start, gentle to settle. Toggle motion retargets
+`MotionPolicy` is independent of theme (default: 160 ms). `ease` uses
+`1 - 2^(-7t)`, normalized to reach the target at the specified duration. Toggle motion retargets
 continuously; disabling motion settles
 immediately and disables popup growth/fading. Stable egui IDs retain identity.
 `UiFrame::animate_bool(id, target)` supplies the same transition for custom
@@ -230,12 +228,10 @@ silently treated as absent text.
 
 ## Floating controls
 
-Content that fills its panel (an image, a model, a video) keeps its controls
-in `Floating` bars: small rounded bars at a corner or the middle of an edge of
-a rect, shown while the pointer is over it or one of their menus is open, and
-faded away otherwise (`shown(true)` keeps them, as for a paused video).
-`UiFrame::floating_button`, `floating_toggle` (underlined in the accent while
-on) and `floating_label` are their pieces.
+`Floating` positions rounded control bars at corners or edge centers. Bars
+show on hover or while a menu is open, and fade otherwise; `shown(true)`
+forces visibility. Controls: `UiFrame::floating_button`, `floating_toggle`
+(accent underline when enabled) and `floating_label`.
 
 ```rust,ignore
 Floating::new(id, rect, egui::Align2::CENTER_BOTTOM).show(&mut frame, |f| {
@@ -370,10 +366,9 @@ and managed work. Closing the last viewer retains the canonical document.
 Game entities need no layout components. Application-wide session data belongs
 in resources; optional panel/document owners give work a shorter lifetime.
 
-Where a new panel goes: `area_for(layout, fits)` is an area with a panel
-that `fits` (the focused one, else the most recently focused, by
-`AreaFocusedAt`), else the largest area (`destination_area`). Opening
-documents and bEd's panels both use it, so a new panel lands beside its kind.
+`area_for(layout, fits)` selects an area containing a matching panel:
+focused, then most recently focused (`AreaFocusedAt`), then the largest area
+(`destination_area`). Document opening and bEd panel placement both use it.
 
 Files dragged in from outside the app (Finder) get the same drop preview as
 a panel drag when the app inserts `FileDrops`: given the dropped paths, it
@@ -758,7 +753,7 @@ is applied once. Window-wide opacity remains 1 so text stays opaque.
 
 Applications configure Bevy window transparency/composite alpha mode and the
 UI camera's scene-overlay routing. On macOS, enable `fullsize_content_view`
-alongside `titlebar_transparent` to paint behind the native titlebar, as in the former application.
+alongside `titlebar_transparent` to paint behind the native titlebar, as required by AppKit.
 Set `titlebar_show_title: false` when the application supplies its own titlebar
 content; keep `titlebar_shown` and `titlebar_show_buttons` enabled to retain native
 controls. `WindowTitlebarGeometry` reports AppKit's reserved height and the union

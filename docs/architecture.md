@@ -1,4 +1,4 @@
-# Architecture: the bedtime crates
+# Architecture: bedtime crates
 
 Status (2026-10-31): **migration steps 1–12 built** (persistence, settings,
 actions and work, menus, layouts and chrome, the framework, opening with
@@ -6,27 +6,23 @@ actions and work, menus, layouts and chrome, the framework, opening with
 Structure, language servers, hover, completions, code actions, rename,
 references and formatting in `bedtime-code`, and `bedtime-terminal`); the
 opening policy is deferred.
-Update this file as decisions change.
+
+Design and migration record. Status and API names reflect the recorded date.
 
 ## Goal
 
-bedtime is for building desktop apps with Bevy, not only bed. Each layer is
-useful without the ones above it:
+Bevy desktop libraries. Each layer is independent of higher layers:
 
-- **A UI toolkit.** `bedtime-ui` alone gives an app a good-looking egui UI in
-  Bevy: theme, fonts, icons, widgets, docking (layouts, areas, panels) and
-  window chrome. No documents, no workspaces, no opinions about files.
-- **Building blocks.** Persistence, settings, actions and menus are separate
-  crates. An app can take the UI plus settings and a settings panel without
-  anything else.
-- **A framework.** `bedtime-workbench` is the opinionated layer: a
-  document-based desktop app with workspaces, opening, and the unsaved-work
-  flow, wired together so an app gets them by adding one plugin group. An app
-  that wants different policies composes the building blocks itself.
+- **UI toolkit:** `bedtime-ui` provides themes, fonts, icons, widgets, docking
+  and window chrome; no documents, workspaces or file policy.
+- **Independent crates:** persistence, settings, actions and menus.
+- **Document framework:** `bedtime-workbench` combines workspaces, document
+  opening and unsaved-work handling in a plugin group. Applications can
+  instead compose the lower-level crates.
 - **Plugins** (file tree, editor, terminal, language servers, tree-sitter,
   structure) build on the framework.
 
-bed is one app on top: policy only.
+`bed` supplies application policy.
 
 ## Crates
 
@@ -101,16 +97,15 @@ entry in a store. Also here:
 - `world.persistence()` / `world.persistence_mut()` for capturing and
   restoring the snapshot directly (layout templates and tests use it).
 
-There's no routing: today's `persist_in` and the rule that only
-`WorkbenchStore` collects entities go away. Data that belongs somewhere other
-than the world snapshot is a persisted resource.
+No routing: the current `persist_in` and the rule that only `WorkbenchStore`
+collects entities go away. Data outside the world snapshot is a persisted
+resource.
 
 `WorkbenchStore` stays in workbench, which calls `persist_world::<WorkbenchStore>()`;
 with workspaces it's the workspace's store.
 
-There's no separate config crate. "Config" so far is the config directory and
-the convention of a global store, which fit here. Revisit if something bigger
-appears.
+No separate config crate: "config" is the config directory and the global-store
+convention, which fit here.
 
 ## `bedtime-settings`
 
@@ -118,9 +113,9 @@ From workbench's `settings.rs`:
 
 - `Setting`, `settings!`, layers, `Settings` (`get`, `get_at`, `inherited`,
   `overridden_above`), `SettingsAppExt`, `read_setting`, `apply`.
-- Setting and clearing values. Today these are `Workbench` methods. Here they
+- Setting and clearing values. These are `Workbench` methods today; here they
   become methods on a settings view (`world.settings_mut().set::<S>(layer, v)`),
-  the same pattern as `world.workbench_mut()`.
+  as with `world.workbench_mut()`.
 - With `ui`: the row helpers that are in bed today (`columns`, `slider`,
   `combo`, `reset_button`, `overridden_marker`, layer tabs), and a settings
   panel that draws registered sections.
@@ -228,10 +223,8 @@ the window half of `native.rs`, `dialogs.rs`).
   `world.layouts_mut()`, the view over every layout and its areas and panels,
   with today's `split_area`, `focus_panel`, `move_tab`, and so on
   (`world.layouts().active()`, `world.layouts_mut().split_area(…)`).
-- **Docking is placed, not in charge.** It fills the space it's given. The app
-  lays out its window with ordinary egui (titlebar, a status bar, anything
-  else) and puts the docking area in what's left. Workbench's status bar slot
-  (`register_status_bar`) goes away; a status bar is app code.
+- **Docking** fills the region allocated by the application's egui layout.
+  Status bars remain application code; `register_status_bar` is removed.
 - **Closing is a request.** Closing a panel, area or layout triggers a
   close-request event carrying the planned edit. Observers may stop it. If
   none does, it closes. Workbench's observer stops a close that would lose
@@ -246,18 +239,14 @@ the window half of `native.rs`, `dialogs.rs`).
 ### Window chrome
 
 - Transparency, `WindowBlur`, `WindowBackground`, the titlebar geometry.
-- **The titlebar is a place for content.** bedtime-ui provides the region
-  (height, space for the native window buttons, dragging, double-click to
-  zoom); the app fills it with whatever it likes: a menu bar from
-  `bedtime-menus`, tools, a search field. Where content can't be drawn into
-  the titlebar, or the app turns that off, the same content draws as a row
-  under the native titlebar. One feature with a fallback, not two.
+- **Titlebar:** bedtime-ui provides geometry, native-button clearance, dragging
+  and double-click zoom. The application supplies content. When custom
+  titlebar content is unsupported or disabled, it renders below the native
+  titlebar.
 
 ### Dialogs
 
-bedtime-ui owns a **modal layer**, drawn after the app's root view on every
-window, so nothing draws on top of a dialog and apps can't forget to draw
-them. `ErrorDialog` and its queue move here; workbench's unsaved-changes
+bedtime-ui draws a **modal layer** after each window's root view. `ErrorDialog` and its queue move here; workbench's unsaved-changes
 prompt goes through the same layer.
 
 - Each modal belongs to a window: by default the one the request came from (a
@@ -278,7 +267,7 @@ documents (a terminal, the file tree) can use it.
 
 ## `bedtime-workbench`
 
-What's left, plus what bed does today that any document app needs:
+Document-application services:
 
 - **Documents in the world**: document entities, `DocumentReference`, loading
   and saving on workers, autosave, drafts.
@@ -340,13 +329,11 @@ only exists to switch workspace.
 
 ### Opening
 
-Opening shows a document in a viewer panel, with optional state ("at line
-40", "select this span"). It's the same call whether the document is new,
-already open in a panel (Structure moving its editor to a symbol), or open
-elsewhere. Tools' own navigation (go to definition) is theirs: they work out
-a target, then open it.
-
-**Every open ends the same way: a viewer panel, and its state applied.**
+Opening shows a document in a viewer panel, with optional state ("at line 40",
+"select this span"). The call is the same whether the document is new, already
+open in a panel (Structure moving its editor to a symbol), or open elsewhere.
+Tools' navigation (go to definition) is theirs: they work out a target, then
+open it.
 
 ```rust
 trait DocumentModel {
@@ -421,7 +408,7 @@ app.register_opener(
 
 ### Documents and unsaved work
 
-How workbench makes sure nothing is lost, without plugins writing any of it.
+Workbench owns document lifetime and unsaved-work handling.
 
 **In the world:**
 
@@ -527,7 +514,7 @@ possible, and the step is reviewed before the next.
 5. **Docking and chrome.** Move docking, window chrome and error dialogs into
    `bedtime-ui`. Add the close request; workbench's unsaved-work check becomes
    an observer. Docking fills the space it's given; bed draws its own status
-   bar. The biggest step: most of it is moving code, about 6,000 lines.
+   bar. Approximately 6,000 lines move.
 6. **The framework.** `WorkbenchPlugins`; workspaces move from bed into
    workbench as an optional plugin and feature, with `Root`. Add the umbrella
    crate and the docking-only example.

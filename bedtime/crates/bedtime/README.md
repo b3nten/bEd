@@ -1,6 +1,6 @@
 # bedtime
 
-Desktop apps with Bevy, in layers, re-exported behind features:
+Feature-gated re-exports for Bevy desktop applications.
 
 | Feature | Crate | What |
 | --- | --- | --- |

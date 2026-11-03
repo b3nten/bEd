@@ -1,7 +1,6 @@
 # bedtime-filetree
 
-A file tree panel for workbench apps: the folders under the workbench's
-`Root`, opening files with `open_path`.
+Workbench file tree rooted at `Root`. Opens files through `open_path`.
 
 ```rust,ignore
 app.add_plugins(FileTreePlugin);
@@ -13,10 +12,9 @@ world.spawn((FileTree::default(), InArea(area)));
   the world shows the same root.
 - **Opening.** A click on a file opens a preview of it (`open_path` with
   `preview: true`), so clicking through files reuses one tab. The tree keeps
-  focus, so arrow keys keep browsing. A double click, Enter or the context
-  menu's Open opens it for good. Which viewer opens it, and what happens when
-  nothing can, is the app's (`register_opener`, `set_open_fallback`); the tree
-  reports errors as notifications.
+  focus, so arrow keys keep browsing. Double-click, Enter or the context
+  menu's Open pins the tab. The application supplies viewer selection and
+  fallback (`register_opener`, `set_open_fallback`). Errors produce notifications.
 - **Open With.** A file's context menu lists `openers_for(path)`, worked out
   when the menu opens. The menu also has Copy Path and Refresh.
 - **File operations.** The context menu has New File…, New Folder… (in that
@@ -80,9 +78,8 @@ being drawn.
 
 ## Not yet
 
-From the old tree (in git history before bed_old was removed), still to come back
-as needed: multiple selection (operations take one row), progress for long
-operations, undoing them, and hiding chosen files.
+Unsupported: multiple selection (operations take one row), operation progress,
+operation undo and per-file hiding.
 
 ## Tests
 

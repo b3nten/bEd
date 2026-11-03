@@ -1,15 +1,14 @@
 # bedtime-workbench
 
 One editing session per Bevy World, with optional native and egui presentation.
-Add WorkbenchPlugins and UI's UiPlugin after the application's normal Bevy setup,
-in either order. Applications compose concrete layout and panel entities;
-an empty workbench is valid. Workbench never installs
-DefaultPlugins or creates a window or GPU device. Layouts,
-panels and the window's chrome are bedtime-ui's
-[`layouts`](../bedtime-ui/README.md#layouts), re-exported; workbench installs
-`LayoutsPlugin` and adds documents to them: drafts block closing their panels,
-closing a panel that would lose unsaved work asks first (a close hook), and
-tabs of unsaved documents show it (`PanelModified`).
+Install `WorkbenchPlugins` and `UiPlugin` after Bevy setup, in either order.
+Applications create layouts and panels; an empty workbench is valid. Workbench
+does not install `DefaultPlugins` or create windows or GPU devices.
+
+Layouts, panels and chrome are re-exported from
+[bedtime-ui](../bedtime-ui/README.md#layouts). Workbench installs `LayoutsPlugin`
+and integrates documents: drafts block panel closure, unsaved work triggers a
+close prompt, and `PanelModified` marks unsaved tabs.
 
 | Plugin | Responsibility |
 | --- | --- |
@@ -41,9 +40,8 @@ app.add_plugins(WorkbenchCorePlugins);
 A workspace is a folder with its own store (`WorkbenchStore`, under
 `<config>/workspaces/<hash>/`) and settings layer, over the app-wide
 `GlobalStore` (`<config>/global/`, with the global settings layer and the
-recent list). There's always one: the folder the app was opened at, or the
-default workspace (the home folder). A lock stops two instances saving the
-same workspace.
+recent list). Each session has a folder workspace or the default workspace (home folder).
+A lock prevents concurrent instances from saving the same workspace.
 
 ~~~rust,ignore
 fn app(start: Start) -> App {
@@ -64,9 +62,8 @@ layers, and the `Workspace`, `Root` and `RecentWorkspaces` resources.
 the plugin was given; that's `bevy::winit::relaunch`, from the bevy_winit fork,
 so apps using this feature need the same `[patch.crates-io]` entry.
 
-`Root` is the folder plugins work in (a file tree's start, a terminal's
-directory). The workspaces plugin sets it; an app without workspaces sets its
-own or leaves it unset.
+`Root` supplies plugins' working directory. `WorkspacesPlugin` sets it;
+applications without workspaces may set it or leave it unset.
 
 
 On macOS with `ui`, the native window adapter also supplies live file-drag

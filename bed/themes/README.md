@@ -1,12 +1,10 @@
 # bEd's themes
 
-bEd ships these twenty themes. Each launch, any whose file is missing from
-`~/.config/bed/themes/` is written there (existing files are never touched),
-and that folder is where themes are read from. Edit them in place, copy one to
-make your own, or delete the ones you don't use (they come back on the next
-launch). Settings → Theme → the folder button opens it. bEd picks up new,
-edited and removed files while it runs; a file with errors is reported in
-Settings, and the theme falls back to bedtime-ui's dark theme.
+Bundled themes are installed in `~/.config/bed/themes/` when missing at
+startup; existing files are preserved. Edit or copy files in this directory.
+Deleted bundled themes return on restart. Settings → Theme → folder opens
+the directory. Changes are loaded at runtime. Invalid files produce an error
+in Settings and fall back to bedtime-ui's dark theme.
 
 A theme's id is its file name (`tokyo`), which the `appearance.theme` setting
 names.

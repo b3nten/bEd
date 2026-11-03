@@ -3,9 +3,8 @@
 Document models, sources and transaction history, without Bevy, a filesystem, a
 renderer or a task runtime.
 
-- **Models.** `DocumentModel` says what a document is made of and how it
-  changes. A change is pure and returns its inverse, so history can undo any
-  model the same way. `TextBuffer` is the text model: a persistent rope whose
+- **Models.** `DocumentModel` defines document data and reversible changes.
+  Changes are pure and return their inverses. `TextBuffer` is the text model: a persistent rope whose
   snapshots share structure, edited with `BufferEdit`.
 - **History.** `History<Model, Group>` applies transactions atomically, keeps a
   bounded undo/redo stack, merges grouped edits, and keeps a journal of recent

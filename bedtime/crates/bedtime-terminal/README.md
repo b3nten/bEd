@@ -12,9 +12,9 @@ app.add_plugins(TerminalPlugin); // After the application's Bevy/Workbench/UI se
 commands.spawn((TerminalPanel::default(), InArea(area)));
 ```
 
-The panel's label is **Terminal**. The component requires `PanelInstance::of::<Self>()`,
-so metadata and drawing exist as soon as the spawn applies. The plugin creates no
-window, camera or renderer. No panel registration is needed.
+The **Terminal** panel requires `PanelInstance::of::<Self>()` for metadata
+and drawing. No registration is required. The plugin creates no window,
+camera or renderer.
 
 Instance tab labels follow the local foreground process, falling back to the
 launched shell name and then **Terminal** before a runtime exists. The shared PTY
@@ -60,18 +60,16 @@ working directory. `TERM_PROGRAM` defaults to `bed` unless explicitly overridden
   `PROMPT_COMMAND` (a `.bashrc` that replaces `PROMPT_COMMAND` loses them);
   fish 4 sends them itself. rio-vt records them on the rows (see its patch
   record).
-- **Command blocks** (`command_blocks`): each command, from its prompt to the
-  next, gets a bar in the left gutter: breathing accent while it runs, green
-  when it succeeded, red when it failed, flaring as it finishes (a failure
-  tints the whole command for a moment). Its prompt line says how it failed
-  and how long it took (from a second; while running, after two). Clicking
-  the bar selects the command's output. Cmd+Up/Down (Ctrl+Shift elsewhere)
-  jumps between commands.
+- **Command blocks** (`command_blocks`) span consecutive prompts. Gutter bars
+  pulse while running, turn green on success or red on failure, and flash
+  on completion; failures briefly tint the block. Prompt labels show failure
+  status and duration (after 1 s completed or 2 s running). Clicking a bar
+  selects output. Cmd+Up/Down (Ctrl+Shift elsewhere) navigates commands.
 - **Notifications.** A command that ran 10 s or more and finished while its
   terminal wasn't in front reports a workbench notification.
-- **Cursor.** The cursor glides between cells (its leading edge in 50 ms, its
-  trailing edge in 130 ms) with a fading comet; in cell units, so scrolling
-  doesn't animate. Off with the app's reduced motion.
+- **Cursor:** cell-relative animation with a 50 ms leading edge, 130 ms
+  trailing edge and fading trail. Scrolling does not animate the cursor.
+  Reduced motion disables animation.
 - **Links.** With Cmd (Ctrl elsewhere) held, links in the output are
   underlined; a `path:line` shows that line. Cmd-click opens files in the app
   (`open_path`, relative to the shell's directory, at the line and column)

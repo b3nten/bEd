@@ -1,18 +1,13 @@
 # Project context
 
-Last updated: 2026-11-02. Keep this file short and current. Update the step log
-and open questions as work proceeds; delete anything that turns out to be wrong.
+Last updated: 2026-11-02. Design decisions and implementation history.
+Step-log entries describe their recorded dates, not necessarily current APIs.
 
 ## Goal
 
-Rebuild **bEd** (the app in `bed/`) from scratch, one feature at a time, with
-the previous app as reference (`bed_old/` and `bedtime_old/` were removed on
-2026-11-02; they're in git history before then). After each step we review the code together
-and decide whether Bedtime/Workbench should change so the integration is cleaner.
-
-End state: `bed` is small and easy to follow. Complexity that any desktop app
-would need lives in `bedtime`, while `bedtime` stays flexible enough for apps
-other than an IDE.
+Rebuild **bEd** (`bed/`) incrementally. Keep application policy in `bed` and
+reusable desktop mechanisms in `bedtime`. The previous implementation
+(`bed_old/`, `bedtime_old/`) is in git history before its removal on 2026-11-02.
 
 ## Responsibilities
 
@@ -21,9 +16,6 @@ other than an IDE.
 | **Workbench** (`bedtime-workbench`) | Panel layout (layouts, areas, tabs), documents (load/save/history/conflicts), commands, menus, managed background work, shutdown | Which panel opens a file, where data is stored, app-specific UI |
 | **Bedtime plugins** (`bedtime-*`) | Optional features, usually by contributing panels (file tree, editor, terminal, hex, image, model, LSP, git...) | Policy: cwd, viewer choice, storage paths |
 | **Application** (`bed`) | Policy and coordination: what to open and in which panel, project root, where/when to serialize, defaults, keybindings, branding | Reusable mechanisms |
-
-A test for where code belongs: *would a different desktop app built on Bedtime
-need to write this again?* If yes, it probably belongs in Bedtime.
 
 ## Repository map
 
@@ -43,11 +35,10 @@ need to write this again?* If yes, it probably belongs in Bedtime.
   root `Cargo.toml` and `vendor/README.md`).
 - `references/zed/` — local Zed checkout for reference; gitignored.
 
-The old guidance docs (AGENTS.md, ENGINEERING.md, `.skills/`, `MIGRATION/`) were
-removed in commit `0e763c8`; read them with `git show c804b15:<path>` if useful.
-The engineering principles in the old AGENTS.md are still a good baseline
-("minimize conceptual complexity, not code size"; clear ownership; visible
-execution; no abstraction just to organize code).
+Historical guidance (`AGENTS.md`, `ENGINEERING.md`, `.skills/`, `MIGRATION/`)
+was removed in `0e763c8`; retrieve it with `git show c804b15:<path>`. Principles:
+minimize conceptual complexity, define ownership, keep execution explicit,
+and avoid abstractions used only for organization.
 
 ## Verification
 
@@ -66,7 +57,7 @@ behind features and silently don't run otherwise.
 
 ## bed_old feature inventory
 
-Approximate line counts, to show where the weight was.
+Historical module sizes (approximate).
 
 | Feature | bed_old modules | Lines |
 | --- | --- | --- |
@@ -86,8 +77,7 @@ Approximate line counts, to show where the weight was.
 
 ## Initial architecture observations
 
-From a first read on 2026-10-26. These are leads to check during the relevant
-step, not decisions.
+Initial hypotheses, 2026-10-26; not decisions or current-state claims.
 
 1. **`FilePanel` is a catch-all panel.** `files.rs` (4.1k lines) has one panel type
    that switches between editor, image, hex, model and metadata views. Bedtime
@@ -127,7 +117,7 @@ step, not decisions.
 
 ## Proposed step order
 
-Each step should produce a usable app. We can reorder at any point.
+Each step must produce a usable app. Order is provisional.
 
 0. ✅ Window, workbench surface, camera, close request → exit (current `bed/main.rs`).
 1. ✅ Global settings: resource, config file, Settings panel.

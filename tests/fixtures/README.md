@@ -1,7 +1,7 @@
 # Shared viewer fixtures
 
-These assets are used by the retained application/library tests, examples and
-native smoke scripts. Tests do not require an upstream checkout or network.
+Assets for application and library tests, examples and native smoke scripts.
+No upstream checkout or network is required.
 
 - `gltf/cube.gltf` and `gltf/cube.glb` are original synthetic fixtures with cube
   geometry and an embedded checker texture. `gltf/generate.py` regenerates them.

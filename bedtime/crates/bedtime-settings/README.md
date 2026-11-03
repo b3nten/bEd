@@ -1,9 +1,8 @@
 # bedtime-settings
 
-Typed settings resolved through layers, each layer kept in a
-[`bedtime-persistence`](../bedtime-persistence/README.md) store. With the `ui`
-feature, settings declared in a section describe how they're edited, and the
-crate draws them.
+Typed, layered settings backed by
+[`bedtime-persistence`](../bedtime-persistence/README.md) stores. The `ui`
+feature renders editors for settings declared in sections.
 
 ```rust,ignore
 use bedtime_settings::*;

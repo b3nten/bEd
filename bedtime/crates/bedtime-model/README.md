@@ -1,7 +1,6 @@
 # bedtime-model
 
-A 3D model viewer for workbench apps: glTF, GLB and STL, rendered in the
-app's Bevy world and drawn into its panel.
+Workbench glTF, GLB and STL viewer. Renders in the application's Bevy world.
 
 ```rust,ignore
 bedtime_model::register_asset_source(&mut app); // before DefaultPlugins
@@ -18,7 +17,7 @@ Display, Lighting, Skybox, Shadows and Reset Appearance. Zoom In, Zoom Out
 and Reset Zoom (Cmd/Ctrl+=, - and 0) move the camera and reframe: it handles
 workbench's actions, rather than the panel zooming. Changes to a `.gltf`'s other files aren't watched.
 
-The rest of this describes the embeddable scene underneath.
+## Embedded scenes
 
 Register `register_asset_source(&mut app)` **before** the host's `AssetPlugin`;
 install `ModelPlugin` after the host renderer and UI. The host supplies Bevy's
@@ -43,7 +42,7 @@ subtree with its camera, lighting, imported geometry and debug geometry. Use
 identity transforms for model-view ancestors. A free nonzero render layer is
 chosen from the actual world; hosts must reserve custom layers before creating
 model scenes and must not reuse a live scene's layer for unrelated content.
-Imported cameras, lights and animation playback are disabled, matching the former application.
+Imported cameras, lights and animation playback are disabled.
 Bevy retains authored geometry/materials and GPU skeleton posing. Inspection
 uses the authored pose to calculate bounds and display debug meshes.
 
@@ -67,14 +66,14 @@ normal vectors (at most 6,000); Studio, Outdoor, Neutral and two embedded Poly
 Haven HDRIs; skybox visibility, blur and horizon; shadows, ambient occlusion and
 exposure. Background blur leaves environment lighting/reflections sharp. Wire
 views use portable line meshes. Ambient occlusion is disabled when the adapter's
-storage-texture limit cannot support it. Defaults match the former application.
+storage-texture limit cannot support it.
 
-Preparation ports bEd's Draco, meshopt, quantization, WebP, material validation,
+Preparation supports Draco, meshopt, quantization, WebP, material validation,
 UV/tangent corrections and STL import. Unsupported required extensions fail;
-unsupported material details produce the existing compatibility warnings.
-Animations are counted, with no playback controls. Limits remain 128 MiB glTF
+unsupported material details produce compatibility warnings.
+Animations are counted, with no playback controls. Limits: 128 MiB glTF
 input, 64 MiB STL/input resources, one million vertices, three million indices,
-100,000 nodes and 512 MiB total decoded texture allocation, with existing
+100,000 nodes and 512 MiB total decoded texture allocation, with
 hierarchy and numeric-range validation. Embedded/data-URI resources work without
 a resolver. Relative local sidecars, including parent-directory references,
 are supported; absolute paths, URL schemes and malformed URI escapes are rejected.

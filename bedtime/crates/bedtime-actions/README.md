@@ -1,9 +1,8 @@
 # bedtime-actions
 
-Actions (named things a user can do), the handlers that perform them, and
-their keys, for Bevy apps. Needs no other bedtime crate; `settings` makes keys
-settings ([`bedtime-settings`](../bedtime-settings/README.md)), and `ui`
-collects shortcuts from egui.
+Actions, handlers and keybindings for Bevy. Optional features:
+- `settings`: layered keybindings through [`bedtime-settings`](../bedtime-settings/README.md).
+- `ui`: egui shortcut collection.
 
 ```rust,ignore
 app.add_plugins(ActionsPlugin);
@@ -11,9 +10,8 @@ app.add_plugins(ActionsPlugin);
 
 ## Actions and handlers
 
-An action (a command the user can run: from a menu, a key, a button) is a
-marker type implementing `Action`, with a stable dotted `KEY`, a `LABEL`, and optional
-`DEFAULT_KEYS` and `REPEATS` (whether held keys run it again).
+An action is a marker implementing `Action`: stable dotted `KEY`, `LABEL`,
+optional `DEFAULT_KEYS` and `REPEATS` (held-key repetition).
 
 ```rust,ignore
 struct Save;
@@ -41,10 +39,9 @@ handler that isn't available makes the action unavailable for it rather than
 falling back. The invocation also names its `source` (e.g. the menu item), so
 a handler can read details from it.
 
-**Focus.** Actions run for the focused entity unless a request says otherwise.
-What's focused is the app's: `ActionFocus` holds a function that says
-(bedtime-workbench makes it the focused panel). Without one, only global
-handlers run.
+**Focus.** Requests default to the entity returned by the application's
+`ActionFocus` function (the focused panel in bedtime-workbench). Without it,
+only global handlers run.
 
 ## Keybindings
 

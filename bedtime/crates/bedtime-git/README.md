@@ -1,7 +1,7 @@
 # bedtime-git
 
-Git for workbench apps: typed Git operations through the installed `git`, and
-(feature `workbench`, default) the Git panel and diff panels.
+Typed operations through the installed `git` executable. The default
+`workbench` feature adds Git and diff panels.
 
 ```rust,ignore
 app.add_plugins(GitPlugin)

@@ -1,15 +1,14 @@
 # Foundation: stores, persistence, settings, workspaces, commands
 
 Status (2026-10-27): **steps 1–7 built** (stores, persistence, settings,
-workspaces, commands and keybindings, menus and toolbar, fonts, automation). Update this file as decisions change during the build.
+workspaces, commands and keybindings, menus and toolbar, fonts, automation).
 
-The crates are being reorganised into layers (UI toolkit, building blocks,
-framework); see [architecture.md](architecture.md). Names of crates and
-modules below are where things live today.
+Historical design and implementation record. Crate and module names reflect
+the recorded date; see [architecture.md](architecture.md) for the subsequent
+layering design.
 
-The goal is a foundation solid enough that everything after it is "bring in a
-plugin": file tree, editor, viewers, terminal. Those plugins should only need to
-mark what they persist, expose config resources, and register commands.
+Goal: file tree, editor, viewer and terminal plugins declare persisted data,
+expose configuration resources and register commands.
 
 ## Overview
 
@@ -23,8 +22,8 @@ mark what they persist, expose config resources, and register commands.
 | **Workspace** | A project folder plus a store bound to it | bed (maybe a bedtime plugin later) |
 | **Command / keybinding** | A named action with handlers; a flat table of command → chords | Workbench mechanism; plugins and apps define commands |
 
-Workbench never hears the word "workspace". It knows about one store of its own,
-the general store/layer machinery, and nothing about where things are saved.
+Workbench has no notion of a workspace: it knows one store of its own and the
+store/layer machinery, not where data is saved.
 
 ## Stores
 
@@ -44,14 +43,12 @@ app.add_store::<GlobalStore>(DirectoryStore::new(&config_dir))
    .add_settings_layer::<WorkbenchStore>();   // added later = higher precedence
 ```
 
-A simple app that treats the workbench as global binds only `WorkbenchStore`
-(to its config directory) and adds one settings layer. An app that doesn't bind
-`WorkbenchStore` doesn't persist the workbench.
+A single-store application binds `WorkbenchStore` to its config directory
+and adds one settings layer. An unbound `WorkbenchStore` is not persisted.
 
 ### Backends
 
-Workbench owns the *format* (how settings and world data become bytes). A
-backend only decides *where the bytes live*, as named entries:
+Workbench serializes settings and world data. Backends store named byte entries:
 
 ```rust
 pub trait StoreBackend: Send + Sync + 'static {
@@ -235,8 +232,7 @@ settings system: an app without settings, or a test, fills it directly.
 
 ### Keybindings as settings
 
-Each command's chords are an ordinary setting, so layering, persistence and
-"reset to inherited" need nothing special:
+Each command's chords use the standard setting resolution and persistence:
 
 ```rust
 struct Keybinding<C: Action>(PhantomData<C>);
@@ -259,8 +255,7 @@ impl<C: Action> Setting for Keybinding<C> {
 
 - Registering a command registers its `Keybinding<C>`, so plugin commands are
   rebindable without the plugin doing anything.
-- A higher layer **replaces** an action's chords: a workspace binding Ctrl+D
-  replaces global's Ctrl+B; the action doesn't end up with both.
+- A higher layer **replaces** the action's entire chord list.
 - Within one layer an action can have several chords (redo: Ctrl+Shift+Z, Ctrl+Y).
 - An empty list unbinds the action in that layer.
 
@@ -287,8 +282,7 @@ A **conflict** is two commands sharing a chord with handlers in the *same* scope
 Handlers are added when panels spawn, so the settings UI can't know in advance
 which panels handle which commands. It notes sharing ("Ctrl+F is also bound to
 Toggle backfaces") without calling it an error; real conflicts are reported when
-the key is pressed. Panels don't declare their commands (no `Panel::COMMANDS`)
-unless that turns out to be needed.
+the key is pressed. Panels do not declare command lists (`Panel::COMMANDS`).
 
 ### Menus
 

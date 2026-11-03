@@ -1,6 +1,6 @@
 # bedtime-table
 
-A table editor for workbench apps: CSV and TSV files as a grid.
+Workbench CSV and TSV editor.
 
 ```rust,ignore
 app.add_plugins(TablePlugin);

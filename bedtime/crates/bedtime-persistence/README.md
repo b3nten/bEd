@@ -1,7 +1,7 @@
 # bedtime-persistence
 
-Saving a Bevy app's state between runs: stores, one world snapshot, and
-resources saved as their own files. Needs no other bedtime crate.
+Bevy state persistence: stores, a world snapshot and separate resource entries.
+No other bedtime crate is required.
 
 ```rust,ignore
 use bedtime_persistence::*;
