@@ -16,6 +16,7 @@ mod mascots;
 mod menus;
 mod new;
 mod panels;
+mod search;
 mod settings;
 mod status;
 mod terminal;
@@ -74,6 +75,7 @@ pub fn app(start: Start) -> App {
         new::NewPlugin,
         language_servers::LanguageServersPanelPlugin,
         git::BedGitPlugin,
+        search::BedSearchPlugin,
     ))
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     .insert_resource(settings::GlobalLocation(

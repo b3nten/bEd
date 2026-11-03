@@ -11,4 +11,9 @@ pub trait DocumentModel: Clone + PartialEq + Send + Sync + 'static {
     fn state_at_line(_line: u32, _column: u32) -> Self::OpenState {
         Self::OpenState::default()
     }
+    /// The state selecting from one line and column to another (a search
+    /// result). The start's state by default.
+    fn state_selecting(from: (u32, u32), _to: (u32, u32)) -> Self::OpenState {
+        Self::state_at_line(from.0, from.1)
+    }
 }

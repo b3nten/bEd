@@ -283,7 +283,22 @@ Each step should produce a usable app. We can reorder at any point.
   resource is `AppearanceSettings` and `WindowBlurSetting` is
   `WindowBlurEnabled`. Earlier entries keep the old names.
 
-- **Polish batch and cleanup**, 2026-11-02, awaiting review. Autosave is a
+- **Project search**, 2026-11-02, awaiting review. New `bedtime-search`:
+  the engine (one `regex` from the query: escaped unless Regular Expression,
+  `\b…\b` for Whole Word, a case flag; include/exclude globs; walks with
+  `ignore`, Git's ignores unless Ignored Files; open documents' unsaved text
+  instead of disk; 20,000 matches at most) and, behind `workbench`, the
+  `SearchPanel`: query, toggles, filters, a replace row; results by file,
+  searched as you type (150 ms), streamed from a `ManagedWork` task. A click
+  opens the file beside the results (an area showing documents, else a
+  split), the match selected: `PathOptions::select_to` and
+  `DocumentModel::state_selecting` (`TextOpenState::anchor`) are new. Replace
+  and Replace All edit open documents as one undoable change each (left
+  unsaved) and other files on disk if unchanged. bed: Find in Files
+  (Cmd/Ctrl+Shift+F, Edit menu) opens it seeded with the selection; the
+  editor's Find no longer takes Cmd+Shift+F. `tests/automation/search.py`.
+
+- **Polish batch and cleanup**, 2026-11-02, committed (`2df80e6`). Autosave is a
   bed setting (`editor.autosave`, on: a second after the last edit). The code
   actions list is an egui menu popup (style, frame, opening), its keyboard row
   painted hovered. Structure rows are `tree::paint_row` (icon now optional):

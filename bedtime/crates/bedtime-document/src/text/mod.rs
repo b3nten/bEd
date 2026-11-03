@@ -20,6 +20,19 @@ impl DocumentModel for TextBuffer {
     fn state_at_line(line: u32, column: u32) -> TextOpenState {
         TextOpenState {
             cursor: Some(TextPosition::LineColumn { line, column }),
+            ..Default::default()
+        }
+    }
+    fn state_selecting(from: (u32, u32), to: (u32, u32)) -> TextOpenState {
+        TextOpenState {
+            anchor: Some(TextPosition::LineColumn {
+                line: from.0,
+                column: from.1,
+            }),
+            cursor: Some(TextPosition::LineColumn {
+                line: to.0,
+                column: to.1,
+            }),
             selection: None,
         }
     }
@@ -29,7 +42,9 @@ impl DocumentModel for TextBuffer {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TextOpenState {
     pub cursor: Option<TextPosition>,
-    /// Bytes to select.
+    /// With `cursor`: select from here to it.
+    pub anchor: Option<TextPosition>,
+    /// Bytes to select (instead of `anchor` and `cursor`).
     pub selection: Option<std::ops::Range<usize>>,
 }
 

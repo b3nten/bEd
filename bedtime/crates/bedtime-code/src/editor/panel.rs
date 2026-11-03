@@ -466,7 +466,10 @@ fn navigation(snapshot: &TextSnapshot, state: &TextOpenState) -> Navigation {
             let end = text.clamp_boundary(range.end.min(text.len()));
             TextSelection::new(text, start, end).ok()
         }
-        (None, Some(cursor)) => TextSelection::caret(text, byte(cursor)).ok(),
+        (None, Some(cursor)) => match &state.anchor {
+            Some(anchor) => TextSelection::new(text, byte(anchor), byte(cursor)).ok(),
+            None => TextSelection::caret(text, byte(cursor)).ok(),
+        },
         (None, None) => None,
     };
     let range = selection.map_or(0..0, TextSelection::range);
@@ -726,7 +729,7 @@ mod tests {
         };
         let at = |cursor| TextOpenState {
             cursor: Some(cursor),
-            selection: None,
+            ..Default::default()
         };
         let line = navigation(
             &snapshot,
@@ -747,8 +750,8 @@ mod tests {
         let selected = navigation(
             &snapshot,
             &TextOpenState {
-                cursor: None,
                 selection: Some(4..9),
+                ..Default::default()
             },
         );
         assert_eq!(selected.range, 4..9);

@@ -145,6 +145,11 @@ fn compose_menus(mut commands: Commands) {
     commands.spawn((MenuItem::action::<UndoDocument>(), InMenu(edit)));
     commands.spawn((MenuItem::action::<RedoDocument>(), InMenu(edit)));
     commands.spawn((MenuSeparator, InMenu(edit)));
+    commands.spawn((
+        MenuItem::action::<bedtime_search::FindInFiles>(),
+        InMenu(edit),
+    ));
+    commands.spawn((MenuSeparator, InMenu(edit)));
     commands.spawn((MenuItem::action::<GoToDefinition>(), InMenu(edit)));
     commands.spawn((MenuItem::action::<FindReferences>(), InMenu(edit)));
     commands.spawn((MenuItem::action::<RenameSymbol>(), InMenu(edit)));

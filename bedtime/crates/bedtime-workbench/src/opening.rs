@@ -145,11 +145,11 @@ impl<M: DocumentModel> Opener<M> {
                     .document_source(path)
                     .map_err(|e| e.to_string())?;
                 let file = source.path();
-                let state = options
-                    .line
-                    .map_or_else(M::OpenState::default, |(line, column)| {
-                        M::state_at_line(line, column)
-                    });
+                let state = match (options.line, options.select_to) {
+                    (Some(from), Some(to)) => M::state_selecting(from, to),
+                    (Some((line, column)), None) => M::state_at_line(line, column),
+                    (None, _) => M::OpenState::default(),
+                };
                 let panel = world.workbench_mut().open_document::<M>(
                     source,
                     OpenOptions {
@@ -245,6 +245,7 @@ pub(crate) fn reopen_viewers(world: &mut World) {
 #[cfg(feature = "files")]
 struct ResolvedPathOptions {
     line: Option<(u32, u32)>,
+    select_to: Option<(u32, u32)>,
     target: Target,
     opener: OpenerId,
     preview: bool,
@@ -435,6 +436,7 @@ impl Workbench {
             path,
             ResolvedPathOptions {
                 line: options.line,
+                select_to: options.select_to,
                 target: options.target,
                 opener,
                 preview: options.preview,
@@ -471,6 +473,8 @@ impl WorkbenchRef {
 pub struct PathOptions {
     /// From 0; the model turns it into its state.
     pub line: Option<(u32, u32)>,
+    /// With `line`: select from it to this line and column.
+    pub select_to: Option<(u32, u32)>,
     pub target: Target,
     pub opener: Option<OpenerId>,
     pub preview: bool,
@@ -732,7 +736,7 @@ mod tests {
     fn line(line: u32) -> OpenOptions<TextBuffer> {
         OpenOptions::at(TextOpenState {
             cursor: Some(TextPosition::LineColumn { line, column: 0 }),
-            selection: None,
+            ..default()
         })
     }
 

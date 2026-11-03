@@ -497,6 +497,7 @@ dependencies = [
  "bedtime-mascots",
  "bedtime-model",
  "bedtime-persistence",
+ "bedtime-search",
  "bedtime-table",
  "bedtime-terminal",
  "bedtime-ui",
@@ -747,6 +748,21 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "bedtime-search"
+version = "0.1.0"
+dependencies = [
+ "bedtime-document",
+ "bedtime-filesystem",
+ "bedtime-filetree",
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
+ "globset",
+ "ignore",
+ "regex",
 ]
 
 [[package]]

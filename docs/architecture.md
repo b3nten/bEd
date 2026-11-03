@@ -45,6 +45,7 @@ bed is one app on top: policy only.
 | `bedtime-filetree` | workbench, filesystem | The file tree panel (first plugin) |
 | `bedtime-code` | workbench, filesystem, grammars | Code editing: the editor, syntax, Structure and language servers |
 | `bedtime-grammars` | — | Bundled tree-sitter grammars (compiled C) |
+| `bedtime-search` | (workbench, filetree) | Project search and replace: the engine, and the Search panel |
 | `bedtime-terminal` | workbench | Terminal panels (PTY, emulator), and the shell bridge for app commands |
 | `bedtime-automation` | ui | Driving an app from scripts (exists) |
 | `bedtime` | — | Re-exports the others behind features, as `bevy` does |

@@ -21,6 +21,7 @@ members = [
     "bedtime/crates/bedtime-filetree",
     "bedtime/crates/bedtime-font",
     "bedtime/crates/bedtime-git",
+    "bedtime/crates/bedtime-search",
     "bedtime/crates/bedtime-grammars",
     "bedtime/crates/bedtime-mascots",
     "bedtime/crates/bedtime-menus",
@@ -60,6 +61,7 @@ bedtime-actions = { path = "bedtime/crates/bedtime-actions" }
 bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
 bedtime-filetree = { path = "bedtime/crates/bedtime-filetree" }
 bedtime-git = { path = "bedtime/crates/bedtime-git" }
+bedtime-search = { path = "bedtime/crates/bedtime-search" }
 bedtime-grammars = { path = "bedtime/crates/bedtime-grammars" }
 bedtime-mascots = { path = "bedtime/crates/bedtime-mascots" }
 bedtime-menus = { path = "bedtime/crates/bedtime-menus" }
@@ -90,6 +92,8 @@ polling = "=3.11.0"
 unicode-width = "=0.2.2"
 trash = "=5.2.9"
 ignore = "=0.4.33"
+regex = "=1.13.1"
+globset = "=0.4.21"
 rodio = { version = "=0.21.1", default-features = false, features = ["playback", "symphonia-all"] }
 libc = "=0.2.190"
 muda = { version = "=0.21.0", default-features = false }
