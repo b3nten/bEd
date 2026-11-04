@@ -16,11 +16,15 @@
 //! With the `ui` feature, settings declared in a section describe how they're
 //! edited, and [`ui`] draws them: layer tabs, sections and rows.
 mod layers;
+#[cfg(feature = "ui")]
+mod panel;
 mod setting;
 #[cfg(test)]
 mod tests;
 #[cfg(feature = "ui")]
 pub mod ui;
+#[cfg(feature = "ui")]
+pub use panel::{OpenSettings, SettingsLocation, SettingsPanel, SettingsPanelPlugin};
 
 /// The `settings!` macro, also at the crate root (where `#[macro_export]` puts it).
 pub use crate::settings;
@@ -29,6 +33,16 @@ pub use setting::Setting;
 
 use bedtime_persistence::{StoreError, StoreSystems};
 use bevy::prelude::*;
+
+/// A number from a settings file brought into `range` before it's used
+/// (hand-edited files can hold anything); NaN is `default`.
+pub fn limit(value: f32, range: std::ops::RangeInclusive<f32>, default: f32) -> f32 {
+    if value.is_nan() {
+        default
+    } else {
+        value.clamp(*range.start(), *range.end())
+    }
+}
 
 #[doc(hidden)]
 pub mod __private {

@@ -294,8 +294,10 @@ impl Plugin for WorkspacesPlugin {
         // it's just where the app is without a project.
         if !workspace.default {
             app.add_settings_layer::<WorkbenchStore>()
-                .label_settings_layer::<WorkbenchStore>("Workspace");
+                .label_settings_layer::<WorkbenchStore>(format!("Workspace: {}", workspace.name()));
         }
+        #[cfg(feature = "ui")]
+        app.insert_resource(crate::settings::SettingsLocation(settings_location));
         if let (Some(lock), Some(config)) = (lock, &config) {
             app.add_store::<WorkbenchStore>(DirectoryStore::new(workspace.store_directory(config)))
                 .insert_resource(lock);
@@ -316,6 +318,32 @@ impl Plugin for WorkspacesPlugin {
                 )));
         }
     }
+}
+
+/// Where a settings layer is saved, for the settings panel: the global file
+/// (from the home folder, when it's in it), or the workspace's store.
+#[cfg(feature = "ui")]
+fn settings_location(world: &World, layer: bedtime_persistence::StoreId) -> Option<String> {
+    if layer != bedtime_persistence::StoreId::of::<GlobalStore>() {
+        return Some("Saved with this workspace. Values set here override the global ones.".into());
+    }
+    let Some(config) = world
+        .get_resource::<WorkspaceSettings>()
+        .and_then(|settings| settings.config.clone())
+    else {
+        return Some("Not saved: there's no configuration directory".into());
+    };
+    let path = config.join("global").join("settings.ron");
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    Some(
+        match home
+            .as_deref()
+            .and_then(|home| path.strip_prefix(home).ok())
+        {
+            Some(relative) => format!("~/{}", relative.display()),
+            None => path.display().to_string(),
+        },
+    )
 }
 
 /// Switch this window to `start`'s workspace. This ends the session the way

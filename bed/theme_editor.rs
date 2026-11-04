@@ -1,14 +1,12 @@
 //! The Theme Editor panel: pick a theme from the themes folder, duplicate it
 //! under a new name, and change its colors. Changes are saved to the theme's
 //! file shortly after you stop editing; a shipped theme can be reset.
-use crate::{
-    settings::{AppearanceSettings, ColorTheme},
-    themes,
-};
+use crate::{settings::ColorTheme, themes};
 use bedtime_ui::{
     BuiltinIcon, UiContext, egui,
     theme::{Appearance, Palette, Rgba, Theme, ThemeFolder},
 };
+use bedtime_workbench::appearance::AppearanceSettings;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
     persistence::ReflectPersist, settings::SettingsWorldExt,

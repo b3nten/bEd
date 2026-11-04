@@ -32,6 +32,8 @@ pub use panel::{
     CodePlugin, ComparisonRequest, EditorComparison, EditorDefaults, EditorPanel, ToggleWordWrap,
     draw_editor, editor_id,
 };
+#[cfg(feature = "persistence")]
+pub use panel::{LineNumbers, WrapLines};
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

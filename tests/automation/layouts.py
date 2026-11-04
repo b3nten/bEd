@@ -4,7 +4,7 @@ import tempfile
 from bed import Bed
 
 with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     assert bed.exists("Appearance")
     bed.key("Primary+2")
     assert not bed.exists("Appearance"), "layout 2 should start empty"

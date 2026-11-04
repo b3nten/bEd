@@ -13,7 +13,7 @@ with Bed() as bed:
     assert tabs(bed) == {}, "one tab in one area has no tab bar"
     assert bed.exists("Workspaces"), "the Workspaces panel is the only one"
 
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     assert set(tabs(bed)) == {"Workspaces", "Settings"}
 
     # Drag Settings out to the right edge: two areas of one tab each.

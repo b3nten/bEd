@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     bed.screenshot("workspaces-panel")
 
     # The default workspace has no settings layer of its own.
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     assert not bed.exists(contains="Workspace:")
 
     stores = bed.config / "workspaces"

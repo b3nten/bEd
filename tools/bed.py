@@ -311,7 +311,7 @@ class Bed:
         self.input(*steps)
 
     def invoke(self, command):
-        """Run a command by key ('app.open_settings'), as its shortcut would."""
+        """Run a command by key ('settings.open'), as its shortcut would."""
         self.call("bedtime.invoke", {"command": command})
         self.settle()
 

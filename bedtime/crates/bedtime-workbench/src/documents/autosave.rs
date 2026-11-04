@@ -122,3 +122,35 @@ pub(crate) fn autosave(
         );
     }
 }
+
+#[cfg(feature = "persistence")]
+crate::settings! {
+    "Documents" {
+        /// Save a document a second after the last edit (and when closing it,
+        /// rather than asking).
+        pub Autosave: bool {
+            default: false,
+            key: "editor.autosave",
+            label: "Autosave",
+            apply: |world, on| {
+                world.insert_resource(DocumentAutosave(if *on {
+                    DocumentAutosavePolicy::AfterIdle(Duration::from_secs(1))
+                } else {
+                    DocumentAutosavePolicy::Never
+                }))
+            },
+        }
+    }
+}
+
+/// The documents' settings (`Autosave`), in `WorkbenchPlugins`. Without it
+/// the app sets `DocumentAutosave` itself.
+#[cfg(feature = "persistence")]
+pub struct DocumentSettingsPlugin;
+
+#[cfg(feature = "persistence")]
+impl Plugin for DocumentSettingsPlugin {
+    fn build(&self, app: &mut App) {
+        crate::settings::SettingsAppExt::register_setting::<Autosave>(app);
+    }
+}

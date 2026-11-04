@@ -17,7 +17,7 @@ def drag_opacity(bed, fraction):
 
 with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     bed.key("Primary+2")
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     bed.click(contains="Workspace:")
     drag_opacity(bed, 0.6)
     workspace_value = opacity(bed)

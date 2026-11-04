@@ -81,9 +81,6 @@ pub fn app(start: Start) -> App {
         theme_editor::ThemeEditorPlugin,
     ))
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
-    .insert_resource(settings::GlobalLocation(
-        config.map(|config| config.join("global")),
-    ))
     .add_systems(Startup, setup);
     #[cfg(target_os = "macos")]
     app.add_plugins(dock::DockMenuPlugin);

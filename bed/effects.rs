@@ -42,7 +42,7 @@ macro_rules! effect_settings {
                     visible: effects_on,
                     apply: |world, value| {
                         world.resource_mut::<Effects>().$field =
-                            crate::settings::limit(*value, INTENSITY, $default)
+                            bedtime_workbench::settings::limit(*value, INTENSITY, $default)
                     },
                 }
             }

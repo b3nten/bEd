@@ -17,7 +17,26 @@ use bevy::prelude::*;
 /// documents editors show, and keeps Structure following the focused editor.
 pub struct CodePlugin;
 
-/// How editors start out (the app's settings set them).
+#[cfg(feature = "persistence")]
+bedtime_workbench::settings! {
+    "Editor" {
+        /// Wrap long lines at the editor's width (View ▸ Word Wrap changes one editor).
+        pub WrapLines: bool {
+            default: false,
+            key: "editor.wrap",
+            label: "Wrap lines",
+            apply: |world, wrap| world.resource_mut::<EditorDefaults>().wrap = *wrap,
+        }
+        pub LineNumbers: bool {
+            default: true,
+            key: "editor.line_numbers",
+            label: "Line numbers",
+            apply: |world, shown| world.resource_mut::<EditorDefaults>().line_numbers = *shown,
+        }
+    }
+}
+
+/// How editors start out (`WrapLines`, `LineNumbers`, with persistence).
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct EditorDefaults {
     /// Wrap long lines at the editor's width.
@@ -68,6 +87,13 @@ fn toggle_word_wrap(
 impl Plugin for CodePlugin {
     fn build(&self, app: &mut App) {
         use bedtime_workbench::ActionAppExt;
+        #[cfg(feature = "persistence")]
+        {
+            use bedtime_workbench::settings::SettingsAppExt;
+            app.init_resource::<EditorDefaults>()
+                .register_setting::<WrapLines>()
+                .register_setting::<LineNumbers>();
+        }
         app.init_resource::<EditorDefaults>()
             .add_action_handler::<ToggleWordWrap>(
                 bedtime_workbench::Handler::new(toggle_word_wrap).available_when(|world, panel| {

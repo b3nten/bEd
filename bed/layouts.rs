@@ -192,7 +192,7 @@ fn reset(world: &mut World, _: ActionInvocation) -> ActionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::settings::SettingsPanel;
+    use bedtime_workbench::settings::SettingsPanel;
     use bedtime_workbench::{
         ActionId, ActionRequest, ActionRequests, InvocationContext, PanelsWorldExt,
         WorkbenchCorePlugins,

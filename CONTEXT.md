@@ -374,14 +374,41 @@ bedtime-document: detection reads files and the registry is an app resource.
 
 ## Other decisions
 
-- **Settings:** each plugin declares its settings, namespaced, with defaults.
-  An app overrides a default by registering the same setting again,
-  identified by type. A `settings_panel!` macro lays out the panel: sections,
-  grouping, order. Leaving settings out of the panel is fine (an app may
-  hard-code some). Keep saved keys explicit (namespace and name), never
-  derived from type names. Settings move to the crate that owns the resource
-  they write: appearance settings to bedtime-ui or workbench, editor settings
-  to bedtime-code.
+- **Settings** (done in step 5):
+  - Each setting belongs to the crate whose behaviour it changes, which
+    declares and registers it:
+    - workbench `appearance` (font, font size, window opacity and blur,
+      panel opacity, radius and gap, applied to every `LayoutSurface` by
+      `AppearancePlugin`, in `WorkbenchPlugins`; disable it to style surfaces
+      yourself). The theme is `AppearanceSettings::theme`, set by the app;
+    - workbench documents: `Autosave`, registered by `DocumentSettingsPlugin`
+      (in `WorkbenchPlugins`, not the core group, so an app or test using
+      only the core sets `DocumentAutosave` itself). Its default is off;
+    - bedtime-code: `WrapLines`, `LineNumbers`; bedtime-filetree:
+      `ShowHiddenFiles`, `ShowIgnoredFiles` (both with `persistence`).
+  - An app overrides a default with `set_setting_default::<S>(value)`,
+    identified by type, before or after registration; the latest call wins.
+    Bed turns `Autosave` on this way. Once a plugin registers a setting, the
+    resource it writes (`EditorDefaults`, `FileTreeDefaults`) follows the
+    settings, so inserting that resource directly is overwritten at
+    startup: change the setting's default instead (a file tree test did).
+  - `settings_panel! { "Section" { SettingA, SettingB } ... }` builds a
+    `SettingsLayout`, set with `set_settings_layout`. With a layout, the panel
+    shows exactly its sections and settings in order (left out is hidden);
+    without one, declared sections. Settings declared without a section can
+    be placed by a layout too.
+  - `SettingsPanelPlugin` (opt-in) adds the generic `SettingsPanel` and
+    `OpenSettings` (`settings.open`, Cmd/Ctrl+, still bound by default until
+    the keybinding step): layer tabs, the layer's location (a
+    `SettingsLocation` hook; workspaces provides it, and labels its layer
+    "Workspace: <name>"), errors (`Stores::error_in`), the settings, then
+    keyboard shortcuts.
+  - `settings::limit` is the shared "clamp a hand-edited number" helper.
+  - Not moved yet: bed's `ColorTheme` setting and theme row stay in bed with
+    its shipped themes and Theme Editor, until step 8 moves the theme editor
+    (they write `AppearanceSettings::theme`). Bed's screen effects and
+    language-server settings stay with bed's panels.
+  - Saved keys didn't change, so existing settings files still apply.
 - **Status bar:** the left side is for notifications, which any plugin can
   post, including ongoing work such as "indexing…". The right side belongs to
   the app; plugins can export widgets for it.
@@ -427,7 +454,7 @@ bedtime-document: detection reads files and the registry is an app resource.
    - ~~**4b, siblings:** one document per (source, model); the byte codec
      moves to bedtime-document; siblings sync in memory on idle and on focus
      change.~~ (done)
-5. Settings declared by the crates that own them; the generic settings panel.
+5. ~~Settings declared by the crates that own them; the generic settings panel.~~ (done)
 6. Status bar contributions.
 7. Route `New` through the focused panel.
 8. Move the LSP panel and theme editor.
@@ -493,3 +520,11 @@ Do one step at a time, then review it before starting the next.
   opened later, and reports both-changed. Store gained the codec and sync
   bookkeeping. Tests cover both directions, a later sibling, undecodable
   content, both changed, and a shared save.
+- 2026-11-04: step 5 done. Settings defaults can be overridden
+  (`set_setting_default`); `settings_panel!` / `SettingsLayout` lays out the
+  panel; generic `SettingsPanel` + `OpenSettings` + `SettingsLocation` in
+  workbench (`SettingsPanelPlugin`); workbench `appearance` module and
+  `AppearancePlugin`; `Autosave` in workbench documents; editor and file tree
+  settings in their crates. Bed's settings.rs is its theme setting, its
+  defaults and its layout. `app.open_settings` is now `settings.open`
+  (automation scripts updated). Workbench gained a `system-fonts` feature.

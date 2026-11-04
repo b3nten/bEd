@@ -8,7 +8,7 @@
 //! | `bedtime.input` | `{"steps": [...]}` | queued; one step per frame (see [`Step`]) |
 //! | `bedtime.ui` | | every widget: role, label, value, rect (logical pixels), state |
 //! | `bedtime.screenshot` | `{"path": "..."}` | queued; listed in `status` once written |
-//! | `bedtime.invoke` | `{"command": "app.open_settings"}` | runs the command as if from its key |
+//! | `bedtime.invoke` | `{"command": "settings.open"}` | runs the command as if from its key |
 //! | `bedtime.exit` | | exits the app normally |
 //!
 //! Scripts start the app with `BEDTIME_AUTOMATION_PORT` set. The app should

@@ -5,7 +5,7 @@ from bed import Bed
 
 with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     bed.key("Primary+2")
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     # Override window opacity in the workspace, then look at the global tab.
     bed.click(contains="Workspace:")
     x0, y0, x1, y1 = bed.find_all(role="Slider")[1]["rect"]

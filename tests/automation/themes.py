@@ -17,7 +17,7 @@ with Bed(settings={"appearance.theme": '"tokyo"'}) as bed:
     folder = bed.config / "themes"
     assert len(list(folder.glob("*.ron"))) == 20, "bed's themes were written"
     bed.key("Primary+2")
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     assert bed.exists("Tokyo Night"), "the chosen theme is shown"
     bed.screenshot("theme-tokyo")
 

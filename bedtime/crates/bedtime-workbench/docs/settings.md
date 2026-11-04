@@ -85,16 +85,44 @@ text field for `String`, a drag value for numbers, a combo box for a fieldless
 enum that derives `Reflect`. A hand-written `impl Setting` needs only `key` and
 `default`.
 
+## Whose settings
+
+Each setting belongs to the crate whose behaviour it changes, which declares
+and registers it: workbench's appearance (`appearance`, in `AppearancePlugin`)
+and `Autosave` (in `DocumentSettingsPlugin`), the editor's in bedtime-code,
+the file tree's in bedtime-filetree. An app adds its own the same way.
+
+An app changes a plugin's default with
+`app.set_setting_default::<FontSize>(13.0)`: the setting is identified by type,
+the latest call wins, and it works before or after the setting is registered.
+Stored values still win over it, and clearing one goes back to it.
+
 ## The settings panel (`ui` feature)
 
+`SettingsPanelPlugin` adds `SettingsPanel` and `OpenSettings`
+(`settings.open`, Cmd/Ctrl+,): layer tabs, where the chosen layer is saved
+(`SettingsLocation`, which workspaces sets), its errors, every setting, then
+the keyboard shortcuts.
+
+Without a layout, settings show in the sections they were declared in, in the
+order given to `app.settings_sections([...])`, then the order their first
+setting was registered. An app lays the panel out itself with
+`settings_panel!`, listing settings by type from any plugin; a setting it
+leaves out isn't shown (an app may set some itself):
+
+```rust,ignore
+app.set_settings_layout(settings_panel! {
+    "Appearance" { ColorTheme, FontFamily, FontSize }
+    "Editor" { bedtime_code::WrapLines, Autosave }
+});
+```
+
 `ui::layer_tabs` shows a tab per layer (when there's more than one) and returns
-the one being edited; `ui::sections` draws every section with a row shown for
-it. Sections come in the order they're declared, or the order given to
-`app.settings_sections([...])`. Each row shows the layer's own value, a warning
-when a higher layer overrides it, and a button that clears the layer's value.
-An app wanting something else (search, another layout) reads the `SettingsUi`
-resource and draws the rows itself, using `ui::row`, `ui::columns` and
-`ui::Marks`.
+the one being edited; `ui::sections` draws the sections with a row shown for
+it. Each row shows the layer's own value, a warning when a higher layer
+overrides it, and a button that clears the layer's value. An app wanting
+something else (search) reads the `SettingsUi` resource and draws the rows
+itself, using `ui::row`, `ui::columns` and `ui::Marks`.
 
 ```sh
 cargo test -p bedtime-workbench --features persistence settings::

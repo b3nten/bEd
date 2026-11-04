@@ -1,6 +1,5 @@
 use crate::{
     layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
-    settings::{OpenSettings, SettingsPanel},
     workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
 };
 use bedtime_code::ShowStructure;
@@ -12,6 +11,7 @@ use bedtime_git::ShowGit;
 use bedtime_terminal::NewTerminal;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;
+use bedtime_workbench::settings::{OpenSettings, SettingsPanel};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
     ActionsWorldExt, ClosePanel, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext,

@@ -6,7 +6,7 @@ from bed import Bed
 
 with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     name = Path(folder).resolve().name
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     window = bed.status()["window"]
     assert bed.exists(f"Workspace: {name}")
 
@@ -15,7 +15,7 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     assert bed.status()["window"] == window, "the window changed size"
     # The default workspace has its own layout: Settings isn't open there.
     assert not bed.exists("Appearance")
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     # Only the global layer: the default workspace has no settings of its own.
     assert bed.exists("Appearance") and not bed.exists(contains="Workspace:")
     stores = sorted(p.name for p in (bed.config / "workspaces").iterdir())

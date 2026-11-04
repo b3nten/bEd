@@ -235,9 +235,14 @@ impl Stores {
 
     /// Why something in store `S` isn't being saved, or why its last save failed.
     pub fn error<S: Store>(&self) -> Option<&str> {
+        self.error_in(StoreId::of::<S>())
+    }
+
+    /// As `error`, for a store known by its id.
+    pub fn error_in(&self, store: StoreId) -> Option<&str> {
         self.entries
             .iter()
-            .filter(|entry| entry.store == StoreId::of::<S>())
+            .filter(|entry| entry.store == store)
             .find_map(|entry| entry.blocked.as_deref().or(entry.error.as_deref()))
     }
 

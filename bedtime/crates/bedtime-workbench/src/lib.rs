@@ -1,5 +1,7 @@
 //! Composable workbench services; the application supplies Bevy's window and renderer.
 pub mod actions;
+#[cfg(all(feature = "ui", feature = "persistence"))]
+pub mod appearance;
 mod closing;
 mod document_actions;
 mod documents;
@@ -149,6 +151,10 @@ impl PluginGroup for WorkbenchPlugins {
         let group = group.add_group(WorkbenchNativePlugin);
         #[cfg(feature = "ui")]
         let group = group.add(WorkbenchUiPlugin);
+        #[cfg(feature = "persistence")]
+        let group = group.add(DocumentSettingsPlugin);
+        #[cfg(all(feature = "ui", feature = "persistence"))]
+        let group = group.add(appearance::AppearancePlugin);
         group
     }
 }

@@ -46,6 +46,12 @@ impl Plugin for FileTreePlugin {
                     .chain()
                     .in_set(FileTreeSystems),
             );
+        #[cfg(feature = "persistence")]
+        {
+            use bedtime_workbench::settings::SettingsAppExt;
+            app.register_setting::<ShowHiddenFiles>()
+                .register_setting::<ShowIgnoredFiles>();
+        }
         bedtime_workbench::ActionAppExt::add_action_handler::<ShowFiles>(
             app,
             bedtime_workbench::Handler::new(bedtime_workbench::show_panel::<FileTree>),
@@ -57,6 +63,26 @@ impl Plugin for FileTreePlugin {
 /// Doing what the trees were asked, then reading and watching folders, in `Update`.
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FileTreeSystems;
+
+#[cfg(feature = "persistence")]
+bedtime_workbench::settings! {
+    "Files" {
+        /// Dot files and the like (a tree's menu changes that tree).
+        pub ShowHiddenFiles: bool {
+            default: false,
+            key: "files.show_hidden",
+            label: "Show hidden files",
+            apply: |world, shown| world.resource_mut::<FileTreeDefaults>().show_hidden = *shown,
+        }
+        /// Files Git ignores.
+        pub ShowIgnoredFiles: bool {
+            default: true,
+            key: "files.show_ignored",
+            label: "Show ignored files",
+            apply: |world, shown| world.resource_mut::<FileTreeDefaults>().show_ignored = *shown,
+        }
+    }
+}
 
 /// What trees show unless one is told otherwise (`FileTree::show_hidden`,
 /// `show_ignored`). By default ignored files show, dimmed; hidden ones don't.

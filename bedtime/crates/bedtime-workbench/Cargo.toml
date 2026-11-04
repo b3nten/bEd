@@ -13,6 +13,8 @@ files = ["dep:bedtime-filesystem"]
 # Drawing menus, collecting shortcuts from egui, the settings UI.
 ui = ["dep:bevy_egui", "bevy/bevy_window"]
 clipboard = ["dep:bedtime-clipboard"]
+# The settings panel lists installed fonts.
+system-fonts = ["bedtime-ui/system-fonts"]
 # Saving state, settings in layers, and keybindings as settings.
 persistence = ["dep:bedtime-persistence", "dep:ron", "bedtime-ui/persistence", "dep:bevy_world_serialization"]
 # Workspaces: folders with their own store and settings, switched by

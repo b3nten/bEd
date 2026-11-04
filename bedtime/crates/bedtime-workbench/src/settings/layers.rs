@@ -33,6 +33,8 @@ impl SettingsMut {
 pub struct Settings {
     layers: Vec<Layer>,
     registered: Vec<Registered>,
+    /// Defaults the app set in place of settings' own (`set_setting_default`).
+    defaults: Vec<(Cow<'static, str>, Box<dyn std::any::Any + Send + Sync>)>,
 }
 
 struct Layer {
@@ -69,7 +71,7 @@ impl Settings {
     pub fn get<S: Setting>(&self) -> S::Value {
         self.resolve::<S>()
             .map(|(_, value)| value)
-            .unwrap_or_else(S::default)
+            .unwrap_or_else(|| self.default_of::<S>())
     }
 
     /// Which layer the value comes from, or `None` for the default.
@@ -90,7 +92,7 @@ impl Settings {
             .rev()
             .filter(|layer| S::allowed_in(layer.store))
             .find_map(decode::<S>)
-            .unwrap_or_else(S::default)
+            .unwrap_or_else(|| self.default_of::<S>())
     }
 
     /// The layer above `store` whose different value is in use instead of
@@ -103,6 +105,18 @@ impl Settings {
             .iter()
             .any(|layer| layer.store == source);
         (above && value != self.get_at::<S>(store)).then_some(source)
+    }
+
+    /// The value with nothing set in any layer: the app's default for it
+    /// (`set_setting_default`), else the setting's own.
+    pub fn default_of<S: Setting>(&self) -> S::Value {
+        let key = S::key();
+        self.defaults
+            .iter()
+            .find(|(known, _)| *known == key)
+            .and_then(|(_, value)| value.downcast_ref::<S::Value>())
+            .cloned()
+            .unwrap_or_else(S::default)
     }
 
     /// The value `store` would have without its own: from the layers below
@@ -118,7 +132,7 @@ impl Settings {
             .rev()
             .filter(|layer| S::allowed_in(layer.store))
             .find_map(decode::<S>)
-            .unwrap_or_else(S::default)
+            .unwrap_or_else(|| self.default_of::<S>())
     }
 
     /// The value set in one layer, if any.
@@ -264,9 +278,21 @@ pub trait SettingsAppExt {
     /// name without "Store" (`GlobalStore` is "Global").
     fn label_settings_layer<S: Store>(&mut self, label: impl Into<Cow<'static, str>>) -> &mut Self;
     fn register_setting<S: Setting>(&mut self) -> &mut Self;
+    /// Use `value` as setting `S`'s default, in place of the one it was
+    /// declared with: an app's own default for a plugin's setting. Before or
+    /// after the setting is registered; the latest call wins.
+    fn set_setting_default<S: Setting>(&mut self, value: S::Value) -> &mut Self;
 }
 
 impl SettingsAppExt for App {
+    fn set_setting_default<S: Setting>(&mut self, value: S::Value) -> &mut Self {
+        let mut settings = self.world_mut().get_resource_or_init::<Settings>();
+        let key = S::key();
+        settings.defaults.retain(|(known, _)| *known != key);
+        settings.defaults.push((key, Box::new(value)));
+        self
+    }
+
     fn add_settings_layer<S: Store>(&mut self) -> &mut Self {
         let mut settings = self.world_mut().get_resource_or_init::<Settings>();
         let store = StoreId::of::<S>();

@@ -34,7 +34,7 @@ bedtime-persistence.workspace = true
 bedtime-preview.workspace = true
 bedtime-video.workspace = true
 bedtime-ui = { workspace = true, features = ["system-fonts"] }
-bedtime-workbench = { workspace = true, features = ["persistence", "workspaces"] }
+bedtime-workbench = { workspace = true, features = ["persistence", "workspaces", "system-fonts"] }
 bevy_egui.workspace = true
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }
 rfd = { workspace = true }

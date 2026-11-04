@@ -10,4 +10,6 @@ pub use editor::{
     CodePlugin, ComparisonRequest, EditorComparison, EditorDefaults, EditorPanel, ToggleWordWrap,
     draw_editor,
 };
+#[cfg(feature = "persistence")]
+pub use editor::{LineNumbers, WrapLines};
 pub use structure::{ShowStructure, StructurePanel};

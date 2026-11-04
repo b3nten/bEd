@@ -66,7 +66,7 @@ with Bed(settings={"appearance.theme": '"tokyo"'}) as bed:
     settings.write_text(settings.read_text().replace('"tokyo"', '"solarized-light"'))
     time.sleep(1.5)
     bed.wait(5)
-    bed.invoke("app.open_settings")
+    bed.invoke("settings.open")
     bed.click("Edit theme")
     assert bed.exists("Solarized Light", role="TextInput"), "editing the chosen theme"
     assert not bed.status()["errors"]

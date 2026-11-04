@@ -61,6 +61,8 @@ mod store;
 pub(crate) mod tests;
 
 pub(crate) use autosave::autosave;
+#[cfg(feature = "persistence")]
+pub use autosave::{Autosave, DocumentSettingsPlugin};
 pub use autosave::{DocumentAutosave, DocumentAutosavePolicy};
 use store::{Session, Store, Typed};
 
