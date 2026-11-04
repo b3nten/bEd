@@ -27,7 +27,9 @@ pub struct SettingsPanelPlugin;
 impl Plugin for SettingsPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<SettingsPanel>()
-            .add_action_handler::<OpenSettings>(Handler::new(show_panel::<SettingsPanel>));
+            .add_action_handler::<OpenSettings>(Handler::new(show_panel::<SettingsPanel>))
+            .add_menu_item_labelled::<OpenSettings>(StandardMenu::App, "settings", "Settings…")
+            .add_menu_item_labelled::<OpenSettings>(StandardMenu::View, "panels", "Settings");
     }
 }
 

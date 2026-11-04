@@ -54,7 +54,8 @@ pub fn app(start: Start) -> App {
             ..default()
         }),
         UiPlugin,
-        WorkbenchPlugins,
+        // The menu bar, its App menu under bEd's name.
+        WorkbenchPlugins.set(bedtime_workbench::StandardMenusPlugin { app_name: "bEd" }),
         workspaces,
         themes::plugin(),
         // Language servers as settings, and their panel.

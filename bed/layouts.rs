@@ -3,7 +3,7 @@ use bedtime_filetree::FileTree;
 use bedtime_workbench::WorkbenchWorldExt as _;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout,
-    LayoutFallback, PanelFactory,
+    LayoutFallback, MenusAppExt, PanelFactory, StandardMenu,
     persistence::{LayoutTemplate, Persisted, PersistenceAppExt, ReflectPersist},
 };
 use bedtime_workbench::{LayoutsWorldExt, SplitAxis};
@@ -11,6 +11,9 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub const SLOTS: usize = 5;
+
+/// bEd's Layout menu: the slots, then saving and resetting defaults.
+const LAYOUT: StandardMenu = StandardMenu::Custom("Layout");
 
 /// Which numbered layout this is, from 0.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -79,6 +82,13 @@ impl Plugin for LayoutSlotsPlugin {
             .add_action_handler::<ResetLayout>(
                 Handler::new(reset).available_when(|world, _| current(world).is_some()),
             )
+            .add_menu_item::<UseLayout<0>>(LAYOUT, "slots")
+            .add_menu_item::<UseLayout<1>>(LAYOUT, "slots")
+            .add_menu_item::<UseLayout<2>>(LAYOUT, "slots")
+            .add_menu_item::<UseLayout<3>>(LAYOUT, "slots")
+            .add_menu_item::<UseLayout<4>>(LAYOUT, "slots")
+            .add_menu_item::<SaveLayoutAsDefault>(LAYOUT, "defaults")
+            .add_menu_item::<ResetLayout>(LAYOUT, "defaults")
             .add_systems(Startup, open_first);
     }
 }

@@ -10,6 +10,7 @@
 //! panel does). A whole menu can belong to one the same way.
 #[cfg(feature = "native")]
 mod native;
+mod standard;
 #[cfg(test)]
 mod tests;
 #[cfg(feature = "ui")]
@@ -17,6 +18,9 @@ pub mod ui;
 
 #[cfg(feature = "native")]
 pub use native::{NativeMenuBar, NativeMenuError, NativeMenuPlugin, NativeMenuSystems};
+pub use standard::{
+    MenuContributions, MenusAppExt, StandardMenu, StandardMenus, StandardMenusPlugin,
+};
 
 use crate::actions::{
     Action, ActionId, ActionRequest, ActionsWorldExt, InvocationContext, Invokes, KeyChord,
@@ -204,11 +208,13 @@ impl Menus {
         }
         let context = capture_context(world, context);
         let mut visited = HashSet::from([root]);
-        let entries = read_entries(world, root, &mut visited, context)?;
-        if world.get::<MenuBar>(root).is_some()
-            && entries.iter().any(|e| !matches!(e, MenuNode::Menu { .. }))
-        {
-            return Err("MenuBar entries must be menus".into());
+        let mut entries = read_entries(world, root, &mut visited, context)?;
+        if world.get::<MenuBar>(root).is_some() {
+            if entries.iter().any(|e| !matches!(e, MenuNode::Menu { .. })) {
+                return Err("MenuBar entries must be menus".into());
+            }
+            // A bar leaves out menus with nothing in them (now).
+            entries.retain(|e| !matches!(e, MenuNode::Menu { entries, .. } if entries.is_empty()));
         }
         Ok(MenuSnapshot {
             root: Some(root),

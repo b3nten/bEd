@@ -10,9 +10,9 @@ use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    Action, ActionAppExt, DocumentReference, EditOptions, ManagedTask, ManagedWork, Notification,
-    Panel, PanelFactory, PanelFactoryPayload, PanelPresentation, PathOptions, Root, Target,
-    ViewerFile, WorkbenchWorldExt,
+    Action, ActionAppExt, DocumentReference, EditOptions, ManagedTask, ManagedWork, MenusAppExt,
+    Notification, Panel, PanelFactory, PanelFactoryPayload, PanelPresentation, PathOptions, Root,
+    StandardMenu, Target, ViewerFile, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 use std::{
@@ -29,6 +29,7 @@ impl Plugin for SearchPlugin {
         app.register_type::<SearchPanel>()
             .register_type::<SearchQuery>()
             .register_action::<SearchWorkspace>()
+            .add_menu_item::<SearchWorkspace>(StandardMenu::Edit, "find")
             .init_resource::<Intents>()
             .add_systems(
                 Update,

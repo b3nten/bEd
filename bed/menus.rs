@@ -1,11 +1,5 @@
-use crate::{
-    layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
-    workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
-};
+use crate::workspace::{self, RecentWorkspaces, Start, Workspace};
 use bedtime_code::ShowStructure;
-use bedtime_code::lsp::{
-    CodeActions, FindReferences, FormatDocument, GoToDefinition, RenameSymbol,
-};
 use bedtime_filetree::{FileTree, ShowFiles};
 use bedtime_git::ShowGit;
 use bedtime_terminal::NewTerminal;
@@ -15,10 +9,9 @@ use bedtime_workbench::WorkbenchWorldExt as _;
 use bedtime_workbench::settings::{OpenSettings, SettingsPanel};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
-    ActionsWorldExt, ClosePanel, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext,
-    Invokes, KeyChord, LayoutSurface, Menu, MenuBar, MenuEntries, MenuItem, MenuSeparator,
-    NativeMenuBar, PanelFactory, RedoDocument, ResetZoom, SaveDocument, UndoDocument, ZoomIn,
-    ZoomOut, draw_menu_bar, panel_drag_source,
+    ActionsWorldExt, CloseRequested, ErrorDialog, Handler, InMenu, InvocationContext, Invokes,
+    KeyChord, LayoutSurface, Menu, MenuEntries, MenuItem, MenusAppExt, PanelFactory, StandardMenu,
+    StandardMenus, draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
@@ -67,10 +60,6 @@ impl Action for NewWindow {
 #[derive(Component)]
 struct RecentPath(PathBuf);
 
-/// The application menu bar.
-#[derive(Component)]
-struct ApplicationMenu;
-
 /// The Open Recent submenu, refilled when the list changes.
 #[derive(Component)]
 struct RecentMenu;
@@ -94,112 +83,25 @@ impl Plugin for MenusPlugin {
             .add_action_handler::<OpenRecent>(
                 Handler::new(open_recent).available_when(|world, _| other_recent(world).is_some()),
             )
-            .add_systems(Startup, compose_menus)
+            .add_menu_item::<Quit>(StandardMenu::App, "quit")
+            .add_menu_item::<NewWindow>(StandardMenu::File, "new")
+            .add_menu_item::<OpenFolder>(StandardMenu::File, "open")
+            .add_menu_entry(StandardMenu::File, "open", recent_menu)
+            .add_menu_item::<CloseFolder>(StandardMenu::File, "open")
             .add_systems(Update, (poll_folder_dialog, fill_recent_menu));
     }
 }
 
-fn compose_menus(mut commands: Commands) {
-    let root = commands
-        .spawn((MenuBar, NativeMenuBar, ApplicationMenu))
-        .id();
-    let mut menu = |label: &str| {
-        commands
-            .spawn((
-                Menu {
-                    label: label.into(),
-                },
-                InMenu(root),
-            ))
-            .id()
-    };
-    // On macOS the first menu becomes the application menu.
-    let app = menu("bEd");
-    let file = menu("File");
-    let edit = menu("Edit");
-    let view = menu("View");
-    let layout = menu("Layout");
-    commands.spawn((
-        MenuItem::new("Settings…"),
-        Invokes::of::<OpenSettings>(),
-        InMenu(app),
-    ));
-    commands.spawn((MenuSeparator, InMenu(app)));
-    commands.spawn((MenuItem::action::<Quit>(), InMenu(app)));
-    commands.spawn((MenuItem::action::<bedtime_workbench::New>(), InMenu(file)));
-    commands.spawn((MenuItem::action::<NewWindow>(), InMenu(file)));
-    commands.spawn((MenuSeparator, InMenu(file)));
-    commands.spawn((MenuItem::action::<OpenFolder>(), InMenu(file)));
-    commands.spawn((
-        Menu {
-            label: "Open Recent".into(),
-        },
-        RecentMenu,
-        InMenu(file),
-    ));
-    commands.spawn((MenuItem::action::<CloseFolder>(), InMenu(file)));
-    commands.spawn((MenuSeparator, InMenu(file)));
-    commands.spawn((MenuItem::action::<SaveDocument>(), InMenu(file)));
-    commands.spawn((MenuItem::action::<ClosePanel>(), InMenu(file)));
-    commands.spawn((MenuItem::action::<UndoDocument>(), InMenu(edit)));
-    commands.spawn((MenuItem::action::<RedoDocument>(), InMenu(edit)));
-    commands.spawn((MenuSeparator, InMenu(edit)));
-    commands.spawn((
-        MenuItem::action::<bedtime_search::SearchWorkspace>(),
-        InMenu(edit),
-    ));
-    commands.spawn((MenuSeparator, InMenu(edit)));
-    commands.spawn((MenuItem::action::<GoToDefinition>(), InMenu(edit)));
-    commands.spawn((MenuItem::action::<FindReferences>(), InMenu(edit)));
-    commands.spawn((MenuItem::action::<RenameSymbol>(), InMenu(edit)));
-    commands.spawn((MenuItem::action::<CodeActions>(), InMenu(edit)));
-    commands.spawn((MenuItem::action::<FormatDocument>(), InMenu(edit)));
-    commands.spawn((
-        MenuItem::new("Settings"),
-        Invokes::of::<OpenSettings>(),
-        InMenu(view),
-    ));
-    commands.spawn((MenuItem::action::<ShowFiles>(), InMenu(view)));
-    commands.spawn((MenuItem::action::<ShowStructure>(), InMenu(view)));
-    commands.spawn((MenuItem::action::<ShowGit>(), InMenu(view)));
-    commands.spawn((
-        MenuItem::action::<bedtime_http_client::ShowHttpClient>(),
-        InMenu(view),
-    ));
-    commands.spawn((MenuSeparator, InMenu(view)));
-    commands.spawn((
-        MenuItem::action::<bedtime_code::ToggleWordWrap>(),
-        InMenu(view),
-    ));
-    commands.spawn((
-        MenuItem::action::<crate::preview::OpenPreview>(),
-        InMenu(view),
-    ));
-    commands.spawn((MenuSeparator, InMenu(view)));
-    // The focused panel's (an image's or a model's own zoom, for those).
-    commands.spawn((MenuItem::action::<ZoomIn>(), InMenu(view)));
-    commands.spawn((MenuItem::action::<ZoomOut>(), InMenu(view)));
-    commands.spawn((MenuItem::action::<ResetZoom>(), InMenu(view)));
-    commands.spawn((MenuSeparator, InMenu(view)));
-    commands.spawn((
-        MenuItem::action::<bedtime_code::lsp::OpenLanguageServers>(),
-        InMenu(view),
-    ));
-    commands.spawn((MenuItem::action::<bedtime_mascots::ShowBed>(), InMenu(view)));
-    commands.spawn((MenuItem::action::<NewTerminal>(), InMenu(view)));
-    commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
-    commands.spawn((
-        MenuItem::action::<bedtime_workbench::appearance::OpenThemeEditor>(),
-        InMenu(view),
-    ));
-    commands.spawn((MenuItem::action::<UseLayout<0>>(), InMenu(layout)));
-    commands.spawn((MenuItem::action::<UseLayout<1>>(), InMenu(layout)));
-    commands.spawn((MenuItem::action::<UseLayout<2>>(), InMenu(layout)));
-    commands.spawn((MenuItem::action::<UseLayout<3>>(), InMenu(layout)));
-    commands.spawn((MenuItem::action::<UseLayout<4>>(), InMenu(layout)));
-    commands.spawn((MenuSeparator, InMenu(layout)));
-    commands.spawn((MenuItem::action::<SaveLayoutAsDefault>(), InMenu(layout)));
-    commands.spawn((MenuItem::action::<ResetLayout>(), InMenu(layout)));
+/// The Open Recent submenu: filled from the recent list.
+fn recent_menu(world: &mut World) -> Entity {
+    world
+        .spawn((
+            Menu {
+                label: "Open Recent".into(),
+            },
+            RecentMenu,
+        ))
+        .id()
 }
 
 /// Recent folders other than this one, in Open Recent.
@@ -328,10 +230,7 @@ pub fn spawn_window() -> Result<(), String> {
 
 /// The menu bar, where the platform has no native one, then the tools.
 pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
-    if let Ok(root) = world
-        .query_filtered::<Entity, With<ApplicationMenu>>()
-        .single(world)
-    {
+    if let Some(root) = world.get_resource::<StandardMenus>().map(|menus| menus.bar) {
         // Inset like the panels below it.
         let inset = world
             .get::<LayoutSurface>(context.surface)
@@ -453,6 +352,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((
             WorkbenchCorePlugins,
+            bedtime_workbench::StandardMenusPlugin { app_name: "bEd" },
             crate::settings::BedSettingsPlugin,
             crate::layouts::LayoutSlotsPlugin,
             MenusPlugin,
@@ -464,10 +364,7 @@ mod tests {
         });
         app.update();
         let world = app.world_mut();
-        let root = world
-            .query_filtered::<Entity, With<ApplicationMenu>>()
-            .single(world)
-            .unwrap();
+        let root = world.resource::<StandardMenus>().bar;
         let bar = world
             .menus()
             .snapshot(root, InvocationContext::Focused)

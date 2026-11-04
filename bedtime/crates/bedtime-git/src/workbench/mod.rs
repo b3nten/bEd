@@ -44,6 +44,7 @@ impl Plugin for GitPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<GitPanel>()
             .add_action_handler::<ShowGit>(Handler::new(show_panel::<GitPanel>))
+            .add_menu_item::<ShowGit>(StandardMenu::View, "panels")
             .register_type::<DiffPanel>()
             .add_systems(Update, update);
     }

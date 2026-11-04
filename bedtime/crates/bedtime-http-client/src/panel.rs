@@ -31,11 +31,12 @@ pub struct HttpClientPlugin;
 
 impl Plugin for HttpClientPlugin {
     fn build(&self, app: &mut App) {
-        use bedtime_workbench::ActionAppExt;
+        use bedtime_workbench::{ActionAppExt, MenusAppExt};
         app.register_type::<HttpClientPanel>()
             .add_action_handler::<ShowHttpClient>(bedtime_workbench::Handler::new(
                 bedtime_workbench::show_panel::<HttpClientPanel>,
             ))
+            .add_menu_item::<ShowHttpClient>(bedtime_workbench::StandardMenu::View, "panels")
             .init_resource::<HttpRequests>()
             .persist::<HttpRequests, WorkbenchStore>()
             .init_resource::<Exchanges>()

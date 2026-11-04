@@ -56,6 +56,11 @@ impl Plugin for FileTreePlugin {
             app,
             bedtime_workbench::Handler::new(bedtime_workbench::show_panel::<FileTree>),
         );
+        bedtime_workbench::MenusAppExt::add_menu_item::<ShowFiles>(
+            app,
+            bedtime_workbench::StandardMenu::View,
+            "panels",
+        );
         view::install_actions(app);
     }
 }

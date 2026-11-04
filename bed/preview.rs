@@ -1,8 +1,8 @@
 use bedtime_code::EditorPanel;
 use bedtime_preview::{PreviewPlugin, preview_viewer};
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Modifiers,
-    PathOptions, Placement, ViewerFile, WorkbenchWorldExt,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, MenusAppExt,
+    Modifiers, PathOptions, Placement, StandardMenu, ViewerFile, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 
@@ -22,6 +22,7 @@ pub struct BedPreviewPlugin;
 impl Plugin for BedPreviewPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(PreviewPlugin)
+            .add_menu_item::<OpenPreview>(StandardMenu::View, "editor")
             .add_action_handler::<OpenPreview>(
                 Handler::new(open_preview)
                     .available_when(|world, panel| panel.is_some_and(|p| previewable(world, p))),

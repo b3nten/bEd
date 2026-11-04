@@ -2,6 +2,7 @@
 //! under a new name, and change its colors. Changes are saved to the theme's
 //! file shortly after you stop editing; a shipped theme can be reset.
 use super::{AppearanceSettings, ColorTheme, ShippedThemes};
+use crate::MenusAppExt;
 use crate::WorkbenchWorldExt as _;
 use crate::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
@@ -36,6 +37,7 @@ impl Plugin for ThemeEditorPlugin {
                 open(world, None)
             }))
             .init_resource::<Installed>()
+            .add_menu_item::<OpenThemeEditor>(crate::StandardMenu::View, "tools")
             .add_systems(Update, autosave);
     }
 }

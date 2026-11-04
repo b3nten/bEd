@@ -2,8 +2,8 @@ use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;
 pub use bedtime_workbench::workspaces::*;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, ErrorDialog, Handler, Panel,
-    PanelsWorldExt, persistence::ReflectPersist,
+    Action, ActionAppExt, ActionInvocation, ActionResult, ErrorDialog, Handler, MenusAppExt, Panel,
+    PanelsWorldExt, StandardMenu, persistence::ReflectPersist,
 };
 use bevy::prelude::*;
 use std::{
@@ -28,7 +28,8 @@ impl Plugin for WorkspacesPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<WorkspacesPanel>()
             .init_resource::<KnownWorkspaces>()
-            .add_action_handler::<OpenWorkspaces>(Handler::new(open_workspaces));
+            .add_action_handler::<OpenWorkspaces>(Handler::new(open_workspaces))
+            .add_menu_item::<OpenWorkspaces>(StandardMenu::View, "tools");
     }
 }
 

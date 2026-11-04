@@ -153,6 +153,7 @@ impl PluginGroup for WorkbenchPlugins {
         let group = group.add_group(WorkbenchNativePlugin);
         #[cfg(feature = "ui")]
         let group = group.add(WorkbenchUiPlugin);
+        let group = group.add(StandardMenusPlugin::default());
         #[cfg(feature = "persistence")]
         let group = group.add(DocumentSettingsPlugin);
         #[cfg(all(feature = "ui", feature = "persistence"))]

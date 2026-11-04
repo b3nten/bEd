@@ -98,12 +98,13 @@ fn remove_scene(mut world: DeferredWorld, context: HookContext) {
 pub struct MascotPlugin;
 impl Plugin for MascotPlugin {
     fn build(&self, app: &mut App) {
-        use bedtime_workbench::ActionAppExt;
+        use bedtime_workbench::{ActionAppExt, MenusAppExt};
         app.register_type::<BedPanel>()
             .register_type::<DuckPanel>()
             .add_action_handler::<ShowBed>(bedtime_workbench::Handler::new(
                 bedtime_workbench::show_panel::<BedPanel>,
             ))
+            .add_menu_item::<ShowBed>(bedtime_workbench::StandardMenu::View, "tools")
             .init_non_send::<audio::AudioOutput>()
             .add_systems(Update, prepare_scenes)
             .add_systems(

@@ -347,24 +347,38 @@ bedtime-document: detection reads files and the registry is an app resource.
 
 ## Menus
 
-- **Plugins add their own menu items by default.** Workbench defines the
-  standard menus (File, Edit, View, Window, Help), and plugins add to them.
-  Within a menu, items follow plugin order, with optional groups separated by
-  a line.
-- **The app can opt out** with a field on the plugin, such as
-  `FooPlugin { menu: false }`, and can place the same actions wherever it
-  wants.
+- **Plugins add their own menu items** (done in step 10):
+  `StandardMenusPlugin { app_name }` (in `WorkbenchPlugins`) builds the
+  standard bar at `PreStartup`: App, File, Edit, View, the app's own menus
+  (`StandardMenu::Custom("Layout")`), Window, Help. Plugins call
+  `app.add_menu_item::<A>(StandardMenu::View, "panels")`.
+  - Each menu has fixed groups in the usual order (App: about, settings,
+    quit; File: new, open, save, close; Edit: history, clipboard, find,
+    code; View: panels, editor, zoom, tools), separated by lines; within a
+    group, plugin order. Unknown groups follow, in first-use order. So
+    nothing needs an ordering knob, and bed's File menu keeps its order.
+  - `add_menu_entry(menu, group, spawn)` adds something else (bed's Open
+    Recent submenu); `add_menu_item_labelled` renames ("Settings…").
+  - Opting out: `hide_menu_item::<A>()` (app-level). The per-plugin
+    `FooPlugin { menu: false }` field wasn't added: plugins are unit structs
+    and `hide_menu_item` covers it per item.
+  - Empty top-level menus aren't shown (Window and Help, for now).
+  - Workbench adds New, Save, Close Panel, Undo/Redo and the zooms; each
+    plugin its own (settings panel, Theme Editor, file tree, code and LSP,
+    Language Servers panel, git, HTTP client, search, mascots, terminal);
+    bed its Quit, folder items, Open Recent, Open Preview, Workspaces and
+    the Layout menu. Bed's `compose_menus` is gone.
 - **Items enabled only while a panel is focused** already work. A menu item
   is enabled when its action is available, and an action handled by a
   panel's `ActionHandler` is only available while that panel is focused.
-- **Menu items and whole menus can belong to a panel**, and workbench adds or
-  removes them automatically, in both the egui snapshot and the native menu
-  bar:
+- **Menu items and whole menus can belong to a panel** (done in step 10):
+  snapshots leave them out otherwise, so the egui and native bars follow.
   - `ForPanel::of::<P>()`: shown while a panel of type `P` is open in the
     active layout.
-  - `ForPanel::instance(panel)`: a relationship to one panel. It's created
-    with the panel, goes away with it, and is shown while that panel is
-    focused.
+  - `ForPanel::instance(panel)`: a relationship to one panel
+    (`ForPanelInstance`); despawned with it, shown while it's focused.
+  - A hidden item between two separators can leave two lines in a row;
+    collapsing them isn't done yet.
 
   Keys are unaffected: shortcuts belong to actions, which are only available
   in the same context anyway.
@@ -571,3 +585,6 @@ Do one step at a time, then review it before starting the next.
   Action keys: `code.show_language_servers`, `appearance.show_theme_editor`.
 - 2026-11-04: step 9 done. `WorkspacesPlugin::global_settings_only()`, with
   a test that a folder has two settings layers by default and one with it.
+- 2026-11-04: step 10a done (`ForPanel`), 10b done (standard menus and
+  contributions; bed's items moved into its plugins). The dock menu (10c)
+  is next.

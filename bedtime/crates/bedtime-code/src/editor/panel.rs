@@ -86,7 +86,10 @@ fn toggle_word_wrap(
 
 impl Plugin for CodePlugin {
     fn build(&self, app: &mut App) {
-        use bedtime_workbench::ActionAppExt;
+        use bedtime_workbench::{
+            ActionAppExt, MenusAppExt,
+            StandardMenu::{Edit, View},
+        };
         #[cfg(feature = "persistence")]
         {
             use bedtime_workbench::settings::SettingsAppExt;
@@ -110,6 +113,13 @@ impl Plugin for CodePlugin {
                 bedtime_workbench::show_panel::<crate::structure::StructurePanel>,
             ))
             .add_plugins(crate::lsp::LanguageServersPlugin)
+            .add_menu_item::<crate::structure::ShowStructure>(View, "panels")
+            .add_menu_item::<ToggleWordWrap>(View, "editor")
+            .add_menu_item::<crate::lsp::GoToDefinition>(Edit, "code")
+            .add_menu_item::<crate::lsp::FindReferences>(Edit, "code")
+            .add_menu_item::<crate::lsp::RenameSymbol>(Edit, "code")
+            .add_menu_item::<crate::lsp::CodeActions>(Edit, "code")
+            .add_menu_item::<crate::lsp::FormatDocument>(Edit, "code")
             .init_resource::<crate::structure::StructureSource>()
             .add_systems(
                 Update,

@@ -7,7 +7,7 @@ use super::{
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, egui, theme};
 use bedtime_workbench::{
-    Action, ActionAppExt, Handler, Panel,
+    Action, ActionAppExt, Handler, MenusAppExt, Panel,
     persistence::{ReflectPersist, StoreId},
     settings::{Settings, SettingsAppExt, SettingsWorldExt, settings, ui::layer_tabs},
     show_panel,
@@ -38,6 +38,7 @@ impl Plugin for LanguageServersPanelPlugin {
             .add_action_handler::<OpenLanguageServers>(Handler::new(
                 show_panel::<LanguageServersPanel>,
             ))
+            .add_menu_item::<OpenLanguageServers>(bedtime_workbench::StandardMenu::View, "tools")
             .add_systems(Update, refresh_catalog.run_if(resource_changed::<Settings>));
     }
 }

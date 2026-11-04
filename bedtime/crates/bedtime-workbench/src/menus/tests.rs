@@ -294,3 +294,62 @@ fn entries_of_a_panel_show_while_it_is_open_or_focused() {
     assert!(world.get_entity(own).is_err());
     assert_eq!(labels(world), ["Copy"]);
 }
+
+#[test]
+fn the_standard_bar_puts_items_in_their_groups_and_leaves_out_empty_menus() {
+    struct Save;
+    impl Action for Save {
+        const KEY: &'static str = "tests.save";
+        const LABEL: &'static str = "Save";
+    }
+    struct Tidy;
+    impl Action for Tidy {
+        const KEY: &'static str = "tests.tidy";
+        const LABEL: &'static str = "Tidy";
+    }
+    let mut app = App::new();
+    app.add_plugins(ActionsPlugin);
+    // Added in plugin order, out of group order.
+    app.add_menu_item::<Save>(StandardMenu::File, "save")
+        .add_menu_item::<Copy>(StandardMenu::File, "new")
+        .add_menu_item::<Paste>(StandardMenu::File, "new")
+        .add_menu_item::<Tidy>(StandardMenu::Custom("Tools"), "tidy")
+        .add_menu_item::<Copy>(StandardMenu::Edit, "clipboard")
+        .hide_menu_item::<Paste>()
+        .add_plugins(StandardMenusPlugin { app_name: "Test" });
+    app.update();
+    let world = app.world_mut();
+    let bar = world.resource::<StandardMenus>().bar;
+    let snapshot = world
+        .menus()
+        .snapshot(bar, InvocationContext::Global)
+        .unwrap();
+    let menus: Vec<&str> = snapshot
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            MenuNode::Menu { label, .. } => Some(label.as_str()),
+            _ => None,
+        })
+        .collect();
+    // App, Window and Help have nothing: left out. The app's Tools after
+    // View (which has workbench's zoom).
+    assert_eq!(menus, ["File", "Edit", "View", "Tools"]);
+    let MenuNode::Menu { entries: file, .. } = &snapshot.entries[0] else {
+        panic!("File is a menu");
+    };
+    let file: Vec<String> = file
+        .iter()
+        .map(|entry| match entry {
+            MenuNode::Item { label, .. } => label.clone(),
+            MenuNode::Separator(_) => "-".into(),
+            MenuNode::Menu { label, .. } => label.clone(),
+        })
+        .collect();
+    // Groups in File's order (new, save, close) with lines between, each in
+    // the order added (workbench's own after the test's); Paste is hidden.
+    assert_eq!(
+        file,
+        ["Copy", "New", "-", "Save", "Save", "-", "Close Panel"]
+    );
+}

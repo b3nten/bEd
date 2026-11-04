@@ -352,6 +352,20 @@ egui drawing is under `bedtime_workbench::ui`). Workbench draws the menu bar
 set with `set_menu` inset by `WorkbenchSurface::panel_gap`, and installs the
 native menu bar with `WorkbenchNativePlugin`.
 
+`StandardMenusPlugin { app_name }` (in `WorkbenchPlugins`; `.set()` it to name
+the App menu) builds the standard bar at `PreStartup`: App, File, Edit, View,
+the app's own menus (`StandardMenu::Custom("Layout")`), Window, Help. Plugins
+put their actions in it with `app.add_menu_item::<A>(StandardMenu::View,
+"panels")`, in a group: each menu has its groups in the usual order (File:
+new, open, save, close), separated by lines, and items in a group come in
+plugin order. `add_menu_entry` adds something else (a submenu), and the app
+leaves a plugin's item out with `hide_menu_item::<A>()`. Empty top-level
+menus aren't shown. `StandardMenus` has the bar and each menu's entity.
+
+An entry can belong to a panel: `ForPanel::of::<P>()` shows it while a `P` is
+open in the active layout, `ForPanel::instance(panel)` while that panel is
+focused (and despawns it with the panel).
+
 ## Persistence (`persistence` feature)
 
 Saving is [`bedtime-persistence`](../bedtime-persistence/README.md), re-exported

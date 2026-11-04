@@ -94,9 +94,10 @@ pub struct TerminalPlugin;
 
 impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
-        use bedtime_workbench::ActionAppExt;
+        use bedtime_workbench::{ActionAppExt, MenusAppExt};
         app.register_type::<TerminalPanel>()
             .add_action_handler::<NewTerminal>(bedtime_workbench::Handler::new(new_terminal))
+            .add_menu_item::<NewTerminal>(bedtime_workbench::StandardMenu::View, "tools")
             .init_resource::<shell::ShellCommands>()
             .add_systems(Startup, shell::initialize)
             .add_systems(
