@@ -84,18 +84,6 @@ impl ViewerId {
     }
 }
 
-/// How well a viewer suits a file.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Fit {
-    No,
-    /// It can show it (a hex viewer, anything).
-    Can,
-    /// It suits it (an editor, text).
-    Preferred,
-    /// It's made for this kind of file (an image viewer, a PNG).
-    Specific,
-}
-
 struct ErasedViewer {
     id: ViewerId,
     label: &'static str,
@@ -145,7 +133,8 @@ impl ErasedViewer {
 
 #[cfg(feature = "files")]
 struct FileViewer {
-    fit: fn(&std::path::Path, &[u8]) -> Fit,
+    /// The formats it shows (and so any that conform to them).
+    formats: Vec<FormatId>,
     open: fn(&mut World, &std::path::Path, ResolvedPathOptions) -> Result<Entity, String>,
     /// Show the file in a restored viewer panel that has lost its document.
     reopen: fn(&mut World, Entity, &std::path::Path) -> Result<(), String>,
@@ -153,9 +142,9 @@ struct FileViewer {
 
 #[cfg(feature = "files")]
 impl FileViewer {
-    fn of<M: bedtime_filesystem::FileModel>(fit: fn(&std::path::Path, &[u8]) -> Fit) -> Self {
+    fn of<M: bedtime_filesystem::FileModel>(formats: Vec<FormatId>) -> Self {
         Self {
-            fit,
+            formats,
             open: |world, path, options| {
                 let source = bedtime_filesystem::Filesystem::local()
                     .document_source(path)
@@ -178,6 +167,12 @@ impl FileViewer {
                     },
                 )?;
                 world.entity_mut(panel).insert(ViewerFile(file));
+                if let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document())
+                {
+                    world
+                        .entity_mut(document.entity())
+                        .insert(DocumentFormat(options.format));
+                }
                 Ok(panel)
             },
             reopen: |world, panel, path| {
@@ -247,13 +242,15 @@ struct ResolvedPathOptions {
     keep_focus: bool,
     viewer: ViewerId,
     preview: bool,
+    format: FormatId,
 }
 
 /// The registered viewers.
 #[derive(Resource, Default)]
 pub struct Viewers {
     viewers: Vec<ErasedViewer>,
-    /// Preferred where it fits, over other viewers' fit.
+    /// Each model's default, for opens that aren't of a file (a document
+    /// handle, a new untitled one): see `register_default_viewer`.
     default: Option<ViewerId>,
 }
 
@@ -294,13 +291,15 @@ impl Viewers {
 pub trait ViewersAppExt {
     /// Make panel `P` a viewer of model `M` (labelled "Text Editor", say).
     /// New viewers are `P::default()` with a `DocumentReference`; a state to
-    /// show arrives as `Reveal<M::OpenState>`. Add `.files(fit)` to open files
-    /// with it.
+    /// show arrives as `Reveal<M::OpenState>`. Add `.formats([..])` to open
+    /// files with it.
     fn register_viewer<M: DocumentModel, P: Panel + Default>(
         &mut self,
         label: &'static str,
     ) -> ViewerRegistration<'_, M>;
-    /// Prefer viewer `P` wherever it fits.
+    /// Open documents of `P`'s model with `P` when no file format says
+    /// otherwise: a document handle, a new untitled document. Files use
+    /// formats (`set_default_viewer`).
     fn register_default_viewer<P: 'static>(&mut self) -> &mut Self;
 }
 
@@ -327,7 +326,7 @@ impl ViewersAppExt for App {
     }
 }
 
-/// A viewer just registered: `.files(fit)` says which files it opens. It
+/// A viewer just registered: `.formats([..])` says which files it opens. It
 /// derefs to the `App`, to keep building it.
 pub struct ViewerRegistration<'a, M> {
     app: &'a mut App,
@@ -336,20 +335,22 @@ pub struct ViewerRegistration<'a, M> {
 }
 
 impl<'a, M: DocumentModel> ViewerRegistration<'a, M> {
-    /// Open files with this viewer, as well as they `fit` (given the path and
-    /// the file's first bytes).
+    /// Open files of these formats with this viewer, and of formats that
+    /// conform to them: `[TEXT]` is any text, `[DATA]` any file. The closer a
+    /// file's format, the better it suits (see `formats`).
     #[cfg(feature = "files")]
-    pub fn files(self, fit: fn(&std::path::Path, &[u8]) -> Fit) -> &'a mut App
+    pub fn formats(self, formats: impl IntoIterator<Item = FormatId>) -> &'a mut App
     where
         M: bedtime_filesystem::FileModel,
     {
+        let formats = formats.into_iter().collect();
         let mut viewers = self.app.world_mut().resource_mut::<Viewers>();
         let viewer = viewers
             .viewers
             .iter_mut()
             .find(|viewer| viewer.id == self.id)
             .expect("just registered");
-        viewer.files = Some(FileViewer::of::<M>(fit));
+        viewer.files = Some(FileViewer::of::<M>(formats));
         self.app
     }
 }
@@ -472,9 +473,11 @@ impl Workbench {
         Ok(panel)
     }
 
-    /// Open the file at `path` with the viewer that suits it: `options.viewer`
-    /// if it can, else the best fit (the default viewer among equals).
-    /// Returns the panel.
+    /// Open the file at `path` as its format (`options.format`, else the one
+    /// detected) with the viewer that suits it: `options.viewer` if it can,
+    /// else the format's default viewer, else the closest (the first
+    /// registered among equals). Records the format on the document. Returns
+    /// the panel.
     #[cfg(feature = "files")]
     pub fn open_path(
         &mut self,
@@ -482,7 +485,10 @@ impl Workbench {
         options: PathOptions,
     ) -> Result<Entity, String> {
         let world = &mut self.world;
-        let viewer = choose_file_viewer(world, path, options.viewer)
+        let format = options
+            .format
+            .unwrap_or_else(|| file_format(world, path, &file_head(path)));
+        let viewer = choose_file_viewer(world, format, options.viewer)
             .ok_or("nothing here opens this file")?;
         let open = world
             .resource::<Viewers>()
@@ -503,6 +509,7 @@ impl Workbench {
                 keep_focus: options.keep_focus,
                 viewer,
                 preview: options.preview,
+                format,
             },
         )
     }
@@ -538,22 +545,32 @@ impl DocumentsCommandsExt for Commands<'_, '_> {
 
 #[cfg(feature = "files")]
 impl WorkbenchRef {
-    /// The viewers that can open the file at `path`, best first ("Open With").
+    /// The viewers that can open the file at `path`, the one it opens with
+    /// first, then the closest ("Open With").
     pub fn viewers_for(&self, path: &std::path::Path) -> Vec<(ViewerId, &'static str)> {
-        let head = file_head(path);
+        let format = file_format(&self.world, path, &file_head(path));
         let Some(viewers) = self.world.get_resource::<Viewers>() else {
             return Vec::new();
         };
-        let mut fits: Vec<_> = viewers
+        let chosen = choose_file_viewer(&self.world, format, None);
+        let mut candidates: Vec<_> = viewers
             .viewers
             .iter()
             .filter_map(|viewer| {
-                let fit = (viewer.files.as_ref()?.fit)(path, &head);
-                (fit != Fit::No).then_some((fit, viewer.id, viewer.label))
+                let distance = viewer_distance(&self.world, viewer, format)?;
+                Some((Some(viewer.id) != chosen, distance, viewer.id, viewer.label))
             })
             .collect();
-        fits.sort_by_key(|fit| std::cmp::Reverse(fit.0));
-        fits.into_iter().map(|(_, id, label)| (id, label)).collect()
+        candidates.sort_by_key(|&(not_chosen, distance, ..)| (not_chosen, distance));
+        candidates
+            .into_iter()
+            .map(|(.., id, label)| (id, label))
+            .collect()
+    }
+
+    /// The format the file at `path` would open as.
+    pub fn format_of(&self, path: &std::path::Path) -> FormatId {
+        file_format(&self.world, path, &file_head(path))
     }
 }
 
@@ -572,6 +589,8 @@ pub struct PathOptions {
     pub keep_focus: bool,
     pub viewer: Option<ViewerId>,
     pub preview: bool,
+    /// Open it as this format ("Open As"), not the one detected.
+    pub format: Option<FormatId>,
 }
 
 #[cfg(feature = "files")]
@@ -585,32 +604,57 @@ fn file_head(path: &std::path::Path) -> Vec<u8> {
 }
 
 #[cfg(feature = "files")]
+fn file_format(world: &World, path: &std::path::Path, head: &[u8]) -> FormatId {
+    match world.get_resource::<Formats>() {
+        Some(formats) => formats.detect(path, head),
+        None => Formats::default().detect(path, head),
+    }
+}
+
+/// How close `viewer`'s formats are to `format`, if it shows that at all.
+#[cfg(feature = "files")]
+fn viewer_distance(world: &World, viewer: &ErasedViewer, format: FormatId) -> Option<u32> {
+    let formats = world.get_resource::<Formats>()?;
+    viewer
+        .files
+        .as_ref()?
+        .formats
+        .iter()
+        .filter_map(|&shown| formats.distance(format, shown))
+        .min()
+}
+
+/// The viewer a file of `format` opens with: `requested` if it can show it,
+/// else the format's default viewer, else the closest (the first registered
+/// among equals).
+#[cfg(feature = "files")]
 fn choose_file_viewer(
     world: &World,
-    path: &std::path::Path,
+    format: FormatId,
     requested: Option<ViewerId>,
 ) -> Option<ViewerId> {
     let viewers = world.get_resource::<Viewers>()?;
-    let head = file_head(path);
-    let fit = |id: ViewerId| {
+    let distance = |id: ViewerId| {
         viewers
             .get(id)
-            .and_then(|viewer| viewer.files.as_ref())
-            .map_or(Fit::No, |files| (files.fit)(path, &head))
+            .and_then(|viewer| viewer_distance(world, viewer, format))
     };
     if let Some(id) = requested {
-        return (fit(id) != Fit::No).then_some(id);
+        return distance(id).map(|_| id);
     }
-    // The best fit; among equals the default, else the first registered.
-    let mut best: Option<(Fit, ViewerId)> = None;
+    let default = world
+        .get_resource::<Formats>()
+        .and_then(|formats| formats.default_viewer(format))
+        .filter(|&id| distance(id).is_some());
+    if default.is_some() {
+        return default;
+    }
+    let mut best: Option<(u32, ViewerId)> = None;
     for viewer in &viewers.viewers {
-        let fit = fit(viewer.id);
-        let better = match best {
-            None => fit != Fit::No,
-            Some((best, _)) => fit > best || (fit == best && viewers.default == Some(viewer.id)),
-        };
-        if better {
-            best = Some((fit, viewer.id));
+        if let Some(distance) = distance(viewer.id)
+            && best.is_none_or(|(best, _)| distance < best)
+        {
+            best = Some((distance, viewer.id));
         }
     }
     best.map(|(_, id)| id)
@@ -1244,19 +1288,15 @@ mod tests {
 
     #[cfg(feature = "files")]
     #[test]
-    fn paths_open_with_the_viewer_that_fits() {
+    fn paths_open_with_the_viewer_of_the_closest_format() {
+        const NOTES: FormatId = FormatId("notes");
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugins)
+            .register_format(Format::new(NOTES).extensions(["notes"]).conforms_to([TEXT]))
             .register_viewer::<TextBuffer, TextView>("Text")
-            .files(|path, _| {
-                if path.extension().is_some_and(|e| e == "txt") {
-                    Fit::Preferred
-                } else {
-                    Fit::No
-                }
-            })
+            .formats([TEXT])
             .register_viewer::<TextBuffer, HexView>("Hex")
-            .files(|_, _| Fit::Can);
+            .formats([DATA]);
         layout(app.world_mut());
         let directory = std::env::temp_dir().join(format!("bedtime-open-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
@@ -1285,15 +1325,44 @@ mod tests {
         std::fs::write(&data, [0u8, 1]).unwrap();
         let hex = world.workbench_mut().open_path(&data, default()).unwrap();
         assert!(world.get::<HexView>(hex).is_some());
-        // Nothing opens a directory as text: an error.
+        // The text viewer doesn't show data: an error.
         let unopened = world.workbench_mut().open_path(
-            &directory,
+            &data,
             PathOptions {
                 viewer: Some(ViewerId::of::<TextView>()),
                 ..default()
             },
         );
         assert!(unopened.is_err());
+        // The document knows its format.
+        let document = world.get::<DocumentReference>(panel).unwrap().document();
+        assert_eq!(world.workbench().document_format(document), Some(TEXT));
+
+        // A format's default viewer wins over a closer one, and "Open As"
+        // asks for another format.
+        let notes_file = directory.join("todo.notes");
+        std::fs::write(&notes_file, "x").unwrap();
+        assert_eq!(world.workbench().format_of(&notes_file), NOTES);
+        app.set_default_viewer::<HexView>(NOTES);
+        let world = app.world_mut();
+        let opened = world
+            .workbench_mut()
+            .open_path(&notes_file, default())
+            .unwrap();
+        assert!(world.get::<HexView>(opened).is_some());
+        let as_text = world
+            .workbench_mut()
+            .open_path(
+                &notes_file,
+                PathOptions {
+                    format: Some(TEXT),
+                    ..default()
+                },
+            )
+            .unwrap();
+        assert!(world.get::<TextView>(as_text).is_some());
+        let document = world.get::<DocumentReference>(as_text).unwrap().document();
+        assert_eq!(world.workbench().document_format(document), Some(TEXT));
 
         // A restored viewer has its file but not its document: it gets it back.
         assert_eq!(

@@ -10,7 +10,7 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    ActionHandler, ActionInvocation, ActionResult, DocumentReference, DocumentStatus, Fit, Handler,
+    ActionHandler, ActionInvocation, ActionResult, DocumentReference, DocumentStatus, Handler,
     ManagedTask, ManagedWork, Panel, PanelInstance, ResetZoom, ViewerFile, ViewersAppExt,
     WorkbenchWorldExt, ZoomIn, ZoomOut, viewer_document,
 };
@@ -31,21 +31,33 @@ impl Plugin for ModelViewerPlugin {
         if !app.is_plugin_added::<crate::ModelPlugin>() {
             app.add_plugins(crate::ModelPlugin);
         }
+        use bedtime_workbench::{Format, FormatId, FormatsAppExt};
         app.register_type::<ModelPanel>()
+            .register_format(Format::new(MODEL))
+            // glTF's text form is JSON too, so the editor opens it.
+            .register_format(
+                Format::new(FormatId("gltf"))
+                    .extensions(["gltf"])
+                    .conforms_to([MODEL, FormatId("json")]),
+            )
+            .register_format(
+                Format::new(FormatId("glb"))
+                    .extensions(["glb"])
+                    .conforms_to([MODEL]),
+            )
+            .register_format(
+                Format::new(FormatId("stl"))
+                    .extensions(["stl"])
+                    .conforms_to([MODEL]),
+            )
             .register_viewer::<ModelFile, ModelPanel>("3D Model")
-            .files(fit)
+            .formats([MODEL])
             .add_systems(Update, prepare_models);
     }
 }
 
-fn fit(path: &Path, _: &[u8]) -> Fit {
-    let known = path.extension().is_some_and(|ext| {
-        crate::SUPPORTED_EXTENSIONS
-            .iter()
-            .any(|known| ext.eq_ignore_ascii_case(known))
-    });
-    if known { Fit::Specific } else { Fit::No }
-}
+/// 3D models: glTF (`.gltf`, `.glb`) and STL.
+pub const MODEL: bedtime_workbench::FormatId = bedtime_workbench::FormatId("3d-model");
 
 /// A model file's bytes.
 #[derive(Clone, Default, PartialEq)]

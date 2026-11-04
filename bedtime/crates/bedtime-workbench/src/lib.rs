@@ -3,6 +3,8 @@ pub mod actions;
 mod closing;
 mod document_actions;
 mod documents;
+#[cfg(feature = "files")]
+mod formats;
 mod lifecycle;
 pub mod menus;
 mod notifications;
@@ -32,6 +34,8 @@ pub mod ui {
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
 pub use document_actions::*;
 pub use documents::*;
+#[cfg(feature = "files")]
+pub use formats::*;
 pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 pub use opening::*;

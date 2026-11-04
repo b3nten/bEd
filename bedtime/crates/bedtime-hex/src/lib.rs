@@ -8,7 +8,7 @@ use bedtime_filesystem::FileModel;
 use bedtime_ui::{Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{Fit, Panel, PanelPresentation, ViewersAppExt, viewer_document};
+use bedtime_workbench::{Panel, PanelPresentation, ViewersAppExt, viewer_document};
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -21,7 +21,8 @@ impl Plugin for HexPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<HexPanel>()
             .register_viewer::<Bytes, HexPanel>("Hex")
-            .files(|_, _| Fit::Can);
+            // Any file, as the furthest fit: what nothing else opens.
+            .formats([bedtime_workbench::DATA]);
     }
 }
 

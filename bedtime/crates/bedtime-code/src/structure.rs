@@ -45,7 +45,9 @@ fn has_outline(world: &World, panel: Entity) -> bool {
                     .inspect_document(reference.document())
                     .ok()
             })
-            .is_some_and(|info| crate::syntax::language_name(&info.title).is_some())
+            .is_some_and(|info| {
+                crate::syntax::document_language(world, info.id, &info.title).is_some()
+            })
 }
 
 /// The current analysis of the text `panel` shows: at its current revision.

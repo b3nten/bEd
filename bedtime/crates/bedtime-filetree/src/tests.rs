@@ -42,13 +42,7 @@ fn app(project: &Project) -> (App, Entity) {
     app.add_plugins((WorkbenchCorePlugins, FileTreePlugin))
         .insert_resource(Root(project.0.clone()))
         .register_viewer::<TextBuffer, TextView>("Text")
-        .files(|path, _| {
-            if path.extension().is_some_and(|e| e == "txt") {
-                bedtime_workbench::Fit::Preferred
-            } else {
-                bedtime_workbench::Fit::No
-            }
-        });
+        .formats([bedtime_workbench::TEXT]);
     let world = app.world_mut();
     let layout = world.layouts_mut().create("Main").unwrap();
     world.layouts_mut().activate(layout).unwrap();
@@ -275,16 +269,17 @@ fn a_preview_opens_beside_the_tree_and_leaves_it_focused() {
     assert!(!world.get::<PanelInstance>(viewer).unwrap().preview);
     assert_eq!(world.layouts().focused_panel(layout), Some(viewer));
 
-    // Nothing opens a Rust file here: the user is told.
+    // Nothing opens a binary file here (only text): the user is told.
+    std::fs::write(project.0.join("blob.bin"), [0u8, 1]).unwrap();
     apply(
         world,
         tree,
         &project.0,
-        open(project.0.join("src/main.rs"), true),
+        open(project.0.join("blob.bin"), true),
     );
     let latest = world.resource::<Notifications>().latest().unwrap();
     assert!(
-        latest.text.starts_with("Couldn't open main.rs"),
+        latest.text.starts_with("Couldn't open blob.bin"),
         "{}",
         latest.text
     );

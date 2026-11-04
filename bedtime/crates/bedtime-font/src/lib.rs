@@ -6,7 +6,7 @@
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, UiFrame, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{Fit, Panel, PanelPresentation, ViewersAppExt, viewer_document};
+use bedtime_workbench::{Panel, PanelPresentation, ViewersAppExt, viewer_document};
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -15,18 +15,16 @@ pub use face::{Command, Face, FontFile, Glyph, Outline, SUPPORTED_EXTENSIONS};
 
 pub struct FontPlugin;
 
+/// Font files: the extensions in `SUPPORTED_EXTENSIONS`.
+pub const FONT: bedtime_workbench::FormatId = bedtime_workbench::FormatId("font");
+
 impl Plugin for FontPlugin {
     fn build(&self, app: &mut App) {
+        use bedtime_workbench::{Format, FormatsAppExt};
         app.register_type::<FontPanel>()
+            .register_format(Format::new(FONT).extensions(SUPPORTED_EXTENSIONS.iter().copied()))
             .register_viewer::<FontFile, FontPanel>("Font")
-            .files(|path, _| {
-                let known = path.extension().is_some_and(|ext| {
-                    SUPPORTED_EXTENSIONS
-                        .iter()
-                        .any(|known| ext.eq_ignore_ascii_case(known))
-                });
-                if known { Fit::Specific } else { Fit::No }
-            });
+            .formats([FONT]);
     }
 }
 

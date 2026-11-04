@@ -6,7 +6,7 @@ mod folds;
 mod languages;
 mod outline;
 mod session;
-pub use languages::{LANGUAGES, language_name};
+pub use languages::{LANGUAGES, document_language, language_name, register_language_formats};
 pub use session::{AnalysisSession, AnalysisWorker};
 use std::{ops::Range, sync::Arc};
 pub use tree_sitter;

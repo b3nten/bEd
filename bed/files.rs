@@ -56,3 +56,57 @@ fn open_dropped_folder(world: &mut World) {
         crate::menus::switch(world, crate::workspace::Start::Folder(folder));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use bedtime_workbench::{WorkbenchCorePlugins, WorkbenchWorldExt};
+    use bevy::prelude::*;
+
+    /// Which viewers bed's plugins offer for files, the one each opens with
+    /// first.
+    #[test]
+    fn files_open_with_the_viewer_their_format_suits() {
+        let mut app = App::new();
+        app.add_plugins((
+            WorkbenchCorePlugins,
+            bedtime_code::CodePlugin,
+            bedtime_hex::HexPlugin,
+            bedtime_image::ImagePlugin,
+            bedtime_table::TablePlugin,
+            bedtime_preview::PreviewPlugin,
+        ));
+        let directory = std::env::temp_dir().join(format!("bed-formats-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let offered = |name: &str, contents: &[u8]| {
+            let path = directory.join(name);
+            std::fs::write(&path, contents).unwrap();
+            app.world()
+                .workbench()
+                .viewers_for(&path)
+                .into_iter()
+                .map(|(_, label)| label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(offered("a.csv", b"a,b"), ["Table", "Text Editor", "Hex"]);
+        assert_eq!(
+            offered("README.md", b"# Hi"),
+            ["Text Editor", "Markdown Preview", "Hex"]
+        );
+        assert_eq!(
+            offered("Cargo.lock", b"version = 4"),
+            ["Text Editor", "Tree View", "Hex"]
+        );
+        assert_eq!(
+            offered("logo.svg", b"<svg/>"),
+            ["Image", "Text Editor", "Hex"]
+        );
+        assert_eq!(
+            offered("photo.png", &[137, 80, 78, 71, 0]),
+            ["Image", "Hex"]
+        );
+        assert_eq!(offered("main.rs", b"fn main() {}"), ["Text Editor", "Hex"]);
+        assert_eq!(offered("notes.poop", b"plain"), ["Text Editor", "Hex"]);
+        assert_eq!(offered("blob", &[0, 1, 2]), ["Hex"]);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+}

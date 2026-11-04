@@ -52,6 +52,8 @@ pub(crate) fn install(app: &mut App) {
             report_failed_actions.after(ActionSystems::Dispatch),
         );
     documents::install(app);
+    #[cfg(feature = "files")]
+    app.init_resource::<Formats>();
     app.init_resource::<Viewers>()
         .add_observer(opening::check_viewer_model)
         .add_systems(Update, opening::pin_edited_previews);

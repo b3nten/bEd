@@ -215,8 +215,8 @@ registering it pairs the panel type with its model and a label, and that's
 what makes it a viewer:
 
 ```rust,ignore
-app.register_viewer::<TextBuffer, EditorPanel>("Text Editor").files(text_fit)
-   .register_viewer::<Bytes, HexPanel>("Hex").files(|_, _| Fit::Can)
+app.register_viewer::<TextBuffer, EditorPanel>("Text Editor").formats([TEXT])
+   .register_viewer::<Bytes, HexPanel>("Hex").formats([DATA])
    .register_default_viewer::<EditorPanel>();
 
 world.workbench_mut().open_document(source, OpenOptions::at(state))?;
@@ -246,13 +246,20 @@ commands.open_document(handle, OpenOptions::at(state)); // errors become notific
   is still its area's selected tab.
 - `preview: true` makes a new panel replace its area's preview. Opening
   without `preview` pins an existing preview, and so does editing its document.
-- With the `files` feature (default), viewers say which files they open
-  (`files(fit)`, for a `FileModel`), `viewers_for(path)` lists them ("Open
-  With"), and `open_path` picks the requested viewer, else the best fit:
-  `Fit::Specific` (made for this kind of file: an image viewer, a PNG) over
-  `Preferred` (the editor, any text) over `Can` (hex, anything), the default
-  viewer among equals. A file nothing opens is an error, which the caller
-  reports. `viewers_for_document` lists viewers for an open document.
+- With the `files` feature (default), files have formats (`formats`
+  module). A plugin registers its formats with the names and extensions
+  they're known by and what they conform to (`register_format(Format::new(CSV)
+  .extensions(["csv"]).conforms_to([TEXT]))`), and viewers the formats they
+  show (`.formats([CSV])`, for a `FileModel`). `open_path` detects the file's
+  format (by name, extension, a detector, then text or not), or takes
+  `PathOptions::format` ("Open As"), and opens it with the requested viewer,
+  else the format's default (`set_default_viewer::<P>(format)`; the latest
+  call wins), else the viewer whose format is closest in steps of
+  conformance, the first registered among equals. It records the format on
+  the document (`DocumentFormat`, `document_format`). `viewers_for(path)`
+  lists the viewers that can open a file ("Open With"), and
+  `viewers_for_document` those for an open document. A file nothing opens is
+  an error, which the caller reports.
 - A viewer opened from a file keeps the path with the panel (`ViewerFile`,
   saved with persistence). A restored panel with a path but no document gets
   it back from the viewer it is (`reopen_viewers`, in `Update`); one whose

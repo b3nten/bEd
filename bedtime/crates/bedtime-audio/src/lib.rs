@@ -7,7 +7,7 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    Fit, Notification, Panel, PanelPresentation, ViewersAppExt, WorkbenchWorldExt, viewer_document,
+    Notification, Panel, PanelPresentation, ViewersAppExt, WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{sync::Arc, time::Duration};
@@ -17,18 +17,17 @@ pub use sound::{Analysis, BINS, FLOOR_DB, PEAK_HOP, SUPPORTED_EXTENSIONS, Sound,
 
 pub struct AudioPlugin;
 
+/// Audio files: the extensions in `SUPPORTED_EXTENSIONS`.
+pub const AUDIO: bedtime_workbench::FormatId = bedtime_workbench::FormatId("audio");
+
 impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
+        use bedtime_workbench::{Format, FormatsAppExt};
         app.register_type::<AudioPanel>()
             .insert_non_send(Speakers::default())
+            .register_format(Format::new(AUDIO).extensions(SUPPORTED_EXTENSIONS.iter().copied()))
             .register_viewer::<Sound, AudioPanel>("Audio")
-            .files(|path, _| {
-                if has_extension(path, SUPPORTED_EXTENSIONS) {
-                    Fit::Specific
-                } else {
-                    Fit::No
-                }
-            });
+            .formats([AUDIO]);
     }
 }
 

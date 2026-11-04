@@ -177,12 +177,11 @@ component and draws with `draw_editor`, without being an editor panel.
   said "opener" now say "viewer": `ViewerId`, `OpenOptions::viewer`,
   `PathOptions::viewer`, `viewers_for(path)`, `viewers_for_document`,
   `Viewers` (the resource), bedtime-preview's `preview_viewer`.
-- **`Fit` stays until formats replace it** (see "Formats and sibling
-  documents"). It ranks how well each viewer suits a file. Many places open
-  paths (the file tree, `+open`, search, dropped files, LSP, git), so the
-  file-to-viewer choice has to be central, and made per viewer, not per
-  model: CSV and Rust both load as `TextBuffer`, but CSV should open in the
-  table viewer.
+- **`Fit` is gone; formats replaced it in 4a** (see "Formats and sibling
+  documents"). Many places open paths (the file tree, `+open`, search,
+  dropped files, LSP, git), so the file-to-viewer choice is central, and made
+  per viewer, not per model: CSV and Rust both load as `TextBuffer`, but CSV
+  opens in the table viewer.
 - **Type checks:**
   - `DocumentReference::of(DocumentHandle<M>)` builds a reference from a
     typed handle, so document IDs can't be mixed up.
@@ -243,34 +242,58 @@ component and draws with `draw_editor`, without being an editor panel.
 A file's *format* (CSV, Rust, SVG, glTF) is separate from the *model* that
 holds it in memory (`TextBuffer`, `GltfModel`). Formats replace `Fit`.
 
-- **Formats are registered by plugins,** with their extensions and what they
-  conform to, as in macOS's Uniform Type Identifiers:
+Status: 4a (formats) is done; 4b (sibling documents, the byte codec) is
+next. Formats live in workbench's `formats` module (`files` feature), not
+bedtime-document: detection reads files and the registry is an app resource.
+
+- **Formats are registered by plugins,** with the names and extensions
+  they're known by and what they conform to, as in macOS's Uniform Type
+  Identifiers. `FormatId("csv")` is the identity; plugins sharing a format use
+  the same id, and registering one again adds names, extensions and parents
+  (the preview plugin adds `Cargo.lock` to bedtime-code's `toml`):
   ```rust
-  app.register_format(Format::new("csv").extensions(["csv", "tsv"]).conforms_to(TEXT));
-  app.register_format(Format::new("svg").extensions(["svg"]).conforms_to([XML, IMAGE]));
+  app.register_format(Format::new(CSV).extensions(["csv", "tsv"]).conforms_to([TEXT]));
+  app.register_format(Format::new(SVG).extensions(["svg"]).conforms_to([IMAGE, FormatId("xml")]));
+  app.register_format_detector(|path| language_name(&path.to_string_lossy()).map(FormatId));
   ```
-  `DATA` is the root format, which everything conforms to.
+  `DATA` (the root) and `TEXT` are built in. A format without parents
+  conforms to `DATA`.
 - **Viewers register for a model and the formats they handle:**
   ```rust
   app.register_viewer::<TextBuffer, TablePanel>("Table").formats([CSV]);
   app.register_viewer::<TextBuffer, EditorPanel>("Text Editor").formats([TEXT]);
   app.register_viewer::<Bytes, HexPanel>("Hex").formats([DATA]);
-  app.set_default_viewer(CSV, EditorPanel);   // app override
+  app.set_default_viewer::<EditorPanel>(CSV);   // an override
   ```
-- **The default viewer is the most specific match.** CSV → text → data, so
-  Table (exact) beats the editor (one level up), which beats hex (the root).
-  The rest appear in "Open With". `Fit`'s levels become distances in the
-  format hierarchy; nobody writes fit functions. On a tie (SVG is as close to
-  `IMAGE` as to `XML`), the app chooses the default with
-  `set_default_viewer`; until it does, the first registered viewer wins.
-- **Detecting a file's format:** first the extension, then a look at the
-  file's first bytes (for example "it's UTF-8, so text"; that check moves
-  out of `text_fit`). An unknown text file (`.poop`) opens as text.
-- **A document records its format,** and the format can be changed: "Open
-  As…", a setting mapping file patterns to formats (like VS Code's
-  `files.associations`), or choosing a format for an untitled document.
-  Syntax highlighting and the language-server language ID should read the
-  document's format, so one association drives all three.
+- **Choosing the viewer:** the requested one if it can show the format,
+  else the format's default (`set_default_viewer`, for exactly that format;
+  the latest call wins, so an app overrides its plugins), else the closest
+  viewer in steps of conformance (CSV → text → data: Table, then the editor,
+  then hex), the first registered among equals. The rest appear in "Open
+  With" (`viewers_for`), the chosen one first. Nobody writes fit functions.
+  - Plugins set defaults for their own formats where the closest viewer
+    isn't the one to open: the preview plugin makes the editor the default
+    for Markdown, JSON and TOML, so the previews are "Open With" only.
+  - No ties in bed's formats: SVG conforms to `[IMAGE, xml]`, so the image
+    viewer is 1 step away and the editor 2; `.gltf` conforms to
+    `[3d-model, json]` the same way.
+  - `register_default_viewer::<P>()` stays, for opens that aren't of a file
+    (a document handle, a new untitled document): the model's default.
+- **Detecting a file's format:** a format's whole file names (`Cargo.lock`),
+  then extensions, then detectors (bedtime-code's finds languages with
+  `language_name`), then the first bytes: UTF-8 without NUL is `TEXT`, else
+  `DATA`. A detector's format that nobody registered is ignored. A format
+  that conforms to text but whose file isn't text counts as `DATA`. An
+  unknown text file (`.poop`) opens as text.
+- **A document records its format** (`DocumentFormat` on the document
+  entity, `workbench().document_format(id)`), set by every path open. "Open
+  As" is `PathOptions::format`; there's no UI for it yet, and no
+  file-association setting yet.
+- **Highlighting and LSP read the format.** Every highlighted language is a
+  format (`FormatId("rust")`, conforming to `TEXT`). `document_language`
+  takes the language closest to the document's format (SVG's is XML,
+  `.gltf`'s JSON). A file opened as plain `TEXT` gets none, and a document
+  without a format (untitled) uses its title.
 - **Each model keeps whatever in-memory form makes its edits cheap.** The
   hex, image, glTF and material editors planned for later each choose their
   own structure. Nothing is stored as bytes for the sake of sharing.
@@ -385,11 +408,13 @@ holds it in memory (`TextBuffer`, `GltfModel`). Formats replace `Fit`.
      viewers with `Place`. Where documents land doesn't change in this step.
 3. Change where documents open by default (prefer areas that already show
    viewers), and add `Placement::Beside` (Preview, git diff).
-4. **Formats and sibling documents:** `register_format` and format detection
-   replace `Fit`; viewers register for formats; documents record their
-   format (highlighting and LSP read it); one document per (source, model);
-   the byte codec moves to bedtime-document; siblings sync in memory on idle
-   and on focus change.
+4. **Formats and sibling documents**, in two parts:
+   - ~~**4a, formats:** `register_format` and format detection replace `Fit`;
+     viewers register for formats; documents record their format
+     (highlighting and LSP read it).~~ (done)
+   - **4b, siblings:** one document per (source, model); the byte codec
+     moves to bedtime-document; siblings sync in memory on idle and on focus
+     change.
 5. Settings declared by the crates that own them; the generic settings panel.
 6. Status bar contributions.
 7. Route `New` through the focused panel.
@@ -439,3 +464,13 @@ Do one step at a time, then review it before starting the next.
   else any viewer, else the largest. Bed's preview, the file tree's and Git's
   previews, `New`, git's diff panels and the LSP references panel moved onto
   `Place` / `keep_focus`.
+- 2026-11-04: step 4a done. Workbench `formats` module: `Format`, `FormatId`,
+  `DATA`/`TEXT`, `Formats` (detection, conformance distance),
+  `register_format` (merging), `register_format_detector`,
+  `set_default_viewer::<P>(format)`, `DocumentFormat`. Viewers register with
+  `.formats([..])`; `Fit` and `text_fit` are gone. `PathOptions::format` is
+  "Open As"; `workbench().format_of(path)`. Every viewer crate registers its
+  formats (audio, font, image + SVG, 3D model + glTF/GLB/STL, video, CSV,
+  Markdown/JSON/TOML); bedtime-code registers a format per language plus a
+  detector, and highlighting, Structure and LSP use `document_language`. Bed
+  has a test of which viewer each kind of file opens with.

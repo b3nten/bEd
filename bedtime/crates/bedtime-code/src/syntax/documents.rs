@@ -55,7 +55,7 @@ pub(crate) fn update_syntax(world: &mut World) {
         ) else {
             continue;
         };
-        let Some(language) = language_name(&info.title) else {
+        let Some(language) = document_language(world, id, &info.title) else {
             continue;
         };
         if info.status != DocumentStatus::Ready {

@@ -8,8 +8,8 @@ use bedtime_ui::UiContext;
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
     DocumentDraft, DocumentError, DocumentHandle, DocumentId, DocumentReference, DocumentStatus,
-    DocumentUndoGroup, EditOptions, Fit, Notification, Panel, PanelPresentation, Reveal,
-    ViewersAppExt, WorkbenchWorldExt,
+    DocumentUndoGroup, EditOptions, Notification, Panel, PanelPresentation, Reveal, ViewersAppExt,
+    WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 
@@ -74,9 +74,10 @@ impl Plugin for CodePlugin {
                     panel.is_some_and(|p| world.get::<EditorPanel>(p).is_some())
                 }),
             );
+        crate::syntax::register_language_formats(app);
         app.register_type::<EditorPanel>()
             .register_viewer::<TextBuffer, EditorPanel>("Text Editor")
-            .files(text_fit)
+            .formats([bedtime_workbench::TEXT])
             .register_default_viewer::<EditorPanel>()
             .register_type::<crate::structure::StructurePanel>()
             .add_action_handler::<crate::structure::ShowStructure>(bedtime_workbench::Handler::new(
@@ -92,19 +93,6 @@ impl Plugin for CodePlugin {
                 )
                     .chain(),
             );
-    }
-}
-
-/// Text: no NUL bytes, and UTF-8 (the start may end mid-character).
-pub fn text_fit(_: &std::path::Path, head: &[u8]) -> Fit {
-    let utf8 = match std::str::from_utf8(head) {
-        Ok(_) => true,
-        Err(error) => error.error_len().is_none(),
-    };
-    if utf8 && !head.contains(&0) {
-        Fit::Preferred
-    } else {
-        Fit::No
     }
 }
 
@@ -224,7 +212,8 @@ fn draw(
         .unwrap_or_default();
     editor.view.settings.wrap = editor.wrap.unwrap_or(defaults.wrap);
     editor.view.settings.line_numbers = defaults.line_numbers;
-    editor.view.has_syntax = crate::syntax::language_name(&info.title).is_some();
+    editor.view.has_syntax =
+        crate::syntax::document_language(world, document, &info.title).is_some();
     match world.get::<crate::syntax::DocumentSyntax>(document.entity()) {
         Some(syntax) => editor.view.set_analysis(&syntax.session),
         None => editor.view.set_syntax(None),

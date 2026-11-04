@@ -366,12 +366,17 @@ fn next_key(document: Entity) -> DocumentKey {
 
 /// A document's file and language, from an editor showing it.
 fn shown_files(world: &mut World) -> HashMap<Entity, (PathBuf, &'static str)> {
-    world
+    let shown: Vec<_> = world
         .query_filtered::<(&DocumentReference, &ViewerFile), With<EditorPanel>>()
         .iter(world)
-        .filter_map(|(reference, file)| {
-            let language = crate::syntax::language_name(&file.0.to_string_lossy())?;
-            Some((reference.document().entity(), (file.0.clone(), language)))
+        .map(|(reference, file)| (reference.document(), file.0.clone()))
+        .collect();
+    shown
+        .into_iter()
+        .filter_map(|(document, file)| {
+            let language =
+                crate::syntax::document_language(world, document, &file.to_string_lossy())?;
+            Some((document.entity(), (file, language)))
         })
         .collect()
 }

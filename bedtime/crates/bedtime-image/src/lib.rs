@@ -7,7 +7,7 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    ActionHandler, ActionInvocation, ActionResult, Fit, Handler, Panel, PanelInstance,
+    ActionHandler, ActionInvocation, ActionResult, Handler, Panel, PanelInstance,
     PanelPresentation, ResetZoom, ViewersAppExt, ZoomIn, ZoomOut, viewer_document,
 };
 use bevy::prelude::*;
@@ -22,17 +22,27 @@ pub use transform::ImageTransform;
 
 pub struct ImagePlugin;
 
+/// Images: the extensions in `SUPPORTED_EXTENSIONS` but SVG.
+pub const IMAGE: bedtime_workbench::FormatId = bedtime_workbench::FormatId("image");
+/// SVG: an image, and XML (so the editor opens it too).
+pub const SVG: bedtime_workbench::FormatId = bedtime_workbench::FormatId("svg");
+
 impl Plugin for ImagePlugin {
     fn build(&self, app: &mut App) {
+        use bedtime_workbench::{Format, FormatId, FormatsAppExt};
+        let raster = SUPPORTED_EXTENSIONS
+            .iter()
+            .copied()
+            .filter(|&ext| ext != "svg");
         app.register_type::<ImagePanel>()
+            .register_format(Format::new(IMAGE).extensions(raster))
+            .register_format(
+                Format::new(SVG)
+                    .extensions(["svg"])
+                    .conforms_to([IMAGE, FormatId("xml")]),
+            )
             .register_viewer::<Picture, ImagePanel>("Image")
-            .files(|path, _| {
-                if supported(path) {
-                    Fit::Specific
-                } else {
-                    Fit::No
-                }
-            });
+            .formats([IMAGE]);
     }
 }
 

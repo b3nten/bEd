@@ -12,11 +12,11 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    EditOptions, Fit, ManagedTask, ManagedWork, Notification, Panel, PanelPresentation,
-    ViewersAppExt, WorkbenchWorldExt, viewer_document,
+    EditOptions, ManagedTask, ManagedWork, Notification, Panel, PanelPresentation, ViewersAppExt,
+    WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
-use std::{path::Path, time::Duration};
+use std::time::Duration;
 
 pub mod csv;
 mod model;
@@ -28,35 +28,21 @@ pub const SUPPORTED_EXTENSIONS: &[&str] = &["csv", "tsv", "tab"];
 
 pub struct TablePlugin;
 
+/// Tables in text: CSV and TSV (`SUPPORTED_EXTENSIONS`). Made for them, the
+/// table viewer opens them; the editor is in "Open With".
+pub const CSV: bedtime_workbench::FormatId = bedtime_workbench::FormatId("csv");
+
 impl Plugin for TablePlugin {
     fn build(&self, app: &mut App) {
+        use bedtime_workbench::{Format, FormatsAppExt, TEXT};
         app.register_type::<TablePanel>()
+            .register_format(
+                Format::new(CSV)
+                    .extensions(SUPPORTED_EXTENSIONS.iter().copied())
+                    .conforms_to([TEXT]),
+            )
             .register_viewer::<TextBuffer, TablePanel>("Table")
-            .files(table_fit);
-    }
-}
-
-/// Whether `path` is named as a table (by its extension).
-fn is_table(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| {
-        SUPPORTED_EXTENSIONS
-            .iter()
-            .any(|known| ext.eq_ignore_ascii_case(known))
-    })
-}
-
-/// Text named as a table: made for it, so it opens as one (the editor is in
-/// "Open With").
-fn table_fit(path: &Path, head: &[u8]) -> Fit {
-    let text = match std::str::from_utf8(head) {
-        Ok(_) => true,
-        // Cut off mid-character at the end of the sample.
-        Err(error) => error.error_len().is_none(),
-    };
-    if is_table(path) && text && !head.contains(&0) {
-        Fit::Specific
-    } else {
-        Fit::No
+            .formats([CSV]);
     }
 }
 

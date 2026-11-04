@@ -6,7 +6,7 @@ Read-only workbench viewer for file offsets, hexadecimal bytes and text.
 app.add_plugins(HexPlugin);
 ```
 
-- **Fallback opener:** `Fit::Can` accepts any file. `Bytes` loads up to
+- **Fallback viewer:** registered for `DATA`, so it opens any file, but as the furthest fit. `Bytes` loads up to
   256 MiB on the document worker, read-only.
 - **Drawing.** Only visible rows are drawn. Integer positions preserve exact offsets. Bytes are colored by kind: zero, text, control, high.
 - **Keys.** Arrows, Page Up/Down and Home/End move (with Shift, select);

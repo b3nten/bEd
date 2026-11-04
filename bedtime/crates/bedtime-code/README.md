@@ -9,8 +9,10 @@ app.add_plugins(CodePlugin);
 ```
 
 `CodePlugin` analyses the documents editors show, and registers `EditorPanel`
-as the default opener for text files
-(`text_fit`: no NUL bytes, UTF-8). Opening a file (`open_path`, a file tree)
+as the viewer of text (`TEXT`: UTF-8 without NUL bytes), and each
+highlighted language as a text format (`FormatId("rust")`, found by
+`language_name`). Highlighting and language servers use the language closest
+to a document's format (`document_language`: SVG is XML), or its title's. Opening a file (`open_path`, a file tree)
 shows it in an editor; the model's `TextOpenState` (a cursor or selection)
 becomes a selection revealed in the middle, once the text has loaded.
 Restoring a workspace reopens its editors (workbench's `ViewerFile`).

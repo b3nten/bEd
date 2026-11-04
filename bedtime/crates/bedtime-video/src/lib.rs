@@ -8,10 +8,10 @@ use bedtime_filesystem::FileModel;
 #[cfg(target_os = "macos")]
 use bedtime_ui::{BuiltinIcon, Floating, UiFrame, theme};
 use bedtime_ui::{UiContext, egui};
+#[cfg(target_os = "macos")]
+use bedtime_workbench::ViewersAppExt;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-#[cfg(target_os = "macos")]
-use bedtime_workbench::{Fit, ViewersAppExt};
 use bedtime_workbench::{Panel, PanelPresentation, ViewerFile, viewer_document};
 use bevy::{platform::collections::HashMap, prelude::*};
 use std::path::PathBuf;
@@ -31,6 +31,9 @@ use player::Player;
 
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov", "qt", "3gp"];
 
+/// Videos: the extensions in `SUPPORTED_EXTENSIONS` (macOS only plays them).
+pub const VIDEO: bedtime_workbench::FormatId = bedtime_workbench::FormatId("video");
+
 pub struct VideoPlugin;
 
 impl Plugin for VideoPlugin {
@@ -39,15 +42,14 @@ impl Plugin for VideoPlugin {
             .insert_non_send(Players::default())
             .add_systems(Update, drop_players);
         #[cfg(target_os = "macos")]
-        app.register_viewer::<VideoFile, VideoPanel>("Video")
-            .files(|path, _| {
-                let known = path.extension().is_some_and(|ext| {
-                    SUPPORTED_EXTENSIONS
-                        .iter()
-                        .any(|known| ext.eq_ignore_ascii_case(known))
-                });
-                if known { Fit::Specific } else { Fit::No }
-            });
+        {
+            use bedtime_workbench::{Format, FormatsAppExt};
+            app.register_format(
+                Format::new(VIDEO).extensions(SUPPORTED_EXTENSIONS.iter().copied()),
+            )
+            .register_viewer::<VideoFile, VideoPanel>("Video")
+            .formats([VIDEO]);
+        }
     }
 }
 

@@ -30,7 +30,7 @@ use bedtime_ui::{MotionPolicy, egui};
 use bevy::prelude::Component;
 pub use panel::{
     CodePlugin, ComparisonRequest, EditorComparison, EditorDefaults, EditorPanel, ToggleWordWrap,
-    draw_editor, editor_id, text_fit,
+    draw_editor, editor_id,
 };
 use std::ops::Range;
 
