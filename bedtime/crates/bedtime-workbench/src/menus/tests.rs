@@ -226,3 +226,71 @@ fn malformed_trees_fail_at_the_snapshot_boundary() {
             .is_err()
     );
 }
+
+#[bedtime_ui::panel]
+#[derive(Default)]
+struct Notes;
+impl crate::Panel for Notes {
+    const LABEL: &'static str = "Notes";
+    fn draw(_: &mut bedtime_ui::egui::Ui, _: &mut World, _: &bedtime_ui::UiContext<'_>, _: Entity) {
+    }
+}
+
+#[bedtime_ui::panel]
+#[derive(Default)]
+struct Other;
+impl crate::Panel for Other {
+    const LABEL: &'static str = "Other";
+    fn draw(_: &mut bedtime_ui::egui::Ui, _: &mut World, _: &bedtime_ui::UiContext<'_>, _: Entity) {
+    }
+}
+
+#[test]
+fn entries_of_a_panel_show_while_it_is_open_or_focused() {
+    use crate::{LayoutsWorldExt, PanelsWorldExt};
+    let mut app = app();
+    app.add_plugins(bedtime_ui::layouts::LayoutsPlugin);
+    let world = app.world_mut();
+    let menu = world
+        .spawn(Menu {
+            label: "Edit".into(),
+        })
+        .id();
+    world.spawn((MenuItem::action::<Copy>(), InMenu(menu)));
+    world.spawn((
+        MenuItem::action::<Paste>(),
+        InMenu(menu),
+        ForPanel::of::<Notes>(),
+    ));
+    let labels = |world: &World| -> Vec<String> {
+        world
+            .menus()
+            .snapshot(menu, InvocationContext::Global)
+            .unwrap()
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                MenuNode::Item { label, .. } => Some(label.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(labels(world), ["Copy"], "no Notes panel is open");
+    let notes = world.open_panel(Notes);
+    assert_eq!(labels(world), ["Copy", "Paste"]);
+
+    // One panel's own entry: while it's focused, and gone with it.
+    let own = world
+        .spawn((
+            MenuItem::new("Notes Only"),
+            InMenu(menu),
+            ForPanel::instance(notes),
+        ))
+        .id();
+    assert_eq!(labels(world), ["Copy", "Paste", "Notes Only"]);
+    world.open_panel(Other);
+    assert_eq!(labels(world), ["Copy", "Paste"]);
+    world.layouts_mut().close_panel(notes).unwrap();
+    assert!(world.get_entity(own).is_err());
+    assert_eq!(labels(world), ["Copy"]);
+}

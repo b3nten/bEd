@@ -3,6 +3,11 @@
 //! when the action is available in its context. A snapshot reads a menu tree
 //! with that state filled in; the egui renderer (`ui` feature) and the native
 //! menu bar (`native` feature) both draw snapshots.
+//!
+//! An entry can belong to a panel, and is left out of snapshots otherwise:
+//! `ForPanel::of::<P>()` while a `P` is open in the active layout,
+//! `ForPanel::instance(panel)` while that panel is focused (it goes when the
+//! panel does). A whole menu can belong to one the same way.
 #[cfg(feature = "native")]
 mod native;
 #[cfg(test)]
@@ -62,6 +67,57 @@ impl MenuEntries {
     pub fn entities(&self) -> &[Entity] {
         &self.0
     }
+}
+
+/// On a menu entry: shown only while a panel of this type is open in the
+/// active layout. `ForPanel::instance` makes one for a single panel instead.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForPanel(std::any::TypeId);
+
+impl ForPanel {
+    /// Shown while a panel of type `P` is open in the active layout.
+    pub fn of<P: 'static>() -> Self {
+        Self(std::any::TypeId::of::<P>())
+    }
+    /// Shown while `panel` is focused, and despawned with it.
+    pub fn instance(panel: Entity) -> ForPanelInstance {
+        ForPanelInstance(panel)
+    }
+}
+
+/// On a menu entry: shown only while this panel is focused; it goes when the
+/// panel does (`ForPanel::instance`).
+#[derive(Component, Debug)]
+#[relationship(relationship_target = PanelMenuEntries)]
+pub struct ForPanelInstance(pub Entity);
+
+/// On a panel: the menu entries that are its own.
+#[derive(Component, Debug, Default)]
+#[relationship_target(relationship = ForPanelInstance, linked_spawn)]
+pub struct PanelMenuEntries(Vec<Entity>);
+
+/// Whether `entry` belongs in menus now: always, unless it's a panel's.
+fn shown(world: &World, entry: Entity) -> bool {
+    use bedtime_ui::layouts::{LayoutsWorldExt, PanelInstance};
+    let active = world.layouts().active();
+    if let Some(ForPanel(kind)) = world.get::<ForPanel>(entry) {
+        let open =
+            active.is_some_and(|layout| {
+                world.layouts().panels(layout).into_iter().any(|panel| {
+                    world.get::<PanelInstance>(panel).and_then(|p| p.kind) == Some(*kind)
+                })
+            });
+        if !open {
+            return false;
+        }
+    }
+    if let Some(ForPanelInstance(panel)) = world.get::<ForPanelInstance>(entry) {
+        let focused = active.and_then(|layout| world.layouts().focused_panel(layout));
+        if focused != Some(*panel) {
+            return false;
+        }
+    }
+    true
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -191,6 +247,9 @@ fn read_entries(
     for entity in children {
         if !visited.insert(entity) {
             return Err("Menus must form an acyclic tree".into());
+        }
+        if !shown(world, entity) {
+            continue;
         }
         let context = world
             .get::<InvocationContext>(entity)
