@@ -325,6 +325,11 @@ an `ActionHandler` for each. A plugin's "show this panel" action can use
 `Handler::new(show_panel::<P>)`: it focuses the `P` in the active layout, else
 opens a new one (`focus_or_open`).
 
+`New` (`document.new`, Cmd/Ctrl+N) runs the focused panel's own handler
+when it has one (a terminal makes another terminal: an `ActionHandler<New>`
+it requires), else the app's: `app.set_new_document::<TextBuffer>()` makes
+an untitled document beside the focused document, else where documents open.
+
 ## Menus
 
 Menus are the [`menus`](docs/menus.md) module, re-exported at the root (its

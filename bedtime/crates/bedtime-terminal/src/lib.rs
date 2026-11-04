@@ -70,6 +70,24 @@ fn new_terminal(
         .map_err(|_| "The terminal couldn't be placed".into())
 }
 
+/// Another terminal, in the area of the one `New` ran for.
+fn new_terminal_here(
+    world: &mut World,
+    invocation: bedtime_workbench::ActionInvocation,
+) -> bedtime_workbench::ActionResult {
+    let area = invocation
+        .entity
+        .and_then(|panel| world.get::<bedtime_workbench::InArea>(panel))
+        .map(|area| area.0)
+        .ok_or("The terminal isn't in an area")?;
+    world.spawn((
+        TerminalPanel::default(),
+        bedtime_workbench::Place::in_area(area),
+    ));
+    world.flush();
+    Ok(())
+}
+
 /// Installs the terminal's ordinary Update system. Requires the
 /// application's Workbench and UI plugins; installs no windows or renderer.
 pub struct TerminalPlugin;
@@ -116,6 +134,8 @@ pub enum TerminalStatus {
 #[derive(Reflect)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
+// New, with a terminal focused, is another terminal beside it.
+#[require(bedtime_workbench::ActionHandler<bedtime_workbench::New> = bedtime_workbench::ActionHandler::new(bedtime_workbench::Handler::new(new_terminal_here)))]
 pub struct TerminalPanel {
     #[reflect(ignore)]
     pub options: TerminalOptions,

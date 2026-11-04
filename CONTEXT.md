@@ -425,8 +425,13 @@ bedtime-document: detection reads files and the registry is an app resource.
   The app binds them with a macro that works with settings. Keys inside a
   panel (an editor's cursor movement, paste) stay with the panel. Plugins may
   export a suggested keymap that the app opts into.
-- **New:** a workbench action that goes to the focused panel's handler
-  first, then to the app's default.
+- **New** (done in step 7): workbench's `New` (`document.new`, Cmd/Ctrl+N).
+  The focused panel's `ActionHandler<New>` runs if it has one (the terminal
+  requires one: another terminal in its area); otherwise the app's, set with
+  `app.set_new_document::<M>()`: an untitled `M` beside the focused
+  document, else where documents open. Bed's save-as picker (rfd) stays in
+  bed's `new.rs`; moving it means a native file-dialog dependency in
+  workbench, left for later.
 - **Moves:**
   - The LSP panel goes to bedtime-code; the theme editor to bedtime-ui.
   - The dock menu becomes `set_dock_menu([actions])` in workbench's native
@@ -465,7 +470,7 @@ bedtime-document: detection reads files and the registry is an app resource.
      change.~~ (done)
 5. ~~Settings declared by the crates that own them; the generic settings panel.~~ (done)
 6. ~~Status bar contributions.~~ (done)
-7. Route `New` through the focused panel.
+7. ~~Route `New` through the focused panel.~~ (done)
 8. Move the LSP panel and theme editor.
 9. Single-store workspaces.
 10. Plugin menu items (including `ForPanel`), the dock menu, and the
@@ -541,3 +546,7 @@ Do one step at a time, then review it before starting the next.
   `StatusItems`/`add_status_item`), `notify_failure`, workspaces' status item;
   bedtime-code's `lsp::status` (item and activity report). Bed's status.rs is
   gone; main adds the two items.
+- 2026-11-04: step 7 done. `New` + `set_new_document` (workbench, `files`
+  feature), the terminal's own New handler; bed's `New` action is gone
+  (`app.new` is now `document.new`). Also fixed a dead-code warning from 4a
+  without the `files` feature.

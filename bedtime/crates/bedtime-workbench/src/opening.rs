@@ -347,6 +347,7 @@ impl ViewersAppExt for App {
 /// derefs to the `App`, to keep building it.
 pub struct ViewerRegistration<'a, M> {
     app: &'a mut App,
+    #[cfg_attr(not(feature = "files"), allow(dead_code))]
     id: ViewerId,
     marker: std::marker::PhantomData<fn() -> M>,
 }

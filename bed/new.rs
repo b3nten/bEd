@@ -1,56 +1,21 @@
-use bedtime_code::EditorPanel;
 use bedtime_document::TextBuffer;
-use bedtime_terminal::TerminalPanel;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, DocumentId, DocumentReference, Handler,
-    InArea, KeyChord, Notification, OpenOptions, Place, Placement, Target, WorkbenchWorldExt,
-    workspaces::Workspace,
+    DocumentId, NewAppExt, Notification, WorkbenchWorldExt, workspaces::Workspace,
 };
 use bevy::prelude::*;
 use std::{future::Future, pin::Pin};
 
-pub struct New;
-impl Action for New {
-    const KEY: &'static str = "app.new";
-    const LABEL: &'static str = "New";
-    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyN)];
-}
-
+/// New makes an untitled text document (workbench's `New`; a terminal makes
+/// another terminal itself). Saving one asks where, with the system picker.
 pub struct NewPlugin;
 
 impl Plugin for NewPlugin {
     fn build(&self, app: &mut App) {
         app.init_non_send::<SaveDialog>()
-            .add_action_handler::<New>(Handler::new(new))
+            .set_new_document::<TextBuffer>()
             .add_systems(Update, poll_save_dialog);
         app.world_mut().workbench_mut().set_save_as(ask_where);
     }
-}
-
-fn new(world: &mut World, invocation: ActionInvocation) -> ActionResult {
-    let focused = invocation
-        .entity
-        .filter(|&panel| world.get_entity(panel).is_ok());
-    let area = focused.and_then(|panel| world.get::<InArea>(panel).map(|area| area.0));
-    if let (Some(panel), Some(area)) = (focused, area)
-        && world.get::<TerminalPanel>(panel).is_some()
-    {
-        world.spawn((TerminalPanel::default(), Place::in_area(area)));
-        world.flush();
-        return Ok(());
-    }
-    // Beside the focused document, else where documents open.
-    let beside = focused.filter(|&panel| {
-        world.get::<DocumentReference>(panel).is_some() || world.get::<EditorPanel>(panel).is_some()
-    });
-    world
-        .workbench_mut()
-        .new_untitled::<TextBuffer>(OpenOptions {
-            target: Target::New,
-            place: beside.and(area).map(Placement::In),
-            ..default()
-        })
-        .map(|_| ())
 }
 
 /// The save picker, while it's open: for which document. AppKit owns the

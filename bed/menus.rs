@@ -126,7 +126,7 @@ fn compose_menus(mut commands: Commands) {
     ));
     commands.spawn((MenuSeparator, InMenu(app)));
     commands.spawn((MenuItem::action::<Quit>(), InMenu(app)));
-    commands.spawn((MenuItem::action::<crate::new::New>(), InMenu(file)));
+    commands.spawn((MenuItem::action::<bedtime_workbench::New>(), InMenu(file)));
     commands.spawn((MenuItem::action::<NewWindow>(), InMenu(file)));
     commands.spawn((MenuSeparator, InMenu(file)));
     commands.spawn((MenuItem::action::<OpenFolder>(), InMenu(file)));
