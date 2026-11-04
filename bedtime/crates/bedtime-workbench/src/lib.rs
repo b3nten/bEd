@@ -50,7 +50,10 @@ mod native;
 #[cfg(feature = "clipboard")]
 pub use bedtime_clipboard::{Clipboard, ClipboardPlugin};
 #[cfg(feature = "native")]
-pub use native::{NativeError, NativeSystems, WorkbenchNativePlugin, WorkbenchNativeWindowPlugin};
+pub use native::{
+    DockMenu, DockMenuAppExt, DockMenuPlugin, NativeError, NativeSystems, WorkbenchNativePlugin,
+    WorkbenchNativeWindowPlugin,
+};
 #[cfg(feature = "ui")]
 mod dialogs;
 #[cfg(feature = "ui")]

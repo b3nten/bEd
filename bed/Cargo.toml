@@ -42,7 +42,3 @@ ron = "0.12.2"
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2.workspace = true
-objc2-foundation.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSApplication", "NSMenu", "NSMenuItem"] }

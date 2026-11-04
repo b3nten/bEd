@@ -362,6 +362,11 @@ plugin order. `add_menu_entry` adds something else (a submenu), and the app
 leaves a plugin's item out with `hide_menu_item::<A>()`. Empty top-level
 menus aren't shown. `StandardMenus` has the bar and each menu's entity.
 
+The app's Dock menu (macOS) lists actions too: `app.set_dock_menu([..])` or
+`add_dock_menu_item::<A>()`; each item runs its action globally, labelled as
+the action is (`DockMenuPlugin`, in `WorkbenchNativePlugin`). Elsewhere it
+does nothing.
+
 An entry can belong to a panel: `ForPanel::of::<P>()` shows it while a `P` is
 open in the active layout, `ForPanel::instance(panel)` while that panel is
 focused (and despawns it with the panel).

@@ -1,7 +1,49 @@
 //! The native plugins: window close requests become `CloseRequested` (the quit
-//! flow), plus bedtime-menus' native menu bar. Window chrome is bedtime-ui's.
+//! flow), plus the native menu bar and (macOS) the Dock menu. Window chrome is
+//! bedtime-ui's.
 use crate::CloseRequested;
+use crate::actions::{Action, ActionId};
 use bevy::{app::PluginGroupBuilder, prelude::*};
+
+#[cfg(target_os = "macos")]
+mod dock;
+
+/// The actions in the app's Dock menu (macOS), in order: `set_dock_menu`.
+#[derive(Resource, Clone, Debug, Default)]
+pub struct DockMenu(pub Vec<ActionId>);
+
+pub trait DockMenuAppExt {
+    /// Show these actions in the app's Dock menu (right-click its icon, on
+    /// macOS), each labelled as its action is. Elsewhere this does nothing.
+    fn set_dock_menu(&mut self, actions: impl IntoIterator<Item = ActionId>) -> &mut Self;
+    /// Add action `A` to the Dock menu.
+    fn add_dock_menu_item<A: Action>(&mut self) -> &mut Self;
+}
+
+impl DockMenuAppExt for App {
+    fn set_dock_menu(&mut self, actions: impl IntoIterator<Item = ActionId>) -> &mut Self {
+        self.insert_resource(DockMenu(actions.into_iter().collect()))
+    }
+    fn add_dock_menu_item<A: Action>(&mut self) -> &mut Self {
+        self.world_mut()
+            .get_resource_or_init::<DockMenu>()
+            .0
+            .push(ActionId::of::<A>());
+        self
+    }
+}
+
+/// The Dock menu (macOS): installed at startup, its clicks run as actions.
+pub struct DockMenuPlugin;
+impl Plugin for DockMenuPlugin {
+    fn build(&self, app: &mut App) {
+        // Startup runs inside winit's event loop, after it set the delegate.
+        #[cfg(target_os = "macos")]
+        app.add_systems(Startup, dock::install)
+            .add_systems(PreUpdate, dock::forward);
+        let _ = app;
+    }
+}
 
 #[derive(Message, Clone, Debug)]
 pub struct NativeError(pub String);
@@ -19,6 +61,7 @@ impl PluginGroup for WorkbenchNativePlugin {
             .add(WorkbenchNativeWindowPlugin)
             .add(bedtime_ui::layouts::ChromePlugin)
             .add(crate::menus::NativeMenuPlugin)
+            .add(DockMenuPlugin)
     }
 }
 

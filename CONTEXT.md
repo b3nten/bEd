@@ -460,8 +460,11 @@ bedtime-document: detection reads files and the registry is an app resource.
       `ThemeEditorPlugin` is opt-in (`appearance.show_theme_editor`); the
       theme row offers Edit only when it's installed. Bed keeps only its
       theme files and default (`themes::plugin()`).
-  - The dock menu becomes `set_dock_menu([actions])` in workbench's native
-    module (step 10).
+  - The Dock menu is workbench's (done in step 10): `set_dock_menu([..])` /
+    `add_dock_menu_item::<A>()`, `DockMenuPlugin` in `WorkbenchNativePlugin`
+    (macOS; elsewhere a no-op). Items run their actions globally; clicks are
+    queued on AppKit's side and submitted in `PreUpdate`. Bed's dock.rs and
+    its objc2 dependencies are gone; bed adds `NewWindow`.
   - `+open` goes to the defaults layer (not done; see the end of the plan).
   - Workspaces stay required (they provide the working folder). Done in step
     9: `WorkspacesPlugin::new(..).global_settings_only()` drops the
@@ -501,8 +504,8 @@ bedtime-document: detection reads files and the registry is an app resource.
 7. ~~Route `New` through the focused panel.~~ (done)
 8. ~~Move the LSP panel and theme editor.~~ (done)
 9. ~~Single-store workspaces.~~ (done: `global_settings_only`)
-10. Plugin menu items (including `ForPanel`), the dock menu, and the
-    standard menus.
+10. ~~Plugin menu items (including `ForPanel`), the dock menu, and the
+    standard menus.~~ (done)
 
 Do one step at a time, then review it before starting the next.
 
@@ -586,5 +589,5 @@ Do one step at a time, then review it before starting the next.
 - 2026-11-04: step 9 done. `WorkspacesPlugin::global_settings_only()`, with
   a test that a folder has two settings layers by default and one with it.
 - 2026-11-04: step 10a done (`ForPanel`), 10b done (standard menus and
-  contributions; bed's items moved into its plugins). The dock menu (10c)
-  is next.
+  contributions; bed's items moved into its plugins), 10c done (the Dock
+  menu in workbench native). The plan is done; see "What's left".

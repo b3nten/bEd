@@ -21,7 +21,7 @@ persistence = ["dep:bedtime-persistence", "dep:ron", "bedtime-ui/persistence", "
 # rebuilding the App (needs the bevy_winit fork's `relaunch`).
 workspaces = ["persistence", "bevy/bevy_winit"]
 # The native menu bar, system clipboard and window chrome.
-native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "dep:muda", "bedtime-ui/native"]
+native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "dep:muda", "bedtime-ui/native", "dep:objc2", "dep:objc2-foundation", "dep:objc2-app-kit"]
 
 [dependencies]
 bedtime-document.workspace = true
@@ -37,6 +37,10 @@ serde = { workspace = true, features = ["derive"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { workspace = true, optional = true }
+# The Dock menu.
+objc2 = { workspace = true, optional = true }
+objc2-foundation = { workspace = true, optional = true }
+objc2-app-kit = { workspace = true, optional = true, features = ["NSApplication", "NSMenu", "NSMenuItem"] }
 
 [dev-dependencies]
 ron = "0.12.2"

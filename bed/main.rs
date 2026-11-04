@@ -1,14 +1,12 @@
 use bedtime_ui::UiPlugin;
 use bedtime_workbench::{
-    AreaBackground, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility, Titlebar,
-    WorkbenchPlugins, status::StatusAppExt,
+    AreaBackground, DockMenuAppExt, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility,
+    Titlebar, WorkbenchPlugins, status::StatusAppExt,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::PathBuf;
 use workspace::{Start, Workspace};
 
-#[cfg(target_os = "macos")]
-mod dock;
 mod effects;
 mod files;
 mod git;
@@ -82,9 +80,9 @@ pub fn app(start: Start) -> App {
     // The status bar's right side: the workspace, then the language server.
     .add_status_item(bedtime_workbench::workspaces::status_item)
     .add_status_item(bedtime_code::lsp::status::status_item)
+    // Right-click bEd in the Dock (macOS) for a new window.
+    .add_dock_menu_item::<menus::NewWindow>()
     .add_systems(Startup, setup);
-    #[cfg(target_os = "macos")]
-    app.add_plugins(dock::DockMenuPlugin);
     app
 }
 
