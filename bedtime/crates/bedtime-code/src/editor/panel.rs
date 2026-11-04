@@ -620,7 +620,7 @@ mod tests {
             .open_document(
                 source,
                 OpenOptions {
-                    target: bedtime_workbench::Target::New { area: None },
+                    target: bedtime_workbench::Target::New,
                     ..default()
                 },
             )

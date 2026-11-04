@@ -182,17 +182,17 @@ pub(super) fn open(
         Some(area) => area,
         None => diff_area(world, layout, origin)?,
     };
-    let panel = world.spawn((DiffPanel::new(descriptor), InArea(area))).id();
+    // A preview leaves the Git panel focused (it's still the selected tab).
+    let place = Place::in_area(area).focus(pin);
+    let panel = world.spawn((DiffPanel::new(descriptor), place)).id();
     world.flush();
+    if world.get::<InArea>(panel).is_none() {
+        return Err("The diff couldn't be placed".into());
+    }
     let title = world.get::<DiffPanel>(panel).unwrap().title();
     if let Some(mut instance) = world.get_mut::<PanelInstance>(panel) {
         instance.title = title;
         instance.preview = !pin;
-    }
-    if pin {
-        world.layouts_mut().focus_panel(panel)?;
-    } else {
-        world.layouts_mut().select_panel(panel)?;
     }
     Ok(panel)
 }
@@ -414,12 +414,11 @@ fn hand_off(world: &mut World, panel: Entity) -> bool {
     let preview = world
         .get::<PanelInstance>(panel)
         .is_some_and(|instance| instance.preview);
-    let focused = world
-        .layouts()
-        .active()
-        .and_then(|layout| world.layouts().focused_panel(layout));
+    // Like a preview diff, a preview viewer leaves the Git panel focused.
     let options = PathOptions {
-        target: Target::New { area: Some(area) },
+        target: Target::New,
+        place: Some(bedtime_workbench::Placement::In(area)),
+        keep_focus: preview,
         preview,
         ..default()
     };
@@ -433,13 +432,6 @@ fn hand_off(world: &mut World, panel: Entity) -> bool {
     // A preview viewer already replaced a preview diff.
     if world.get::<DiffPanel>(panel).is_some() {
         let _ = world.layouts_mut().close_panel(panel);
-    }
-    // Like a preview diff, a preview viewer leaves the Git panel focused.
-    if preview
-        && let Some(focused) = focused.filter(|&focused| focused != panel)
-        && world.get_entity(focused).is_ok()
-    {
-        let _ = world.layouts_mut().focus_panel(focused);
     }
     true
 }

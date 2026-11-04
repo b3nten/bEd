@@ -776,6 +776,20 @@ impl LayoutsRef {
         layout: Entity,
         fits: impl Fn(&World, Entity) -> bool,
     ) -> Result<Entity, String> {
+        match self.area_holding(layout, fits, None) {
+            Some(area) => Ok(area),
+            None => self.destination_area(layout),
+        }
+    }
+
+    /// An area of `layout` other than `except` with a panel that `fits`: the
+    /// focused one, else the most recently focused.
+    pub fn area_holding(
+        &self,
+        layout: Entity,
+        fits: impl Fn(&World, Entity) -> bool,
+        except: Option<Entity>,
+    ) -> Option<Entity> {
         let world = &self.world;
         let focused = world.get::<Layout>(layout).and_then(Layout::focused_area);
         let candidates: Vec<Entity> = world
@@ -783,9 +797,10 @@ impl LayoutsRef {
             .map_or(&[][..], |a| a.entities())
             .iter()
             .copied()
+            .filter(|&area| Some(area) != except)
             .filter(|&area| self.panels_in_area(area).iter().any(|&p| fits(world, p)))
             .collect();
-        let chosen = candidates
+        candidates
             .iter()
             .copied()
             .find(|&area| Some(area) == focused)
@@ -796,11 +811,7 @@ impl LayoutsRef {
                         .copied()
                         .unwrap_or_default()
                 })
-            });
-        match chosen {
-            Some(area) => Ok(area),
-            None => self.destination_area(layout),
-        }
+            })
     }
 
     pub(crate) fn snapshot(&self, layout: Entity) -> Result<GeometrySnapshot, String> {

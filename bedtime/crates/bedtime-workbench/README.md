@@ -231,14 +231,19 @@ commands.open_document(handle, OpenOptions::at(state)); // errors become notific
   too: `(ImagePanel::default(), DocumentReference::of(handle), Place::auto())`.
   A `DocumentReference` on a viewer of a different model logs an error.
 
-- `Target::Existing` (default) reuses a panel already showing the document in
-  the current layout (the focused area's, else the first) and applies the
-  state to it; with none, or with `Target::New { area }`, a new panel goes in
-  that area, else an area with the same viewer (the focused one, else the
-  most recently focused), else the largest (so opening from a file tree's
-  sidebar doesn't land in the sidebar).
-  `Target::Panel(panel)` names the panel; it must show the document. Opening
-  never switches layouts.
+- `Target` says which panel: `Existing` (default) reuses a viewer already
+  showing the document in the current layout (the focused area's, else the
+  first), `Panel(panel)` names one (it must show the document), and `New`
+  always makes one. Opening never switches layouts.
+- `place` says where a new panel goes, as a `Placement`. Without one it goes
+  where documents go: an area with this viewer's panels (the focused one,
+  else the most recently focused), else an area with any viewer's, else the
+  largest, so opening from a file tree's sidebar doesn't land in the sidebar.
+  `Placement::Beside(panel)` puts it with panels of its type in another area,
+  else splits `panel`'s area (a preview beside its editor).
+- `keep_focus` leaves the layout's focus where it is: a file tree's or Git
+  panel's preview, or a preview beside the editor you're typing in. The panel
+  is still its area's selected tab.
 - `preview: true` makes a new panel replace its area's preview. Opening
   without `preview` pins an existing preview, and so does editing its document.
 - With the `files` feature (default), viewers say which files they open

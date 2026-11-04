@@ -83,9 +83,13 @@ component and draws with `draw_editor`, without being an editor panel.
   `P`'s `TypeId`. That is what "like panels" and "is a viewer" compare, so a
   panel built from another panel's parts is never mistaken for that panel.
 - **`Place` decides where a new panel goes:** `Place { at: Placement, focus: bool }`.
-  - `Placement` is an enum: `Auto`, `Largest`, `In(area)`, and later
-    `Beside(panel)`. (`LikePanels` was dropped: it would be the same as
-    `Auto`.)
+  - `Placement` is an enum: `Auto`, `Largest`, `In(area)`, `Beside(panel)`.
+    (`LikePanels` was dropped: it would be the same as `Auto`.)
+  - `Beside(panel)`: another area of `panel`'s layout holding panels of the
+    same type (the focused one, else the most recently focused), else
+    `panel`'s area split in half (the new panel on the right), else, too
+    small to split, `panel`'s own area. `layouts().area_holding(layout, fits,
+    except)` is the shared "area with panels like this" search.
   - `Auto` means: an area that already holds a panel of this type (the
     focused one, else the most recently focused), otherwise the largest area.
   - `Place`'s insert hook resolves it to an area by the next flush: it picks
@@ -113,10 +117,9 @@ component and draws with `draw_editor`, without being an editor panel.
   and read `InArea`. Inserting `Place` on a panel that's already placed moves
   it. Read-only is a convention for now, not enforced. Document opening uses
   `Place` since 2b; still inserting `InArea` directly: layouts' own code and
-  `PanelFactory`, restored layouts, the LSP references panel
-  (`bedtime-code/src/lsp/actions.rs`), git's diff panel (`diff.rs`), and the
-  bedtime-ui example. Move those, then make `InArea` constructible only inside
-  bedtime-ui.
+  `PanelFactory`, restored layouts, and the bedtime-ui example (the LSP
+  references panel and git's diff panel moved to `Place` in step 3). Move
+  those, then make `InArea` constructible only inside bedtime-ui.
 - **Opening always creates a panel.** It never focuses an existing one.
   Whether to focus an existing panel instead is the caller's choice, using
   `layouts.find::<P>(layout) -> Option<Entity>`.
@@ -204,9 +207,17 @@ component and draws with `draw_editor`, without being an editor panel.
   - The `Commands` version returns nothing and reports errors as
     notifications. Which panel ends up showing the document is only known
     when the command runs, so it can't return one.
-  - Options are still `OpenOptions { state, target, viewer, preview }`; the
+  - Options: `OpenOptions { state, target, place, keep_focus, viewer,
+    preview }` (and the same fields in `PathOptions`). `Target` only says
+    which panel: `Existing`, `Panel(panel)` or `New`. `place:
+    Option<Placement>` says where a new one goes; `None` is the documents'
+    default (below). `keep_focus` leaves the layout's focus where it is (the
+    panel is still its area's selected tab), for existing panels too. The
     builder chain sketched earlier (`.at().with().place()`) wasn't added.
-    `Target` stays until step 3 decides placement.
+  - **Where documents go by default:** an area with this viewer's panels
+    (focused, else most recently focused), else an area with any viewer's
+    panels, else the largest area. A file tree isn't a viewer, so opening from
+    it lands beside it.
   - With no layout open, `Place`'s fallback makes one (it used to be an
     error).
 - **`open_path(path, options)`** stays as the untyped entry point and picks a
@@ -217,8 +228,15 @@ component and draws with `draw_editor`, without being an editor panel.
   "binary"; it now shows the error instead (with hex installed that never
   happens). It turns a line into each model's state with
   `DocumentModel::state_at_line`.
-- **Preview** becomes `Place::Beside(editor)` with `focus(false)`, and no
-  longer needs the panel entity.
+- **Preview** opens with `place: Placement::Beside(editor)` and
+  `keep_focus`, and no longer needs the panel entity. Previews now gather
+  with previews of the same viewer type only (markdown with markdown); before,
+  any preview counted. The file tree's and Git's previews use `keep_focus`
+  instead of focusing back by hand.
+- **Git's diff panels** spawn with `Place::in_area` (focused when pinned).
+  Git keeps its own `diff_area` (beside editors or diffs, else a free area,
+  else a 2:3 split of the Git panel's area); `Beside` splits in half, so it
+  doesn't replace that.
 
 ## Formats and sibling documents (workbench, bedtime-document)
 
@@ -415,3 +433,9 @@ Do one step at a time, then review it before starting the next.
   split (not needed), the open builder, enforcing `InArea`. Noticed:
   `work::tests::tasks_are_cancelled_with_their_owner_and_by_shutdown` is
   flaky under the full parallel test run (passes alone); unrelated.
+- 2026-11-04: step 3 done. `Placement::Beside` and `layouts().area_holding`
+  in bedtime-ui. `Target` is now `Existing | Panel | New`; open options gained
+  `place` and `keep_focus`. New documents go to an area with this viewer,
+  else any viewer, else the largest. Bed's preview, the file tree's and Git's
+  previews, `New`, git's diff panels and the LSP references panel moved onto
+  `Place` / `keep_focus`.

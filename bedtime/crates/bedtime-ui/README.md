@@ -453,7 +453,9 @@ commands.spawn((Notes { text: "Draft".into() }, Place::auto()));
 `Place` puts a panel in an area of the active layout: its insert hook picks
 the area by the next flush, inserts `InArea`, and removes itself.
 `Placement::Auto` (the default) picks an area that already holds a panel of
-the same type, otherwise the largest; `Largest` and `In(area)` are explicit.
+the same type, otherwise the largest; `Largest` and `In(area)` are explicit;
+`Beside(panel)` goes with panels of its type in another area, else splits
+`panel`'s area in two, else into it.
 `Place::auto().focus(false)` leaves the layout's focus where it was (the
 panel is still its area's selected tab). Inserting `Place` on a placed panel
 moves it, and a new panel that can't be placed is despawned with an error

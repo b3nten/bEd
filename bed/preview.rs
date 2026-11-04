@@ -1,9 +1,8 @@
 use bedtime_code::EditorPanel;
-use bedtime_preview::{PreviewPlugin, is_preview, preview_viewer};
+use bedtime_preview::{PreviewPlugin, preview_viewer};
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Area, DocumentReference, Handler, InArea,
-    KeyChord, LayoutsWorldExt, Modifiers, PathOptions, SplitAxis, Target, ViewerFile,
-    WorkbenchWorldExt,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Modifiers,
+    PathOptions, Placement, ViewerFile, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 
@@ -40,8 +39,8 @@ fn previewable(world: &World, panel: Entity) -> bool {
 }
 
 /// The editor's document in its preview: the one already in the layout,
-/// else a new one beside the other previews, else in the editor's area
-/// split in two (or, too small to split, as a tab in it).
+/// else a new one beside the editor (`Placement::Beside`: with previews of
+/// its kind, else in the editor's area split in two, else as a tab in it).
 fn open_preview(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let editor = invocation.entity.ok_or("No editor is focused")?;
     if !previewable(world, editor) {
@@ -49,58 +48,14 @@ fn open_preview(world: &mut World, invocation: ActionInvocation) -> ActionResult
     }
     let path = world.get::<ViewerFile>(editor).unwrap().0.clone();
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let viewer = preview_viewer(&name);
-    let document = world
-        .get::<DocumentReference>(editor)
-        .ok_or("The editor shows no document")?
-        .document();
-    let own = world
-        .get::<InArea>(editor)
-        .ok_or("The editor isn't in an area")?
-        .0;
-    let layout = world.layouts().active().ok_or("No layout is open")?;
-    let previews: Vec<Entity> = world
-        .layouts()
-        .panels(layout)
-        .into_iter()
-        .filter(|&panel| is_preview(world, panel))
-        .collect();
-    let shows = |panel: Entity| {
-        world
-            .get::<DocumentReference>(panel)
-            .is_some_and(|reference| reference.document() == document)
-    };
-    let elsewhere = previews
-        .iter()
-        .filter_map(|&panel| world.get::<InArea>(panel).map(|area| area.0))
-        .find(|&area| area != own);
-    let target = if let Some(&panel) = previews.iter().find(|&&panel| shows(panel)) {
-        Target::Panel(panel)
-    } else if let Some(area) = elsewhere {
-        Target::New { area: Some(area) }
-    } else {
-        let rect = world
-            .get::<Area>(own)
-            .ok_or("The editor isn't in an area")?
-            .rect();
-        let at = (rect.min[0] + rect.max[0]) / 2;
-        let area = world
-            .layouts_mut()
-            .split_area(own, SplitAxis::Horizontal, at, [1000, 1000])
-            .unwrap_or(own);
-        Target::New { area: Some(area) }
-    };
+    // The preview already showing it, else a new one beside the editor; and
+    // keep typing where you were (unless the preview had to go in the
+    // editor's own area, where it's the tab shown).
     let options = PathOptions {
-        target,
-        viewer,
+        viewer: preview_viewer(&name),
+        place: Some(Placement::Beside(editor)),
+        keep_focus: true,
         ..default()
     };
-    let preview = world.workbench_mut().open_path(&path, options)?;
-    // Keep typing where you were, unless that hides the preview (a tab
-    // behind the editor).
-    let area = |world: &World, panel| world.get::<InArea>(panel).map(|area| area.0);
-    if area(world, preview) == area(world, editor) {
-        return Ok(());
-    }
-    world.layouts_mut().focus_panel(editor)
+    world.workbench_mut().open_path(&path, options).map(|_| ())
 }

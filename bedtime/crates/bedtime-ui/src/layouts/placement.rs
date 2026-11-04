@@ -10,7 +10,7 @@
 //! Opening always makes a new panel. To show an existing one instead, look
 //! for it with `layouts().find::<P>(layout)`; `focus_or_open::<P>()` does
 //! both for a panel built from `Default`.
-use super::{Area, InArea, LayoutsWorldExt, PanelInstance};
+use super::{Area, InArea, InLayout, LayoutsWorldExt, PanelInstance, SplitAxis};
 use bevy::{
     ecs::{lifecycle::HookContext, world::DeferredWorld},
     prelude::*,
@@ -28,6 +28,11 @@ pub enum Placement {
     Largest,
     /// This area.
     In(Entity),
+    /// Beside this panel, in its layout: another area holding panels of the
+    /// same type (the focused one, else the most recently focused), else the
+    /// panel's area split in two (the new panel on the right), else, too
+    /// small to split, the panel's own area.
+    Beside(Entity),
 }
 
 /// Put this panel in an area: by the next flush it has `InArea`, and this is
@@ -59,6 +64,9 @@ impl Place {
     }
     pub fn in_area(area: Entity) -> Self {
         Self::at(Placement::In(area))
+    }
+    pub fn beside(panel: Entity) -> Self {
+        Self::at(Placement::Beside(panel))
     }
     /// At `placement`, focused.
     pub fn at(placement: Placement) -> Self {
@@ -169,13 +177,42 @@ fn area_for(world: &mut World, panel: Entity, placement: Placement) -> Result<En
         }
         Placement::Auto => {
             let layout = world.layouts_mut().ensure_active()?;
-            world.layouts().area_for(layout, |world, other| {
-                other != panel
-                    && kind.is_some()
-                    && world.get::<PanelInstance>(other).map(|p| p.kind) == Some(kind)
-            })
+            world
+                .layouts()
+                .area_for(layout, |world, other| like(world, panel, kind, other))
+        }
+        Placement::Beside(beside) => {
+            let own = world
+                .get::<InArea>(beside)
+                .ok_or("The panel to go beside isn't in an area")?
+                .0;
+            let layout = world
+                .get::<InLayout>(own)
+                .ok_or("The panel to go beside isn't in a layout")?
+                .0;
+            let elsewhere = world.layouts().area_holding(
+                layout,
+                |world, other| like(world, panel, kind, other),
+                Some(own),
+            );
+            if let Some(area) = elsewhere {
+                return Ok(area);
+            }
+            let rect = world.get::<Area>(own).ok_or("Area is unavailable")?.rect();
+            let at = (rect.min[0] + rect.max[0]) / 2;
+            Ok(world
+                .layouts_mut()
+                .split_area(own, SplitAxis::Horizontal, at, [1000, 1000])
+                .unwrap_or(own))
         }
     }
+}
+
+/// Whether `other` is a panel like `panel` (of type `kind`), and not it.
+fn like(world: &World, panel: Entity, kind: Option<std::any::TypeId>, other: Entity) -> bool {
+    other != panel
+        && kind.is_some()
+        && world.get::<PanelInstance>(other).map(|p| p.kind) == Some(kind)
 }
 
 /// Opening panels on a `World`.
@@ -223,7 +260,7 @@ impl PanelsCommandsExt for Commands<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::layouts::{Panel, SplitAxis};
+    use crate::layouts::{LayoutAreas, Panel, SplitAxis};
     use crate::{UiContext, egui};
 
     #[crate::layouts::panel]
@@ -333,6 +370,28 @@ mod tests {
         world.flush();
         assert_eq!(area(world, notes), right);
         assert!(world.layouts().panels_in_area(left).is_empty());
+    }
+
+    #[test]
+    fn beside_splits_once_then_joins_its_kind() {
+        let mut app = app();
+        let world = app.world_mut();
+        let notes = world.open_panel(Notes);
+        let own = area(world, notes);
+        // Nothing like it elsewhere: the notes' area is split.
+        let first = world.spawn((Terminal, Place::beside(notes))).id();
+        world.flush();
+        let beside = area(world, first);
+        assert_ne!(beside, own);
+        // The next goes where its kind already is, beside the notes.
+        let second = world.spawn((Terminal, Place::beside(notes))).id();
+        world.flush();
+        assert_eq!(area(world, second), beside);
+        let layout = world.layouts().active().unwrap();
+        assert_eq!(
+            world.get::<LayoutAreas>(layout).unwrap().entities().len(),
+            2
+        );
     }
 
     #[test]

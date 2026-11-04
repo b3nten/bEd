@@ -330,7 +330,8 @@ fn open_factory(path: PathBuf, found: Option<Match>) -> PanelFactory {
         let options = PathOptions {
             line: found.as_ref().map(|found| found.start),
             select_to: found.as_ref().map(|found| found.end),
-            target: Target::New { area: Some(area) },
+            target: Target::New,
+            place: Some(bedtime_workbench::Placement::In(area)),
             ..default()
         };
         match world.workbench_mut().open_path(&path, options) {

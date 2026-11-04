@@ -4,8 +4,7 @@ use crate::{FileTree, FileTreeDefaults, Folders, Row, TreeView, refresh_rows};
 use bedtime_filesystem::{EntryKind, operations::Operation};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 use bedtime_workbench::{
-    LayoutsWorldExt, Notification, Panel, PanelPresentation, PathOptions, ViewerId,
-    WorkbenchWorldExt,
+    Notification, Panel, PanelPresentation, PathOptions, ViewerId, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
@@ -1099,19 +1098,14 @@ pub(crate) fn apply(world: &mut World, panel: Entity, root: &Path, intent: Inten
             preview,
             viewer,
         } => {
+            // A preview leaves the tree focused, to keep browsing.
             let options = PathOptions {
                 preview,
+                keep_focus: preview,
                 viewer,
                 ..default()
             };
             match world.workbench_mut().open_path(&path, options) {
-                // A preview leaves the tree focused, to keep browsing.
-                Ok(opened) if preview => {
-                    let area = |panel| world.get::<bedtime_workbench::InArea>(panel).map(|a| a.0);
-                    if area(opened) != area(panel) {
-                        let _ = world.layouts_mut().focus_panel(panel);
-                    }
-                }
                 Ok(_) => {}
                 Err(error) => {
                     let name = path.file_name().unwrap_or(path.as_os_str()).display();
@@ -1162,7 +1156,8 @@ pub fn open_files_factory(paths: Vec<PathBuf>) -> bedtime_workbench::PanelFactor
         let mut shown = Entity::PLACEHOLDER;
         for path in &paths {
             let options = PathOptions {
-                target: bedtime_workbench::Target::New { area: Some(area) },
+                target: bedtime_workbench::Target::New,
+                place: Some(bedtime_workbench::Placement::In(area)),
                 ..default()
             };
             match world.workbench_mut().open_path(path, options) {

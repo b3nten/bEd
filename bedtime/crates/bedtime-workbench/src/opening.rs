@@ -34,14 +34,20 @@ pub enum Target {
     Existing,
     /// This panel, which must be a viewer showing the document.
     Panel(Entity),
-    /// Always a new panel: in `area`, else where `Placement::Auto` puts it
-    /// (an area with this viewer's panels, else the largest).
-    New { area: Option<Entity> },
+    /// Always a new panel.
+    New,
 }
 
 pub struct OpenOptions<M: DocumentModel> {
     pub state: M::OpenState,
     pub target: Target,
+    /// Where a new panel goes. `None` is where documents go: an area with
+    /// this viewer's panels, else one with any viewer's, else the largest
+    /// (so a file opened from a file tree's sidebar doesn't land in it).
+    pub place: Option<Placement>,
+    /// Leave the layout's focus where it is. The panel is still its area's
+    /// selected tab, so a panel opened into the focused area has it anyway.
+    pub keep_focus: bool,
     /// Which viewer; `None` is the default viewer for the model.
     pub viewer: Option<ViewerId>,
     /// A new panel replaces its area's preview panel, and is the preview
@@ -54,6 +60,8 @@ impl<M: DocumentModel> Default for OpenOptions<M> {
         Self {
             state: default(),
             target: default(),
+            place: None,
+            keep_focus: false,
             viewer: None,
             preview: false,
         }
@@ -163,6 +171,8 @@ impl FileViewer {
                     OpenOptions {
                         state,
                         target: options.target,
+                        place: options.place,
+                        keep_focus: options.keep_focus,
                         viewer: Some(options.viewer),
                         preview: options.preview,
                     },
@@ -233,6 +243,8 @@ struct ResolvedPathOptions {
     line: Option<(u32, u32)>,
     select_to: Option<(u32, u32)>,
     target: Target,
+    place: Option<Placement>,
+    keep_focus: bool,
     viewer: ViewerId,
     preview: bool,
 }
@@ -436,7 +448,7 @@ impl Workbench {
                 if !showing || viewer_of(world, panel, TypeId::of::<M>()).is_none() {
                     return Err("That panel doesn't show this document".into());
                 }
-                world.layouts_mut().focus_panel(panel)?;
+                show(world, panel, options.keep_focus)?;
                 panel
             }
             Target::Existing => match existing_panel(world, document, options.viewer) {
@@ -447,12 +459,12 @@ impl Workbench {
                     {
                         instance.preview = false;
                     }
-                    world.layouts_mut().focus_panel(panel)?;
+                    show(world, panel, options.keep_focus)?;
                     panel
                 }
-                None => new_panel(world, document, viewer, None, options.preview)?,
+                None => new_panel(world, document, viewer, &options)?,
             },
-            Target::New { area } => new_panel(world, document, viewer, area, options.preview)?,
+            Target::New => new_panel(world, document, viewer, &options)?,
         };
         if let Some(reveal) = viewer_of(world, panel, TypeId::of::<M>()) {
             reveal(world, panel, &options.state);
@@ -487,6 +499,8 @@ impl Workbench {
                 line: options.line,
                 select_to: options.select_to,
                 target: options.target,
+                place: options.place,
+                keep_focus: options.keep_focus,
                 viewer,
                 preview: options.preview,
             },
@@ -552,6 +566,10 @@ pub struct PathOptions {
     /// With `line`: select from it to this line and column.
     pub select_to: Option<(u32, u32)>,
     pub target: Target,
+    /// As `OpenOptions::place`.
+    pub place: Option<Placement>,
+    /// As `OpenOptions::keep_focus`.
+    pub keep_focus: bool,
     pub viewer: Option<ViewerId>,
     pub preview: bool,
 }
@@ -642,17 +660,17 @@ fn existing_panel(world: &World, document: DocumentId, viewer: Option<ViewerId>)
 /// A new viewer panel, focused: in `area`, else where `Placement::Auto` puts
 /// it (an area with this viewer's panels, the focused one first, else the
 /// largest). A preview replaces that area's preview panel.
-fn new_panel(
+fn new_panel<M: DocumentModel>(
     world: &mut World,
     document: DocumentId,
     viewer: ViewerId,
-    area: Option<Entity>,
-    preview: bool,
+    options: &OpenOptions<M>,
 ) -> Result<Entity, String> {
-    let place = match area {
-        Some(area) => Place::in_area(area),
-        None => Place::auto(),
+    let at = match options.place {
+        Some(placement) => placement,
+        None => Placement::In(document_area(world, viewer)?),
     };
+    let place = Place::at(at).focus(!options.keep_focus);
     let create = world.resource::<Viewers>().get(viewer).unwrap().create;
     let panel = create(world, document, place)?;
     world.flush();
@@ -660,7 +678,7 @@ fn new_panel(
         .get::<InArea>(panel)
         .ok_or("The viewer couldn't be placed")?
         .0;
-    if preview {
+    if options.preview {
         let replaced = world
             .layouts()
             .panels_in_area(area)
@@ -674,8 +692,43 @@ fn new_panel(
             world.layouts_mut().close_panel(old)?;
         }
     }
-    world.layouts_mut().focus_panel(panel)?;
+    // Closing the replaced preview may have selected another tab.
+    show(world, panel, options.keep_focus)?;
     Ok(panel)
+}
+
+/// Where a new viewer goes by default: an area with panels of this viewer
+/// (the focused one, else the most recently focused), else one with any
+/// viewer's, else the largest. A sidebar (a file tree) isn't a viewer, so
+/// opening from it lands beside it, not in it.
+fn document_area(world: &mut World, viewer: ViewerId) -> Result<Entity, String> {
+    let layout = world.layouts_mut().ensure_active()?;
+    let kind = |world: &World, panel| world.get::<PanelInstance>(panel).and_then(|p| p.kind);
+    let layouts = world.layouts();
+    let viewers = world.resource::<Viewers>();
+    layouts
+        .area_holding(
+            layout,
+            |world, panel| kind(world, panel) == Some(viewer.0),
+            None,
+        )
+        .or_else(|| {
+            layouts.area_holding(
+                layout,
+                |world, panel| viewers.is_viewer(kind(world, panel)),
+                None,
+            )
+        })
+        .map_or_else(|| layouts.destination_area(layout), Ok)
+}
+
+/// Select `panel`'s tab, and focus it unless `keep_focus`.
+fn show(world: &mut World, panel: Entity, keep_focus: bool) -> Result<(), String> {
+    if keep_focus {
+        world.layouts_mut().select_panel(panel)
+    } else {
+        world.layouts_mut().focus_panel(panel)
+    }
 }
 
 /// What a viewer panel shows, for drawing it: its document's model (viewers'
@@ -827,7 +880,7 @@ mod tests {
             .open_document(
                 MemorySource::new("other", TextBuffer::from("x")),
                 OpenOptions {
-                    target: Target::New { area: None },
+                    target: Target::New,
                     ..line(0)
                 },
             )
@@ -933,7 +986,7 @@ mod tests {
         let preview = |name: &str| {
             OpenOptions::<TextBuffer> {
                 preview: true,
-                target: Target::New { area: None },
+                target: Target::New,
                 ..default()
             }
             .with_source(name)
@@ -1011,6 +1064,72 @@ mod tests {
     }
 
     #[test]
+    fn new_viewers_go_where_other_viewers_are_before_the_largest_area() {
+        let mut app = app();
+        let world = app.world_mut();
+        let layout = world.layouts().active().unwrap();
+        let main = world.layouts().destination_area(layout).unwrap();
+        let side = world
+            .layouts_mut()
+            .split_area(main, SplitAxis::Horizontal, 2500, [100, 100])
+            .unwrap();
+        let small = if world.layouts().destination_area(layout).unwrap() == main {
+            side
+        } else {
+            main
+        };
+        // A hex viewer in the small area: a text viewer joins it, since no
+        // text viewer is open, rather than taking the empty large area.
+        let (source, options) = OpenOptions::<TextBuffer> {
+            target: Target::New,
+            place: Some(Placement::In(small)),
+            viewer: Some(ViewerId::of::<HexView>()),
+            ..default()
+        }
+        .with_source("one");
+        world
+            .workbench_mut()
+            .open_document(source, options)
+            .unwrap();
+        let (source, options) = OpenOptions::<TextBuffer>::default().with_source("two");
+        let panel = world
+            .workbench_mut()
+            .open_document(source, options)
+            .unwrap();
+        assert!(world.get::<TextView>(panel).is_some());
+        assert_eq!(world.get::<InArea>(panel).unwrap().0, small);
+    }
+
+    #[test]
+    fn keep_focus_opens_beside_without_moving_focus() {
+        let mut app = app();
+        let world = app.world_mut();
+        let layout = world.layouts().active().unwrap();
+        let (source, options) = OpenOptions::<TextBuffer>::default().with_source("one");
+        let editor = world
+            .workbench_mut()
+            .open_document(source, options)
+            .unwrap();
+        let options = OpenOptions::<TextBuffer> {
+            place: Some(Placement::Beside(editor)),
+            keep_focus: true,
+            viewer: Some(ViewerId::of::<HexView>()),
+            ..default()
+        };
+        let (source, options) = options.with_source("two");
+        let hex = world
+            .workbench_mut()
+            .open_document(source, options)
+            .unwrap();
+        assert_ne!(
+            world.get::<InArea>(hex).unwrap().0,
+            world.get::<InArea>(editor).unwrap().0,
+            "the editor's area is split"
+        );
+        assert_eq!(world.layouts().focused_panel(layout), Some(editor));
+    }
+
+    #[test]
     fn new_viewers_go_beside_their_kind_most_recently_focused_first() {
         let mut app = app();
         let world = app.world_mut();
@@ -1028,7 +1147,8 @@ mod tests {
         // A text viewer in the small area: the next goes there too, even
         // with the sidebar focused.
         let (source, options) = OpenOptions::<TextBuffer> {
-            target: Target::New { area: Some(small) },
+            target: Target::New,
+            place: Some(Placement::In(small)),
             ..default()
         }
         .with_source("one");
@@ -1066,7 +1186,7 @@ mod tests {
         let second = world
             .workbench_mut()
             .new_untitled::<TextBuffer>(OpenOptions {
-                target: Target::New { area: None },
+                target: Target::New,
                 ..default()
             })
             .unwrap();

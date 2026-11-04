@@ -33,7 +33,7 @@ fn host() -> Host {
             .unwrap()
     };
     let a = open(world, Target::Existing);
-    let b = open(world, Target::New { area: None });
+    let b = open(world, Target::New);
     let area = world.layouts().destination_area(layout).unwrap();
     let structure = world
         .spawn((StructurePanel::default(), bedtime_workbench::InArea(area)))

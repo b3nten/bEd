@@ -3,7 +3,7 @@ use bedtime_document::TextBuffer;
 use bedtime_terminal::TerminalPanel;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, DocumentId, DocumentReference, Handler,
-    InArea, KeyChord, Notification, OpenOptions, Place, Target, WorkbenchWorldExt,
+    InArea, KeyChord, Notification, OpenOptions, Place, Placement, Target, WorkbenchWorldExt,
     workspaces::Workspace,
 };
 use bevy::prelude::*;
@@ -43,14 +43,11 @@ fn new(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let beside = focused.filter(|&panel| {
         world.get::<DocumentReference>(panel).is_some() || world.get::<EditorPanel>(panel).is_some()
     });
-    let target = match beside.and(area) {
-        Some(area) => Target::New { area: Some(area) },
-        None => Target::New { area: None },
-    };
     world
         .workbench_mut()
         .new_untitled::<TextBuffer>(OpenOptions {
-            target,
+            target: Target::New,
+            place: beside.and(area).map(Placement::In),
             ..default()
         })
         .map(|_| ())

@@ -12,8 +12,8 @@ use bedtime_document::{BufferEdit, TextBuffer};
 use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, DocumentId, DocumentReference,
-    EditOptions, Handler, InArea, KeyChord, LayoutsWorldExt, Modifiers, Notification, Panel,
-    PathOptions, Root, ViewerFile, WorkbenchWorldExt,
+    EditOptions, Handler, KeyChord, LayoutsWorldExt, Modifiers, Notification, Panel, PathOptions,
+    Place, Root, ViewerFile, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 use std::{
@@ -679,26 +679,16 @@ fn show_references(world: &mut World, locations: Vec<Location>) {
     let Some(layout) = world.layouts().active() else {
         return;
     };
-    let existing = world
-        .layouts()
-        .panels(layout)
-        .into_iter()
-        .find(|&panel| world.get::<ReferencesPanel>(panel).is_some());
-    let panel = match existing {
+    match world.layouts().find::<ReferencesPanel>(layout) {
         Some(panel) => {
             world.entity_mut(panel).insert(content);
-            panel
+            let _ = world.layouts_mut().focus_panel(panel);
         }
         None => {
-            let Ok(area) = world.layouts().destination_area(layout) else {
-                return;
-            };
-            let panel = world.spawn((content, InArea(area))).id();
+            world.spawn((content, Place::largest()));
             world.flush();
-            panel
         }
-    };
-    let _ = world.layouts_mut().focus_panel(panel);
+    }
 }
 
 impl Panel for ReferencesPanel {
