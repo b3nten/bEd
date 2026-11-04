@@ -1,7 +1,7 @@
 //! The native menu bar (`native` feature): macOS's, through muda. Elsewhere
 //! nothing is installed and apps draw their egui menu bar instead.
-use crate::{MenuBar, MenuSnapshot, MenusWorldExt};
-use bedtime_actions::{ActionRequests, InvocationContext};
+use crate::actions::{ActionRequests, InvocationContext};
+use crate::menus::{MenuBar, MenuSnapshot, MenusWorldExt};
 use bevy::{
     prelude::*,
     window::{PrimaryWindow, RawHandleWrapper},
@@ -25,7 +25,7 @@ impl Plugin for NativeMenuPlugin {
     }
     fn finish(&self, app: &mut App) {
         assert!(
-            app.is_plugin_added::<bedtime_actions::ActionsPlugin>(),
+            app.is_plugin_added::<crate::actions::ActionsPlugin>(),
             "Native menus require ActionsPlugin"
         );
     }
@@ -167,8 +167,8 @@ fn shutdown(world: &mut World) {
 
 #[cfg(target_os = "macos")]
 mod macos {
-    use crate::{MenuNode, MenuSnapshot};
-    use bedtime_actions::{ActionId, InvocationContext};
+    use crate::actions::{ActionId, InvocationContext};
+    use crate::menus::{MenuNode, MenuSnapshot};
     use bevy::prelude::Entity;
     use muda::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
     use std::{collections::HashMap, io};
@@ -178,16 +178,16 @@ mod macos {
         actions: HashMap<MenuId, (Entity, ActionId, InvocationContext)>,
     }
 
-    fn accelerator(chord: bedtime_actions::KeyChord) -> Option<muda::accelerator::Accelerator> {
+    fn accelerator(chord: crate::actions::KeyChord) -> Option<muda::accelerator::Accelerator> {
         use muda::accelerator::{Accelerator, Code, Modifiers};
         let key = format!("{:?}", chord.key).parse::<Code>().ok()?;
         let resolved = chord.modifiers.resolved();
         let mut modifiers = Modifiers::empty();
         for (source, target) in [
-            (bedtime_actions::Modifiers::CONTROL, Modifiers::CONTROL),
-            (bedtime_actions::Modifiers::SHIFT, Modifiers::SHIFT),
-            (bedtime_actions::Modifiers::ALT, Modifiers::ALT),
-            (bedtime_actions::Modifiers::META, Modifiers::META),
+            (crate::actions::Modifiers::CONTROL, Modifiers::CONTROL),
+            (crate::actions::Modifiers::SHIFT, Modifiers::SHIFT),
+            (crate::actions::Modifiers::ALT, Modifiers::ALT),
+            (crate::actions::Modifiers::META, Modifiers::META),
         ] {
             if resolved.contains(source) {
                 modifiers |= target;
@@ -271,15 +271,15 @@ mod macos {
     fn primary_chords_use_native_command_accelerators_not_label_suffixes() {
         use muda::accelerator::{Accelerator, Code, Modifiers};
         assert_eq!(
-            accelerator(bedtime_actions::KeyChord::new(
-                bedtime_actions::Modifiers::PRIMARY,
+            accelerator(crate::actions::KeyChord::new(
+                crate::actions::Modifiers::PRIMARY,
                 bevy::input::keyboard::KeyCode::KeyS
             )),
             Some(Accelerator::new(Modifiers::META, Code::KeyS))
         );
         assert_eq!(
-            accelerator(bedtime_actions::KeyChord::new(
-                bedtime_actions::Modifiers::PRIMARY | bedtime_actions::Modifiers::SHIFT,
+            accelerator(crate::actions::KeyChord::new(
+                crate::actions::Modifiers::PRIMARY | crate::actions::Modifiers::SHIFT,
                 bevy::input::keyboard::KeyCode::KeyZ
             )),
             Some(Accelerator::new(
@@ -293,7 +293,7 @@ mod macos {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bedtime_actions::ActionsPlugin;
+    use crate::actions::ActionsPlugin;
 
     #[test]
     fn one_native_root_is_requested_and_two_are_an_error() {

@@ -1,6 +1,6 @@
 //! Drawing menus with egui: a menu bar, or a context menu.
-use crate::*;
-use bedtime_actions::ActionRequests;
+use crate::actions::ActionRequests;
+use crate::menus::*;
 use bedtime_ui::{UiFrame, egui};
 
 /// Where an entry was last drawn, for tests and automation. Native menus are

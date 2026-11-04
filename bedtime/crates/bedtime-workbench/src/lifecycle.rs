@@ -36,7 +36,7 @@ pub(crate) fn install(app: &mut App) {
         PreUpdate,
         (
             crate::NativeSystems::Poll,
-            bedtime_menus::NativeMenuSystems::Poll,
+            crate::menus::NativeMenuSystems::Poll,
         )
             .after(SessionSystems::Prepare)
             .before(LayoutSystems::Apply),
@@ -67,7 +67,7 @@ pub(crate) fn install(app: &mut App) {
     );
     app.configure_sets(
         Last,
-        bedtime_work::WorkSystems::Poll.in_set(SessionSystems::Close),
+        crate::work::WorkSystems::Poll.in_set(SessionSystems::Close),
     );
     #[cfg(feature = "ui")]
     app.configure_sets(

@@ -27,7 +27,7 @@ pub trait Setting: Send + Sync + 'static {
     fn label() -> Cow<'static, str> {
         let path = std::any::type_name::<Self>();
         let name = path.split('<').next().unwrap_or(path);
-        crate::ui::words(name.rsplit("::").next().unwrap_or(name)).into()
+        crate::settings::ui::words(name.rsplit("::").next().unwrap_or(name)).into()
     }
     /// Shown when hovering its label.
     #[cfg(feature = "ui")]
@@ -44,13 +44,13 @@ pub trait Setting: Send + Sync + 'static {
     /// How it's edited. `None` uses the editor for its value's type
     /// ([`inferred_ui`](Setting::inferred_ui)).
     #[cfg(feature = "ui")]
-    fn ui() -> Option<crate::ui::SettingUi<Self::Value>> {
+    fn ui() -> Option<crate::settings::ui::SettingUi<Self::Value>> {
         None
     }
     /// The editor for its value's type, if there's an obvious one. `settings!`
     /// provides it.
     #[cfg(feature = "ui")]
-    fn inferred_ui() -> Option<crate::ui::SettingUi<Self::Value>> {
+    fn inferred_ui() -> Option<crate::settings::ui::SettingUi<Self::Value>> {
         None
     }
 }
@@ -113,7 +113,7 @@ macro_rules! __setting {
     (($($section:literal)?) $(#[$meta:meta])* $vis:vis $name:ident : $ty:ty { $($entries:tt)* }) => {
         $(#[$meta])*
         $vis struct $name;
-        impl $crate::Setting for $name {
+        impl $crate::settings::Setting for $name {
             type Value = $ty;
             $crate::__setting_entries! { $ty ; $($entries)* }
             $( $crate::__setting_section! { $section, $ty } )?
@@ -126,8 +126,8 @@ macro_rules! __setting {
 macro_rules! __setting_entries {
     ($ty:ty ;) => {};
     ($ty:ty ; only_in : [$($store:ty),* $(,)?] $(, $($rest:tt)*)?) => {
-        fn allowed_in(store: $crate::__private::StoreId) -> bool {
-            [$($crate::__private::StoreId::of::<$store>()),*].contains(&store)
+        fn allowed_in(store: $crate::settings::__private::StoreId) -> bool {
+            [$($crate::settings::__private::StoreId::of::<$store>()),*].contains(&store)
         }
         $crate::__setting_entries! { $ty ; $($($rest)*)? }
     };
@@ -151,8 +151,8 @@ macro_rules! __setting_entry {
         }
     };
     (apply, $ty:ty, $value:expr) => {
-        fn apply(world: &mut $crate::__private::World, value: &$ty) {
-            let apply: fn(&mut $crate::__private::World, &$ty) = $value;
+        fn apply(world: &mut $crate::settings::__private::World, value: &$ty) {
+            let apply: fn(&mut $crate::settings::__private::World, &$ty) = $value;
             apply(world, value)
         }
     };
@@ -185,15 +185,21 @@ macro_rules! __setting_ui_entry {
         }
     };
     (visible, $ty:ty, $value:expr) => {
-        fn visible(world: &$crate::__private::World, layer: $crate::__private::StoreId) -> bool {
-            let visible: fn(&$crate::__private::World, $crate::__private::StoreId) -> bool = $value;
+        fn visible(
+            world: &$crate::settings::__private::World,
+            layer: $crate::settings::__private::StoreId,
+        ) -> bool {
+            let visible: fn(
+                &$crate::settings::__private::World,
+                $crate::settings::__private::StoreId,
+            ) -> bool = $value;
             visible(world, layer)
         }
     };
     (ui, $ty:ty, $value:expr) => {
-        fn ui() -> ::std::option::Option<$crate::ui::SettingUi<$ty>> {
+        fn ui() -> ::std::option::Option<$crate::settings::ui::SettingUi<$ty>> {
             #[allow(unused_imports)]
-            use $crate::ui::editors::*;
+            use $crate::settings::ui::editors::*;
             ::std::option::Option::Some(($value).into())
         }
     };
@@ -212,10 +218,10 @@ macro_rules! __setting_ui_entry {
 macro_rules! __setting_section {
     ($section:literal, $ty:ty) => {
         const SECTION: ::std::option::Option<&'static str> = ::std::option::Option::Some($section);
-        fn inferred_ui() -> ::std::option::Option<$crate::ui::SettingUi<$ty>> {
+        fn inferred_ui() -> ::std::option::Option<$crate::settings::ui::SettingUi<$ty>> {
             #[allow(unused_imports)]
-            use $crate::ui::infer::{InferEnum, InferNone, InferType};
-            (&&&$crate::ui::infer::Infer::<$ty>::new()).infer()
+            use $crate::settings::ui::infer::{InferEnum, InferNone, InferType};
+            (&&&$crate::settings::ui::infer::Infer::<$ty>::new()).infer()
         }
     };
 }

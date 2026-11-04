@@ -1,6 +1,6 @@
 //! The remote methods and the systems that carry them out.
-use bedtime_actions::{ActionRegistry, ActionRequest, ActionRequests, InvocationContext};
 use bedtime_ui::{AccessibilityTree, egui::accesskit};
+use bedtime_workbench::{ActionRegistry, ActionRequest, ActionRequests, InvocationContext};
 use bevy::{
     input::{
         ButtonState,

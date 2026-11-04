@@ -13,7 +13,7 @@ pub mod ui;
 #[cfg(feature = "native")]
 pub use native::{NativeMenuBar, NativeMenuError, NativeMenuPlugin, NativeMenuSystems};
 
-use bedtime_actions::{
+use crate::actions::{
     Action, ActionId, ActionRequest, ActionsWorldExt, InvocationContext, Invokes, KeyChord,
 };
 use bevy::prelude::*;

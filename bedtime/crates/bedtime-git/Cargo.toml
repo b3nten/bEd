@@ -12,7 +12,6 @@ default = ["workbench", "persistence"]
 workbench = [
     "dep:bevy",
     "dep:bedtime-ui",
-    "dep:bedtime-work",
     "dep:bedtime-workbench",
     "dep:bedtime-filetree",
     "dep:bedtime-code",
@@ -26,7 +25,6 @@ persistence = ["workbench", "bedtime-workbench/persistence", "bedtime-code/persi
 serde = { workspace = true, features = ["derive"] }
 bevy = { workspace = true, features = ["std"], optional = true }
 bedtime-ui = { workspace = true, optional = true }
-bedtime-work = { workspace = true, optional = true }
 bedtime-workbench = { workspace = true, features = ["files"], optional = true }
 bedtime-filetree = { workspace = true, optional = true }
 bedtime-code = { workspace = true, optional = true }

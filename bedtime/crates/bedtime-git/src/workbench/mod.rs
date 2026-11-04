@@ -10,7 +10,6 @@ pub use presentation::{GitPanelOptions, GroupBy, ViewMode};
 use std::collections::BTreeSet;
 
 use crate::{CommitMode, DiffSide, Job, Operation, Output, StatusEntry};
-use bedtime_work::Cancellation;
 use bedtime_workbench::*;
 use bevy::prelude::*;
 use std::{

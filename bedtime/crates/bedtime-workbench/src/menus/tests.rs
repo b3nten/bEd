@@ -1,5 +1,5 @@
-use crate::*;
-use bedtime_actions::*;
+use crate::actions::*;
+use crate::menus::*;
 
 struct Copy;
 impl Action for Copy {

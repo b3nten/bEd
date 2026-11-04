@@ -1,7 +1,8 @@
-# bedtime-actions
+# Actions
 
-Actions, handlers and keybindings for Bevy. Optional features:
-- `settings`: layered keybindings through [`bedtime-settings`](../bedtime-settings/README.md).
+Actions, handlers and keybindings: the `actions` module of bedtime-workbench.
+By workbench feature:
+- `persistence`: layered keybindings through [settings](settings.md).
 - `ui`: egui shortcut collection.
 
 ```rust,ignore
@@ -80,5 +81,5 @@ every action and its keys in a layer, re-recorded by clicking and pressing new
 ones.
 
 ```sh
-cargo test -p bedtime-actions --all-features
+cargo test -p bedtime-workbench --all-features actions::
 ```

@@ -1,7 +1,9 @@
 //! Keybindings as settings (`settings` feature): one setting per action.
-use crate::{Action, ActionId, ActionRegistry, Actions, ActionsRef, KeyChord, Keybindings};
+use crate::actions::{
+    Action, ActionId, ActionRegistry, Actions, ActionsRef, KeyChord, Keybindings,
+};
+use crate::settings::{Setting, SettingsWorldExt};
 use bedtime_persistence::StoreId;
-use bedtime_settings::{Setting, SettingsWorldExt};
 use bevy::prelude::*;
 use std::borrow::Cow;
 

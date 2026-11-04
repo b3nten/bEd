@@ -4,7 +4,7 @@
 //! A panel is usually [`layer_tabs`] then [`sections`]. An app that wants
 //! something else (search, another layout) reads [`SettingsUi`] and draws the
 //! rows itself; [`row`], [`columns`] and the markers are the parts.
-use crate::{Setting, Settings, SettingsError, SettingsWorldExt};
+use crate::settings::{Setting, Settings, SettingsError, SettingsWorldExt};
 use bedtime_persistence::StoreId;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bevy::prelude::*;

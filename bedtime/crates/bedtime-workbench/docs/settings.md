@@ -1,11 +1,11 @@
-# bedtime-settings
+# Settings
 
 Typed, layered settings backed by
-[`bedtime-persistence`](../bedtime-persistence/README.md) stores. The `ui`
+[`bedtime-persistence`](../../bedtime-persistence/README.md) stores. The `ui`
 feature renders editors for settings declared in sections.
 
 ```rust,ignore
-use bedtime_settings::*;
+use bedtime_workbench::settings::*;
 
 settings! {
     "Files" {
@@ -97,5 +97,5 @@ resource and draws the rows itself, using `ui::row`, `ui::columns` and
 `ui::Marks`.
 
 ```sh
-cargo test -p bedtime-settings --features ui
+cargo test -p bedtime-workbench --features persistence settings::
 ```

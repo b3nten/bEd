@@ -18,7 +18,7 @@ impl PluginGroup for WorkbenchNativePlugin {
         PluginGroupBuilder::start::<Self>()
             .add(WorkbenchNativeWindowPlugin)
             .add(bedtime_ui::layouts::ChromePlugin)
-            .add(bedtime_menus::NativeMenuPlugin)
+            .add(crate::menus::NativeMenuPlugin)
     }
 }
 
@@ -90,6 +90,6 @@ mod tests {
             }]
         );
         assert!(app.world().get::<Window>(window).is_some());
-        assert!(!app.is_plugin_added::<bedtime_menus::NativeMenuPlugin>());
+        assert!(!app.is_plugin_added::<crate::menus::NativeMenuPlugin>());
     }
 }

@@ -212,7 +212,7 @@ frame, so closing a text edit or popup cannot leak its final key into a shortcut
 Custom text canvases call `egui::Context::register_text_input(id)` when drawing;
 the ordinary focused widget ID then participates in the same text capture policy
 without creating a `TextEdit` buffer or private history.
-bedtime-actions collects eligible egui shortcuts after drawing. UI leaves Bevy input
+bedtime-workbench's actions collect eligible egui shortcuts after drawing. UI leaves Bevy input
 messages and `ButtonInput` unchanged. Applications and panels reading that input
 own their focus/visibility gating and any held-key cleanup when it is suspended.
 

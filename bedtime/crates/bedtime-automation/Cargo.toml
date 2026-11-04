@@ -11,7 +11,7 @@ description = "Drive a bedtime app from scripts over the Bevy Remote Protocol"
 # always add it and enable automation only in the builds that want it.
 enabled = [
     "dep:bedtime-ui",
-    "dep:bedtime-actions",
+    "dep:bedtime-workbench",
     "dep:serde",
     "dep:serde_json",
     "bevy/bevy_remote",
@@ -22,6 +22,6 @@ enabled = [
 [dependencies]
 bevy = { workspace = true, features = ["std", "bevy_window", "bevy_render", "keyboard", "mouse"] }
 bedtime-ui = { workspace = true, optional = true, features = ["accessibility"] }
-bedtime-actions = { workspace = true, optional = true }
+bedtime-workbench = { workspace = true, optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }

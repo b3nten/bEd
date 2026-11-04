@@ -1,5 +1,5 @@
 //! Settings layers: what each holds, loading, saving and reloading them.
-use crate::{Setting, SettingsError, SettingsWorldExt};
+use crate::settings::{Setting, SettingsError, SettingsWorldExt};
 use bedtime_persistence::{Store, StoreBackend, StoreError, StoreErrorKind, StoreId, Stores};
 use bevy::prelude::*;
 use ron::value::RawValue;
@@ -326,7 +326,7 @@ impl SettingsAppExt for App {
             },
         });
         #[cfg(feature = "ui")]
-        crate::ui::register::<S>(self);
+        crate::settings::ui::register::<S>(self);
         self
     }
 }

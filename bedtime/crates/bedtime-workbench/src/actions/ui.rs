@@ -1,14 +1,14 @@
 //! The `ui` feature: keyboard shortcuts from egui, after widgets have had the
 //! keys they want, and the Keyboard Shortcuts section of a settings panel.
-use crate::*;
-#[cfg(feature = "settings")]
-use bedtime_persistence::StoreId;
-#[cfg(feature = "settings")]
-use bedtime_settings::{
+use crate::actions::*;
+#[cfg(feature = "persistence")]
+use crate::settings::{
     SettingsWorldExt,
     ui::{CONTROL_WIDTH, Marks, columns},
 };
-#[cfg(feature = "settings")]
+#[cfg(feature = "persistence")]
+use bedtime_persistence::StoreId;
+#[cfg(feature = "persistence")]
 use bedtime_ui::UiContext;
 use bedtime_ui::{UiCamera, UiCapture, UiSystems, egui};
 use bevy::prelude::*;
@@ -171,7 +171,7 @@ fn conflicts_with_text(key: egui::Key, modifiers: Modifiers) -> bool {
 
 /// The Keyboard Shortcuts section of a settings panel: every registered action
 /// and its keys in `layer`. Click an action's keys, then press the new ones.
-#[cfg(feature = "settings")]
+#[cfg(feature = "persistence")]
 pub fn keybindings_section(
     ui: &mut egui::Ui,
     world: &mut World,
@@ -253,17 +253,17 @@ pub fn keybindings_section(
     });
 }
 
-#[cfg(feature = "settings")]
+#[cfg(feature = "persistence")]
 fn report(world: &mut World, doing: &str, result: Result<(), String>) {
     if let Err(error) = result {
-        world.write_message(bedtime_settings::SettingsError(format!("{doing}: {error}")));
+        world.write_message(crate::settings::SettingsError(format!("{doing}: {error}")));
     }
 }
 
 /// A key pressed this frame with its modifiers; `Err` for Escape. The
 /// platform's main modifier is recorded as `Primary`, so the binding carries
 /// over to other platforms.
-#[cfg(feature = "settings")]
+#[cfg(feature = "persistence")]
 fn pressed_chord(world: &World) -> Option<Result<KeyChord, ()>> {
     let input = world.get_resource::<ButtonInput<KeyCode>>()?;
     let key = input
@@ -307,7 +307,7 @@ fn pressed_chord(world: &World) -> Option<Result<KeyChord, ()>> {
     Some(Ok(KeyChord::new(modifiers, key)))
 }
 
-#[cfg(feature = "settings")]
+#[cfg(feature = "persistence")]
 fn is_modifier(key: KeyCode) -> bool {
     matches!(
         key,

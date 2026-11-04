@@ -1,4 +1,4 @@
-use crate::*;
+use crate::settings::*;
 use bedtime_persistence::{
     MemoryStore, PersistenceAppExt, PersistencePlugin, Store, StoreBackend, StoreId,
 };
@@ -299,7 +299,7 @@ fn a_setting_can_be_read_before_the_app_exists() {
 #[cfg(feature = "ui")]
 mod ui {
     use super::*;
-    use crate::ui::{SettingUi, SettingsUi, SettingsUiAppExt, words};
+    use crate::settings::ui::{SettingUi, SettingsUi, SettingsUiAppExt, words};
 
     #[derive(Clone, Copy, Debug, PartialEq, Reflect, serde::Serialize, serde::Deserialize)]
     enum Tone {

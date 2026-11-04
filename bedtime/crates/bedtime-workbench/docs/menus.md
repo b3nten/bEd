@@ -1,8 +1,8 @@
-# bedtime-menus
+# Menus
 
 Menus as entities, drawn with egui (`ui` feature) or as the operating
 system's menu bar (`native` feature, macOS). Items run
-[`bedtime-actions`](../bedtime-actions/README.md) actions.
+[actions](actions.md).
 
 ```rust,ignore
 let bar = world.spawn((MenuBar, NativeMenuBar)).id();
@@ -48,5 +48,5 @@ hint and the ordinary shortcut route. Only one root may be marked; problems
 are `NativeMenuError` messages.
 
 ```sh
-cargo test -p bedtime-menus --all-features
+cargo test -p bedtime-workbench --all-features menus::
 ```

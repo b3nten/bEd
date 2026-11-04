@@ -1,4 +1,4 @@
-# bedtime-work
+# Background work
 
 Application- or entity-owned background tasks with cooperative cancellation
 and shutdown. Depends only on Bevy.
@@ -26,5 +26,5 @@ let task = world.resource_mut::<ManagedWork>().spawn_task(Some(panel), "Search",
 - Polling runs in `Last` (`WorkSystems::Poll`).
 
 ```sh
-cargo test -p bedtime-work
+cargo test -p bedtime-workbench work::
 ```

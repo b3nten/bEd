@@ -1,33 +1,33 @@
 //! Composable workbench services; the application supplies Bevy's window and renderer.
+pub mod actions;
 mod closing;
 mod document_actions;
 mod documents;
 mod lifecycle;
+pub mod menus;
 mod notifications;
 mod opening;
 mod panel_actions;
 #[cfg(feature = "persistence")]
 pub mod persistence;
+#[cfg(feature = "persistence")]
+pub mod settings;
 mod untitled;
+pub mod work;
 #[cfg(feature = "workspaces")]
 pub mod workspaces;
-/// Settings: [`bedtime-settings`](bedtime_settings), re-exported.
-#[cfg(feature = "persistence")]
-pub mod settings {
-    pub use bedtime_settings::*;
-}
-pub use bedtime_actions::*;
-pub use bedtime_menus::*;
+pub use actions::*;
 pub use bedtime_ui::layouts::*;
-pub use bedtime_work::*;
-/// The `ui` parts of the crates above: drawing menus, collecting shortcuts,
+pub use menus::*;
+pub use work::*;
+/// The `ui` parts of the modules above: drawing menus, collecting shortcuts,
 /// the Keyboard Shortcuts section.
 #[cfg(feature = "ui")]
 pub mod ui {
     // Its public items need the `settings` feature too.
     #[allow(unused_imports)]
-    pub use bedtime_actions::ui::*;
-    pub use bedtime_menus::ui::*;
+    pub use crate::actions::ui::*;
+    pub use crate::menus::ui::*;
 }
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
 pub use document_actions::*;
@@ -47,9 +47,9 @@ pub use native::{NativeError, NativeSystems, WorkbenchNativePlugin, WorkbenchNat
 mod dialogs;
 #[cfg(feature = "ui")]
 mod ui_plugin;
-#[cfg(feature = "ui")]
-pub use bedtime_menus::ui::{MenuPresentation, draw_menu_bar, draw_popup_menu};
 use bevy::{app::PluginGroupBuilder, prelude::*};
+#[cfg(feature = "ui")]
+pub use menus::ui::{MenuPresentation, draw_menu_bar, draw_popup_menu};
 #[cfg(feature = "ui")]
 pub use ui_plugin::WorkbenchUiPlugin;
 
@@ -93,7 +93,7 @@ impl Plugin for DocumentsPlugin {
         #[cfg(feature = "persistence")]
         {
             needs::<persistence::PersistencePlugin>(app, "PersistencePlugin");
-            needs::<bedtime_settings::SettingsPlugin>(app, "SettingsPlugin");
+            needs::<settings::SettingsPlugin>(app, "SettingsPlugin");
         }
     }
 }
@@ -108,7 +108,7 @@ impl PluginGroup for WorkbenchCorePlugins {
         #[cfg(feature = "persistence")]
         let group = group
             .add(persistence::PersistencePlugin)
-            .add(bedtime_settings::SettingsPlugin);
+            .add(settings::SettingsPlugin);
         group
             .add(WorkPlugin)
             .add(ActionsPlugin)
@@ -121,10 +121,10 @@ impl PluginGroup for WorkbenchCorePlugins {
 #[cfg(feature = "persistence")]
 fn report_settings_errors(
     world: &mut World,
-    mut cursor: Local<bevy::ecs::message::MessageCursor<bedtime_settings::SettingsError>>,
+    mut cursor: Local<bevy::ecs::message::MessageCursor<settings::SettingsError>>,
 ) {
     let errors: Vec<_> = cursor
-        .read(world.resource::<Messages<bedtime_settings::SettingsError>>())
+        .read(world.resource::<Messages<settings::SettingsError>>())
         .map(|error| error.0.clone())
         .collect();
     for error in errors {

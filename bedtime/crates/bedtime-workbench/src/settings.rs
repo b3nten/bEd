@@ -2,7 +2,7 @@
 //!
 //! Layers stack in the order the app adds them; later layers win. A layer
 //! holds only what was set in it, so a missing value inherits from the layers
-//! below, and finally from the setting's default. This crate knows nothing
+//! below, and finally from the setting's default. This module knows nothing
 //! about what the layers mean; an app might stack a global store under a
 //! workspace's so per-workspace values override global ones.
 //!
@@ -22,6 +22,8 @@ mod tests;
 #[cfg(feature = "ui")]
 pub mod ui;
 
+/// The `settings!` macro, also at the crate root (where `#[macro_export]` puts it).
+pub use crate::settings;
 pub use layers::{SETTINGS_ENTRY, Settings, SettingsAppExt, SettingsMut, read_setting};
 pub use setting::Setting;
 

@@ -1,4 +1,4 @@
-use crate::*;
+use crate::actions::*;
 use bevy::prelude::*;
 
 const CTRL_F: KeyChord = KeyChord::new(Modifiers::CONTROL, KeyCode::KeyF);
@@ -325,11 +325,11 @@ fn chords_read_and_write_as_portable_text() {
     );
 }
 
-#[cfg(feature = "settings")]
+#[cfg(feature = "persistence")]
 mod keybinding_settings {
     use super::*;
+    use crate::settings::{SettingsAppExt, SettingsPlugin, SettingsWorldExt};
     use bedtime_persistence::{Store, StoreId};
-    use bedtime_settings::{SettingsAppExt, SettingsPlugin, SettingsWorldExt};
 
     struct GlobalStore;
     impl Store for GlobalStore {}

@@ -1,20 +1,16 @@
-//! Desktop apps with Bevy, in layers. Each crate is re-exported here behind a
-//! feature of the same name:
+//! Desktop apps with Bevy, in layers, re-exported here by feature:
 //!
 //! - [`ui`]: the UI toolkit (theme, fonts, icons, widgets), layouts of
 //!   panels, and window chrome. Always included.
-//! - Building blocks: [`persistence`], [`settings`], [`actions`], [`menus`],
-//!   [`work`], [`document`], [`filesystem`].
-//! - [`workbench`] (default): the framework for document-based apps, with
-//!   `WorkbenchPlugins`. `workspaces` adds workspaces, which need the
-//!   bevy_winit fork.
+//! - [`workbench`] (default): desktop-app services (documents, actions and
+//!   keys, menus, settings, background work) with `WorkbenchPlugins`. Its
+//!   parts are also re-exported here: [`actions`], [`menus`], [`settings`],
+//!   [`work`]. `workspaces` adds workspaces, which need the bevy_winit fork.
+//! - Building blocks below the workbench: [`persistence`], [`document`],
+//!   [`filesystem`].
 //! - Plugins: [`filetree`], [`code`], [`terminal`].
-//!
-//! See `docs/architecture.md` for how the layers fit together.
 pub use bedtime_ui as ui;
 
-#[cfg(feature = "actions")]
-pub use bedtime_actions as actions;
 #[cfg(feature = "code")]
 pub use bedtime_code as code;
 #[cfg(feature = "documents")]
@@ -23,15 +19,11 @@ pub use bedtime_document as document;
 pub use bedtime_filesystem as filesystem;
 #[cfg(feature = "filetree")]
 pub use bedtime_filetree as filetree;
-#[cfg(feature = "menus")]
-pub use bedtime_menus as menus;
 #[cfg(feature = "persistence")]
 pub use bedtime_persistence as persistence;
-#[cfg(feature = "settings")]
-pub use bedtime_settings as settings;
 #[cfg(feature = "terminal")]
 pub use bedtime_terminal as terminal;
-#[cfg(feature = "work")]
-pub use bedtime_work as work;
 #[cfg(feature = "workbench")]
 pub use bedtime_workbench as workbench;
+#[cfg(feature = "workbench")]
+pub use bedtime_workbench::{actions, menus, settings, work};

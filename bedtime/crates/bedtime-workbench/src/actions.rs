@@ -6,7 +6,7 @@
 //! of `ActionHandler<A>` components on entities. An action runs for an entity
 //! (the focused one, by default); that entity's handler wins over the global
 //! one. What's focused is the app's business: `ActionFocus` says
-//! (bedtime-workbench makes it the focused panel). Without it, only global
+//! (workbench makes it the focused panel). Without it, only global
 //! handlers run.
 //!
 //! Which keys trigger which action is a plain table, `Keybindings`. Actions may
@@ -14,12 +14,12 @@
 //! (the focused entity, then global). Two actions sharing a key and handled in
 //! the same scope are a conflict, reported rather than guessed.
 //!
-//! With the `settings` feature, each action's keys are a setting
+//! With the `persistence` feature, each action's keys are a setting
 //! (`Keybinding<A>`) that fills the table; without, the table holds each
 //! action's defaults. With `ui`, shortcuts are collected from egui, and with
 //! both, `ui::keybindings_section` edits them in a settings panel.
 mod chord;
-#[cfg(feature = "settings")]
+#[cfg(feature = "persistence")]
 mod keys;
 #[cfg(test)]
 mod tests;
@@ -27,7 +27,7 @@ mod tests;
 pub mod ui;
 
 pub use chord::{KeyChord, Modifiers};
-#[cfg(feature = "settings")]
+#[cfg(feature = "persistence")]
 pub use keys::Keybinding;
 
 use bevy::prelude::*;
@@ -140,7 +140,7 @@ struct Registered {
     global: Option<Handler>,
     /// The entity's `ActionHandler<A>`.
     on_entity: fn(&World, Entity) -> Option<Handler>,
-    #[cfg(feature = "settings")]
+    #[cfg(feature = "persistence")]
     keys: keys::KeySettings,
 }
 
@@ -366,14 +366,14 @@ impl ActionAppExt for App {
                     .get::<ActionHandler<A>>(entity)
                     .map(|component| component.handler)
             },
-            #[cfg(feature = "settings")]
+            #[cfg(feature = "persistence")]
             keys: keys::KeySettings::of::<A>(),
         });
         world
             .get_resource_or_init::<Keybindings>()
             .set(id, A::DEFAULT_KEYS.to_vec());
-        #[cfg(feature = "settings")]
-        bedtime_settings::SettingsAppExt::register_setting::<Keybinding<A>>(self);
+        #[cfg(feature = "persistence")]
+        crate::settings::SettingsAppExt::register_setting::<Keybinding<A>>(self);
         self
     }
 

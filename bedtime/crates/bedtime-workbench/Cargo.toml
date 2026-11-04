@@ -4,34 +4,38 @@ version.workspace = true
 edition = "2024"
 publish = false
 license.workspace = true
-description = "World sessions, layouts, panels, documents and commands for Bedtime"
+description = "Desktop-app services for Bedtime: documents, actions and keys, menus, settings, background work, workspaces"
 
 [features]
 default = ["ui", "native", "clipboard", "files"]
 # Opening files by path (`open_path`, openers' `files`), with bedtime-filesystem.
 files = ["dep:bedtime-filesystem"]
-ui = ["dep:bevy_egui", "bedtime-settings?/ui", "bedtime-actions/ui", "bedtime-menus/ui"]
+# Drawing menus, collecting shortcuts from egui, the settings UI.
+ui = ["dep:bevy_egui", "bevy/bevy_window"]
 clipboard = ["dep:bedtime-clipboard"]
-persistence = ["dep:bedtime-persistence", "dep:bedtime-settings", "bedtime-actions/settings", "bedtime-ui/persistence", "dep:bevy_world_serialization", "bevy/serialize"]
+# Saving state, settings in layers, and keybindings as settings.
+persistence = ["dep:bedtime-persistence", "dep:ron", "bedtime-ui/persistence", "dep:bevy_world_serialization"]
 # Workspaces: folders with their own store and settings, switched by
 # rebuilding the App (needs the bevy_winit fork's `relaunch`).
 workspaces = ["persistence", "bevy/bevy_winit"]
-native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "bedtime-menus/native", "bedtime-ui/native"]
+# The native menu bar, system clipboard and window chrome.
+native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "dep:muda", "bedtime-ui/native"]
 
 [dependencies]
-bedtime-actions.workspace = true
-bedtime-menus.workspace = true
 bedtime-document.workspace = true
 bedtime-filesystem = { workspace = true, optional = true }
-bedtime-work.workspace = true
 bedtime-persistence = { workspace = true, optional = true }
-bedtime-settings = { workspace = true, optional = true }
 bevy_world_serialization = { version = "=0.20.0", optional = true }
-bevy = { workspace = true, features = ["std", "keyboard", "bevy_log"] }
+bevy = { workspace = true, features = ["std", "keyboard", "bevy_log", "serialize"] }
 bedtime-clipboard = { workspace = true, optional = true }
 bedtime-ui.workspace = true
 bevy_egui = { workspace = true, optional = true }
+ron = { version = "0.12.2", optional = true }
 serde = { workspace = true, features = ["derive"] }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+muda = { workspace = true, optional = true }
+
 [dev-dependencies]
+ron = "0.12.2"
 serde_json = { workspace = true }

@@ -17,7 +17,7 @@ close prompt, and `PanelModified` marks unsaved tabs.
 | ClipboardPlugin | Shared text/file clipboard, usable independently |
 | WorkbenchNativeWindowPlugin | Window close requests into the quit flow |
 | ChromePlugin (bedtime-ui) | Native window chrome: titlebar, background, blur |
-| NativeMenuPlugin (bedtime-menus) | Native presentation of the world menu |
+| NativeMenuPlugin | Native presentation of the world menu |
 | WorkbenchNativePlugin | Group of native window/chrome/menu plugins |
 | WorkbenchUiPlugin | The unsaved-changes prompt, in the modal layer |
 | WorkbenchPlugins | `WorkbenchCorePlugins` plus clipboard, native and UI, by feature |
@@ -266,7 +266,7 @@ world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..defa
 
 Relationship hooks keep the layout graph consistent as it changes; debug builds
 also validate it once per frame (in `Last`), panicking on a broken graph.
-Background work is [`bedtime-work`](../bedtime-work/README.md) (`ManagedWork`,
+Background work is the [`work`](docs/work.md) module (`ManagedWork`,
 re-exported), polled in `Last`. Quitting through `CloseRequested` performs an
 orderly exit; headless hosts and tests can instead call `shutdown_work()` and
 keep updating until `work_finished()`. New document and work admissions are
@@ -274,7 +274,7 @@ rejected after shutdown.
 
 ## Actions, handlers and keybindings
 
-Actions are [`bedtime-actions`](../bedtime-actions/README.md), re-exported.
+Actions are the [`actions`](docs/actions.md) module, re-exported at the root.
 Workbench makes `ActionFocus` the focused panel, so a panel's
 `ActionHandler<A>` wins while it's focused, and shows a handler's error as a
 notification (an action that isn't available isn't an error). Document
@@ -286,7 +286,7 @@ an `ActionHandler` for each.
 
 ## Menus
 
-Menus are [`bedtime-menus`](../bedtime-menus/README.md), re-exported (its
+Menus are the [`menus`](docs/menus.md) module, re-exported at the root (its
 egui drawing is under `bedtime_workbench::ui`). Workbench draws the menu bar
 set with `set_menu` inset by `WorkbenchSurface::panel_gap`, and installs the
 native menu bar with `WorkbenchNativePlugin`.
@@ -329,7 +329,7 @@ app.register_type::<Notes>()
 
 ## Settings (`persistence` feature)
 
-Settings are [`bedtime-settings`](../bedtime-settings/README.md), re-exported as
+Settings are the [`settings`](docs/settings.md) module,
 `bedtime_workbench::settings`: typed values resolved through layers kept in
 stores, and (with the `ui` feature) the pieces of a settings panel. Workbench
 installs its plugin and shows settings problems as notifications.
