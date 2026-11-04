@@ -101,9 +101,11 @@ mutation and watch implementations.
 returns an `FsDocumentSource`: one identity per canonical file, shared by
 symlink aliases (hard links stay separate), which follows confirmed moves
 (`move_document_sources`) and notices deletions (`delete_document_sources`).
-It's a `bedtime_document::DocumentSource<M>` for any `M: FileModel`, the
-model's `decode` and `encode`; `TextBuffer` is one (UTF-8, no NUL bytes, up to
-256 MiB). `decode` runs on the document's load worker, so a viewer's model can
+It's a `bedtime_document::DocumentSource<M>` for any `M: FileModel`: the
+model's byte form (`ByteModel`'s `decode` and `encode`, from bedtime-document,
+re-exported here) plus file limits (`MAX_LEN`, `UNREAD`); `TextBuffer` is one
+(UTF-8, no NUL bytes, up to 256 MiB). One source serves every model of a path,
+so documents of the file as different models share its `SourceId`. `decode` runs on the document's load worker, so a viewer's model can
 decode there (an image's pixels, a sound's spectrogram). A model whose viewer
 reads the file itself (a video) sets `UNREAD`: loading only checks the file
 and gives `decode` no bytes.

@@ -1,7 +1,7 @@
 //! What's in a font file, read once on the document's load worker: its
 //! names, metrics, the characters it has, and glyph outlines on demand.
 use bedtime_document::DocumentModel;
-use bedtime_filesystem::FileModel;
+use bedtime_filesystem::{ByteModel, FileModel};
 use skrifa::{
     FontRef, MetadataProvider,
     instance::{LocationRef, Size},
@@ -56,8 +56,7 @@ impl DocumentModel for FontFile {
     }
 }
 
-impl FileModel for FontFile {
-    const MAX_LEN: u64 = 64 * 1024 * 1024;
+impl ByteModel for FontFile {
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         Face::read(bytes).map(|face| Self(Some(Arc::new(face))))
     }
@@ -67,6 +66,10 @@ impl FileModel for FontFile {
             None => Ok(()),
         }
     }
+}
+
+impl FileModel for FontFile {
+    const MAX_LEN: u64 = 64 * 1024 * 1024;
 }
 
 impl Face {

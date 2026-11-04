@@ -242,8 +242,7 @@ component and draws with `draw_editor`, without being an editor panel.
 A file's *format* (CSV, Rust, SVG, glTF) is separate from the *model* that
 holds it in memory (`TextBuffer`, `GltfModel`). Formats replace `Fit`.
 
-Status: 4a (formats) is done; 4b (sibling documents, the byte codec) is
-next. Formats live in workbench's `formats` module (`files` feature), not
+Status: 4a (formats) and 4b (sibling documents, the byte codec) are done. Formats live in workbench's `formats` module (`files` feature), not
 bedtime-document: detection reads files and the registry is an app resource.
 
 - **Formats are registered by plugins,** with the names and extensions
@@ -299,33 +298,46 @@ bedtime-document: detection reads files and the registry is an app resource.
   own structure. Nothing is stored as bytes for the sake of sharing.
 - **One document per (source, model).**
   - Opening a source with a model that's already open reuses that document.
-    That fixes today's error when opening an open text file as text.
+    `load_document` matches on source and model, which fixed the error when
+    opening a file already open as another model.
   - Opening it with a different model ("Open With → Text" on a `.gltf`)
     opens a **sibling document**: the same source, decoded as that model.
 - **Siblings stay in sync through bytes, in memory.** Not every document has
   a file, so syncing never goes through the disk.
-  - **When:** when the changed document goes idle (as autosave does), and
-    when focus moves to another panel.
-  - **How:** the changed document is encoded to bytes, and each sibling
-    receives them through the same path as an outside change to the source
-    (`session.incoming`). Siblings reload, or raise a conflict, exactly as if
-    another app had saved the file.
-  - **Invalid content stays local.** If a sibling can't decode the bytes
-    (half-typed JSON for a glTF), it keeps its last good state and shows that
-    the other view has errors.
-  - **Undo is per document.** Undoing in one view produces new content,
-    which syncs to the others as one more change. Sharing an undo history
-    across models would need a common change type.
-  - **Conflicts:** editing one sibling while another has unsynced changes
-    syncs the other first. If both have really diverged, the existing
-    conflict handling applies.
+  Implemented in workbench's `documents/siblings.rs` (`sync_siblings`, in
+  `Update`).
+  - **When:** the one sibling changed since content last passed between them
+    has been idle 300 ms, or the layout's focus moved, or it was just saved
+    (so its siblings share the save).
+  - **How:** it's encoded and each other sibling *replaces* its content with
+    the decoded bytes, as one undo step ("Change in Another View"). That's
+    not the outside-change path (`session.incoming`): the receiving sibling
+    becomes dirty like its source, since the file doesn't have the change
+    yet.
+  - **Saves are shared.** When one sibling saves, the others still holding
+    the same content take that as their saved state (`adopt_save`, with the
+    new file version). So they're clean, autosave doesn't save them again,
+    and a later save of theirs expects the right version.
+  - **A sibling opened later** takes the unsaved content of one already open.
+  - **Invalid content stays local.** A sibling that can't decode the bytes
+    (half-typed JSON for a glTF) keeps its content and its document's error
+    says "Another view's changes can't be shown here: …".
+  - **Undo is per document.** Undoing in one view is a change the others then
+    take. Sharing an undo history across models would need a common change
+    type.
+  - **Both changed:** if two siblings changed since they were last in step,
+    nothing passes and the user is told once ("… was changed in two views.
+    Save one to bring the other up to date."). Saving one changes the file,
+    and the other then gets the existing outside-change conflict.
   - **Cost:** one encode and decode per sync point, only while siblings are
     open. Single-view use pays nothing.
-- **Models need a byte codec to have siblings.** `FileModel`'s `decode` and
-  `encode` already provide one, but it lives in bedtime-filesystem and is
-  tied to files. Move the codec to a trait in bedtime-document that doesn't
-  require a file; `FileModel` builds on it. A model without a byte form (a
-  live SQL table) simply can't have siblings.
+  - Videos (`FileModel::UNREAD`) get no codec: they're read from disk by the
+    player and have no byte form to pass.
+- **The byte codec is `ByteModel`** (bedtime-document): `decode` and
+  `encode`. `FileModel` (bedtime-filesystem, which re-exports `ByteModel`)
+  builds on it with the file limits (`MAX_LEN`, `UNREAD`). Opening a file
+  gives its document the codec (`set_byte_codec`); a model without a byte
+  form (a live SQL table) simply can't have siblings.
 - **Adapters, later and only if needed:** where one model really is a view
   of another (bytes over text), a shared-storage adapter could replace
   syncing, for example to give hex and text a shared undo history.
@@ -412,9 +424,9 @@ bedtime-document: detection reads files and the registry is an app resource.
    - ~~**4a, formats:** `register_format` and format detection replace `Fit`;
      viewers register for formats; documents record their format
      (highlighting and LSP read it).~~ (done)
-   - **4b, siblings:** one document per (source, model); the byte codec
+   - ~~**4b, siblings:** one document per (source, model); the byte codec
      moves to bedtime-document; siblings sync in memory on idle and on focus
-     change.
+     change.~~ (done)
 5. Settings declared by the crates that own them; the generic settings panel.
 6. Status bar contributions.
 7. Route `New` through the focused panel.
@@ -474,3 +486,10 @@ Do one step at a time, then review it before starting the next.
   Markdown/JSON/TOML); bedtime-code registers a format per language plus a
   detector, and highlighting, Structure and LSP use `document_language`. Bed
   has a test of which viewer each kind of file opens with.
+- 2026-11-04: step 4b done. `ByteModel` in bedtime-document; `FileModel`
+  builds on it (every model's impl split in two). Documents are keyed by
+  source and model. `documents/siblings.rs` passes content between siblings
+  in memory (idle, focus move, save), shares saves, catches up a sibling
+  opened later, and reports both-changed. Store gained the codec and sync
+  bookkeeping. Tests cover both directions, a later sibling, undecodable
+  content, both changed, and a shared save.

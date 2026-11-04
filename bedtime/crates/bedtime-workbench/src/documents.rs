@@ -52,6 +52,8 @@ pub use bedtime_document::{
 
 #[path = "documents/autosave.rs"]
 mod autosave;
+#[path = "documents/siblings.rs"]
+mod siblings;
 #[path = "documents/store.rs"]
 mod store;
 #[cfg(test)]
@@ -458,11 +460,16 @@ impl Workbench {
     ) -> Result<DocumentHandle<M>, DocumentError> {
         let world = &mut self.world;
         validate_session(world)?;
+        // One document per source and model: the same file as another model
+        // (an SVG as text and as an image) is a sibling document.
         let source_id = source.id();
+        let model = TypeId::of::<M>();
         let existing = world
             .query::<(Entity, &Document)>()
             .iter(world)
-            .find(|(_, document)| document.store.source_id() == source_id)
+            .find(|(_, document)| {
+                document.store.source_id() == source_id && document.model_type == model
+            })
             .map(|(entity, _)| DocumentId(entity));
         if let Some(id) = existing {
             return world.workbench().cast_document(id);
@@ -475,6 +482,31 @@ impl Workbench {
             })
             .id();
         Ok(DocumentHandle::new(DocumentId(entity)))
+    }
+
+    /// Give the document its model's byte form, so documents of the same
+    /// source held by other models (its siblings) stay in step with it.
+    /// Opening a file does this.
+    pub fn set_byte_codec<M: bedtime_document::ByteModel>(
+        &mut self,
+        handle: DocumentHandle<M>,
+    ) -> Result<(), DocumentError> {
+        let id = handle.id();
+        let mut document = self
+            .world
+            .get_mut::<Document>(id.0)
+            .ok_or(DocumentError::Unavailable(id))?;
+        let actual = document.model_name;
+        let typed = document
+            .store
+            .as_any_mut()
+            .downcast_mut::<Typed<M>>()
+            .ok_or(DocumentError::WrongModel {
+                expected: type_name::<M>(),
+                actual,
+            })?;
+        typed.set_codec(store::Codec::of());
+        Ok(())
     }
 
     pub fn edit_document<M: DocumentModel>(
@@ -651,7 +683,7 @@ pub(crate) fn install(app: &mut App) {
             PreUpdate,
             poll_documents.before(crate::SessionSystems::Prepare),
         )
-        .add_systems(Update, title_document_panels);
+        .add_systems(Update, (title_document_panels, siblings::sync_siblings));
 }
 
 /// A panel showing a document is titled after it, including when the file

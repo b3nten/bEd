@@ -10,6 +10,6 @@ mod source;
 pub mod text;
 
 pub use history::*;
-pub use model::DocumentModel;
+pub use model::{ByteModel, DocumentModel};
 pub use source::*;
 pub use text::{BufferEdit, TextBuffer, TextOpenState, TextPosition};

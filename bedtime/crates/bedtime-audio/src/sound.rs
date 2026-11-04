@@ -3,7 +3,7 @@
 //! to mono; only summaries are kept, so long files stay small: the
 //! waveform's peaks, and a spectrogram of loudness (dB) by frequency.
 use bedtime_document::DocumentModel;
-use bedtime_filesystem::FileModel;
+use bedtime_filesystem::{ByteModel, FileModel};
 use rodio::Source;
 use rustfft::{FftPlanner, num_complex::Complex};
 use std::{io::Cursor, sync::Arc, time::Duration};
@@ -55,7 +55,7 @@ impl DocumentModel for Sound {
     }
 }
 
-impl FileModel for Sound {
+impl ByteModel for Sound {
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         Analysis::read(bytes.into()).map(|analysis| Self(Some(Arc::new(analysis))))
     }
@@ -66,6 +66,8 @@ impl FileModel for Sound {
         }
     }
 }
+
+impl FileModel for Sound {}
 
 /// A decoder for `bytes`, seekable.
 pub fn decoder(bytes: Arc<[u8]>) -> Result<rodio::Decoder<Cursor<Arc<[u8]>>>, String> {

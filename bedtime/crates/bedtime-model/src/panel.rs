@@ -5,7 +5,7 @@
 //! shown; the right-click menu has the same.
 use crate::{Appearance, DisplayMode, Lighting, ModelScene, ModelView, PreparedModel};
 use bedtime_document::DocumentModel;
-use bedtime_filesystem::FileModel;
+use bedtime_filesystem::{ByteModel, FileModel};
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -71,14 +71,17 @@ impl DocumentModel for ModelFile {
     }
 }
 
-impl FileModel for ModelFile {
-    const MAX_LEN: u64 = MAX_MODEL;
+impl ByteModel for ModelFile {
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self(bytes.into()))
     }
     fn encode(&self, out: &mut dyn std::io::Write) -> std::io::Result<()> {
         out.write_all(&self.0)
     }
+}
+
+impl FileModel for ModelFile {
+    const MAX_LEN: u64 = MAX_MODEL;
 }
 
 #[derive(Component, Reflect, Default)]

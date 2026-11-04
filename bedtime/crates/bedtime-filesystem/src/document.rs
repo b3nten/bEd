@@ -3,7 +3,6 @@
 use crate::{FileSource, FileVersion, Filesystem, WriteExpectation};
 use bedtime_document::*;
 use std::{
-    io::Write,
     path::{Path, PathBuf},
     sync::{
         Arc, RwLock,
@@ -137,13 +136,9 @@ impl FsDocumentSource {
     }
 }
 
-/// A document model kept in a file: how its bytes become the model and back.
-pub trait FileModel: DocumentModel {
-    /// Read the whole file, refusing files that aren't this model (binary
-    /// data as text, say).
-    fn decode(bytes: &[u8]) -> Result<Self, String>;
-    /// Write the model out.
-    fn encode(&self, out: &mut dyn Write) -> std::io::Result<()>;
+/// A document model kept in a file: its byte form (`ByteModel`), and the
+/// limits of reading it from one.
+pub trait FileModel: ByteModel {
     /// Files larger than this aren't opened as this model.
     const MAX_LEN: u64 = 256 * 1024 * 1024;
     /// The viewer reads the file itself (a video, played from disk): loading
@@ -151,21 +146,10 @@ pub trait FileModel: DocumentModel {
     const UNREAD: bool = false;
 }
 
-impl FileModel for TextBuffer {
-    fn decode(bytes: &[u8]) -> Result<Self, String> {
-        if bytes.contains(&0) {
-            return Err("It looks like binary data, not text".into());
-        }
-        let text = std::str::from_utf8(bytes).map_err(|_| "It isn't UTF-8 text".to_owned())?;
-        Ok(TextBuffer::from(text))
-    }
-    fn encode(&self, out: &mut dyn Write) -> std::io::Result<()> {
-        for chunk in self.chunks() {
-            out.write_all(chunk.as_bytes())?;
-        }
-        Ok(())
-    }
-}
+/// Re-exported: `FileModel`'s byte form.
+pub use bedtime_document::ByteModel;
+
+impl FileModel for TextBuffer {}
 
 /// A file's version as a document source version, and back.
 fn version(version: &FileVersion) -> SourceVersion {

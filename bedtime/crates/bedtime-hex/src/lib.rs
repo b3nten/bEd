@@ -4,7 +4,7 @@
 //! as hex, text or its offset. It opens any file, so it's the viewer of last
 //! resort for files nothing else shows.
 use bedtime_document::DocumentModel;
-use bedtime_filesystem::FileModel;
+use bedtime_filesystem::{ByteModel, FileModel};
 use bedtime_ui::{Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -38,7 +38,7 @@ impl DocumentModel for Bytes {
     }
 }
 
-impl FileModel for Bytes {
+impl ByteModel for Bytes {
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         Ok(Self(bytes.into()))
     }
@@ -46,6 +46,8 @@ impl FileModel for Bytes {
         out.write_all(&self.0)
     }
 }
+
+impl FileModel for Bytes {}
 
 #[bedtime_ui::panel]
 #[derive(Reflect, Default)]

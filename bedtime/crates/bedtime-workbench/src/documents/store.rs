@@ -37,6 +37,48 @@ pub(super) trait Store: Send + Sync {
         owner: Entity,
         may_read: bool,
     ) -> Option<Result<(), String>>;
+
+    // Siblings: documents of one source held by different models, passing
+    // their content to each other as bytes (see `siblings`).
+
+    /// It has a byte form, so it can have siblings.
+    fn has_codec(&self) -> bool;
+    /// The current content as bytes.
+    fn encode(&self) -> Option<Result<Vec<u8>, String>>;
+    /// Take a sibling's content: decoded, it replaces this one's (one undo
+    /// step). Content that won't decode leaves this one as it is, and says so.
+    fn receive(&mut self, bytes: &[u8]) -> Result<(), String>;
+    /// Edited (or undone) since content last passed between it and its
+    /// siblings. Until then, nothing has: it starts in step.
+    fn changed_since_sync(&self) -> bool;
+    /// What it holds now is in step with its siblings.
+    fn mark_synced(&mut self);
+    /// It has been in step with its siblings (not just opened).
+    fn in_step(&self) -> bool;
+    /// A sibling saved its content, which this one holds too: that's this
+    /// one's saved state now, at `version`.
+    fn adopt_save(&mut self, version: Option<SourceVersion>);
+    /// The version of what was last loaded or saved.
+    fn saved_version(&self) -> Option<SourceVersion>;
+}
+
+/// How a model becomes bytes and back (`ByteModel`), kept without the bound.
+pub(super) struct Codec<M> {
+    encode: fn(&M) -> Result<Vec<u8>, String>,
+    decode: fn(&[u8]) -> Result<M, String>,
+}
+
+impl<M: bedtime_document::ByteModel> Codec<M> {
+    pub(super) fn of() -> Self {
+        Self {
+            encode: |model| {
+                let mut bytes = Vec::new();
+                model.encode(&mut bytes).map_err(|e| e.to_string())?;
+                Ok(bytes)
+            },
+            decode: M::decode,
+        }
+    }
 }
 
 pub(super) struct StoreInfo {
@@ -62,6 +104,10 @@ pub(super) struct Typed<M: DocumentModel> {
     /// What the next save expects to find, after the source was replaced
     /// (`None`: nothing there).
     next_expected: Option<Option<SourceVersion>>,
+    /// Its byte form, when its model has one and it came from a file.
+    codec: Option<Codec<M>>,
+    /// The revision it had when content last passed to or from a sibling.
+    synced: Option<u64>,
 }
 
 enum State<M: DocumentModel> {
@@ -107,7 +153,13 @@ impl<M: DocumentModel> Typed<M> {
             refresh: true,
             next_check: Instant::now(),
             next_expected: None,
+            codec: None,
+            synced: None,
         }
+    }
+
+    pub(super) fn set_codec(&mut self, codec: Codec<M>) {
+        self.codec = Some(codec);
     }
 
     /// Keep the contents somewhere else from now on (Save As): the next save
@@ -407,6 +459,72 @@ impl<M: DocumentModel> Store for Typed<M> {
             self.start_read(work, owner);
         }
         finished
+    }
+
+    fn has_codec(&self) -> bool {
+        self.codec.is_some()
+    }
+
+    fn encode(&self) -> Option<Result<Vec<u8>, String>> {
+        let codec = self.codec.as_ref()?;
+        let session = self.session().ok()?;
+        Some((codec.encode)(session.history.content()))
+    }
+
+    fn receive(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let decode = self.codec.as_ref().ok_or("It has no byte form")?.decode;
+        let session = self.session_mut().map_err(|e| e.to_string())?;
+        match decode(bytes) {
+            Ok(model) => {
+                session.group = None;
+                session.history.replace(model, "Change in Another View");
+                session.error = None;
+                self.synced = Some(session.history.revision());
+                Ok(())
+            }
+            Err(error) => {
+                let error = format!("Another view's changes can't be shown here: {error}");
+                session.error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn changed_since_sync(&self) -> bool {
+        let Ok(session) = self.session() else {
+            return false;
+        };
+        self.synced
+            .is_some_and(|synced| synced != session.history.revision())
+    }
+
+    fn mark_synced(&mut self) {
+        if let Ok(session) = self.session() {
+            self.synced = Some(session.history.revision());
+        }
+    }
+
+    fn in_step(&self) -> bool {
+        self.synced.is_some()
+    }
+
+    fn adopt_save(&mut self, version: Option<SourceVersion>) {
+        if let State::Ready(session) = &mut self.state {
+            session.saved = Some(Saved {
+                model: session.history.content().clone(),
+                version,
+            });
+            session.incoming = None;
+            session.missing = false;
+        }
+    }
+
+    fn saved_version(&self) -> Option<SourceVersion> {
+        self.session()
+            .ok()?
+            .saved
+            .as_ref()
+            .and_then(|saved| saved.version.clone())
     }
 }
 

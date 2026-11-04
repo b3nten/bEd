@@ -4,7 +4,7 @@
 //! and fades while playing. Click or Space plays and pauses, Left and Right
 //! skip five seconds. Files aren't read into memory: the player reads them.
 use bedtime_document::DocumentModel;
-use bedtime_filesystem::FileModel;
+use bedtime_filesystem::{ByteModel, FileModel};
 #[cfg(target_os = "macos")]
 use bedtime_ui::{BuiltinIcon, Floating, UiFrame, theme};
 use bedtime_ui::{UiContext, egui};
@@ -65,14 +65,17 @@ impl DocumentModel for VideoFile {
     }
 }
 
-impl FileModel for VideoFile {
-    const UNREAD: bool = true;
+impl ByteModel for VideoFile {
     fn decode(_: &[u8]) -> Result<Self, String> {
         Ok(Self)
     }
     fn encode(&self, _: &mut dyn std::io::Write) -> std::io::Result<()> {
         Err(std::io::Error::other("Videos aren't saved"))
     }
+}
+
+impl FileModel for VideoFile {
+    const UNREAD: bool = true;
 }
 
 #[bedtime_ui::panel]

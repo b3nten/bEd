@@ -2,7 +2,7 @@
 //! formats (by their signature; TGA has none, so it's tried last), animated
 //! GIF, APNG and WebP frames, and SVG rendered at a sharp size.
 use bedtime_document::DocumentModel;
-use bedtime_filesystem::FileModel;
+use bedtime_filesystem::{ByteModel, FileModel};
 use image::{AnimationDecoder, ImageDecoder, ImageFormat, ImageReader};
 use std::{
     io::Cursor,
@@ -71,7 +71,7 @@ impl DocumentModel for Picture {
     }
 }
 
-impl FileModel for Picture {
+impl ByteModel for Picture {
     fn decode(bytes: &[u8]) -> Result<Self, String> {
         decode(bytes).map(|decoded| Self(Some(Arc::new(decoded))))
     }
@@ -79,6 +79,8 @@ impl FileModel for Picture {
         Err(std::io::Error::other("Images aren't saved"))
     }
 }
+
+impl FileModel for Picture {}
 
 pub fn decode(bytes: &[u8]) -> Result<Decoded, String> {
     match image::guess_format(bytes) {

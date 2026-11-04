@@ -17,3 +17,31 @@ pub trait DocumentModel: Clone + PartialEq + Send + Sync + 'static {
         Self::state_at_line(from.0, from.1)
     }
 }
+
+/// A model with a byte form: how bytes become the model and back. Files
+/// are kept this way, and documents of one source held by different models
+/// (an SVG as text and as an image) pass their content to each other through
+/// it.
+pub trait ByteModel: DocumentModel {
+    /// Read the whole content, refusing bytes that aren't this model (binary
+    /// data as text, say).
+    fn decode(bytes: &[u8]) -> Result<Self, String>;
+    /// Write the model out.
+    fn encode(&self, out: &mut dyn std::io::Write) -> std::io::Result<()>;
+}
+
+impl ByteModel for crate::TextBuffer {
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.contains(&0) {
+            return Err("It looks like binary data, not text".into());
+        }
+        let text = std::str::from_utf8(bytes).map_err(|_| "It isn't UTF-8 text".to_owned())?;
+        Ok(crate::TextBuffer::from(text))
+    }
+    fn encode(&self, out: &mut dyn std::io::Write) -> std::io::Result<()> {
+        for chunk in self.chunks() {
+            out.write_all(chunk.as_bytes())?;
+        }
+        Ok(())
+    }
+}

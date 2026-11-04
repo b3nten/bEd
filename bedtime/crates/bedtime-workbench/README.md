@@ -154,8 +154,15 @@ Raw despawn of panels bypasses the prompt; it is not a user-facing close.
 ## Documents
 
 A document is an entity owning one source's content, undo history and what was
-last saved. There is **one document per source**: opening the same source again
-returns the same document. Models come from
+last saved. There is **one document per source and model**: opening the same
+source as the same model again returns the same document. The same file as
+another model (an SVG as text and as an image) is a sibling document: each
+keeps its own model and undo, and their content passes between them in memory
+as bytes (`ByteModel`) once the edited one goes idle or the focus moves (see
+`documents/siblings.rs`). A sibling that can't decode the bytes keeps its
+content and shows why; if two siblings were both changed, nothing passes and
+the user is told; a save is shared by siblings holding the same content.
+Opening a file gives its document the codec (`set_byte_codec`). Models come from
 [`bedtime-document`](../bedtime-document/README.md) (`DocumentModel`, with
 `TextBuffer` for text); sources implement `DocumentSource<Model>`.
 

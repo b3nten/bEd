@@ -155,8 +155,19 @@ impl FileViewer {
                     (Some((line, column)), None) => M::state_at_line(line, column),
                     (None, _) => M::OpenState::default(),
                 };
-                let panel = world.workbench_mut().open_document::<M>(
-                    source,
+                let handle = world
+                    .workbench_mut()
+                    .load_document::<M>(source)
+                    .map_err(|e| e.to_string())?;
+                // In step with any other model's document of this file.
+                if !M::UNREAD {
+                    world
+                        .workbench_mut()
+                        .set_byte_codec(handle)
+                        .map_err(|e| e.to_string())?;
+                }
+                let panel = world.workbench_mut().open_document_handle(
+                    handle,
                     OpenOptions {
                         state,
                         target: options.target,
@@ -183,6 +194,12 @@ impl FileViewer {
                     .workbench_mut()
                     .load_document::<M>(source)
                     .map_err(|e| e.to_string())?;
+                if !M::UNREAD {
+                    world
+                        .workbench_mut()
+                        .set_byte_codec(document)
+                        .map_err(|e| e.to_string())?;
+                }
                 world
                     .entity_mut(panel)
                     .insert(DocumentReference::new(document.id()));
