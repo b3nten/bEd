@@ -209,19 +209,27 @@ instead.
 ## Opening
 
 `open_document(source, OpenOptions)` shows a document in a viewer panel with
-the model's `OpenState` applied (`TextOpenState`: a cursor, a selection). A
-viewer is a panel implementing `Viewer<M>` (`new` from the document, `apply`
-a state); an opener pairs it with its model and a label:
+the model's `OpenState` (`TextOpenState`: a cursor, a selection). A viewer is
+an ordinary panel that shows a document through `DocumentReference`;
+registering it pairs the panel type with its model and a label, and that's
+what makes it a viewer:
 
 ```rust,ignore
-app.register_opener(Opener::<TextBuffer>::new::<EditorPanel>("Text Editor").files(text_fit))
-   .register_opener(Opener::<TextBuffer>::new::<HexPanel>("Hex").files(|_, _| Fit::Can))
-   .register_default_opener::<EditorPanel>()
-   .set_open_fallback(|world, path, reason| { /* nothing opens it: say so */ });
+app.register_viewer::<TextBuffer, EditorPanel>("Text Editor").files(text_fit)
+   .register_viewer::<Bytes, HexPanel>("Hex").files(|_, _| Fit::Can)
+   .register_default_viewer::<EditorPanel>();
 
 world.workbench_mut().open_document(source, OpenOptions::at(state))?;
 world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..default() })?;
+commands.open_document(handle, OpenOptions::at(state)); // errors become notifications
 ```
+
+- A new viewer is `P::default()` with a `DocumentReference`, placed with
+  `Place`. The state reaches it as `Reveal<M::OpenState>` (never for models
+  whose `OpenState` is `()`): the viewer reads and removes it once its content
+  is loaded, and a later open replaces it. Spawning a viewer yourself works
+  too: `(ImagePanel::default(), DocumentReference::of(handle), Place::auto())`.
+  A `DocumentReference` on a viewer of a different model logs an error.
 
 - `Target::Existing` (default) reuses a panel already showing the document in
   the current layout (the focused area's, else the first) and applies the
@@ -233,18 +241,17 @@ world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..defa
   never switches layouts.
 - `preview: true` makes a new panel replace its area's preview. Opening
   without `preview` pins an existing preview, and so does editing its document.
-- With the `files` feature (default), openers say which files they open
-  (`files(fit)`, for a `FileModel`), `openers_for(path)` lists them ("Open
-  With"), and `open_path` picks the requested opener, else the best fit:
+- With the `files` feature (default), viewers say which files they open
+  (`files(fit)`, for a `FileModel`), `viewers_for(path)` lists them ("Open
+  With"), and `open_path` picks the requested viewer, else the best fit:
   `Fit::Specific` (made for this kind of file: an image viewer, a PNG) over
   `Preferred` (the editor, any text) over `Can` (hex, anything), the default
-  opener among equals. A file nothing opens goes to the fallback, which
-  tells the user (`open_path` returns `Ok(None)`); without one it's an error.
-  `openers_for_document` lists viewers for an open document.
+  viewer among equals. A file nothing opens is an error, which the caller
+  reports. `viewers_for_document` lists viewers for an open document.
 - A viewer opened from a file keeps the path with the panel (`ViewerFile`,
   saved with persistence). A restored panel with a path but no document gets
-  it back from the opener whose viewer it is (`reopen_viewers`, in `Update`);
-  one whose file can't be opened is closed, with a notification.
+  it back from the viewer it is (`reopen_viewers`, in `Update`); one whose
+  file can't be opened is closed, with a notification.
 - **Untitled documents.** `new_untitled::<M>(options)` opens an empty
   "Untitled" (or "Untitled 2", …) document, marked `Untitled`. Saving one
   (Save, or the close prompt's Save) asks the app where, with the function
@@ -252,9 +259,10 @@ world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..defa
   as saving, so closing waits. The app answers `save_untitled_to(id, path)`
   (it's then that file's, history and all; its viewers get a `ViewerFile`)
   or `cancel_save_as(id)`. Without a picker, saving one is an error.
-- `HostedViewer` marks a panel that draws a viewer's component inside its
-  own (a diff panel with an editor): openers don't take it for that viewer,
-  restoring doesn't reopen it (its host does), and it titles itself.
+- A panel is the viewer of its own type only (`PanelInstance::kind`). One
+  built from a viewer's parts, like a diff panel that requires an
+  `EditorPanel`, isn't taken for that viewer: opening doesn't reuse it,
+  restoring doesn't reopen it (it does that itself), and it titles itself.
 - `viewer_document::<M>(ui, world, panel)` is how a viewer's `draw` starts: it
   draws a spinner while the document loads, or why it couldn't be read, and
   otherwise returns its model (viewers' models are cheap to clone), handle and

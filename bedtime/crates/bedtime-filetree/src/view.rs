@@ -4,7 +4,7 @@ use crate::{FileTree, FileTreeDefaults, Folders, Row, TreeView, refresh_rows};
 use bedtime_filesystem::{EntryKind, operations::Operation};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 use bedtime_workbench::{
-    LayoutsWorldExt, Notification, OpenerId, Panel, PanelPresentation, PathOptions,
+    LayoutsWorldExt, Notification, Panel, PanelPresentation, PathOptions, ViewerId,
     WorkbenchWorldExt,
 };
 use bevy::prelude::*;
@@ -65,7 +65,7 @@ pub(crate) enum Intent {
     Open {
         path: PathBuf,
         preview: bool,
-        opener: Option<OpenerId>,
+        viewer: Option<ViewerId>,
     },
     Refresh,
     ToggleHidden,
@@ -308,7 +308,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             // to open a file there (an area, beside a tab, a new split).
             if response.drag_started() && row.depth > 0 {
                 let opens = row.kind != EntryKind::Directory
-                    && !world.workbench().openers_for(&row.path).is_empty();
+                    && !world.workbench().viewers_for(&row.path).is_empty();
                 let factory = if opens {
                     open_factory(row.path.clone())
                 } else {
@@ -348,7 +348,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
                     intents.push(Intent::Open {
                         path: row.path.clone(),
                         preview: false,
-                        opener: None,
+                        viewer: None,
                     });
                 }
             } else if response.clicked() {
@@ -359,27 +359,27 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
                     Intent::Open {
                         path: row.path.clone(),
                         preview: true,
-                        opener: None,
+                        viewer: None,
                     }
                 });
             }
             if response.secondary_clicked() {
                 view.selected = Some(row.path.clone());
-                let openers = if row.kind == EntryKind::Directory {
+                let viewers = if row.kind == EntryKind::Directory {
                     Vec::new()
                 } else {
-                    world.workbench().openers_for(&row.path)
+                    world.workbench().viewers_for(&row.path)
                 };
-                view.menu = Some((row.path.clone(), openers));
+                view.menu = Some((row.path.clone(), viewers));
             }
             response.context_menu(|ui| {
-                let openers = view
+                let viewers = view
                     .menu
                     .as_ref()
                     .filter(|(path, _)| path == &row.path)
-                    .map(|(_, openers)| openers.clone())
+                    .map(|(_, viewers)| viewers.clone())
                     .unwrap_or_default();
-                menu(ui, row, &openers, &mut view.naming, &mut intents);
+                menu(ui, row, &viewers, &mut view.naming, &mut intents);
                 filter_menu(ui, filter, &mut intents);
             });
         }
@@ -615,7 +615,7 @@ pub fn file_kind(path: &Path) -> String {
 fn menu(
     ui: &mut egui::Ui,
     row: &Row,
-    openers: &[(OpenerId, &'static str)],
+    viewers: &[(ViewerId, &'static str)],
     naming: &mut Option<Naming>,
     intents: &mut Vec<Intent>,
 ) {
@@ -625,17 +625,17 @@ fn menu(
             intents.push(Intent::Open {
                 path: row.path.clone(),
                 preview: false,
-                opener: None,
+                viewer: None,
             });
         }
-        if !openers.is_empty() {
+        if !viewers.is_empty() {
             ui.menu_button("Open With", |ui| {
-                for &(opener, label) in openers {
+                for &(viewer, label) in viewers {
                     if ui.button(label).clicked() {
                         intents.push(Intent::Open {
                             path: row.path.clone(),
                             preview: false,
-                            opener: Some(opener),
+                            viewer: Some(viewer),
                         });
                     }
                 }
@@ -1030,7 +1030,7 @@ fn keyboard(ui: &mut egui::Ui, view: &mut TreeView, height: f32, intents: &mut V
                 Intent::Open {
                     path: row.path.clone(),
                     preview: false,
-                    opener: None,
+                    viewer: None,
                 }
             });
         }
@@ -1097,16 +1097,16 @@ pub(crate) fn apply(world: &mut World, panel: Entity, root: &Path, intent: Inten
         Intent::Open {
             path,
             preview,
-            opener,
+            viewer,
         } => {
             let options = PathOptions {
                 preview,
-                opener,
+                viewer,
                 ..default()
             };
             match world.workbench_mut().open_path(&path, options) {
                 // A preview leaves the tree focused, to keep browsing.
-                Ok(Some(opened)) if preview => {
+                Ok(opened) if preview => {
                     let area = |panel| world.get::<bedtime_workbench::InArea>(panel).map(|a| a.0);
                     if area(opened) != area(panel) {
                         let _ = world.layouts_mut().focus_panel(panel);
@@ -1166,8 +1166,7 @@ pub fn open_files_factory(paths: Vec<PathBuf>) -> bedtime_workbench::PanelFactor
                 ..default()
             };
             match world.workbench_mut().open_path(path, options) {
-                Ok(Some(panel)) => shown = panel,
-                Ok(None) => {}
+                Ok(panel) => shown = panel,
                 Err(error) => {
                     let name = path.file_name().unwrap_or(path.as_os_str()).display();
                     world.workbench_mut().notify(Notification::error(format!(

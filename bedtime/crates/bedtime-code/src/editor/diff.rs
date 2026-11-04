@@ -1,7 +1,7 @@
 //! Git-independent, revision-bound inline comparisons. Historical rows are a
 //! sparse projection over the real document, never document edits.
 use super::{
-    EditorError, EditorView, Navigation, Reveal, TextBuffer, TextSnapshot, background::Job,
+    EditorError, EditorView, Navigation, Scroll, TextBuffer, TextSnapshot, background::Job,
     wrapping::WrapIndex,
 };
 use bedtime_ui::egui;
@@ -426,7 +426,7 @@ impl EditorView {
                     revision: snapshot.revision,
                     range: byte..byte,
                     selection: Some(super::TextSelection::caret(&snapshot.text, byte)?),
-                    reveal: Reveal::Center,
+                    reveal: Scroll::Center,
                     focus: true,
                 },
             )?;

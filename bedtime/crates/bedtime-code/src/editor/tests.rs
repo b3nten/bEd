@@ -206,7 +206,7 @@ fn external_reveal_scrolls_without_moving_selection_or_claiming_focus() {
             revision: snapshot.revision,
             range: target..target,
             selection: None,
-            reveal: Reveal::Center,
+            reveal: Scroll::Center,
             focus: false,
         },
     )
@@ -224,7 +224,7 @@ fn external_reveal_scrolls_without_moving_selection_or_claiming_focus() {
                 revision: 99,
                 range: 0..0,
                 selection: None,
-                reveal: Reveal::Minimal,
+                reveal: Scroll::Minimal,
                 focus: true
             }
         )
@@ -246,7 +246,7 @@ fn unicode_selection_clipboard_and_line_numbers_use_the_same_layout() {
             revision: 0,
             range: 1..7,
             selection: Some(TextSelection::new(&snapshot.text, 1, 7).unwrap()),
-            reveal: Reveal::Minimal,
+            reveal: Scroll::Minimal,
             focus: true,
         },
     )
@@ -510,7 +510,7 @@ fn long_lines_are_virtualized_horizontally_and_delete_whole_graphemes() {
             revision: 0,
             range: end..end,
             selection: Some(TextSelection::caret(&snapshot.text, end).unwrap()),
-            reveal: Reveal::Minimal,
+            reveal: Scroll::Minimal,
             focus: true,
         },
     )
@@ -569,7 +569,7 @@ fn million_line_editing_keeps_layout_bounded() {
             revision: 0,
             range: target..target,
             selection: Some(TextSelection::caret(&snapshot.text, target).unwrap()),
-            reveal: Reveal::Center,
+            reveal: Scroll::Center,
             focus: true,
         },
     )
@@ -626,7 +626,7 @@ fn line_navigation_validates_before_mutation_and_does_not_require_language_featu
         text: "one\r\né🙂\rlast".into(),
     };
     let mut view = EditorView::default();
-    view.scroll_to_line(&snapshot, 2, Reveal::Center, false)
+    view.scroll_to_line(&snapshot, 2, Scroll::Center, false)
         .unwrap();
     assert_eq!(
         view.navigation.as_ref().unwrap().range,
@@ -634,7 +634,7 @@ fn line_navigation_validates_before_mutation_and_does_not_require_language_featu
     );
     let before = view.navigation.clone().unwrap();
     assert!(
-        view.scroll_to_line(&snapshot, 3, Reveal::Minimal, true)
+        view.scroll_to_line(&snapshot, 3, Scroll::Minimal, true)
             .is_err()
     );
     let mut stale = before.clone();

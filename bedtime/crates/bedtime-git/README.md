@@ -49,7 +49,7 @@ operation) and runs one operation at a time.
 
 ## Diff panels
 
-`DiffPanel` is an editor (bedtime-code's, hosted in the panel: `HostedViewer`,
+`DiffPanel` is an editor (bedtime-code's, required by the panel and drawn by it:
 `draw_editor`) with one file's changes inline: old lines between the new, old
 and new line numbers, and above each change Stage (or Unstage) and Discard…
 (asked about first; only with the file saved). The working changes are shown

@@ -3,13 +3,12 @@
 //! parses each revision on a worker and keeps showing the last one that
 //! parsed, with the error, while the text doesn't.
 use bedtime_code::editor::syntax::SyntaxPalette;
-use bedtime_document::{TextBuffer, TextOpenState};
+use bedtime_document::TextBuffer;
 use bedtime_ui::{UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, DocumentReference, ManagedTask, ManagedWork, Panel, Viewer, WorkbenchWorldExt,
-    viewer_document,
+    DocumentReference, ManagedTask, ManagedWork, Panel, WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -54,13 +53,6 @@ struct Row {
     path: String,
     key: String,
     index: bool,
-}
-
-impl Viewer<TextBuffer> for TreePanel {
-    fn new(_: DocumentHandle<TextBuffer>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &TextOpenState) {}
 }
 
 impl Panel for TreePanel {

@@ -1,7 +1,7 @@
 //! A file tree panel: the folders under the workbench's [`Root`], read in the
 //! background and kept up to date by watching them. A single click on a file
 //! opens a preview of it with `open_path`, a double click or Enter opens it for
-//! good, and its context menu lists `openers_for` as "Open With".
+//! good, and its context menu lists `viewers_for` as "Open With".
 use bedtime_filesystem::{EntryKind, Filesystem, watch::DirectoryWatcher};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -172,7 +172,7 @@ pub struct TreeView {
     /// Scroll so this row shows, on the next draw.
     reveal: Option<PathBuf>,
     /// The context menu's file and what can open it, found when it opened.
-    menu: Option<(PathBuf, Vec<(bedtime_workbench::OpenerId, &'static str)>)>,
+    menu: Option<(PathBuf, Vec<(bedtime_workbench::ViewerId, &'static str)>)>,
     typed: String,
     typed_at: f64,
     /// A name being typed (new file or folder, rename).

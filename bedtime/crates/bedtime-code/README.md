@@ -17,7 +17,7 @@ Restoring a workspace reopens its editors (workbench's `ViewerFile`).
 
 ## The editor
 
-`EditorPanel` is a `Viewer<TextBuffer>`. The text and its undo history are the
+`EditorPanel` is the viewer of `TextBuffer`s. The text and its undo history are the
 panel's workbench document; several panels on one document share them, and
 each keeps its own selection, scroll and composition (`EditorView`). Every
 edit goes through the document (`edit_document`) at the revision the view saw,
@@ -77,7 +77,7 @@ its buttons above it. A click comes back as a `ComparisonRequest` on the panel
 text is edited the changes are worked out again on a worker (bounded line
 diff). Folding is off while comparing; language server hover and Cmd-click
 skip the old lines. `draw_editor` draws an editor panel's editor inside
-another panel (mark that panel `HostedViewer`).
+another panel (one that requires `EditorPanel`; it stays that panel, not an editor).
 
 ## Syntax
 

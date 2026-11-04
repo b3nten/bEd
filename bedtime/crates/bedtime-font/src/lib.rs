@@ -6,9 +6,7 @@
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, UiFrame, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{
-    DocumentHandle, Fit, Opener, OpenersAppExt, Panel, PanelPresentation, Viewer, viewer_document,
-};
+use bedtime_workbench::{Fit, Panel, PanelPresentation, ViewersAppExt, viewer_document};
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -19,16 +17,16 @@ pub struct FontPlugin;
 
 impl Plugin for FontPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<FontPanel>().register_opener(
-            Opener::<FontFile>::new::<FontPanel>("Font").files(|path, _| {
+        app.register_type::<FontPanel>()
+            .register_viewer::<FontFile, FontPanel>("Font")
+            .files(|path, _| {
                 let known = path.extension().is_some_and(|ext| {
                     SUPPORTED_EXTENSIONS
                         .iter()
                         .any(|known| ext.eq_ignore_ascii_case(known))
                 });
                 if known { Fit::Specific } else { Fit::No }
-            }),
-        );
+            });
     }
 }
 
@@ -64,13 +62,6 @@ impl Default for FontPanel {
             inspected: None,
         }
     }
-}
-
-impl Viewer<FontFile> for FontPanel {
-    fn new(_: DocumentHandle<FontFile>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &()) {}
 }
 
 impl Panel for FontPanel {

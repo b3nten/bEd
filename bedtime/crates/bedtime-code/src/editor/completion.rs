@@ -345,7 +345,7 @@ impl EditorView {
                 revision: snapshot.revision,
                 range: range.clone(),
                 selection: Some(self.selection),
-                reveal: Reveal::Minimal,
+                reveal: Scroll::Minimal,
                 focus: false,
             });
             self.assistance.snippet = (edit.snippet && prepared.stops.iter().any(|(n, _)| *n != 0))

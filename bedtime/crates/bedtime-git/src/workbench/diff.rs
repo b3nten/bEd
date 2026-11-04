@@ -33,7 +33,7 @@ pub struct Descriptor {
 #[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(EditorPanel, HostedViewer)]
+#[require(EditorPanel)]
 pub struct DiffPanel {
     pub root: PathBuf,
     /// Relative to the repository.
@@ -424,9 +424,7 @@ fn hand_off(world: &mut World, panel: Entity) -> bool {
         ..default()
     };
     match world.workbench_mut().open_path(&file, options) {
-        Ok(Some(_)) => {}
-        // Nothing opens it (the app said so): the diff says it's binary.
-        Ok(None) => return false,
+        Ok(_) => {}
         Err(error) => {
             world.get_mut::<DiffPanel>(panel).unwrap().error = Some(error);
             return false;

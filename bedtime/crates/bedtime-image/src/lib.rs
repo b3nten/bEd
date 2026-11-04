@@ -7,9 +7,8 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    ActionHandler, ActionInvocation, ActionResult, DocumentHandle, Fit, Handler, Opener,
-    OpenersAppExt, Panel, PanelInstance, PanelPresentation, ResetZoom, Viewer, ZoomIn, ZoomOut,
-    viewer_document,
+    ActionHandler, ActionInvocation, ActionResult, Fit, Handler, Panel, PanelInstance,
+    PanelPresentation, ResetZoom, ViewersAppExt, ZoomIn, ZoomOut, viewer_document,
 };
 use bevy::prelude::*;
 use std::sync::Arc;
@@ -25,15 +24,15 @@ pub struct ImagePlugin;
 
 impl Plugin for ImagePlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<ImagePanel>().register_opener(
-            Opener::<Picture>::new::<ImagePanel>("Image").files(|path, _| {
+        app.register_type::<ImagePanel>()
+            .register_viewer::<Picture, ImagePanel>("Image")
+            .files(|path, _| {
                 if supported(path) {
                     Fit::Specific
                 } else {
                     Fit::No
                 }
-            }),
-        );
+            });
     }
 }
 
@@ -105,13 +104,6 @@ impl ImagePanel {
         let shown = self.shown.as_ref()?;
         Some((shown.frame, shown.picture.frames.len()))
     }
-}
-
-impl Viewer<Picture> for ImagePanel {
-    fn new(_: DocumentHandle<Picture>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &()) {}
 }
 
 impl Panel for ImagePanel {

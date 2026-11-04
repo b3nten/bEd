@@ -526,7 +526,7 @@ fn million_line_wrapping_and_search_keep_editing_bounded() {
             revision: snapshot.revision,
             range: target..target,
             selection: Some(TextSelection::caret(&snapshot.text, target).unwrap()),
-            reveal: Reveal::Center,
+            reveal: Scroll::Center,
             focus: true,
         },
     )

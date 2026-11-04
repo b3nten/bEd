@@ -1,50 +1,49 @@
 //! Opening: showing a document in a viewer panel, with state ("at line 40").
 //!
-//! It's the same call whether the document is new, already shown in a panel
-//! (Structure moving its editor to a symbol), or open elsewhere. Every open
-//! ends with a viewer panel and `Viewer::apply` of the state; `Target` says
-//! how the panel is found. Openers pair a model with a viewer; with the
-//! `files` feature they say which files they open, and `open_path` picks one.
+//! A viewer is an ordinary panel that shows a document through
+//! `DocumentReference`. `register_viewer::<M, P>` pairs a model with the
+//! panel type, which is what makes `P` a viewer; with the `files` feature it
+//! also says which files the viewer suits, and `open_path` picks one.
+//!
+//! Opening is the same call whether the document is new, already shown in a
+//! panel (Structure moving its editor to a symbol), or open elsewhere: it
+//! focuses a viewer already showing the document, or spawns a new one with
+//! `Place` (`Target` says which). The state goes to the panel as `Reveal`,
+//! which the viewer reads and removes.
 use crate::*;
 use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
 use bedtime_document::{DocumentModel, DocumentSource};
 use bevy::prelude::*;
 use std::any::TypeId;
 
-/// On a panel that draws a viewer's component inside its own (a diff panel
-/// with an editor in it): openers don't take it for that viewer, so opening
-/// the file still goes to (or makes) an ordinary one.
-#[derive(Component, Default)]
-pub struct HostedViewer;
-
-/// A panel that shows documents of model `M`.
-pub trait Viewer<M: DocumentModel>: Panel {
-    /// A new panel showing `document`.
-    fn new(document: DocumentHandle<M>) -> Self;
-    /// Move to `state`, on a fresh panel or an existing one. A viewer whose
-    /// content isn't loaded yet keeps it and applies it once it is.
-    fn apply(world: &mut World, panel: Entity, state: &M::OpenState);
-}
+/// On a viewer panel: show this state of its document (for a text editor, a
+/// position or selection). Opening inserts it, on a new panel or one already
+/// showing the document; the viewer reads and removes it, once its content
+/// is loaded. Inserting it again replaces it, so the latest wins. Viewers of
+/// models with nothing to point at (`OpenState = ()`) never get one.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct Reveal<S: Send + Sync + 'static>(pub S);
 
 /// Which panel an open shows the document in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Target {
-    /// A panel already showing the document (with the requested opener) in
+    /// A panel already showing the document (with the requested viewer) in
     /// the current layout: the one in the focused area, else the first. With
     /// none, a new panel.
     #[default]
     Existing,
     /// This panel, which must be a viewer showing the document.
     Panel(Entity),
-    /// Always a new panel: in `area`, else the focused one.
+    /// Always a new panel: in `area`, else where `Placement::Auto` puts it
+    /// (an area with this viewer's panels, else the largest).
     New { area: Option<Entity> },
 }
 
 pub struct OpenOptions<M: DocumentModel> {
     pub state: M::OpenState,
     pub target: Target,
-    /// Which viewer; `None` is the default opener for the model.
-    pub opener: Option<OpenerId>,
+    /// Which viewer; `None` is the default viewer for the model.
+    pub viewer: Option<ViewerId>,
     /// A new panel replaces its area's preview panel, and is the preview
     /// until pinned (by editing, or the user keeping it).
     pub preview: bool,
@@ -55,7 +54,7 @@ impl<M: DocumentModel> Default for OpenOptions<M> {
         Self {
             state: default(),
             target: default(),
-            opener: None,
+            viewer: None,
             preview: false,
         }
     }
@@ -67,17 +66,17 @@ impl<M: DocumentModel> OpenOptions<M> {
     }
 }
 
-/// An opener: which viewer panel type it creates.
+/// A registered viewer: its panel type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct OpenerId(TypeId);
+pub struct ViewerId(TypeId);
 
-impl OpenerId {
+impl ViewerId {
     pub fn of<P: 'static>() -> Self {
         Self(TypeId::of::<P>())
     }
 }
 
-/// How well an opener suits a file.
+/// How well a viewer suits a file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Fit {
     No,
@@ -89,56 +88,65 @@ pub enum Fit {
     Specific,
 }
 
-/// A model and a viewer for it, with a label ("Text Editor") and, optionally,
-/// the files it opens.
-pub struct Opener<M: DocumentModel> {
-    erased: ErasedOpener,
-    marker: std::marker::PhantomData<fn() -> M>,
+struct ErasedViewer {
+    id: ViewerId,
+    label: &'static str,
+    model: TypeId,
+    /// Insert `Reveal` of an `M::OpenState` on one of its panels.
+    reveal: fn(&mut World, Entity, &dyn std::any::Any),
+    /// A new viewer panel, placed with `Place`.
+    create: fn(&mut World, DocumentId, Place) -> Result<Entity, String>,
+    #[cfg(feature = "files")]
+    files: Option<FileViewer>,
 }
 
-impl<M: DocumentModel> Opener<M> {
-    pub fn new<P: Viewer<M>>(label: &'static str) -> Self {
+impl ErasedViewer {
+    fn of<M: DocumentModel, P: Panel + Default>(label: &'static str) -> Self {
         Self {
-            erased: ErasedOpener {
-                id: OpenerId::of::<P>(),
-                label,
-                model: TypeId::of::<M>(),
-                shows: |world, panel| {
-                    world.get::<P>(panel).is_some() && world.get::<HostedViewer>(panel).is_none()
-                },
-                apply: |world, panel, state| {
-                    if let Some(state) = state.downcast_ref::<M::OpenState>() {
-                        P::apply(world, panel, state);
-                    }
-                },
-                create: |world, document, area| {
-                    let handle = world
-                        .workbench()
-                        .cast_document::<M>(document)
-                        .map_err(|e| e.to_string())?;
-                    Ok(world
-                        .spawn((
-                            P::new(handle),
-                            DocumentReference::new(document),
-                            InArea(area),
-                        ))
-                        .id())
-                },
-                #[cfg(feature = "files")]
-                files: None,
+            id: ViewerId::of::<P>(),
+            label,
+            model: TypeId::of::<M>(),
+            reveal: |world, panel, state| {
+                if TypeId::of::<M::OpenState>() == TypeId::of::<()>() {
+                    return;
+                }
+                if let Some(state) = state.downcast_ref::<M::OpenState>() {
+                    world.entity_mut(panel).insert(Reveal(state.clone()));
+                }
             },
-            marker: std::marker::PhantomData,
+            create: |world, document, place| {
+                world
+                    .workbench()
+                    .cast_document::<M>(document)
+                    .map_err(|e| e.to_string())?;
+                Ok(world
+                    .spawn((P::default(), DocumentReference::new(document), place))
+                    .id())
+            },
+            #[cfg(feature = "files")]
+            files: None,
         }
     }
 
-    /// Open files with this opener, as well as they `fit` (given the path
-    /// and the file's first bytes).
-    #[cfg(feature = "files")]
-    pub fn files(mut self, fit: fn(&std::path::Path, &[u8]) -> Fit) -> Self
-    where
-        M: bedtime_filesystem::FileModel,
-    {
-        self.erased.files = Some(FileOpener {
+    /// Whether `panel` is this viewer: its `Panel` type, not one built from
+    /// its parts (a diff panel with an editor in it).
+    fn shows(&self, world: &World, panel: Entity) -> bool {
+        world.get::<PanelInstance>(panel).and_then(|p| p.kind) == Some(self.id.0)
+    }
+}
+
+#[cfg(feature = "files")]
+struct FileViewer {
+    fit: fn(&std::path::Path, &[u8]) -> Fit,
+    open: fn(&mut World, &std::path::Path, ResolvedPathOptions) -> Result<Entity, String>,
+    /// Show the file in a restored viewer panel that has lost its document.
+    reopen: fn(&mut World, Entity, &std::path::Path) -> Result<(), String>,
+}
+
+#[cfg(feature = "files")]
+impl FileViewer {
+    fn of<M: bedtime_filesystem::FileModel>(fit: fn(&std::path::Path, &[u8]) -> Fit) -> Self {
+        Self {
             fit,
             open: |world, path, options| {
                 let source = bedtime_filesystem::Filesystem::local()
@@ -155,7 +163,7 @@ impl<M: DocumentModel> Opener<M> {
                     OpenOptions {
                         state,
                         target: options.target,
-                        opener: Some(options.opener),
+                        viewer: Some(options.viewer),
                         preview: options.preview,
                     },
                 )?;
@@ -175,35 +183,12 @@ impl<M: DocumentModel> Opener<M> {
                     .insert(DocumentReference::new(document.id()));
                 Ok(())
             },
-        });
-        self
+        }
     }
 }
 
-struct ErasedOpener {
-    id: OpenerId,
-    label: &'static str,
-    model: TypeId,
-    /// Whether a panel is this opener's viewer.
-    shows: fn(&World, Entity) -> bool,
-    /// Apply an `M::OpenState` to one of its panels.
-    apply: fn(&mut World, Entity, &dyn std::any::Any),
-    /// A new viewer panel in an area.
-    create: fn(&mut World, DocumentId, Entity) -> Result<Entity, String>,
-    #[cfg(feature = "files")]
-    files: Option<FileOpener>,
-}
-
-#[cfg(feature = "files")]
-struct FileOpener {
-    fit: fn(&std::path::Path, &[u8]) -> Fit,
-    open: fn(&mut World, &std::path::Path, ResolvedPathOptions) -> Result<Entity, String>,
-    /// Show the file in a restored viewer panel that has lost its document.
-    reopen: fn(&mut World, Entity, &std::path::Path) -> Result<(), String>,
-}
-
 /// The file a viewer panel shows, saved with the panel: restoring the panel
-/// opens the file again, with the opener whose viewer the panel is.
+/// opens the file again, with the viewer the panel is.
 #[cfg(feature = "files")]
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Eq)]
 #[reflect(Component)]
@@ -215,19 +200,20 @@ pub struct ViewerFile(pub std::path::PathBuf);
 #[cfg(feature = "files")]
 pub(crate) fn reopen_viewers(world: &mut World) {
     let restored: Vec<(Entity, std::path::PathBuf)> = world
-        .query_filtered::<(Entity, &ViewerFile), (Without<DocumentReference>, Without<HostedViewer>)>()
+        .query_filtered::<(Entity, &ViewerFile), Without<DocumentReference>>()
         .iter(world)
         .map(|(panel, file)| (panel, file.0.clone()))
         .collect();
     for (panel, path) in restored {
-        let reopen = world.get_resource::<Openers>().and_then(|openers| {
-            openers
-                .openers
-                .iter()
-                .find(|opener| (opener.shows)(world, panel))
-                .and_then(|opener| Some(opener.files.as_ref()?.reopen))
-        });
-        let result = match reopen {
+        let Some(viewers) = world.get_resource::<Viewers>() else {
+            return;
+        };
+        // Only viewers themselves: a panel built from a viewer's parts keeps
+        // its own documents.
+        let Some(viewer) = viewers.of_panel(world, panel) else {
+            continue;
+        };
+        let result = match viewer.files.as_ref().map(|files| files.reopen) {
             Some(reopen) => reopen(world, panel, &path),
             None => Err("nothing here opens it".into()),
         };
@@ -247,84 +233,155 @@ struct ResolvedPathOptions {
     line: Option<(u32, u32)>,
     select_to: Option<(u32, u32)>,
     target: Target,
-    opener: OpenerId,
+    viewer: ViewerId,
     preview: bool,
 }
 
-/// The registered openers.
+/// The registered viewers.
 #[derive(Resource, Default)]
-pub struct Openers {
-    openers: Vec<ErasedOpener>,
-    /// Preferred where it fits, over other openers' fit.
-    default: Option<OpenerId>,
-    #[cfg(feature = "files")]
-    fallback: Option<fn(&mut World, &std::path::Path, String)>,
+pub struct Viewers {
+    viewers: Vec<ErasedViewer>,
+    /// Preferred where it fits, over other viewers' fit.
+    default: Option<ViewerId>,
 }
 
-impl Openers {
-    fn get(&self, id: OpenerId) -> Option<&ErasedOpener> {
-        self.openers.iter().find(|opener| opener.id == id)
+impl Viewers {
+    fn get(&self, id: ViewerId) -> Option<&ErasedViewer> {
+        self.viewers.iter().find(|viewer| viewer.id == id)
     }
 
-    /// The opener for model `model`: `requested`, else the default if it's
+    /// The viewer for model `model`: `requested`, else the default if it's
     /// for this model, else the first registered for it.
-    fn for_model(&self, model: TypeId, requested: Option<OpenerId>) -> Option<&ErasedOpener> {
+    fn for_model(&self, model: TypeId, requested: Option<ViewerId>) -> Option<&ErasedViewer> {
         if let Some(id) = requested {
-            return self.get(id).filter(|opener| opener.model == model);
+            return self.get(id).filter(|viewer| viewer.model == model);
         }
         self.default
             .and_then(|id| self.get(id))
-            .filter(|opener| opener.model == model)
-            .or_else(|| self.openers.iter().find(|opener| opener.model == model))
+            .filter(|viewer| viewer.model == model)
+            .or_else(|| self.viewers.iter().find(|viewer| viewer.model == model))
     }
 
-    pub fn label(&self, id: OpenerId) -> Option<&'static str> {
-        self.get(id).map(|opener| opener.label)
+    /// The viewer `panel` is, if it's one.
+    fn of_panel(&self, world: &World, panel: Entity) -> Option<&ErasedViewer> {
+        self.viewers
+            .iter()
+            .find(|viewer| viewer.shows(world, panel))
+    }
+
+    /// Whether a panel of type `kind` (`PanelInstance::kind`) is a viewer.
+    pub fn is_viewer(&self, kind: Option<TypeId>) -> bool {
+        kind.is_some_and(|kind| self.viewers.iter().any(|viewer| viewer.id.0 == kind))
+    }
+
+    pub fn label(&self, id: ViewerId) -> Option<&'static str> {
+        self.get(id).map(|viewer| viewer.label)
     }
 }
 
-pub trait OpenersAppExt {
-    fn register_opener<M: DocumentModel>(&mut self, opener: Opener<M>) -> &mut Self;
-    /// Prefer opener `P` wherever it fits.
-    fn register_default_opener<P: 'static>(&mut self) -> &mut Self;
-    /// What happens to a file no opener claims (a notification, say).
-    #[cfg(feature = "files")]
-    fn set_open_fallback(
+pub trait ViewersAppExt {
+    /// Make panel `P` a viewer of model `M` (labelled "Text Editor", say).
+    /// New viewers are `P::default()` with a `DocumentReference`; a state to
+    /// show arrives as `Reveal<M::OpenState>`. Add `.files(fit)` to open files
+    /// with it.
+    fn register_viewer<M: DocumentModel, P: Panel + Default>(
         &mut self,
-        fallback: fn(&mut World, &std::path::Path, String),
-    ) -> &mut Self;
+        label: &'static str,
+    ) -> ViewerRegistration<'_, M>;
+    /// Prefer viewer `P` wherever it fits.
+    fn register_default_viewer<P: 'static>(&mut self) -> &mut Self;
 }
 
-impl OpenersAppExt for App {
-    fn register_opener<M: DocumentModel>(&mut self, opener: Opener<M>) -> &mut Self {
-        let mut openers = self.world_mut().get_resource_or_init::<Openers>();
-        assert!(
-            openers.get(opener.erased.id).is_none(),
-            "{} was registered twice",
-            opener.erased.label
+impl ViewersAppExt for App {
+    fn register_viewer<M: DocumentModel, P: Panel + Default>(
+        &mut self,
+        label: &'static str,
+    ) -> ViewerRegistration<'_, M> {
+        let viewer = ErasedViewer::of::<M, P>(label);
+        let id = viewer.id;
+        let mut viewers = self.world_mut().get_resource_or_init::<Viewers>();
+        assert!(viewers.get(id).is_none(), "{label} was registered twice");
+        viewers.viewers.push(viewer);
+        ViewerRegistration {
+            app: self,
+            id,
+            marker: std::marker::PhantomData,
+        }
+    }
+
+    fn register_default_viewer<P: 'static>(&mut self) -> &mut Self {
+        self.world_mut().get_resource_or_init::<Viewers>().default = Some(ViewerId::of::<P>());
+        self
+    }
+}
+
+/// A viewer just registered: `.files(fit)` says which files it opens. It
+/// derefs to the `App`, to keep building it.
+pub struct ViewerRegistration<'a, M> {
+    app: &'a mut App,
+    id: ViewerId,
+    marker: std::marker::PhantomData<fn() -> M>,
+}
+
+impl<'a, M: DocumentModel> ViewerRegistration<'a, M> {
+    /// Open files with this viewer, as well as they `fit` (given the path and
+    /// the file's first bytes).
+    #[cfg(feature = "files")]
+    pub fn files(self, fit: fn(&std::path::Path, &[u8]) -> Fit) -> &'a mut App
+    where
+        M: bedtime_filesystem::FileModel,
+    {
+        let mut viewers = self.app.world_mut().resource_mut::<Viewers>();
+        let viewer = viewers
+            .viewers
+            .iter_mut()
+            .find(|viewer| viewer.id == self.id)
+            .expect("just registered");
+        viewer.files = Some(FileViewer::of::<M>(fit));
+        self.app
+    }
+}
+
+impl<M> std::ops::Deref for ViewerRegistration<'_, M> {
+    type Target = App;
+    fn deref(&self) -> &App {
+        self.app
+    }
+}
+
+impl<M> std::ops::DerefMut for ViewerRegistration<'_, M> {
+    fn deref_mut(&mut self) -> &mut App {
+        self.app
+    }
+}
+
+/// A `DocumentReference` put on a viewer of another model is a mistake (the
+/// viewer couldn't read it): say so.
+pub(crate) fn check_viewer_model(insert: On<Insert<DocumentReference>>, world: &World) {
+    let panel = insert.entity;
+    let Some(viewers) = world.get_resource::<Viewers>() else {
+        return;
+    };
+    let Some(viewer) = viewers.of_panel(world, panel) else {
+        return;
+    };
+    let Some(reference) = world.get::<DocumentReference>(panel) else {
+        return;
+    };
+    let model = world
+        .get::<Document>(reference.document().entity())
+        .map(Document::model_type);
+    if model.is_some_and(|model| model != viewer.model) {
+        error!(
+            "Panel {panel} is a {} viewer, but its document is another model",
+            viewer.label
         );
-        openers.openers.push(opener.erased);
-        self
-    }
-
-    fn register_default_opener<P: 'static>(&mut self) -> &mut Self {
-        self.world_mut().get_resource_or_init::<Openers>().default = Some(OpenerId::of::<P>());
-        self
-    }
-
-    #[cfg(feature = "files")]
-    fn set_open_fallback(
-        &mut self,
-        fallback: fn(&mut World, &std::path::Path, String),
-    ) -> &mut Self {
-        self.world_mut().get_resource_or_init::<Openers>().fallback = Some(fallback);
-        self
     }
 }
 
 impl WorkbenchRef {
-    /// The openers for an open document's model ("Open With").
-    pub fn openers_for_document(&self, document: DocumentId) -> Vec<(OpenerId, &'static str)> {
+    /// The viewers for an open document's model ("Open With").
+    pub fn viewers_for_document(&self, document: DocumentId) -> Vec<(ViewerId, &'static str)> {
         let Some(model) = self
             .world
             .get::<Document>(document.entity())
@@ -333,13 +390,13 @@ impl WorkbenchRef {
             return Vec::new();
         };
         self.world
-            .get_resource::<Openers>()
-            .map(|openers| {
-                openers
-                    .openers
+            .get_resource::<Viewers>()
+            .map(|viewers| {
+                viewers
+                    .viewers
                     .iter()
-                    .filter(|opener| opener.model == model)
-                    .map(|opener| (opener.id, opener.label))
+                    .filter(|viewer| viewer.model == model)
+                    .map(|viewer| (viewer.id, viewer.label))
                     .collect()
             })
             .unwrap_or_default()
@@ -348,7 +405,7 @@ impl WorkbenchRef {
 
 impl Workbench {
     /// Show `source`'s document in a viewer, with `options.state` applied.
-    /// Returns the panel.
+    /// Returns the panel: the existing one it focused, or the new one.
     pub fn open_document<M: DocumentModel>(
         &mut self,
         source: impl DocumentSource<M>,
@@ -366,10 +423,10 @@ impl Workbench {
     ) -> Result<Entity, String> {
         let document = handle.id();
         let world = &mut self.world;
-        let opener_id = world
-            .get_resource::<Openers>()
-            .and_then(|openers| openers.for_model(TypeId::of::<M>(), options.opener))
-            .map(|opener| opener.id)
+        let viewer = world
+            .get_resource::<Viewers>()
+            .and_then(|viewers| viewers.for_model(TypeId::of::<M>(), options.viewer))
+            .map(|viewer| viewer.id)
             .ok_or_else(|| format!("Nothing opens {}", std::any::type_name::<M>()))?;
         let panel = match options.target {
             Target::Panel(panel) => {
@@ -382,7 +439,7 @@ impl Workbench {
                 world.layouts_mut().focus_panel(panel)?;
                 panel
             }
-            Target::Existing => match existing_panel(world, document, options.opener) {
+            Target::Existing => match existing_panel(world, document, options.viewer) {
                 Some(panel) => {
                     // Opening for good pins a preview.
                     if !options.preview
@@ -393,39 +450,31 @@ impl Workbench {
                     world.layouts_mut().focus_panel(panel)?;
                     panel
                 }
-                None => new_panel(world, document, opener_id, None, options.preview)?,
+                None => new_panel(world, document, viewer, None, options.preview)?,
             },
-            Target::New { area } => new_panel(world, document, opener_id, area, options.preview)?,
+            Target::New { area } => new_panel(world, document, viewer, area, options.preview)?,
         };
-        if let Some(apply) = viewer_of(world, panel, TypeId::of::<M>()) {
-            apply(world, panel, &options.state);
+        if let Some(reveal) = viewer_of(world, panel, TypeId::of::<M>()) {
+            reveal(world, panel, &options.state);
         }
         Ok(panel)
     }
 
-    /// Open the file at `path` with the opener that suits it: `options.opener`
-    /// if it can, else the best fit (the default opener among equals).
-    /// Returns the panel. A file nothing opens goes to the app's fallback
-    /// (`None`), or is an error without one.
+    /// Open the file at `path` with the viewer that suits it: `options.viewer`
+    /// if it can, else the best fit (the default viewer among equals).
+    /// Returns the panel.
     #[cfg(feature = "files")]
     pub fn open_path(
         &mut self,
         path: &std::path::Path,
         options: PathOptions,
-    ) -> Result<Option<Entity>, String> {
+    ) -> Result<Entity, String> {
         let world = &mut self.world;
-        let choice = choose_file_opener(world, path, options.opener);
-        let Some(opener) = choice else {
-            let reason = format!("Nothing here can open {}", path.display());
-            let Some(fallback) = world.get_resource::<Openers>().and_then(|o| o.fallback) else {
-                return Err(reason);
-            };
-            fallback(world, path, reason);
-            return Ok(None);
-        };
+        let viewer = choose_file_viewer(world, path, options.viewer)
+            .ok_or("nothing here opens this file")?;
         let open = world
-            .resource::<Openers>()
-            .get(opener)
+            .resource::<Viewers>()
+            .get(viewer)
             .unwrap()
             .files
             .as_ref()
@@ -438,28 +487,55 @@ impl Workbench {
                 line: options.line,
                 select_to: options.select_to,
                 target: options.target,
-                opener,
+                viewer,
                 preview: options.preview,
             },
         )
-        .map(Some)
+    }
+}
+
+/// Opening documents from `Commands`.
+pub trait DocumentsCommandsExt {
+    /// Show `handle`'s document as `Workbench::open_document_handle` does,
+    /// once the commands apply. Which panel shows it is only known then, so
+    /// nothing is returned; a failure is shown as a notification.
+    fn open_document<M: DocumentModel>(
+        &mut self,
+        handle: DocumentHandle<M>,
+        options: OpenOptions<M>,
+    );
+}
+
+impl DocumentsCommandsExt for Commands<'_, '_> {
+    fn open_document<M: DocumentModel>(
+        &mut self,
+        handle: DocumentHandle<M>,
+        options: OpenOptions<M>,
+    ) {
+        self.queue(move |world: &mut World| {
+            if let Err(error) = world.workbench_mut().open_document_handle(handle, options) {
+                world
+                    .workbench_mut()
+                    .notify(Notification::error(format!("Couldn't open it: {error}")));
+            }
+        });
     }
 }
 
 #[cfg(feature = "files")]
 impl WorkbenchRef {
-    /// The openers that can open the file at `path`, best first ("Open With").
-    pub fn openers_for(&self, path: &std::path::Path) -> Vec<(OpenerId, &'static str)> {
+    /// The viewers that can open the file at `path`, best first ("Open With").
+    pub fn viewers_for(&self, path: &std::path::Path) -> Vec<(ViewerId, &'static str)> {
         let head = file_head(path);
-        let Some(openers) = self.world.get_resource::<Openers>() else {
+        let Some(viewers) = self.world.get_resource::<Viewers>() else {
             return Vec::new();
         };
-        let mut fits: Vec<_> = openers
-            .openers
+        let mut fits: Vec<_> = viewers
+            .viewers
             .iter()
-            .filter_map(|opener| {
-                let fit = (opener.files.as_ref()?.fit)(path, &head);
-                (fit != Fit::No).then_some((fit, opener.id, opener.label))
+            .filter_map(|viewer| {
+                let fit = (viewer.files.as_ref()?.fit)(path, &head);
+                (fit != Fit::No).then_some((fit, viewer.id, viewer.label))
             })
             .collect();
         fits.sort_by_key(|fit| std::cmp::Reverse(fit.0));
@@ -476,7 +552,7 @@ pub struct PathOptions {
     /// With `line`: select from it to this line and column.
     pub select_to: Option<(u32, u32)>,
     pub target: Target,
-    pub opener: Option<OpenerId>,
+    pub viewer: Option<ViewerId>,
     pub preview: bool,
 }
 
@@ -491,56 +567,56 @@ fn file_head(path: &std::path::Path) -> Vec<u8> {
 }
 
 #[cfg(feature = "files")]
-fn choose_file_opener(
+fn choose_file_viewer(
     world: &World,
     path: &std::path::Path,
-    requested: Option<OpenerId>,
-) -> Option<OpenerId> {
-    let openers = world.get_resource::<Openers>()?;
+    requested: Option<ViewerId>,
+) -> Option<ViewerId> {
+    let viewers = world.get_resource::<Viewers>()?;
     let head = file_head(path);
-    let fit = |id: OpenerId| {
-        openers
+    let fit = |id: ViewerId| {
+        viewers
             .get(id)
-            .and_then(|opener| opener.files.as_ref())
+            .and_then(|viewer| viewer.files.as_ref())
             .map_or(Fit::No, |files| (files.fit)(path, &head))
     };
     if let Some(id) = requested {
         return (fit(id) != Fit::No).then_some(id);
     }
     // The best fit; among equals the default, else the first registered.
-    let mut best: Option<(Fit, OpenerId)> = None;
-    for opener in &openers.openers {
-        let fit = fit(opener.id);
+    let mut best: Option<(Fit, ViewerId)> = None;
+    for viewer in &viewers.viewers {
+        let fit = fit(viewer.id);
         let better = match best {
             None => fit != Fit::No,
-            Some((best, _)) => fit > best || (fit == best && openers.default == Some(opener.id)),
+            Some((best, _)) => fit > best || (fit == best && viewers.default == Some(viewer.id)),
         };
         if better {
-            best = Some((fit, opener.id));
+            best = Some((fit, viewer.id));
         }
     }
     best.map(|(_, id)| id)
 }
 
-/// How to apply state to `panel`, if it's a viewer for `model`.
+/// How to reveal a state on `panel`, if it's a viewer for `model`.
 fn viewer_of(
     world: &World,
     panel: Entity,
     model: TypeId,
 ) -> Option<fn(&mut World, Entity, &dyn std::any::Any)> {
     world
-        .get_resource::<Openers>()?
-        .openers
+        .get_resource::<Viewers>()?
+        .viewers
         .iter()
-        .find(|opener| opener.model == model && (opener.shows)(world, panel))
-        .map(|opener| opener.apply)
+        .find(|viewer| viewer.model == model && viewer.shows(world, panel))
+        .map(|viewer| viewer.reveal)
 }
 
-/// A panel in the current layout showing `document` (with `opener`'s viewer,
-/// if one was asked for): the one in the focused area, else the first.
-fn existing_panel(world: &World, document: DocumentId, opener: Option<OpenerId>) -> Option<Entity> {
+/// A viewer in the current layout showing `document` (with `viewer`, if one
+/// was asked for): the one in the focused area, else the first.
+fn existing_panel(world: &World, document: DocumentId, viewer: Option<ViewerId>) -> Option<Entity> {
     let layout = world.layouts().active()?;
-    let shows = opener.and_then(|id| world.resource::<Openers>().get(id).map(|o| o.shows));
+    let viewers = world.get_resource::<Viewers>()?;
     let candidates: Vec<_> = world
         .layouts()
         .panels(layout)
@@ -549,7 +625,10 @@ fn existing_panel(world: &World, document: DocumentId, opener: Option<OpenerId>)
             world
                 .get::<DocumentReference>(panel)
                 .is_some_and(|reference| reference.document() == document)
-                && shows.is_none_or(|shows| shows(world, panel))
+                && match viewer.and_then(|id| viewers.get(id)) {
+                    Some(viewer) => viewer.shows(world, panel),
+                    None => viewers.of_panel(world, panel).is_some(),
+                }
         })
         .collect();
     let focused = world.get::<Layout>(layout).and_then(Layout::focused_area);
@@ -560,42 +639,40 @@ fn existing_panel(world: &World, document: DocumentId, opener: Option<OpenerId>)
         .or_else(|| candidates.first().copied())
 }
 
-/// A new viewer panel: in `area`, else an area with this opener's viewer
-/// (the focused one, else the most recently focused), else the largest
-/// area. A preview replaces that area's preview panel.
+/// A new viewer panel, focused: in `area`, else where `Placement::Auto` puts
+/// it (an area with this viewer's panels, the focused one first, else the
+/// largest). A preview replaces that area's preview panel.
 fn new_panel(
     world: &mut World,
     document: DocumentId,
-    opener: OpenerId,
+    viewer: ViewerId,
     area: Option<Entity>,
     preview: bool,
 ) -> Result<Entity, String> {
-    let layout = world.layouts().active().ok_or("No layout is open")?;
-    let area = match area {
-        Some(area) => area,
-        None => {
-            let shows = world.resource::<Openers>().get(opener).unwrap().shows;
-            world.layouts().area_for(layout, shows)?
-        }
+    let place = match area {
+        Some(area) => Place::in_area(area),
+        None => Place::auto(),
     };
-    let replaced = if preview {
-        world
+    let create = world.resource::<Viewers>().get(viewer).unwrap().create;
+    let panel = create(world, document, place)?;
+    world.flush();
+    let area = world
+        .get::<InArea>(panel)
+        .ok_or("The viewer couldn't be placed")?
+        .0;
+    if preview {
+        let replaced = world
             .layouts()
             .panels_in_area(area)
             .iter()
             .copied()
-            .find(|&panel| world.get::<PanelInstance>(panel).is_some_and(|p| p.preview))
-    } else {
-        None
-    };
-    let create = world.resource::<Openers>().get(opener).unwrap().create;
-    let panel = create(world, document, area)?;
-    world.flush();
-    if let Some(mut instance) = world.get_mut::<PanelInstance>(panel) {
-        instance.preview = preview;
-    }
-    if let Some(old) = replaced {
-        world.layouts_mut().close_panel(old)?;
+            .find(|&other| {
+                other != panel && world.get::<PanelInstance>(other).is_some_and(|p| p.preview)
+            });
+        world.get_mut::<PanelInstance>(panel).unwrap().preview = true;
+        if let Some(old) = replaced {
+            world.layouts_mut().close_panel(old)?;
+        }
     }
     world.layouts_mut().focus_panel(panel)?;
     Ok(panel)
@@ -668,12 +745,10 @@ mod tests {
     use crate::tests::layout;
     use bedtime_document::{MemorySource, TextBuffer, TextOpenState, TextPosition};
 
-    /// A text viewer that records the states applied to it.
+    /// A text viewer: what it's asked to show stays as its `Reveal`.
     #[bedtime_ui::panel]
     #[derive(Default)]
-    struct TextView {
-        applied: Vec<TextOpenState>,
-    }
+    struct TextView;
 
     impl Panel for TextView {
         const LABEL: &'static str = "Text";
@@ -686,22 +761,8 @@ mod tests {
         }
     }
 
-    impl Viewer<TextBuffer> for TextView {
-        fn new(_: DocumentHandle<TextBuffer>) -> Self {
-            Self {
-                applied: Vec::new(),
-            }
-        }
-        fn apply(world: &mut World, panel: Entity, state: &TextOpenState) {
-            world
-                .get_mut::<TextView>(panel)
-                .unwrap()
-                .applied
-                .push(state.clone());
-        }
-    }
-
     #[bedtime_ui::panel]
+    #[derive(Default)]
     struct HexView;
 
     impl Panel for HexView {
@@ -715,19 +776,12 @@ mod tests {
         }
     }
 
-    impl Viewer<TextBuffer> for HexView {
-        fn new(_: DocumentHandle<TextBuffer>) -> Self {
-            Self
-        }
-        fn apply(_: &mut World, _: Entity, _: &TextOpenState) {}
-    }
-
     fn app() -> App {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugins)
-            .register_opener(Opener::<TextBuffer>::new::<TextView>("Text"))
-            .register_opener(Opener::<TextBuffer>::new::<HexView>("Hex"))
-            .register_default_opener::<TextView>();
+            .register_viewer::<TextBuffer, TextView>("Text")
+            .register_viewer::<TextBuffer, HexView>("Hex")
+            .register_default_viewer::<TextView>();
         layout(app.world_mut());
         app
     }
@@ -739,17 +793,12 @@ mod tests {
         })
     }
 
-    fn applied(world: &World, panel: Entity) -> Vec<u32> {
-        world
-            .get::<TextView>(panel)
-            .unwrap()
-            .applied
-            .iter()
-            .filter_map(|state| match state.cursor {
-                Some(TextPosition::LineColumn { line, .. }) => Some(line),
-                _ => None,
-            })
-            .collect()
+    /// The line `panel` was last asked to show.
+    fn revealed(world: &World, panel: Entity) -> Option<u32> {
+        match world.get::<Reveal<TextOpenState>>(panel)?.0.cursor {
+            Some(TextPosition::LineColumn { line, .. }) => Some(line),
+            _ => None,
+        }
     }
 
     #[test]
@@ -761,13 +810,14 @@ mod tests {
             .workbench_mut()
             .open_document(source.clone(), line(1))
             .unwrap();
+        assert_eq!(revealed(world, first), Some(1));
         // Opened again: the same panel, moved.
         let again = world
             .workbench_mut()
             .open_document(source.clone(), line(2))
             .unwrap();
         assert_eq!(first, again);
-        assert_eq!(applied(world, first), [1, 2]);
+        assert_eq!(revealed(world, first), Some(2));
         let document = world.get::<DocumentReference>(first).unwrap().document();
         assert_eq!(world.workbench().document_ids(), [document]);
 
@@ -805,7 +855,7 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(applied(world, first), [1, 2, 3]);
+        assert_eq!(revealed(world, first), Some(3));
 
         // Another viewer for the same document is a new panel.
         let hex = world
@@ -813,13 +863,67 @@ mod tests {
             .open_document(
                 source,
                 OpenOptions {
-                    opener: Some(OpenerId::of::<HexView>()),
+                    viewer: Some(ViewerId::of::<HexView>()),
                     ..default()
                 },
             )
             .unwrap();
         assert!(world.get::<HexView>(hex).is_some());
-        assert_eq!(world.workbench().openers_for_document(document).len(), 2);
+        assert_eq!(world.workbench().viewers_for_document(document).len(), 2);
+    }
+
+    /// A panel built from a viewer's parts (a diff panel with an editor in
+    /// it) isn't that viewer.
+    #[bedtime_ui::panel]
+    #[derive(Default)]
+    #[require(TextView)]
+    struct Wrapper;
+    impl Panel for Wrapper {
+        const LABEL: &'static str = "Wrapper";
+        fn draw(
+            _: &mut bedtime_ui::egui::Ui,
+            _: &mut World,
+            _: &bedtime_ui::UiContext<'_>,
+            _: Entity,
+        ) {
+        }
+    }
+
+    #[test]
+    fn a_panel_built_from_a_viewer_isnt_that_viewer() {
+        let mut app = app();
+        let world = app.world_mut();
+        let handle = world
+            .workbench_mut()
+            .load_document(MemorySource::new("notes", TextBuffer::from("a")))
+            .unwrap();
+        let wrapper = world
+            .spawn((Wrapper, DocumentReference::of(handle), Place::auto()))
+            .id();
+        world.flush();
+        let viewer = world
+            .workbench_mut()
+            .open_document_handle(handle, line(0))
+            .unwrap();
+        assert_ne!(viewer, wrapper);
+        assert!(world.get::<Reveal<TextOpenState>>(wrapper).is_none());
+    }
+
+    #[test]
+    fn commands_open_documents_too() {
+        let mut app = app();
+        let handle = app
+            .world_mut()
+            .workbench_mut()
+            .load_document(MemorySource::new("notes", TextBuffer::from("a\nb")))
+            .unwrap();
+        app.world_mut().commands().open_document(handle, line(1));
+        app.world_mut().flush();
+        let world = app.world_mut();
+        let layout = world.layouts().active().unwrap();
+        let panel = world.layouts().find::<TextView>(layout).unwrap();
+        assert_eq!(revealed(world, panel), Some(1));
+        assert_eq!(world.layouts().focused_panel(layout), Some(panel));
     }
 
     #[test]
@@ -895,7 +999,7 @@ mod tests {
         } else {
             (side, main)
         };
-        let sidebar = world.spawn((Sidebar, InArea(small))).id();
+        let sidebar = world.spawn((Sidebar, Place::in_area(small))).id();
         world.flush();
         world.layouts_mut().focus_panel(sidebar).unwrap();
         let (source, options) = OpenOptions::<TextBuffer>::default().with_source("one");
@@ -932,7 +1036,7 @@ mod tests {
             .workbench_mut()
             .open_document(source, options)
             .unwrap();
-        let sidebar = world.spawn((Sidebar, InArea(small))).id();
+        let sidebar = world.spawn((Sidebar, Place::in_area(small))).id();
         world.flush();
         world.layouts_mut().focus_panel(sidebar).unwrap();
         let (source, options) = OpenOptions::<TextBuffer>::default().with_source("two");
@@ -1020,25 +1124,19 @@ mod tests {
 
     #[cfg(feature = "files")]
     #[test]
-    fn paths_open_with_the_opener_that_fits() {
-        #[derive(Resource, Default)]
-        struct Unopened(Vec<String>);
+    fn paths_open_with_the_viewer_that_fits() {
         let mut app = App::new();
         app.add_plugins(WorkbenchCorePlugins)
-            .init_resource::<Unopened>()
-            .register_opener(
-                Opener::<TextBuffer>::new::<TextView>("Text").files(|path, _| {
-                    if path.extension().is_some_and(|e| e == "txt") {
-                        Fit::Preferred
-                    } else {
-                        Fit::No
-                    }
-                }),
-            )
-            .register_opener(Opener::<TextBuffer>::new::<HexView>("Hex").files(|_, _| Fit::Can))
-            .set_open_fallback(|world, _, reason| {
-                world.resource_mut::<Unopened>().0.push(reason);
-            });
+            .register_viewer::<TextBuffer, TextView>("Text")
+            .files(|path, _| {
+                if path.extension().is_some_and(|e| e == "txt") {
+                    Fit::Preferred
+                } else {
+                    Fit::No
+                }
+            })
+            .register_viewer::<TextBuffer, HexView>("Hex")
+            .files(|_, _| Fit::Can);
         layout(app.world_mut());
         let directory = std::env::temp_dir().join(format!("bedtime-open-{}", std::process::id()));
         std::fs::create_dir_all(&directory).unwrap();
@@ -1047,7 +1145,7 @@ mod tests {
         let world = app.world_mut();
         let labels: Vec<_> = world
             .workbench()
-            .openers_for(&notes)
+            .viewers_for(&notes)
             .into_iter()
             .map(|(_, label)| label)
             .collect();
@@ -1061,26 +1159,21 @@ mod tests {
                     ..default()
                 },
             )
-            .unwrap()
             .unwrap();
-        assert_eq!(applied(world, panel), [2]);
+        assert_eq!(revealed(world, panel), Some(2));
         let data = directory.join("data.bin");
         std::fs::write(&data, [0u8, 1]).unwrap();
-        let hex = world
-            .workbench_mut()
-            .open_path(&data, default())
-            .unwrap()
-            .unwrap();
+        let hex = world.workbench_mut().open_path(&data, default()).unwrap();
         assert!(world.get::<HexView>(hex).is_some());
-        // Nothing opens a missing file's directory: the fallback hears.
+        // Nothing opens a directory as text: an error.
         let unopened = world.workbench_mut().open_path(
             &directory,
             PathOptions {
-                opener: Some(OpenerId::of::<TextView>()),
+                viewer: Some(ViewerId::of::<TextView>()),
                 ..default()
             },
         );
-        assert_eq!(unopened, Ok(None));
+        assert!(unopened.is_err());
 
         // A restored viewer has its file but not its document: it gets it back.
         assert_eq!(
@@ -1089,7 +1182,7 @@ mod tests {
         );
         let area = world.get::<InArea>(panel).unwrap().0;
         let restored = world
-            .spawn((TextView::default(), ViewerFile(notes.clone()), InArea(area)))
+            .spawn((TextView, ViewerFile(notes.clone()), InArea(area)))
             .id();
         app.update();
         let world = app.world_mut();
@@ -1101,7 +1194,7 @@ mod tests {
         // One whose file is gone is closed, and the user told.
         let gone = world
             .spawn((
-                TextView::default(),
+                TextView,
                 ViewerFile(directory.join("gone.txt")),
                 InArea(area),
             ))
@@ -1111,7 +1204,6 @@ mod tests {
         let world = app.world_mut();
         let told = &world.resource::<Notifications>().latest().unwrap().text;
         assert!(told.starts_with("Couldn't reopen gone.txt"), "{told}");
-        assert_eq!(world.resource::<Unopened>().0.len(), 1);
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

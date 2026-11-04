@@ -8,9 +8,7 @@ use bedtime_filesystem::FileModel;
 use bedtime_ui::{Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{
-    DocumentHandle, Fit, Opener, OpenersAppExt, Panel, PanelPresentation, Viewer, viewer_document,
-};
+use bedtime_workbench::{Fit, Panel, PanelPresentation, ViewersAppExt, viewer_document};
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -22,7 +20,8 @@ pub struct HexPlugin;
 impl Plugin for HexPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<HexPanel>()
-            .register_opener(Opener::<Bytes>::new::<HexPanel>("Hex").files(|_, _| Fit::Can));
+            .register_viewer::<Bytes, HexPanel>("Hex")
+            .files(|_, _| Fit::Can);
     }
 }
 
@@ -81,13 +80,6 @@ impl HexPanel {
     pub fn selection(&self, len: u64) -> std::ops::Range<u64> {
         self.view.selection(len)
     }
-}
-
-impl Viewer<Bytes> for HexPanel {
-    fn new(_: DocumentHandle<Bytes>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &()) {}
 }
 
 impl Panel for HexPanel {

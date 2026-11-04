@@ -1,9 +1,9 @@
 use super::*;
 use crate::view::{Intent, apply};
-use bedtime_document::{TextBuffer, TextOpenState};
+use bedtime_document::TextBuffer;
 use bedtime_workbench::{
-    DocumentHandle, InArea, LayoutsWorldExt, Notifications, Opener, OpenersAppExt, Panel,
-    PanelInstance, SplitAxis, Viewer, WorkbenchCorePlugins,
+    InArea, LayoutsWorldExt, Notifications, Panel, PanelInstance, SplitAxis, ViewersAppExt,
+    WorkbenchCorePlugins,
 };
 
 /// A temporary folder, removed when dropped.
@@ -28,17 +28,12 @@ impl Drop for Project {
 }
 
 #[bedtime_ui::panel]
+#[derive(Default)]
 struct TextView;
 impl Panel for TextView {
     const LABEL: &'static str = "Text";
     fn draw(_: &mut bedtime_ui::egui::Ui, _: &mut World, _: &bedtime_ui::UiContext<'_>, _: Entity) {
     }
-}
-impl Viewer<TextBuffer> for TextView {
-    fn new(_: DocumentHandle<TextBuffer>) -> Self {
-        Self
-    }
-    fn apply(_: &mut World, _: Entity, _: &TextOpenState) {}
 }
 
 /// A workbench showing `project` in a file tree, in a small area beside a big one.
@@ -46,15 +41,14 @@ fn app(project: &Project) -> (App, Entity) {
     let mut app = App::new();
     app.add_plugins((WorkbenchCorePlugins, FileTreePlugin))
         .insert_resource(Root(project.0.clone()))
-        .register_opener(
-            Opener::<TextBuffer>::new::<TextView>("Text").files(|path, _| {
-                if path.extension().is_some_and(|e| e == "txt") {
-                    bedtime_workbench::Fit::Preferred
-                } else {
-                    bedtime_workbench::Fit::No
-                }
-            }),
-        );
+        .register_viewer::<TextBuffer, TextView>("Text")
+        .files(|path, _| {
+            if path.extension().is_some_and(|e| e == "txt") {
+                bedtime_workbench::Fit::Preferred
+            } else {
+                bedtime_workbench::Fit::No
+            }
+        });
     let world = app.world_mut();
     let layout = world.layouts_mut().create("Main").unwrap();
     world.layouts_mut().activate(layout).unwrap();
@@ -254,7 +248,7 @@ fn a_preview_opens_beside_the_tree_and_leaves_it_focused() {
     let open = |path: PathBuf, preview| Intent::Open {
         path,
         preview,
-        opener: None,
+        viewer: None,
     };
     apply(world, tree, &project.0, open(project.0.join("A.txt"), true));
     let viewers: Vec<Entity> = world

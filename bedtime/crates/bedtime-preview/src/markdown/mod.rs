@@ -8,13 +8,13 @@ use bedtime_code::{
     editor::syntax::SyntaxPalette,
     syntax::{AnalysisStatus, DocumentSyntax, SyntaxViewer},
 };
-use bedtime_document::{TextBuffer, TextOpenState};
+use bedtime_document::TextBuffer;
 use bedtime_ui::{UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, DocumentReference, ManagedWork, Notification, Panel, PathOptions, Viewer,
-    ViewerFile, WorkbenchWorldExt, viewer_document,
+    DocumentReference, ManagedWork, Notification, Panel, PathOptions, ViewerFile,
+    WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{path::PathBuf, time::Duration};
@@ -51,13 +51,6 @@ struct Shown {
     revision: u64,
     markdown: Markdown,
     coloured: bool,
-}
-
-impl Viewer<TextBuffer> for MarkdownPanel {
-    fn new(_: DocumentHandle<TextBuffer>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &TextOpenState) {}
 }
 
 impl Panel for MarkdownPanel {

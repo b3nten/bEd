@@ -111,9 +111,12 @@ component and draws with `draw_editor`, without being an editor panel.
   be one, and one component meaning both "request" and "resolved" would
   complicate every query. Users write `Place` (including `Placement::In(area)`)
   and read `InArea`. Inserting `Place` on a panel that's already placed moves
-  it. Read-only is a convention for now, not enforced: layouts' own code,
-  restored layouts and workbench's document opening still insert `InArea`
-  directly. Enforce it once 2b moves document opening to `Place`.
+  it. Read-only is a convention for now, not enforced. Document opening uses
+  `Place` since 2b; still inserting `InArea` directly: layouts' own code and
+  `PanelFactory`, restored layouts, the LSP references panel
+  (`bedtime-code/src/lsp/actions.rs`), git's diff panel (`diff.rs`), and the
+  bedtime-ui example. Move those, then make `InArea` constructible only inside
+  bedtime-ui.
 - **Opening always creates a panel.** It never focuses an existing one.
   Whether to focus an existing panel instead is the caller's choice, using
   `layouts.find::<P>(layout) -> Option<Entity>`.
@@ -150,17 +153,27 @@ component and draws with `draw_editor`, without being an editor panel.
 - **A position travels as a component, `Reveal<S>(S)`** (for example
   `Reveal<TextOpenState>`):
   - Opening inserts it on the panel, new or existing. The viewer reads and
-    removes it, replacing the editor's `pending` field.
+    removes it once its content is loaded; the editor takes it in `draw`,
+    replacing its `pending` field.
   - Inserting it again replaces it, so the latest jump wins.
+  - Not inserted for models whose `OpenState` is `()`, so viewers that can't
+    move don't collect stale ones.
   - Code that doesn't go through opening can insert it directly, such as
     "go to line" or a test.
+  - bedtime-code's editor had its own `enum Reveal` (how far to scroll); it's
+    now `editor::Scroll` (`Minimal`/`Center`).
 - **Viewer registration** records the model, the panel type, a label, and
   (optionally) which files the viewer suits. Plugins register their viewers;
   the app can override the default:
   ```rust
   app.register_viewer::<Picture, ImagePanel>("Image").files(fit);
-  app.register_default_viewer::<TextBuffer, EditorPanel>();
+  app.register_default_viewer::<EditorPanel>();
   ```
+  `register_viewer` returns a `ViewerRegistration`, which derefs to the
+  `App` so building continues; `.files(fit)` returns the `App`. Names that
+  said "opener" now say "viewer": `ViewerId`, `OpenOptions::viewer`,
+  `PathOptions::viewer`, `viewers_for(path)`, `viewers_for_document`,
+  `Viewers` (the resource), bedtime-preview's `preview_viewer`.
 - **`Fit` stays until formats replace it** (see "Formats and sibling
   documents"). It ranks how well each viewer suits a file. Many places open
   paths (the file tree, `+open`, search, dropped files, LSP, git), so the
@@ -170,30 +183,39 @@ component and draws with `draw_editor`, without being an editor panel.
 - **Type checks:**
   - `DocumentReference::of(DocumentHandle<M>)` builds a reference from a
     typed handle, so document IDs can't be mixed up.
-  - `DocumentReference`'s insert hook logs an error if the panel is
-    registered as a viewer for a different model.
-- **`HostedViewer` goes away.** "Is a viewer" is decided by the panel type
-  recorded in `PanelInstance`. Split the editor into an `Editor` state
-  component (plus `draw_editor`) and a thin `EditorPanel`. The diff panel
-  then requires `Editor`, not `EditorPanel`.
+  - An observer on `DocumentReference` inserts logs an error if the panel is
+    registered as a viewer for a different model. (A hook can't be used: the
+    relationship derive owns the component's hooks.)
+- **`HostedViewer` is gone.** "Is a viewer" is decided by the panel type
+  recorded in `PanelInstance`: the diff panel requires `EditorPanel`, but its
+  `PanelInstance` is the diff panel's, so opening, restoring and titling skip
+  it. The planned `Editor` / `EditorPanel` split isn't needed for that, so it
+  hasn't been done. Do it only if another reason comes up (the diff panel
+  being matched by editor-only systems, say).
 - **Opening a document:** focus a registered viewer already showing it;
   otherwise spawn the default viewer (or the one requested) with `Place` and
   a `DocumentReference`. Either way, add `Reveal` if a state was given.
   ```rust
-  commands.open_document(handle).at(state).with::<HexPanel>()
-      .place(Place::beside(editor)).focus(false).preview();
-  world.open_document(handle, …) -> Result<Entity, String>  // the new or existing panel
+  world.workbench_mut().open_document_handle(handle, OpenOptions::at(state))?; // -> Entity
+  commands.open_document(handle, OpenOptions::at(state)); // DocumentsCommandsExt
   ```
   - The model type comes from the handle, so the state's type is checked at
     compile time.
   - The `Commands` version returns nothing and reports errors as
     notifications. Which panel ends up showing the document is only known
     when the command runs, so it can't return one.
-  - The `World` version returns the panel.
-- **`open_path(path, line)`** stays as the untyped entry point and picks a
-  viewer. It returns the same `Result<Entity>`. "Nothing opens this file"
-  becomes an error (which the app's fallback can show as a notification), so
-  the `Option` goes away. It turns a line into each model's state with
+  - Options are still `OpenOptions { state, target, viewer, preview }`; the
+    builder chain sketched earlier (`.at().with().place()`) wasn't added.
+    `Target` stays until step 3 decides placement.
+  - With no layout open, `Place`'s fallback makes one (it used to be an
+    error).
+- **`open_path(path, options)`** stays as the untyped entry point and picks a
+  viewer. It returns `Result<Entity, String>`. "Nothing opens this file" is
+  an error ("nothing here opens this file"), which callers already report, so
+  `set_open_fallback` is gone (bed's "bEd can't open X" notification became
+  each caller's "Couldn't open X: …"). Git's diff panel used `Ok(None)` to mean
+  "binary"; it now shows the error instead (with hex installed that never
+  happens). It turns a line into each model's state with
   `DocumentModel::state_at_line`.
 - **Preview** becomes `Place::Beside(editor)` with `focus(false)`, and no
   longer needs the panel entity.
@@ -384,3 +406,12 @@ Do one step at a time, then review it before starting the next.
   their "show" actions (keys renamed from `app.open_*`; the automation tests
   are updated). Bed lost `panels.rs`, `PanelPolicy`, `http_client.rs` and its
   duplicate open actions.
+- 2026-11-04: step 2b done. `Viewer`, `Opener`, `HostedViewer` and
+  `set_open_fallback` are gone; `register_viewer::<M, P>` / `Viewers` /
+  `ViewerId`, `Reveal<S>`, `DocumentReference::of`, the model-mismatch
+  observer and `Commands::open_document` replace them. New viewers spawn with
+  `Place`. `open_path` returns `Result<Entity, String>`. Every viewer crate
+  migrated; the editor reads `Reveal`. Not done: the `Editor` / `EditorPanel`
+  split (not needed), the open builder, enforcing `InArea`. Noticed:
+  `work::tests::tasks_are_cancelled_with_their_owner_and_by_shutdown` is
+  flaky under the full parallel test run (passes alone); unrelated.

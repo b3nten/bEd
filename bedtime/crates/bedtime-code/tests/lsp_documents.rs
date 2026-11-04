@@ -68,7 +68,6 @@ fn host(name: &str, scenario: &str) -> (App, PathBuf, Entity) {
     let panel = world
         .workbench_mut()
         .open_path(&root.join("main.rs"), PathOptions::default())
-        .unwrap()
         .unwrap();
     (app, root, panel)
 }

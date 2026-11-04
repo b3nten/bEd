@@ -334,7 +334,7 @@ fn open_factory(path: PathBuf, found: Option<Match>) -> PanelFactory {
             ..default()
         };
         match world.workbench_mut().open_path(&path, options) {
-            Ok(panel) => panel.unwrap_or(Entity::PLACEHOLDER),
+            Ok(panel) => panel,
             Err(error) => {
                 let name = path.file_name().unwrap_or(path.as_os_str()).display();
                 world.workbench_mut().notify(Notification::error(format!(

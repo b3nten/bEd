@@ -10,10 +10,9 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    ActionHandler, ActionInvocation, ActionResult, DocumentHandle, DocumentReference,
-    DocumentStatus, Fit, Handler, ManagedTask, ManagedWork, Opener, OpenersAppExt, Panel,
-    PanelInstance, ResetZoom, Viewer, ViewerFile, WorkbenchWorldExt, ZoomIn, ZoomOut,
-    viewer_document,
+    ActionHandler, ActionInvocation, ActionResult, DocumentReference, DocumentStatus, Fit, Handler,
+    ManagedTask, ManagedWork, Panel, PanelInstance, ResetZoom, ViewerFile, ViewersAppExt,
+    WorkbenchWorldExt, ZoomIn, ZoomOut, viewer_document,
 };
 use bevy::prelude::*;
 use std::{path::Path, sync::Arc};
@@ -33,7 +32,8 @@ impl Plugin for ModelViewerPlugin {
             app.add_plugins(crate::ModelPlugin);
         }
         app.register_type::<ModelPanel>()
-            .register_opener(Opener::<ModelFile>::new::<ModelPanel>("3D Model").files(fit))
+            .register_viewer::<ModelFile, ModelPanel>("3D Model")
+            .files(fit)
             .add_systems(Update, prepare_models);
     }
 }
@@ -89,13 +89,6 @@ pub struct ModelPanel {
 
 /// A model being prepared on a worker.
 type Preparing = ManagedTask<Result<Arc<PreparedModel>, String>>;
-
-impl Viewer<ModelFile> for ModelPanel {
-    fn new(_: DocumentHandle<ModelFile>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &()) {}
-}
 
 /// Prepare each panel's model when its document changes, on a worker.
 fn prepare_models(world: &mut World) {

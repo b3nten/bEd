@@ -8,8 +8,8 @@ use bedtime_ui::UiContext;
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
     DocumentDraft, DocumentError, DocumentHandle, DocumentId, DocumentReference, DocumentStatus,
-    DocumentUndoGroup, EditOptions, Fit, Notification, Opener, OpenersAppExt, Panel,
-    PanelPresentation, Viewer, WorkbenchWorldExt,
+    DocumentUndoGroup, EditOptions, Fit, Notification, Panel, PanelPresentation, Reveal,
+    ViewersAppExt, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 
@@ -75,10 +75,9 @@ impl Plugin for CodePlugin {
                 }),
             );
         app.register_type::<EditorPanel>()
-            .register_opener(
-                Opener::<TextBuffer>::new::<EditorPanel>("Text Editor").files(text_fit),
-            )
-            .register_default_opener::<EditorPanel>()
+            .register_viewer::<TextBuffer, EditorPanel>("Text Editor")
+            .files(text_fit)
+            .register_default_viewer::<EditorPanel>()
             .register_type::<crate::structure::StructurePanel>()
             .add_action_handler::<crate::structure::ShowStructure>(bedtime_workbench::Handler::new(
                 bedtime_workbench::show_panel::<crate::structure::StructurePanel>,
@@ -124,9 +123,6 @@ pub struct EditorPanel {
     /// The document `view`'s state belongs to; another one resets it.
     #[reflect(ignore)]
     state_for: Option<DocumentId>,
-    /// An open's state, applied once the text is loaded.
-    #[reflect(ignore)]
-    pending: Option<TextOpenState>,
     /// A popup of the panel's own (code actions) has keyboard focus.
     #[reflect(ignore)]
     pub(crate) popup: bool,
@@ -138,21 +134,9 @@ pub struct EditorPanel {
     drawn: u64,
 }
 
-impl Viewer<TextBuffer> for EditorPanel {
-    fn new(_: DocumentHandle<TextBuffer>) -> Self {
-        Self::default()
-    }
-
-    fn apply(world: &mut World, panel: Entity, state: &TextOpenState) {
-        if let Some(mut editor) = world.get_mut::<EditorPanel>(panel) {
-            editor.pending = Some(state.clone());
-        }
-    }
-}
-
 /// Draw the editor of `panel` (which has an `EditorPanel` and a document) in
-/// `ui`: for a panel that hosts one in its own drawing (mark it
-/// `HostedViewer`).
+/// `ui`: for a panel that requires `EditorPanel` and draws it in its own
+/// drawing (a diff panel).
 pub fn draw_editor(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
     if let Err(error) = draw(ui, world, context, panel) {
         world
@@ -229,7 +213,6 @@ fn draw(
     if editor.state_for != Some(document) && world.get::<DocumentDraft>(panel).is_none() {
         editor = EditorPanel {
             state_for: Some(document),
-            pending: editor.pending.take(),
             wrap: editor.wrap,
             ..default()
         };
@@ -274,6 +257,8 @@ fn draw(
     }
     editor.focused = focused;
     editor.drawn = frame;
+    // What an open asked to show, now that the text is loaded.
+    let reveal = world.entity_mut(panel).take::<Reveal<TextOpenState>>();
     let mut session = DocumentSession {
         world,
         handle,
@@ -281,7 +266,7 @@ fn draw(
         group: &mut editor.group,
     };
     let mut result = Ok(());
-    if let Some(state) = editor.pending.take() {
+    if let Some(Reveal(state)) = reveal {
         result = session.snapshot().and_then(|snapshot| {
             editor
                 .view
@@ -480,7 +465,7 @@ fn navigation(snapshot: &TextSnapshot, state: &TextOpenState) -> Navigation {
         revision: snapshot.revision,
         range,
         selection,
-        reveal: Reveal::Center,
+        reveal: Scroll::Center,
         focus: false,
     }
 }
@@ -742,7 +727,7 @@ mod tests {
         assert_eq!(line.selection.unwrap().head(), 8);
         assert_eq!(
             (line.revision, line.reveal, line.focus),
-            (3, Reveal::Center, false)
+            (3, Scroll::Center, false)
         );
         let past_the_end = navigation(
             &snapshot,

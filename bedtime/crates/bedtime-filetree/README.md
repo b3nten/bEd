@@ -13,9 +13,10 @@ world.spawn((FileTree::default(), InArea(area)));
 - **Opening.** A click on a file opens a preview of it (`open_path` with
   `preview: true`), so clicking through files reuses one tab. The tree keeps
   focus, so arrow keys keep browsing. Double-click, Enter or the context
-  menu's Open pins the tab. The application supplies viewer selection and
-  fallback (`register_opener`, `set_open_fallback`). Errors produce notifications.
-- **Open With.** A file's context menu lists `openers_for(path)`, worked out
+  menu's Open pins the tab. Viewers are whatever the app registered
+  (`register_viewer`). Errors, including a file nothing opens, produce
+  notifications.
+- **Open With.** A file's context menu lists `viewers_for(path)`, worked out
   when the menu opens. The menu also has Copy Path and Refresh.
 - **File operations.** The context menu has New File…, New Folder… (in that
   folder, or the file's), Rename…, Duplicate, Move to Trash, Copy, Cut and
@@ -70,7 +71,7 @@ tree says it isn't watching. Closed folders are let go (and unwatched); at most
 512 folders are kept. Listings sort folders first, then by name ignoring case.
 Symbolic links are rows, never followed into.
 
-Drawing does no file I/O except `openers_for` when a context menu opens. Rows
+Drawing does no file I/O except `viewers_for` when a context menu opens. Rows
 are worked out again only when a listing or the open folders change. What the
 user asks for while the tree draws (open, toggle, refresh, operations) is applied in
 `Update` (`FileTreeSystems`), since opening a file can close the preview panel

@@ -1,5 +1,5 @@
 use bedtime_code::EditorPanel;
-use bedtime_preview::{PreviewPlugin, is_preview, preview_opener};
+use bedtime_preview::{PreviewPlugin, is_preview, preview_viewer};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Area, DocumentReference, Handler, InArea,
     KeyChord, LayoutsWorldExt, Modifiers, PathOptions, SplitAxis, Target, ViewerFile,
@@ -36,7 +36,7 @@ fn previewable(world: &World, panel: Entity) -> bool {
         && world
             .get::<ViewerFile>(panel)
             .and_then(|file| file.0.file_name())
-            .is_some_and(|name| preview_opener(&name.to_string_lossy()).is_some())
+            .is_some_and(|name| preview_viewer(&name.to_string_lossy()).is_some())
 }
 
 /// The editor's document in its preview: the one already in the layout,
@@ -49,7 +49,7 @@ fn open_preview(world: &mut World, invocation: ActionInvocation) -> ActionResult
     }
     let path = world.get::<ViewerFile>(editor).unwrap().0.clone();
     let name = path.file_name().unwrap_or_default().to_string_lossy();
-    let opener = preview_opener(&name);
+    let viewer = preview_viewer(&name);
     let document = world
         .get::<DocumentReference>(editor)
         .ok_or("The editor shows no document")?
@@ -92,14 +92,14 @@ fn open_preview(world: &mut World, invocation: ActionInvocation) -> ActionResult
     };
     let options = PathOptions {
         target,
-        opener,
+        viewer,
         ..default()
     };
     let preview = world.workbench_mut().open_path(&path, options)?;
     // Keep typing where you were, unless that hides the preview (a tab
     // behind the editor).
     let area = |world: &World, panel| world.get::<InArea>(panel).map(|area| area.0);
-    if preview.is_some_and(|preview| area(world, preview) == area(world, editor)) {
+    if area(world, preview) == area(world, editor) {
         return Ok(());
     }
     world.layouts_mut().focus_panel(editor)

@@ -10,11 +10,9 @@ use bedtime_ui::{BuiltinIcon, Floating, UiFrame, theme};
 use bedtime_ui::{UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{
-    DocumentHandle, Panel, PanelPresentation, Viewer, ViewerFile, viewer_document,
-};
 #[cfg(target_os = "macos")]
-use bedtime_workbench::{Fit, Opener, OpenersAppExt};
+use bedtime_workbench::{Fit, ViewersAppExt};
+use bedtime_workbench::{Panel, PanelPresentation, ViewerFile, viewer_document};
 use bevy::{platform::collections::HashMap, prelude::*};
 use std::path::PathBuf;
 
@@ -41,16 +39,15 @@ impl Plugin for VideoPlugin {
             .insert_non_send(Players::default())
             .add_systems(Update, drop_players);
         #[cfg(target_os = "macos")]
-        app.register_opener(
-            Opener::<VideoFile>::new::<VideoPanel>("Video").files(|path, _| {
+        app.register_viewer::<VideoFile, VideoPanel>("Video")
+            .files(|path, _| {
                 let known = path.extension().is_some_and(|ext| {
                     SUPPORTED_EXTENSIONS
                         .iter()
                         .any(|known| ext.eq_ignore_ascii_case(known))
                 });
                 if known { Fit::Specific } else { Fit::No }
-            }),
-        );
+            });
     }
 }
 
@@ -94,13 +91,6 @@ impl Default for VideoPanel {
             volume: 1.0,
         }
     }
-}
-
-impl Viewer<VideoFile> for VideoPanel {
-    fn new(_: DocumentHandle<VideoFile>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &()) {}
 }
 
 /// Each panel's player (AVFoundation objects stay on the main thread).

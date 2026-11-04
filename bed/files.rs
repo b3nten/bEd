@@ -7,9 +7,8 @@ use bedtime_image::ImagePlugin;
 use bedtime_model::ModelViewerPlugin;
 use bedtime_table::TablePlugin;
 use bedtime_video::VideoPlugin;
-use bedtime_workbench::{Notification, OpenersAppExt, PanelFactory, WorkbenchWorldExt};
+use bedtime_workbench::{PanelFactory, WorkbenchWorldExt};
 use bevy::prelude::*;
-use std::path::Path;
 
 pub struct FilesPlugin;
 
@@ -28,18 +27,10 @@ impl Plugin for FilesPlugin {
                 AudioPlugin,
                 VideoPlugin,
                 TablePlugin,
-            ))
-            .set_open_fallback(nothing_opens);
+            ));
         // Save, Undo and Redo act on the focused panel's document.
         app.world_mut().workbench_mut().register_document_handlers();
     }
-}
-
-fn nothing_opens(world: &mut World, path: &Path, _: String) {
-    let name = path.file_name().unwrap_or(path.as_os_str()).display();
-    world
-        .workbench_mut()
-        .notify(Notification::warning(format!("bEd can't open {name}")));
 }
 
 /// A folder dropped on the window, to open as the workspace (in `Update`,

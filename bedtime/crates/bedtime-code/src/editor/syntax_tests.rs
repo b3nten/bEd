@@ -86,7 +86,7 @@ fn navigation_and_find_unfold_targets_and_reveal_only_keeps_caret() {
     focus(&ctx, &mut view, &mut doc, id);
     view.toggle_fold(&snapshot, 0).unwrap();
     let before = view.selection();
-    view.scroll_to_line(&snapshot, 2, Reveal::Center, false)
+    view.scroll_to_line(&snapshot, 2, Scroll::Center, false)
         .unwrap();
     frame(&ctx, &mut view, &mut doc, id, vec![]);
     assert!(view.collapsed_regions().is_empty());
@@ -99,7 +99,7 @@ fn navigation_and_find_unfold_targets_and_reveal_only_keeps_caret() {
             revision: 0,
             range: at..at + 3,
             selection: Some(TextSelection::new(&snapshot.text, at, at + 3).unwrap()),
-            reveal: Reveal::Minimal,
+            reveal: Scroll::Minimal,
             focus: true,
         },
     )
@@ -193,7 +193,7 @@ fn wrapping_folding_theme_and_composition_preserve_geometry_and_canonical_text()
     let snapshot = doc.snapshot().unwrap();
     assert!(view.toggle_fold(&snapshot, 0).is_err());
     assert!(
-        view.scroll_to_line(&snapshot, 1, Reveal::Center, true)
+        view.scroll_to_line(&snapshot, 1, Scroll::Center, true)
             .is_err()
     );
     assert!(!doc.text().range_text(0..doc.text().len()).contains('猫'));

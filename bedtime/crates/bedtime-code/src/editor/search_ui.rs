@@ -191,7 +191,7 @@ impl EditorView {
                     revision: snapshot.revision,
                     range,
                     selection: Some(self.selection),
-                    reveal: Reveal::Minimal,
+                    reveal: Scroll::Minimal,
                     focus: false,
                 });
                 self.search.navigation = None;

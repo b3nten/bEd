@@ -155,6 +155,10 @@ impl DocumentReference {
     pub fn new(document: DocumentId) -> Self {
         Self(document.0)
     }
+    /// A reference to a typed handle's document, so IDs can't be mixed up.
+    pub fn of<M: DocumentModel>(handle: DocumentHandle<M>) -> Self {
+        Self::new(handle.id())
+    }
     pub fn document(&self) -> DocumentId {
         DocumentId(self.0)
     }
@@ -654,10 +658,18 @@ pub(crate) fn install(app: &mut App) {
 /// it's in is renamed or moved (and the panel isn't drawn: a tab behind
 /// another).
 fn title_document_panels(
-    mut panels: Query<(&mut PanelInstance, &DocumentReference), Without<crate::HostedViewer>>,
+    mut panels: Query<(&mut PanelInstance, &DocumentReference)>,
     documents: Query<&Document>,
+    viewers: Option<Res<crate::Viewers>>,
 ) {
+    let Some(viewers) = viewers else {
+        return;
+    };
     for (mut instance, reference) in &mut panels {
+        // Viewers only: a panel built from a viewer's parts titles itself.
+        if !viewers.is_viewer(instance.kind) {
+            continue;
+        }
         let Ok(document) = documents.get(reference.document().0) else {
             continue;
         };

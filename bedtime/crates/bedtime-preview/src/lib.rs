@@ -2,10 +2,10 @@
 //! shows JSON and TOML as a tree. Both show the same `TextBuffer` document
 //! an editor does, so they follow its edits, unsaved too. Neither is the
 //! default for its files (the editor is); they're offered in "Open With",
-//! and `preview_opener` names the one for a file.
+//! and `preview_viewer` names the one for a file.
 use bedtime_code::{editor::text_fit, syntax::language_name};
 use bedtime_document::TextBuffer;
-use bedtime_workbench::{Fit, Opener, OpenerId, OpenersAppExt};
+use bedtime_workbench::{Fit, ViewerId, ViewersAppExt};
 use bevy::prelude::*;
 use std::path::Path;
 
@@ -20,10 +20,10 @@ impl Plugin for PreviewPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<MarkdownPanel>()
             .register_type::<TreePanel>()
-            .register_opener(
-                Opener::<TextBuffer>::new::<MarkdownPanel>("Markdown Preview").files(markdown_fit),
-            )
-            .register_opener(Opener::<TextBuffer>::new::<TreePanel>("Tree View").files(tree_fit));
+            .register_viewer::<TextBuffer, MarkdownPanel>("Markdown Preview")
+            .files(markdown_fit)
+            .register_viewer::<TextBuffer, TreePanel>("Tree View")
+            .files(tree_fit);
     }
 }
 
@@ -53,11 +53,11 @@ fn tree_fit(path: &Path, head: &[u8]) -> Fit {
 
 /// The viewer that previews a file named `name` (a document's title), if
 /// there's one.
-pub fn preview_opener(name: &str) -> Option<OpenerId> {
+pub fn preview_viewer(name: &str) -> Option<ViewerId> {
     if is_markdown(name) {
-        Some(OpenerId::of::<MarkdownPanel>())
+        Some(ViewerId::of::<MarkdownPanel>())
     } else if data::Format::of(name).is_some() {
-        Some(OpenerId::of::<TreePanel>())
+        Some(ViewerId::of::<TreePanel>())
     } else {
         None
     }

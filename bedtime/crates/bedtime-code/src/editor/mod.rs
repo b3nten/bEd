@@ -68,7 +68,7 @@ impl TextSelection {
     }
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Reveal {
+pub enum Scroll {
     #[default]
     Minimal,
     Center,
@@ -78,7 +78,7 @@ pub struct Navigation {
     pub revision: u64,
     pub range: Range<usize>,
     pub selection: Option<TextSelection>,
-    pub reveal: Reveal,
+    pub reveal: Scroll,
     pub focus: bool,
 }
 #[derive(Clone, Debug)]
@@ -145,7 +145,7 @@ pub struct EditorView {
     pointer_presses: PointerPresses,
     wrapping: wrapping::Wrapping,
     wrap_active: bool,
-    wrap_reveal: Option<(Range<usize>, Reveal)>,
+    wrap_reveal: Option<(Range<usize>, Scroll)>,
     search: search::Search,
     indent_job: Option<(
         u64,
@@ -235,7 +235,7 @@ impl Navigation {
     pub fn scroll_to_line(
         snapshot: &TextSnapshot,
         line: usize,
-        reveal: Reveal,
+        reveal: Scroll,
         focus: bool,
     ) -> Result<Self, EditorError> {
         if line >= snapshot.text.line_count() {
@@ -256,7 +256,7 @@ impl EditorView {
         &mut self,
         snapshot: &TextSnapshot,
         line: usize,
-        reveal: Reveal,
+        reveal: Scroll,
         focus: bool,
     ) -> Result<(), EditorError> {
         self.request_navigation(
@@ -828,7 +828,7 @@ impl EditorView {
                                     anchor: self.drag_anchor.unwrap_or(self.selection.anchor),
                                     head: hit,
                                 };
-                                reveal = Some((hit..hit, Reveal::Minimal));
+                                reveal = Some((hit..hit, Scroll::Minimal));
                             }
                         }
                         let focused =
@@ -866,7 +866,7 @@ impl EditorView {
                                     Ok(true) => {
                                         reveal = Some((
                                             self.selection.head..self.selection.head,
-                                            Reveal::Minimal,
+                                            Scroll::Minimal,
                                         ))
                                     }
                                     Ok(false) => {}
@@ -890,7 +890,7 @@ impl EditorView {
                                             consumed.push(index);
                                             reveal = Some((
                                                 self.selection.head..self.selection.head,
-                                                Reveal::Minimal,
+                                                Scroll::Minimal,
                                             ));
                                         }
                                     }
@@ -1433,7 +1433,7 @@ impl EditorView {
                             reveal = self
                                 .wrap_reveal
                                 .take()
-                                .or(Some((selection.head..selection.head, Reveal::Minimal)));
+                                .or(Some((selection.head..selection.head, Scroll::Minimal)));
                         }
                         if wrap_width.is_some() && !wrapped {
                             self.wrap_reveal = reveal.clone().or_else(|| self.wrap_reveal.take());
@@ -1448,7 +1448,7 @@ impl EditorView {
                             };
                             ui.scroll_to_rect(
                                 target.translate(origin.to_vec2()).expand(2.0),
-                                if *alignment == Reveal::Center {
+                                if *alignment == Scroll::Center {
                                     Some(egui::Align::Center)
                                 } else {
                                     None

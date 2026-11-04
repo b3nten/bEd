@@ -7,8 +7,7 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, Fit, Notification, Opener, OpenersAppExt, Panel,
-    PanelPresentation, Viewer, WorkbenchWorldExt, viewer_document,
+    Fit, Notification, Panel, PanelPresentation, ViewersAppExt, WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{sync::Arc, time::Duration};
@@ -22,15 +21,14 @@ impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<AudioPanel>()
             .insert_non_send(Speakers::default())
-            .register_opener(
-                Opener::<Sound>::new::<AudioPanel>("Audio").files(|path, _| {
-                    if has_extension(path, SUPPORTED_EXTENSIONS) {
-                        Fit::Specific
-                    } else {
-                        Fit::No
-                    }
-                }),
-            );
+            .register_viewer::<Sound, AudioPanel>("Audio")
+            .files(|path, _| {
+                if has_extension(path, SUPPORTED_EXTENSIONS) {
+                    Fit::Specific
+                } else {
+                    Fit::No
+                }
+            });
     }
 }
 
@@ -130,13 +128,6 @@ impl AudioPanel {
             _ => self.position,
         }
     }
-}
-
-impl Viewer<Sound> for AudioPanel {
-    fn new(_: DocumentHandle<Sound>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &()) {}
 }
 
 /// What the user asked for this frame.

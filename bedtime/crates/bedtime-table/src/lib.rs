@@ -7,13 +7,13 @@
 //! and delete rows and columns. The table is a view of a text document, the
 //! one a text editor shows, so the two follow each other's edits; Undo, Redo
 //! and Save work as for any file. Edits change only the text they need to.
-use bedtime_document::{TextBuffer, TextOpenState};
+use bedtime_document::TextBuffer;
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, EditOptions, Fit, ManagedTask, ManagedWork, Notification, Opener,
-    OpenersAppExt, Panel, PanelPresentation, Viewer, WorkbenchWorldExt, viewer_document,
+    EditOptions, Fit, ManagedTask, ManagedWork, Notification, Panel, PanelPresentation,
+    ViewersAppExt, WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{path::Path, time::Duration};
@@ -31,7 +31,8 @@ pub struct TablePlugin;
 impl Plugin for TablePlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<TablePanel>()
-            .register_opener(Opener::<TextBuffer>::new::<TablePanel>("Table").files(table_fit));
+            .register_viewer::<TextBuffer, TablePanel>("Table")
+            .files(table_fit);
     }
 }
 
@@ -109,13 +110,6 @@ impl TablePanel {
     pub fn cursor(&self) -> Option<(usize, usize)> {
         self.state.cursor
     }
-}
-
-impl Viewer<TextBuffer> for TablePanel {
-    fn new(_: DocumentHandle<TextBuffer>) -> Self {
-        Self::default()
-    }
-    fn apply(_: &mut World, _: Entity, _: &TextOpenState) {}
 }
 
 impl Panel for TablePanel {

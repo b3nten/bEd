@@ -2,7 +2,7 @@
 //! focused while another kind of panel (Structure itself, say) has focus.
 //! Clicking an entry selects its name in that editor and focuses it.
 use crate::{
-    editor::{EditorPanel, Navigation, Reveal, TextSelection, TextSnapshot},
+    editor::{EditorPanel, Navigation, Scroll, TextSelection, TextSnapshot},
     syntax::{AnalysisStatus, DocumentSyntax, Observation, ObservationKey},
 };
 use bedtime_document::TextBuffer;
@@ -93,7 +93,7 @@ pub fn reveal_entry(world: &mut World, editor: Entity, key: ObservationKey, item
         revision: key.revision,
         range: node.name_range.clone(),
         selection: Some(selection),
-        reveal: Reveal::Center,
+        reveal: Scroll::Center,
         focus: false,
     };
     let accepted = world
