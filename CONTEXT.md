@@ -509,6 +509,53 @@ bedtime-document: detection reads files and the registry is an app resource.
 
 Do one step at a time, then review it before starting the next.
 
+## What's left
+
+The ten steps are done (2026-11-04, overnight; one commit per step or part).
+Not done, or only partly, roughly in order of value:
+
+- **A `bedtime::DefaultPlugins` group.** The goal's "install a handful of
+  plugins" isn't packaged yet: an app still adds `UiPlugin`,
+  `WorkbenchPlugins`, the opt-in panels (`SettingsPanelPlugin`,
+  `ThemeEditorPlugin`, `LanguageServersPanelPlugin`) and its viewer plugins
+  one by one, sets `SurfaceBody(status::body)` and adds status items. A
+  defaults group in the `bedtime` crate could do all that.
+- **Keybindings.** Plugins still declare `DEFAULT_KEYS` (`terminal.new`,
+  `settings.open`, the code plugin's, workbench's own). The decided design
+  (the app binds keys with a macro that works with settings; plugins may
+  export a suggested keymap) isn't built.
+- **`+open` in the defaults layer.** It's still bed's (`terminal.rs`), since
+  it needs workspace switching.
+- **The save-as picker** (rfd) is still bed's `new.rs`; moving it means a
+  native file-dialog dependency in workbench.
+- **"Open As" UI and file associations.** `PathOptions::format` exists; no
+  menu or setting uses it.
+- **Siblings changed in both views** are only reported; there's no merge.
+- **`InArea` read-only:** `PanelFactory`, restored layouts and the bedtime-ui
+  example still insert it directly.
+- **Menus:** separators around hidden `ForPanel` items aren't collapsed;
+  Window and Help have nothing yet; there's no per-plugin `menu: false`
+  field (`hide_menu_item` per action instead).
+- **The `.at().with().place()` open builder** wasn't added (`OpenOptions` and
+  `PathOptions` do the job).
+- **The `Editor` / `EditorPanel` split** wasn't needed (panel-type identity
+  covers the diff panel).
+
+GUI check (2026-11-04, after step 10): `python3 tools/bed.py run` passes 28
+of 29 scripts. `theme_editor.py` fails the same way on `45c8734` (before
+this work): the accent field it clicks is only partly scrolled into view
+above the status bar, so the typed color never lands. Pre-existing; the
+script needs to scroll further.
+
+Renamed action keys (saved custom bindings for these are lost, as agreed):
+`app.open_files` → `files.show`, `app.open_structure` → `code.show_structure`,
+`app.open_git` → `git.show`, `app.open_http_client` → `http_client.show`,
+`app.open_bed` → `mascots.show_bed`, `app.new_terminal` → `terminal.new`,
+`app.open_settings` → `settings.open`, `app.new` → `document.new`,
+`app.open_language_servers` → `code.show_language_servers`,
+`app.open_theme_editor` → `appearance.show_theme_editor`. The automation
+scripts in `tests/automation` use the new keys.
+
 ## Log
 
 - 2026-11-03: step 1 done (`6935794`, fast-forwarded onto `main`). actions,
