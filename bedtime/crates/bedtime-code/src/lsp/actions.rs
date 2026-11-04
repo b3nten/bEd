@@ -13,7 +13,7 @@ use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, DocumentId, DocumentReference,
     EditOptions, Handler, InArea, KeyChord, LayoutsWorldExt, Modifiers, Notification, Panel,
-    PanelInstance, PathOptions, Root, ViewerFile, WorkbenchWorldExt,
+    PathOptions, Root, ViewerFile, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 use std::{
@@ -618,8 +618,8 @@ fn draw_rename(ui: &mut egui::Ui, world: &mut World, panel: Entity, at: egui::Po
 
 /// Where a symbol is used: files, then lines with their text. Clicking one
 /// opens it there. Not saved with the layout.
-#[derive(Component, Default)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
+#[bedtime_ui::panel]
+#[derive(Default)]
 pub struct ReferencesPanel {
     of: String,
     files: Vec<(PathBuf, Vec<Reference>)>,

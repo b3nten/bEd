@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory() as folder:
     (root / "other" / "inside.txt").write_text("inside\n")
 
     with Bed(folder) as bed:
-        bed.invoke("app.new_terminal")
+        bed.invoke("terminal.new")
         until(bed, lambda: bed.exists("Terminal") or any(w["role"] == "TextInput" for w in bed.widgets()),
               "a terminal opens")
         bed.wait(30)

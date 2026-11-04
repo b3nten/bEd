@@ -7,8 +7,7 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, UiFrame, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, Fit, Opener, OpenersAppExt, Panel, PanelInstance, PanelPresentation, Viewer,
-    viewer_document,
+    DocumentHandle, Fit, Opener, OpenersAppExt, Panel, PanelPresentation, Viewer, viewer_document,
 };
 use bevy::prelude::*;
 use std::sync::Arc;
@@ -43,10 +42,10 @@ pub enum FontMode {
 const SAMPLE: &str = "The quick brown fox jumps over the lazy dog";
 const SIZES: &[f32] = &[12.0, 16.0, 20.0, 28.0, 36.0, 48.0, 64.0, 96.0];
 
-#[derive(Component, Reflect)]
+#[bedtime_ui::panel]
+#[derive(Reflect)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct FontPanel {
     pub mode: FontMode,
     pub sample: String,

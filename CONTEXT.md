@@ -65,24 +65,29 @@ components and widgets are reusable parts.** One panel can be built from
 another's parts. For example, the diff panel requires an `Editor` state
 component and draws with `draw_editor`, without being an editor panel.
 
-- **`#[panel]` attribute macro.** It adds `#[derive(Component)]` and
-  `#[require(PanelInstance = PanelInstance::of::<Self>())]`, and implements
-  `LABEL`. An attribute macro is needed because a separate derive can't add
-  `#[require]` for Bevy's `Component` derive; it follows the existing
-  `bedtime-persistence-macros` crate. `draw` is still written by hand.
+- **`#[bedtime_ui::panel]` attribute macro** (crate `bedtime-ui-macros`). It
+  adds `#[derive(Component)]` and
+  `#[require(PanelInstance = PanelInstance::of::<Self>())]`. An attribute
+  macro is needed because a separate derive can't add `#[require]` for Bevy's
+  `Component` derive. Bevy merges several `#[require]` attributes, so a
+  panel's own requires stay next to it. It takes no arguments: `Panel` (label
+  and `draw`) is still implemented by hand, since a macro can't implement half
+  of a trait. All panels use it.
   ```rust
-  #[panel(label = "Git")]
+  #[bedtime_ui::panel]
   #[derive(Reflect, Default)]
-  pub struct GitPanel { … }
+  #[require(TreeView)]
+  pub struct FileTree { … }
   ```
 - **A panel's type is recorded at runtime.** `PanelInstance::of::<P>()` keeps
   `P`'s `TypeId`. That is what "like panels" and "is a viewer" compare, so a
   panel built from another panel's parts is never mistaken for that panel.
 - **`Place` decides where a new panel goes:** `Place { at: Placement, focus: bool }`.
-  - `Placement` is an enum: `Auto`, `LikePanels`, `Largest`, `In(area)`, and
-    later `Beside(panel)`.
-  - `Auto` means: an area that already holds a panel of this type, otherwise
-    the largest area.
+  - `Placement` is an enum: `Auto`, `Largest`, `In(area)`, and later
+    `Beside(panel)`. (`LikePanels` was dropped: it would be the same as
+    `Auto`.)
+  - `Auto` means: an area that already holds a panel of this type (the
+    focused one, else the most recently focused), otherwise the largest area.
   - `Place`'s insert hook resolves it to an area by the next flush: it picks
     the area in the active layout, inserts `InArea`, focuses the panel if
     `focus` is set, and removes `Place`.
@@ -93,8 +98,11 @@ component and draws with `draw_editor`, without being an editor panel.
     where it was.
   ```rust
   commands.spawn((GitPanel, Place::auto()));
-  commands.spawn((TerminalPanel::new(options), Place::like_panels().focus(false)));
+  commands.spawn((TerminalPanel::new(options), Place::in_area(area).focus(false)));
   ```
+  - A new panel that can't be placed is despawned with an error logged (a
+    panel can't exist outside an area). A placed panel that can't be moved
+    stays where it is.
 - **`InArea` stays, read-only to users.** It's a Bevy relationship and
   records where `Place` ended up. Tab order (`AreaPanels`), despawn cleanup,
   spawning panels together with their area, and entity remapping when a saved
@@ -103,20 +111,31 @@ component and draws with `draw_editor`, without being an editor panel.
   be one, and one component meaning both "request" and "resolved" would
   complicate every query. Users write `Place` (including `Placement::In(area)`)
   and read `InArea`. Inserting `Place` on a panel that's already placed moves
-  it.
+  it. Read-only is a convention for now, not enforced: layouts' own code,
+  restored layouts and workbench's document opening still insert `InArea`
+  directly. Enforce it once 2b moves document opening to `Place`.
 - **Opening always creates a panel.** It never focuses an existing one.
   Whether to focus an existing panel instead is the caller's choice, using
   `layouts.find::<P>(layout) -> Option<Entity>`.
 - **Whether a panel can be opened right now** is the action's job
   (`Handler::available_when`, which also greys out menu items), not the panel
   layer's.
-- **Shortcuts:** `commands.open_panel(bundle)` and
-  `world.open_panel(bundle) -> Entity` spawn the bundle with `Place::auto()`
-  and focus.
-- **No layout open:** a fallback in bedtime-ui creates a layout. Bed's
-  numbered layouts override it to open "Layout 1".
-- **No generated "Open" actions.** Each plugin writes its own open handler
-  (a few lines using `find` and `open_panel`), and the app binds keys to it.
+- **Shortcuts:** `commands.open_panel(bundle)` (`PanelsCommandsExt`) and
+  `world.open_panel(bundle) -> Entity` (`PanelsWorldExt`) spawn the bundle
+  with `Place::auto()` and focus. `world.focus_or_open::<P>()` focuses the
+  first `P` in the active layout, else opens `P::default()`.
+- **No layout open:** `LayoutFallback` (a resource holding a function) makes
+  one; by default a new "Layout 1". `layouts_mut().ensure_active()` uses it.
+  Bed's numbered layouts set it to open layout 1.
+- **No generated "Open" actions.** Each plugin defines its own action (no
+  keys) and registers a handler; for the usual "focus it, else open it" that
+  is `Handler::new(show_panel::<P>)` (workbench). The app binds keys. Moved
+  so far: `files.show` (bedtime-filetree), `code.show_structure`
+  (bedtime-code), `git.show`, `http_client.show`, `mascots.show_bed`, and
+  `terminal.new` (always a new terminal). `terminal.new` still has its
+  Ctrl+` default key until the keybinding step. Bed's own panels (Settings,
+  Workspaces, Language Servers, Theme Editor) keep their actions in bed until
+  they move to their crates.
 
 ## Documents and viewers (workbench)
 
@@ -357,3 +376,11 @@ Do one step at a time, then review it before starting the next.
   only, plugin menu items). Not started. Decided to keep `InArea`, add
   `ForPanel::of` / `ForPanel::instance`, and replace `Fit` with formats plus
   sibling documents synced in memory (step 4).
+- 2026-11-04: step 2a done. `Place`/`Placement` and their hook,
+  `PanelInstance::kind`, `layouts().find`, `open_panel`, `focus_or_open`,
+  `LayoutFallback` and `ensure_active` in bedtime-ui (`layouts/placement.rs`,
+  with tests). New `bedtime-ui-macros` crate for `#[bedtime_ui::panel]`, used
+  by every panel. Workbench's `show_panel::<P>` handler. Plugins now own
+  their "show" actions (keys renamed from `app.open_*`; the automation tests
+  are updated). Bed lost `panels.rs`, `PanelPolicy`, `http_client.rs` and its
+  duplicate open actions.

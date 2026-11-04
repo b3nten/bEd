@@ -9,9 +9,7 @@ use bedtime_document::TextBuffer;
 use bedtime_ui::{UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{
-    DocumentReference, LayoutsWorldExt, Panel, PanelInstance, WorkbenchWorldExt,
-};
+use bedtime_workbench::{DocumentReference, LayoutsWorldExt, Panel, WorkbenchWorldExt};
 use bevy::prelude::*;
 use std::{collections::HashSet, sync::Arc};
 
@@ -104,10 +102,17 @@ pub fn reveal_entry(world: &mut World, editor: Entity, key: ObservationKey, item
     accepted && world.layouts_mut().focus_panel(editor).is_ok()
 }
 
-#[derive(Component, Reflect, Default)]
+/// Show Structure: the one in the active layout, else a new one.
+pub struct ShowStructure;
+impl bedtime_workbench::Action for ShowStructure {
+    const KEY: &'static str = "code.show_structure";
+    const LABEL: &'static str = "Structure";
+}
+
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct StructurePanel {
     /// What's shown: the editor and its analysis. Kept while a newer analysis
     /// of the same text runs, so the outline doesn't flicker as you type.

@@ -8,6 +8,7 @@ members = [
     "bedtime/crates/bedtime-model",
     "bedtime/crates/bedtime-document",
     "bedtime/crates/bedtime-ui",
+    "bedtime/crates/bedtime-ui-macros",
     "bedtime/crates/bedtime-video",
     "bedtime/crates/bedtime-audio",
     "bedtime/crates/bedtime-automation",
@@ -48,6 +49,7 @@ bedtime-image = { path = "bedtime/crates/bedtime-image" }
 bedtime-model = { path = "bedtime/crates/bedtime-model" }
 bedtime-clipboard = { path = "bedtime/crates/bedtime-clipboard", default-features = false }
 bedtime-ui = { path = "bedtime/crates/bedtime-ui" }
+bedtime-ui-macros = { path = "bedtime/crates/bedtime-ui-macros" }
 bedtime-video = { path = "bedtime/crates/bedtime-video" }
 bedtime-audio = { path = "bedtime/crates/bedtime-audio" }
 bedtime-automation = { path = "bedtime/crates/bedtime-automation" }

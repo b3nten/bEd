@@ -809,6 +809,7 @@ version = "0.1.0"
 dependencies = [
  "bedtime-clipboard",
  "bedtime-persistence",
+ "bedtime-ui-macros",
  "bevy",
  "bevy_egui",
  "bevy_world_serialization",
@@ -823,6 +824,15 @@ dependencies = [
  "ron",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bedtime-ui-macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

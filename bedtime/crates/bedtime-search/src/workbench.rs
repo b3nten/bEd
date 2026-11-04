@@ -11,8 +11,8 @@ use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
     Action, ActionAppExt, DocumentReference, EditOptions, ManagedTask, ManagedWork, Notification,
-    Panel, PanelFactory, PanelFactoryPayload, PanelInstance, PanelPresentation, PathOptions, Root,
-    Target, ViewerFile, WorkbenchWorldExt,
+    Panel, PanelFactory, PanelFactoryPayload, PanelPresentation, PathOptions, Root, Target,
+    ViewerFile, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
 use std::{
@@ -59,10 +59,11 @@ impl Action for SearchWorkspace {
 
 /// The search panel. Its query, replacement and which rows show are saved
 /// with it.
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>(), SearchState)]
+#[require(SearchState)]
 pub struct SearchPanel {
     pub query: SearchQuery,
     pub replacement: String,

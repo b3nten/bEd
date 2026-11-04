@@ -1,7 +1,4 @@
-use crate::{
-    panels::PanelPolicy,
-    workspace::{GlobalStore, Workspace},
-};
+use crate::workspace::{GlobalStore, Workspace};
 use bedtime_ui::{
     Metrics, UiContext, egui,
     fonts::{DEFAULT_FAMILY, InstalledFonts},
@@ -9,7 +6,7 @@ use bedtime_ui::{
 };
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, LayoutSurface, Panel,
-    PanelFactory, PanelInstance, WindowBlur,
+    PanelsWorldExt, WindowBlur,
     persistence::{ReflectPersist, StoreId, Stores, WorkbenchStore},
     settings::{
         Setting, SettingsAppExt, SettingsWorldExt, settings,
@@ -185,8 +182,7 @@ impl Action for OpenSettings {
 }
 
 fn open_settings(world: &mut World, _: ActionInvocation) -> ActionResult {
-    let factory = PanelFactory::of::<SettingsPanel>();
-    crate::panels::open_panel::<SettingsPanel>(world, (), factory).map(|_| ())
+    world.focus_or_open::<SettingsPanel>().map(|_| ())
 }
 
 pub struct BedSettingsPlugin;
@@ -257,15 +253,9 @@ fn apply_appearance(
     }
 }
 
-impl PanelPolicy for SettingsPanel {
-    /// There's one set of settings, so any settings panel is equivalent.
-    type Key = ();
-    fn key(_: &World, _: Entity) {}
-}
-
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Persist)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct SettingsPanel;
 
 impl Panel for SettingsPanel {

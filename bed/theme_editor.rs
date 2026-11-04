@@ -2,7 +2,6 @@
 //! under a new name, and change its colors. Changes are saved to the theme's
 //! file shortly after you stop editing; a shipped theme can be reset.
 use crate::{
-    panels::PanelPolicy,
     settings::{AppearanceSettings, ColorTheme},
     themes,
 };
@@ -11,8 +10,8 @@ use bedtime_ui::{
     theme::{Appearance, Palette, Rgba, Theme, ThemeFolder},
 };
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelFactory,
-    PanelInstance, persistence::ReflectPersist, settings::SettingsWorldExt,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
+    persistence::ReflectPersist, settings::SettingsWorldExt,
 };
 use bevy::prelude::*;
 use std::time::{Duration, Instant};
@@ -40,8 +39,7 @@ impl Plugin for ThemeEditorPlugin {
 
 /// Open the editor (or focus the open one), on `theme` if given.
 pub fn open(world: &mut World, theme: Option<String>) -> ActionResult {
-    let factory = PanelFactory::of::<ThemeEditorPanel>();
-    let panel = crate::panels::open_panel::<ThemeEditorPanel>(world, (), factory)?;
+    let panel = world.focus_or_open::<ThemeEditorPanel>()?;
     if let Some(theme) = theme
         && let Some(mut editor) = world.get_mut::<ThemeEditorPanel>(panel)
     {
@@ -50,15 +48,9 @@ pub fn open(world: &mut World, theme: Option<String>) -> ActionResult {
     Ok(())
 }
 
-impl PanelPolicy for ThemeEditorPanel {
-    /// One editor is enough; it can switch themes.
-    type Key = ();
-    fn key(_: &World, _: Entity) {}
-}
-
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default, Persist)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct ThemeEditorPanel {
     /// The theme being edited, by id; empty for the one in use.
     theme: String,

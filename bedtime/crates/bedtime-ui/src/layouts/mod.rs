@@ -19,6 +19,7 @@ mod geometry;
 mod membership;
 #[cfg(feature = "persistence")]
 mod persistence;
+mod placement;
 mod surface;
 #[cfg(feature = "persistence")]
 mod templates;
@@ -27,8 +28,10 @@ pub(crate) mod tests;
 mod validation;
 pub mod view;
 
+pub use bedtime_ui_macros::panel;
 pub use chrome::*;
 pub use dialogs::{ErrorDialog, ErrorDialogWorldExt, ErrorDialogs, ModalAppExt, ModalFn};
+pub use placement::{LayoutFallback, PanelsCommandsExt, PanelsWorldExt, Place, Placement};
 pub use surface::{AreaBackground, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility};
 #[cfg(feature = "persistence")]
 pub use templates::LayoutTemplate;
@@ -269,6 +272,9 @@ pub struct PanelInstance {
     pub preview: bool,
     /// Optional ordinary drawing capability, available as soon as composition applies.
     pub draw: Option<PanelDraw>,
+    /// The panel's type (its `Panel` component), set by `of`: what
+    /// `Placement::Auto` compares to find areas with panels like it.
+    pub kind: Option<std::any::TypeId>,
 }
 
 pub type PanelDraw = fn(&mut crate::egui::Ui, &mut World, &crate::UiContext<'_>, Entity);
@@ -285,6 +291,7 @@ impl PanelInstance {
         Self {
             title: P::LABEL.into(),
             draw: Some(P::draw),
+            kind: Some(std::any::TypeId::of::<P>()),
             ..default()
         }
     }
@@ -601,6 +608,7 @@ impl Plugin for LayoutsPlugin {
             .init_resource::<CloseHooks>()
             .init_resource::<PanelModified>()
             .init_resource::<Validations>()
+            .init_resource::<LayoutFallback>()
             .configure_sets(
                 PreUpdate,
                 LayoutSystems::Apply.after(crate::UiSystems::Draw),

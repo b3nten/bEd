@@ -6,10 +6,10 @@ use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::persistence::ReflectPersist;
 
 /// The Git panel. Its draft commit message and view options are saved with it.
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct GitPanel {
     pub draft: String,
     pub options: GitPanelOptions,

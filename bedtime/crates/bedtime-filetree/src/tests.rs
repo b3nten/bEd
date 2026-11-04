@@ -3,7 +3,7 @@ use crate::view::{Intent, apply};
 use bedtime_document::{TextBuffer, TextOpenState};
 use bedtime_workbench::{
     DocumentHandle, InArea, LayoutsWorldExt, Notifications, Opener, OpenersAppExt, Panel,
-    SplitAxis, Viewer, WorkbenchCorePlugins,
+    PanelInstance, SplitAxis, Viewer, WorkbenchCorePlugins,
 };
 
 /// A temporary folder, removed when dropped.
@@ -27,8 +27,7 @@ impl Drop for Project {
     }
 }
 
-#[derive(Component)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
+#[bedtime_ui::panel]
 struct TextView;
 impl Panel for TextView {
     const LABEL: &'static str = "Text";

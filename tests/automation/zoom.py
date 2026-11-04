@@ -102,7 +102,7 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: zooms(bed) == [], "Cmd+0 resets it")
 
         # A terminal zooms too (it doesn't take the keys for the shell).
-        bed.invoke("app.new_terminal")
+        bed.invoke("terminal.new")
         shell = lambda: [w for w in bed.find_all(role="TextInput")
                          if "some notes" not in (w.get("value") or "")]
         until(bed, lambda: shell(), "a terminal opens")

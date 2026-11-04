@@ -21,7 +21,7 @@ pub use repository::execute;
 #[cfg(feature = "workbench")]
 pub mod workbench;
 #[cfg(feature = "workbench")]
-pub use workbench::{DiffPanel, GitHost, GitPanel, GitPlugin, GitSession};
+pub use workbench::{DiffPanel, GitHost, GitPanel, GitPlugin, GitSession, ShowGit};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum DiffSide {

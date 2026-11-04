@@ -11,7 +11,7 @@ use bedtime_ui::{UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, Panel, PanelInstance, PanelPresentation, Viewer, ViewerFile, viewer_document,
+    DocumentHandle, Panel, PanelPresentation, Viewer, ViewerFile, viewer_document,
 };
 #[cfg(target_os = "macos")]
 use bedtime_workbench::{Fit, Opener, OpenersAppExt};
@@ -76,10 +76,10 @@ impl FileModel for VideoFile {
     }
 }
 
-#[derive(Component, Reflect)]
+#[bedtime_ui::panel]
+#[derive(Reflect)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct VideoPanel {
     pub looping: bool,
     pub muted: bool,

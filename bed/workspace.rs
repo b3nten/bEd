@@ -1,10 +1,9 @@
-use crate::panels::PanelPolicy;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;
 pub use bedtime_workbench::workspaces::*;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, ErrorDialog, Handler, Panel,
-    PanelFactory, PanelInstance, persistence::ReflectPersist,
+    PanelsWorldExt, persistence::ReflectPersist,
 };
 use bevy::prelude::*;
 use std::{
@@ -18,16 +17,10 @@ impl Action for OpenWorkspaces {
     const LABEL: &'static str = "Workspaces";
 }
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Persist)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct WorkspacesPanel;
-
-impl PanelPolicy for WorkspacesPanel {
-    /// There's one list of workspaces.
-    type Key = ();
-    fn key(_: &World, _: Entity) {}
-}
 
 pub struct WorkspacesPanelPlugin;
 
@@ -40,8 +33,7 @@ impl Plugin for WorkspacesPanelPlugin {
 }
 
 fn open_workspaces(world: &mut World, _: ActionInvocation) -> ActionResult {
-    let factory = PanelFactory::of::<WorkspacesPanel>();
-    crate::panels::open_panel::<WorkspacesPanel>(world, (), factory).map(|_| ())
+    world.focus_or_open::<WorkspacesPanel>().map(|_| ())
 }
 
 /// One row of the list.

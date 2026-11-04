@@ -5,7 +5,7 @@
 use bedtime_filesystem::{EntryKind, Filesystem, watch::DirectoryWatcher};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{ManagedTask, ManagedWork, PanelInstance, Root};
+use bedtime_workbench::{ManagedTask, ManagedWork, Root};
 use bevy::prelude::*;
 use std::{
     collections::HashMap,
@@ -24,6 +24,13 @@ pub use view::{ToggleHiddenFiles, ToggleIgnoredFiles, file_icon, file_kind, open
 #[cfg(test)]
 mod tests;
 
+/// Show the file tree: the one in the active layout, else a new one.
+pub struct ShowFiles;
+impl bedtime_workbench::Action for ShowFiles {
+    const KEY: &'static str = "files.show";
+    const LABEL: &'static str = "Files";
+}
+
 pub struct FileTreePlugin;
 
 impl Plugin for FileTreePlugin {
@@ -39,6 +46,10 @@ impl Plugin for FileTreePlugin {
                     .chain()
                     .in_set(FileTreeSystems),
             );
+        bedtime_workbench::ActionAppExt::add_action_handler::<ShowFiles>(
+            app,
+            bedtime_workbench::Handler::new(bedtime_workbench::show_panel::<FileTree>),
+        );
         view::install_actions(app);
     }
 }
@@ -68,10 +79,11 @@ impl Default for FileTreeDefaults {
 
 /// The file tree panel. Which folders are open, and whether it shows hidden
 /// and ignored files, is saved with it.
-#[derive(Component, Reflect, Clone, Debug)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Clone, Debug)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>(), TreeView)]
+#[require(TreeView)]
 pub struct FileTree {
     /// Open folders, relative to the root; the empty path is the root itself.
     expanded: Vec<PathBuf>,

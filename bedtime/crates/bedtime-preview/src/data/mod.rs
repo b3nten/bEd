@@ -8,8 +8,8 @@ use bedtime_ui::{UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, DocumentReference, ManagedTask, ManagedWork, Panel, PanelInstance, Viewer,
-    WorkbenchWorldExt, viewer_document,
+    DocumentHandle, DocumentReference, ManagedTask, ManagedWork, Panel, Viewer, WorkbenchWorldExt,
+    viewer_document,
 };
 use bevy::prelude::*;
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -20,10 +20,10 @@ pub use value::{Format, Key, Kind, Value, parse, path_text};
 /// Tables with more entries than this start closed.
 const OPEN_AT_START: usize = 100;
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct TreePanel {
     /// Open arrays and tables, by `path_text`.
     expanded: HashSet<String>,

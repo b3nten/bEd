@@ -282,7 +282,9 @@ actions (Save, Undo, Redo) are workbench's own, and so are the focused
 panel's: Close Panel (Cmd/Ctrl+W, through the close checks as its tab's ×),
 and Zoom In, Zoom Out and Reset Zoom (Cmd/Ctrl+=, - and 0), which step its
 `PanelZoom`. A panel with a zoom of its own (an image, a model) gives itself
-an `ActionHandler` for each.
+an `ActionHandler` for each. A plugin's "show this panel" action can use
+`Handler::new(show_panel::<P>)`: it focuses the `P` in the active layout, else
+opens a new one (`focus_or_open`).
 
 ## Menus
 
@@ -301,9 +303,10 @@ it; the app decides where it lives by giving it a backend.
 ```rust,ignore
 use bedtime_workbench::persistence::{DirectoryStore, ReflectPersist, PersistenceAppExt, WorkbenchStore};
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Persist)]
-#[require(PanelInstance = PanelInstance::of::<Self>(), NotesRuntime)]
+#[require(NotesRuntime)]
 struct Notes { text: String }
 
 app.register_type::<Notes>()

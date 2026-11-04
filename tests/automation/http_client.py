@@ -39,7 +39,7 @@ url = f"127.0.0.1:{server.server_address[1]}/users?id=7"
 
 with tempfile.TemporaryDirectory() as folder:
     with Bed(folder) as bed:
-        bed.invoke("app.open_http_client")
+        bed.invoke("http_client.show")
         until(bed, lambda: bed.exists("New Request"), "the empty panel shows")
         bed.click("New Request")
         bed.type(url)

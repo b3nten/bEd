@@ -8,8 +8,8 @@
 use bedtime_ui::{
     UiContext, UiPlugin, egui,
     layouts::{
-        InArea, LayoutCamera, LayoutSurface, LayoutsPlugin, LayoutsWorldExt, Panel, PanelInstance,
-        SurfaceBody, view,
+        InArea, LayoutCamera, LayoutSurface, LayoutsPlugin, LayoutsWorldExt, Panel, SurfaceBody,
+        view,
     },
 };
 use bevy::{prelude::*, window::PrimaryWindow};
@@ -30,8 +30,8 @@ fn main() -> AppExit {
 }
 
 /// A panel that shows some text.
-#[derive(Component, Default)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
+#[bedtime_ui::panel]
+#[derive(Default)]
 struct Note {
     text: String,
 }

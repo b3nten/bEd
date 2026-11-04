@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory() as folder:
 
     with Bed(folder) as bed:
         until(bed, lambda: bed.exists("notes.txt"), "the root is listed")
-        bed.invoke("app.open_git")
+        bed.invoke("git.show")
         until(bed, lambda: bed.exists("main"), "the Git panel shows the branch")
         until(bed, lambda: len(bed.find_all("notes.txt")) >= 2 and len(bed.find_all("new.txt")) >= 2,
               "the changes are listed")

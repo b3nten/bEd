@@ -3,7 +3,7 @@ use bedtime_document::TextBuffer;
 use bedtime_terminal::TerminalPanel;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, DocumentId, DocumentReference, Handler,
-    InArea, KeyChord, LayoutsWorldExt, Notification, OpenOptions, Target, WorkbenchWorldExt,
+    InArea, KeyChord, Notification, OpenOptions, Place, Target, WorkbenchWorldExt,
     workspaces::Workspace,
 };
 use bevy::prelude::*;
@@ -35,9 +35,9 @@ fn new(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     if let (Some(panel), Some(area)) = (focused, area)
         && world.get::<TerminalPanel>(panel).is_some()
     {
-        let terminal = world.spawn((TerminalPanel::default(), InArea(area))).id();
+        world.spawn((TerminalPanel::default(), Place::in_area(area)));
         world.flush();
-        return world.layouts_mut().focus_panel(terminal);
+        return Ok(());
     }
     // Beside the focused document, else where documents open.
     let beside = focused.filter(|&panel| {

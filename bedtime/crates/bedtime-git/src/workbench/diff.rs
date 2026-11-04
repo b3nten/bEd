@@ -29,10 +29,11 @@ pub struct Descriptor {
     pub side: DiffSide,
 }
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>(), EditorPanel, HostedViewer)]
+#[require(EditorPanel, HostedViewer)]
 pub struct DiffPanel {
     pub root: PathBuf,
     /// Relative to the repository.

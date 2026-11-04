@@ -35,7 +35,7 @@ pub use documents::*;
 pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 pub use opening::*;
-pub use panel_actions::{ClosePanel, ResetZoom, ZoomIn, ZoomOut};
+pub use panel_actions::{ClosePanel, ResetZoom, ZoomIn, ZoomOut, show_panel};
 pub use untitled::{SaveAs, Untitled};
 #[cfg(feature = "native")]
 mod native;

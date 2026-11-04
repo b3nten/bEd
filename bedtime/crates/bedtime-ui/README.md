@@ -433,8 +433,9 @@ Every layout content instance is a panel. `Panel` is the rendering/type
 contract; `PanelInstance` is the ECS metadata attached to each instance:
 
 ~~~rust,ignore
-#[derive(Component, Default)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
+// Derives `Component` and requires `PanelInstance::of::<Self>()`.
+#[bedtime_ui::panel]
+#[derive(Default)]
 struct Notes { text: String }
 
 impl bedtime_ui::layouts::Panel for Notes {
@@ -445,9 +446,25 @@ impl bedtime_ui::layouts::Panel for Notes {
         context.frame(ui).text_edit(egui::TextEdit::singleline(&mut notes.text));
     }
 }
-commands.spawn((Notes { text: "Draft".into() }, InArea(area)));
+commands.spawn((Notes { text: "Draft".into() }, Place::auto()));
 // Required components preserve explicitly supplied component overrides.
 ~~~
+
+`Place` puts a panel in an area of the active layout: its insert hook picks
+the area by the next flush, inserts `InArea`, and removes itself.
+`Placement::Auto` (the default) picks an area that already holds a panel of
+the same type, otherwise the largest; `Largest` and `In(area)` are explicit.
+`Place::auto().focus(false)` leaves the layout's focus where it was (the
+panel is still its area's selected tab). Inserting `Place` on a placed panel
+moves it, and a new panel that can't be placed is despawned with an error
+logged. With no layout active, `LayoutFallback` makes one ("Layout 1" by
+default; an app with its own layouts sets it).
+
+Read `InArea` to see where a panel is, but place panels with `Place`.
+Opening always makes a new panel: `commands.open_panel(bundle)` and
+`world.open_panel(bundle)` spawn with `Place::auto()`. To show an existing
+one instead, look for it with `world.layouts().find::<P>(layout)`, or use
+`world.focus_or_open::<P>()`.
 
 Panel draw methods are ordinary Rust calls with exclusive world access, not
 registered Bevy systems. Panels compose `bedtime_ui::UiComponent` renderers with

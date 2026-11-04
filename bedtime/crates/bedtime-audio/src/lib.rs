@@ -7,7 +7,7 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, Fit, Notification, Opener, OpenersAppExt, Panel, PanelInstance,
+    DocumentHandle, Fit, Notification, Opener, OpenersAppExt, Panel,
     PanelPresentation, Viewer, WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
@@ -79,10 +79,10 @@ pub enum AudioView {
     Spectrogram,
 }
 
-#[derive(Component, Reflect)]
+#[bedtime_ui::panel]
+#[derive(Reflect)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct AudioPanel {
     pub view: AudioView,
     pub looping: bool,

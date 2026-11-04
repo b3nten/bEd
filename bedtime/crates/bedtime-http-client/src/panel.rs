@@ -9,7 +9,7 @@
 use crate::{Collection, Error, Field, Method, Options, Response, SavedRequest, json, send};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
 use bedtime_workbench::{
-    ManagedTask, ManagedWork, Panel, PanelInstance, PanelPresentation, WorkStatus,
+    ManagedTask, ManagedWork, Panel, PanelPresentation, WorkStatus,
     persistence::{Persisted, PersistenceAppExt, ReflectPersist, WorkbenchStore},
 };
 use bevy::prelude::*;
@@ -20,11 +20,22 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Show the HTTP client: the one in the active layout, else a new one.
+pub struct ShowHttpClient;
+impl bedtime_workbench::Action for ShowHttpClient {
+    const KEY: &'static str = "http_client.show";
+    const LABEL: &'static str = "HTTP Client";
+}
+
 pub struct HttpClientPlugin;
 
 impl Plugin for HttpClientPlugin {
     fn build(&self, app: &mut App) {
+        use bedtime_workbench::ActionAppExt;
         app.register_type::<HttpClientPanel>()
+            .add_action_handler::<ShowHttpClient>(bedtime_workbench::Handler::new(
+                bedtime_workbench::show_panel::<HttpClientPanel>,
+            ))
             .init_resource::<HttpRequests>()
             .persist::<HttpRequests, WorkbenchStore>()
             .init_resource::<Exchanges>()
@@ -50,9 +61,10 @@ pub struct HttpClientSystems;
 pub struct HttpRequests(pub Collection);
 
 /// The HTTP client panel. Which request it shows is saved with it.
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default, Persist)]
-#[require(PanelInstance = PanelInstance::of::<Self>(), HttpClientView)]
+#[require(HttpClientView)]
 pub struct HttpClientPanel {
     /// The request shown, by id.
     pub selected: Option<u64>,

@@ -1,4 +1,8 @@
 //! Bed presentation on upstream egui/Bevy integration; the host owns its window and camera.
+// `#[panel]` names `::bedtime_ui`, so it works in this crate too.
+extern crate self as bedtime_ui;
+/// `#[bedtime_ui::panel]`: see [`layouts::panel`].
+pub use layouts::panel;
 mod clipping;
 mod combo_box;
 mod component;

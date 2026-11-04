@@ -13,8 +13,7 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
     DocumentHandle, EditOptions, Fit, ManagedTask, ManagedWork, Notification, Opener,
-    OpenersAppExt, Panel, PanelInstance, PanelPresentation, Viewer, WorkbenchWorldExt,
-    viewer_document,
+    OpenersAppExt, Panel, PanelPresentation, Viewer, WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{path::Path, time::Duration};
@@ -60,10 +59,10 @@ fn table_fit(path: &Path, head: &[u8]) -> Fit {
     }
 }
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct TablePanel {
     /// Whether the first row names the columns; `None` guesses.
     pub header: Option<bool>,

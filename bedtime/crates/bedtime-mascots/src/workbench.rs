@@ -1,15 +1,23 @@
 //! The mascots as panels: Bed and Ducky, saved with the layout.
 use crate::{Mascot, MascotKind, MascotScene};
 use bedtime_ui::{UiComponent as _, UiContext, egui};
+use bedtime_workbench::Panel;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{Panel, PanelInstance};
 use bevy::prelude::*;
 
-#[derive(Component, Reflect, Default)]
+/// Show Bed: the one in the active layout, else a new one.
+pub struct ShowBed;
+impl bedtime_workbench::Action for ShowBed {
+    const KEY: &'static str = "mascots.show_bed";
+    const LABEL: &'static str = "Bed";
+}
+
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>(), MascotScene = MascotScene::new(MascotKind::Bed))]
+#[require(MascotScene = MascotScene::new(MascotKind::Bed))]
 pub struct BedPanel;
 
 impl Panel for BedPanel {
@@ -19,10 +27,11 @@ impl Panel for BedPanel {
     }
 }
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>(), MascotScene = MascotScene::new(MascotKind::Duck))]
+#[require(MascotScene = MascotScene::new(MascotKind::Duck))]
 pub struct DuckPanel;
 
 impl Panel for DuckPanel {

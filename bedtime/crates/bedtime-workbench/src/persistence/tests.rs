@@ -1,9 +1,10 @@
 use super::*;
 use crate::tests::TestPanels;
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Persist)]
-#[require(PanelInstance = PanelInstance::of::<Self>(), Runtime)]
+#[require(Runtime)]
 struct Note {
     text: String,
 }

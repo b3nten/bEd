@@ -45,13 +45,40 @@ pub enum TerminalSystems {
     Update,
 }
 
+/// A new terminal, focused: beside the other terminals, else in the largest
+/// area.
+pub struct NewTerminal;
+impl bedtime_workbench::Action for NewTerminal {
+    const KEY: &'static str = "terminal.new";
+    const LABEL: &'static str = "New Terminal";
+    const DEFAULT_KEYS: &'static [bedtime_workbench::KeyChord] =
+        &[bedtime_workbench::KeyChord::new(
+            bedtime_workbench::Modifiers::CONTROL,
+            KeyCode::Backquote,
+        )];
+}
+
+fn new_terminal(
+    world: &mut World,
+    _: bedtime_workbench::ActionInvocation,
+) -> bedtime_workbench::ActionResult {
+    use bedtime_workbench::PanelsWorldExt;
+    let terminal = world.open_panel(TerminalPanel::default());
+    world
+        .get_entity(terminal)
+        .map(|_| ())
+        .map_err(|_| "The terminal couldn't be placed".into())
+}
+
 /// Installs the terminal's ordinary Update system. Requires the
 /// application's Workbench and UI plugins; installs no windows or renderer.
 pub struct TerminalPlugin;
 
 impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
+        use bedtime_workbench::ActionAppExt;
         app.register_type::<TerminalPanel>()
+            .add_action_handler::<NewTerminal>(bedtime_workbench::Handler::new(new_terminal))
             .init_resource::<shell::ShellCommands>()
             .add_systems(Startup, shell::initialize)
             .add_systems(
@@ -85,10 +112,10 @@ pub enum TerminalStatus {
 /// panel initialization. Editing options affects the next start/restart only.
 /// Saved with the layout as a panel only: a restored one starts a fresh shell.
 /// Without a working directory, the shell starts in the workbench's `Root`.
-#[derive(Component, Reflect)]
+#[bedtime_ui::panel]
+#[derive(Reflect)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct TerminalPanel {
     #[reflect(ignore)]
     pub options: TerminalOptions,

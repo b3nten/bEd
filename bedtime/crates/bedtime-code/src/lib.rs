@@ -10,4 +10,4 @@ pub use editor::{
     CodePlugin, ComparisonRequest, EditorComparison, EditorDefaults, EditorPanel, ToggleWordWrap,
     draw_editor,
 };
-pub use structure::StructurePanel;
+pub use structure::{ShowStructure, StructurePanel};

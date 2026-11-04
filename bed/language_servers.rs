@@ -1,12 +1,10 @@
-use crate::panels::PanelPolicy;
 use bedtime_code::lsp::{
     InstalledServers, ServerCatalog, ServerEntry, ServerSettings, ServerStatus, config::resolve,
     restart, server_states,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, egui, theme};
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelFactory,
-    PanelInstance,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
     persistence::{ReflectPersist, StoreId, WorkbenchStore},
     settings::{Settings, SettingsAppExt, SettingsWorldExt, settings, ui::layer_tabs},
     workspaces::{GlobalStore, Workspace},
@@ -41,8 +39,7 @@ impl Plugin for LanguageServersPanelPlugin {
 }
 
 fn open(world: &mut World, _: ActionInvocation) -> ActionResult {
-    let factory = PanelFactory::of::<LanguageServersPanel>();
-    crate::panels::open_panel::<LanguageServersPanel>(world, (), factory).map(|_| ())
+    world.focus_or_open::<LanguageServersPanel>().map(|_| ())
 }
 
 /// Each layer's changes, lowest first, up to `top` (every layer without one).
@@ -89,14 +86,9 @@ fn change(world: &mut World, layer: StoreId, name: &str, f: impl FnOnce(&mut Ser
     }
 }
 
-impl PanelPolicy for LanguageServersPanel {
-    type Key = ();
-    fn key(_: &World, _: Entity) {}
-}
-
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default, Persist)]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct LanguageServersPanel {
     #[reflect(ignore)]
     state: PanelState,

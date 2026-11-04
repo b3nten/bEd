@@ -1,14 +1,15 @@
 use crate::{
-    files::{OpenFiles, OpenStructure},
     layouts::{ResetLayout, SaveLayoutAsDefault, UseLayout},
     settings::{OpenSettings, SettingsPanel},
-    terminal::NewTerminal,
     workspace::{self, OpenWorkspaces, RecentWorkspaces, Start, Workspace},
 };
+use bedtime_code::ShowStructure;
 use bedtime_code::lsp::{
     CodeActions, FindReferences, FormatDocument, GoToDefinition, RenameSymbol,
 };
-use bedtime_filetree::FileTree;
+use bedtime_filetree::{FileTree, ShowFiles};
+use bedtime_git::ShowGit;
+use bedtime_terminal::NewTerminal;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;
 use bedtime_workbench::{
@@ -157,11 +158,11 @@ fn compose_menus(mut commands: Commands) {
         Invokes::of::<OpenSettings>(),
         InMenu(view),
     ));
-    commands.spawn((MenuItem::action::<OpenFiles>(), InMenu(view)));
-    commands.spawn((MenuItem::action::<OpenStructure>(), InMenu(view)));
-    commands.spawn((MenuItem::action::<crate::git::OpenGit>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<ShowFiles>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<ShowStructure>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<ShowGit>(), InMenu(view)));
     commands.spawn((
-        MenuItem::action::<crate::http_client::OpenHttpClient>(),
+        MenuItem::action::<bedtime_http_client::ShowHttpClient>(),
         InMenu(view),
     ));
     commands.spawn((MenuSeparator, InMenu(view)));
@@ -183,7 +184,7 @@ fn compose_menus(mut commands: Commands) {
         MenuItem::action::<crate::language_servers::OpenLanguageServers>(),
         InMenu(view),
     ));
-    commands.spawn((MenuItem::action::<crate::mascots::OpenBed>(), InMenu(view)));
+    commands.spawn((MenuItem::action::<bedtime_mascots::ShowBed>(), InMenu(view)));
     commands.spawn((MenuItem::action::<NewTerminal>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
     commands.spawn((
@@ -349,21 +350,21 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
             BuiltinIcon::Settings,
             PanelFactory::of::<SettingsPanel>(),
         );
-        tool::<OpenStructure>(
+        tool::<ShowStructure>(
             ui,
             world,
             context,
             BuiltinIcon::Structure,
             PanelFactory::of::<bedtime_code::StructurePanel>(),
         );
-        tool::<crate::git::OpenGit>(
+        tool::<ShowGit>(
             ui,
             world,
             context,
             BuiltinIcon::GitBranch,
             PanelFactory::of::<bedtime_git::GitPanel>(),
         );
-        tool::<OpenFiles>(
+        tool::<ShowFiles>(
             ui,
             world,
             context,

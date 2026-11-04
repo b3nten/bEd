@@ -1,7 +1,8 @@
 use crate::workspace::{GlobalStore, Workspace, WorkspacesPanel};
 use bedtime_filetree::FileTree;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout, PanelFactory,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout,
+    LayoutFallback, PanelFactory,
     persistence::{LayoutTemplate, Persisted, PersistenceAppExt, ReflectPersist},
 };
 use bedtime_workbench::{LayoutsWorldExt, SplitAxis};
@@ -64,6 +65,8 @@ impl Plugin for LayoutSlotsPlugin {
         app.register_type::<LayoutSlot>()
             .init_resource::<LayoutDefaults>()
             .persist::<LayoutDefaults, GlobalStore>()
+            // Placing a panel with no layout open opens layout 1.
+            .insert_resource(LayoutFallback(|world| switch(world, LayoutSlot(0))))
             .add_action_handler::<UseLayout<0>>(Handler::new(use_layout::<0>))
             .add_action_handler::<UseLayout<1>>(Handler::new(use_layout::<1>))
             .add_action_handler::<UseLayout<2>>(Handler::new(use_layout::<2>))
@@ -189,9 +192,9 @@ fn reset(world: &mut World, _: ActionInvocation) -> ActionResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{panels::open_panel, settings::SettingsPanel};
+    use crate::settings::SettingsPanel;
     use bedtime_workbench::{
-        ActionId, ActionRequest, ActionRequests, InvocationContext, PanelFactory,
+        ActionId, ActionRequest, ActionRequests, InvocationContext, PanelsWorldExt,
         WorkbenchCorePlugins,
     };
 
@@ -225,7 +228,7 @@ mod tests {
     }
 
     fn open_settings(world: &mut World) {
-        open_panel::<SettingsPanel>(world, (), PanelFactory::of::<SettingsPanel>()).unwrap();
+        world.focus_or_open::<SettingsPanel>().unwrap();
     }
 
     #[test]

@@ -1,42 +1,16 @@
-use bedtime_terminal::{ShellCommandsAppExt, ShellInvocation, TerminalPanel, TerminalPlugin};
-use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, InArea, KeyChord,
-    LayoutsWorldExt, Modifiers, PathOptions, WorkbenchWorldExt,
-};
+use bedtime_terminal::{ShellCommandsAppExt, ShellInvocation, TerminalPlugin};
+use bedtime_workbench::{PathOptions, WorkbenchWorldExt};
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
-
-pub struct NewTerminal;
-impl Action for NewTerminal {
-    const KEY: &'static str = "app.new_terminal";
-    const LABEL: &'static str = "New Terminal";
-    const DEFAULT_KEYS: &'static [KeyChord] =
-        &[KeyChord::new(Modifiers::CONTROL, KeyCode::Backquote)];
-}
 
 pub struct TerminalsPlugin;
 
 impl Plugin for TerminalsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(TerminalPlugin)
-            .add_action_handler::<NewTerminal>(Handler::new(new_terminal))
             .add_shell_command(["+open", "+o"], open_from_shell)
             .expect("bed's shell commands are unique");
     }
-}
-
-/// A new terminal, focused: beside another terminal, else in the largest area.
-fn new_terminal(world: &mut World, _: ActionInvocation) -> ActionResult {
-    let layout = match world.layouts().active() {
-        Some(layout) => layout,
-        None => crate::layouts::switch(world, crate::layouts::LayoutSlot(0))?,
-    };
-    let area = world.layouts().area_for(layout, |world, panel| {
-        world.get::<TerminalPanel>(panel).is_some()
-    })?;
-    let panel = world.spawn((TerminalPanel::default(), InArea(area))).id();
-    world.flush();
-    world.layouts_mut().focus_panel(panel)
 }
 
 /// `+open a.rs b.rs:12 c.rs:3:5`, relative to the shell's directory;

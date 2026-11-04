@@ -33,7 +33,7 @@ with tempfile.TemporaryDirectory() as folder:
         bed.input(at, {"press": "Left"}, {"release": "Left"}, {"press": "Left"}, {"release": "Left"})
         until(bed, lambda: bed.exists("Fold line 1"), "pets.rs is analysed")
 
-        bed.invoke("app.open_structure")
+        bed.invoke("code.show_structure")
         until(bed, lambda: bed.exists(contains="Dog"), "Structure lists the declarations")
         assert bed.exists(contains="cat"), [w.get("label") for w in bed.widgets()]
         bed.screenshot("structure")

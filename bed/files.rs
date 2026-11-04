@@ -1,43 +1,15 @@
-use crate::panels::PanelPolicy;
 use bedtime_audio::AudioPlugin;
-use bedtime_code::{CodePlugin, StructurePanel};
-use bedtime_filetree::{FileTree, FileTreePlugin};
+use bedtime_code::CodePlugin;
+use bedtime_filetree::FileTreePlugin;
 use bedtime_font::FontPlugin;
 use bedtime_hex::HexPlugin;
 use bedtime_image::ImagePlugin;
 use bedtime_model::ModelViewerPlugin;
 use bedtime_table::TablePlugin;
 use bedtime_video::VideoPlugin;
-use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Notification, OpenersAppExt,
-    PanelFactory, WorkbenchWorldExt,
-};
+use bedtime_workbench::{Notification, OpenersAppExt, PanelFactory, WorkbenchWorldExt};
 use bevy::prelude::*;
 use std::path::Path;
-
-pub struct OpenFiles;
-impl Action for OpenFiles {
-    const KEY: &'static str = "app.open_files";
-    const LABEL: &'static str = "Files";
-}
-
-pub struct OpenStructure;
-impl Action for OpenStructure {
-    const KEY: &'static str = "app.open_structure";
-    const LABEL: &'static str = "Structure";
-}
-
-impl PanelPolicy for StructurePanel {
-    /// One Structure follows the focused editor.
-    type Key = ();
-    fn key(_: &World, _: Entity) {}
-}
-
-impl PanelPolicy for FileTree {
-    /// One tree shows the workspace folder.
-    type Key = ();
-    fn key(_: &World, _: Entity) {}
-}
 
 pub struct FilesPlugin;
 
@@ -57,21 +29,10 @@ impl Plugin for FilesPlugin {
                 VideoPlugin,
                 TablePlugin,
             ))
-            .set_open_fallback(nothing_opens)
-            .add_action_handler::<OpenFiles>(Handler::new(open_files))
-            .add_action_handler::<OpenStructure>(Handler::new(open_structure));
+            .set_open_fallback(nothing_opens);
         // Save, Undo and Redo act on the focused panel's document.
         app.world_mut().workbench_mut().register_document_handlers();
     }
-}
-
-fn open_structure(world: &mut World, _: ActionInvocation) -> ActionResult {
-    let factory = PanelFactory::of::<StructurePanel>();
-    crate::panels::open_panel::<StructurePanel>(world, (), factory).map(|_| ())
-}
-
-fn open_files(world: &mut World, _: ActionInvocation) -> ActionResult {
-    crate::panels::open_panel::<FileTree>(world, (), PanelFactory::of::<FileTree>()).map(|_| ())
 }
 
 fn nothing_opens(world: &mut World, path: &Path, _: String) {

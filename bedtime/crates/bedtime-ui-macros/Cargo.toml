@@ -1,0 +1,15 @@
+[package]
+name = "bedtime-ui-macros"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "The #[panel] attribute for bedtime-ui panels"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full"] }

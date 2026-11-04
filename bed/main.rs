@@ -12,13 +12,11 @@ mod dock;
 mod effects;
 mod files;
 mod git;
-mod http_client;
 mod language_servers;
 mod layouts;
 mod mascots;
 mod menus;
 mod new;
-mod panels;
 mod preview;
 mod search;
 mod settings;
@@ -77,7 +75,7 @@ pub fn app(start: Start) -> App {
         new::NewPlugin,
         language_servers::LanguageServersPanelPlugin,
         git::BedGitPlugin,
-        http_client::BedHttpClientPlugin,
+        bedtime_http_client::HttpClientPlugin,
         search::BedSearchPlugin,
         preview::BedPreviewPlugin,
         theme_editor::ThemeEditorPlugin,

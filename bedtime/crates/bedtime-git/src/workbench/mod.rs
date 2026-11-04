@@ -31,11 +31,19 @@ pub fn has_pending_operation(world: &World) -> bool {
         .is_some_and(|s| s.pending.is_some())
 }
 
+/// Show the Git panel: the one in the active layout, else a new one.
+pub struct ShowGit;
+impl Action for ShowGit {
+    const KEY: &'static str = "git.show";
+    const LABEL: &'static str = "Git";
+}
+
 /// The Git and diff panels, and the session behind them.
 pub struct GitPlugin;
 impl Plugin for GitPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<GitPanel>()
+            .add_action_handler::<ShowGit>(Handler::new(show_panel::<GitPanel>))
             .register_type::<DiffPanel>()
             .add_systems(Update, update);
     }

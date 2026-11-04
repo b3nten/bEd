@@ -5,6 +5,12 @@
 use crate::*;
 use bevy::prelude::*;
 
+/// A handler for an action that shows a panel: focus the `P` in the active
+/// layout, else open a new one. `Handler::new(show_panel::<GitPanel>)`.
+pub fn show_panel<P: Component + Default>(world: &mut World, _: ActionInvocation) -> ActionResult {
+    world.focus_or_open::<P>().map(|_| ())
+}
+
 pub struct ClosePanel;
 impl Action for ClosePanel {
     const KEY: &'static str = "panel.close";

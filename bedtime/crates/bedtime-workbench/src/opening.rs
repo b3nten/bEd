@@ -669,8 +669,8 @@ mod tests {
     use bedtime_document::{MemorySource, TextBuffer, TextOpenState, TextPosition};
 
     /// A text viewer that records the states applied to it.
-    #[derive(Component, Default)]
-    #[require(PanelInstance = PanelInstance::of::<Self>())]
+    #[bedtime_ui::panel]
+    #[derive(Default)]
     struct TextView {
         applied: Vec<TextOpenState>,
     }
@@ -701,8 +701,7 @@ mod tests {
         }
     }
 
-    #[derive(Component)]
-    #[require(PanelInstance = PanelInstance::of::<Self>())]
+    #[bedtime_ui::panel]
     struct HexView;
 
     impl Panel for HexView {
@@ -868,8 +867,7 @@ mod tests {
     }
 
     /// A panel that isn't a viewer, like a file tree.
-    #[derive(Component)]
-    #[require(PanelInstance = PanelInstance::of::<Self>())]
+    #[bedtime_ui::panel]
     struct Sidebar;
     impl Panel for Sidebar {
         const LABEL: &'static str = "Sidebar";

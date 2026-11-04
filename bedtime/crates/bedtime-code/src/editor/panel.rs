@@ -8,7 +8,7 @@ use bedtime_ui::UiContext;
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
     DocumentDraft, DocumentError, DocumentHandle, DocumentId, DocumentReference, DocumentStatus,
-    DocumentUndoGroup, EditOptions, Fit, Notification, Opener, OpenersAppExt, Panel, PanelInstance,
+    DocumentUndoGroup, EditOptions, Fit, Notification, Opener, OpenersAppExt, Panel,
     PanelPresentation, Viewer, WorkbenchWorldExt,
 };
 use bevy::prelude::*;
@@ -80,6 +80,9 @@ impl Plugin for CodePlugin {
             )
             .register_default_opener::<EditorPanel>()
             .register_type::<crate::structure::StructurePanel>()
+            .add_action_handler::<crate::structure::ShowStructure>(bedtime_workbench::Handler::new(
+                bedtime_workbench::show_panel::<crate::structure::StructurePanel>,
+            ))
             .add_plugins(crate::lsp::LanguageServersPlugin)
             .init_resource::<crate::structure::StructureSource>()
             .add_systems(
@@ -106,10 +109,10 @@ pub fn text_fit(_: &std::path::Path, head: &[u8]) -> Fit {
     }
 }
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct EditorPanel {
     /// Wrap long lines in this editor; `None` follows `EditorDefaults`.
     #[reflect(default)]

@@ -13,8 +13,8 @@ use bedtime_ui::{UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, DocumentReference, ManagedWork, Notification, Panel, PanelInstance,
-    PathOptions, Viewer, ViewerFile, WorkbenchWorldExt, viewer_document,
+    DocumentHandle, DocumentReference, ManagedWork, Notification, Panel, PathOptions, Viewer,
+    ViewerFile, WorkbenchWorldExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{path::PathBuf, time::Duration};
@@ -27,10 +27,11 @@ pub use parse::{Block, Callout, Code, Item, Markdown, Run, Style, parse, slug};
 /// How long a new revision waits for its code's colours.
 const WAIT_FOR_COLOURS: f64 = 0.3;
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>(), SyntaxViewer)]
+#[require(SyntaxViewer)]
 pub struct MarkdownPanel {
     #[reflect(ignore)]
     state: State,

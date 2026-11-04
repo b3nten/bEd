@@ -9,8 +9,7 @@ use bedtime_ui::{Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentHandle, Fit, Opener, OpenersAppExt, Panel, PanelInstance, PanelPresentation, Viewer,
-    viewer_document,
+    DocumentHandle, Fit, Opener, OpenersAppExt, Panel, PanelPresentation, Viewer, viewer_document,
 };
 use bevy::prelude::*;
 use std::sync::Arc;
@@ -48,10 +47,10 @@ impl FileModel for Bytes {
     }
 }
 
-#[derive(Component, Reflect, Default)]
+#[bedtime_ui::panel]
+#[derive(Reflect, Default)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
-#[require(PanelInstance = PanelInstance::of::<Self>())]
 pub struct HexPanel {
     #[reflect(ignore)]
     view: HexView,
