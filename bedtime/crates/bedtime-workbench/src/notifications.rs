@@ -74,6 +74,14 @@ impl Notifications {
 
 impl Workbench {
     /// Tell the user something that needs no answer.
+    /// Report `result`'s error, if it is one, prefixed with what was being
+    /// done ("Couldn't open the theme: …").
+    pub fn notify_failure<T>(&mut self, doing: &str, result: Result<T, impl std::fmt::Display>) {
+        if let Err(error) = result {
+            self.notify(Notification::error(format!("{doing}: {error}")));
+        }
+    }
+
     pub fn notify(&mut self, notification: Notification) {
         let (level, text) = (notification.level, notification.text.clone());
         if self

@@ -1,4 +1,5 @@
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::ThemeFolder};
+use bedtime_workbench::WorkbenchWorldExt as _;
 use bedtime_workbench::{
     persistence::StoreId,
     settings::{
@@ -105,8 +106,7 @@ impl Plugin for ThemesPlugin {
             return;
         };
         let result = install(&folder);
-        crate::status::notify_failure(
-            app.world_mut(),
+        app.world_mut().workbench_mut().notify_failure(
             &format!("Couldn't write themes to {}", folder.display()),
             result,
         );
@@ -202,17 +202,23 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
         let result = world
             .settings_mut()
             .set::<crate::settings::ColorTheme>(layer, value);
-        crate::status::notify_failure(world, "Couldn't change the theme", result);
+        world
+            .workbench_mut()
+            .notify_failure("Couldn't change the theme", result);
     }
     if reset {
         let result = world
             .settings_mut()
             .clear::<crate::settings::ColorTheme>(layer);
-        crate::status::notify_failure(world, "Couldn't reset the theme", result);
+        world
+            .workbench_mut()
+            .notify_failure("Couldn't reset the theme", result);
     }
     if edit {
         let result = crate::theme_editor::open(world, Some(chosen.clone()));
-        crate::status::notify_failure(world, "Couldn't open the Theme Editor", result);
+        world
+            .workbench_mut()
+            .notify_failure("Couldn't open the Theme Editor", result);
     }
     if open_folder && let Some(folder) = folder() {
         let opener = if cfg!(target_os = "macos") {
@@ -224,11 +230,9 @@ pub fn row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer:
         };
         let result = std::fs::create_dir_all(&folder)
             .and_then(|()| std::process::Command::new(opener).arg(&folder).spawn());
-        crate::status::notify_failure(
-            world,
-            &format!("Couldn't open {}", folder.display()),
-            result,
-        );
+        world
+            .workbench_mut()
+            .notify_failure(&format!("Couldn't open {}", folder.display()), result);
     }
 }
 

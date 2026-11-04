@@ -11,6 +11,7 @@ use bedtime_git::ShowGit;
 use bedtime_terminal::NewTerminal;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::ErrorDialogWorldExt;
+use bedtime_workbench::WorkbenchWorldExt as _;
 use bedtime_workbench::settings::{OpenSettings, SettingsPanel};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionId, ActionInvocation, ActionRequests, ActionResult,
@@ -336,7 +337,7 @@ pub fn draw_titlebar(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'
             .get::<LayoutSurface>(context.surface)
             .map_or(0.0, |surface| surface.panel_gap);
         let result = draw_menu_bar(&mut context.frame(ui), world, root, inset);
-        crate::status::notify_failure(world, "Menu", result);
+        world.workbench_mut().notify_failure("Menu", result);
     }
     // Right to left: terminal, search, files, git, structure, settings.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

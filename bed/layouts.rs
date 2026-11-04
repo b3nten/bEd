@@ -1,5 +1,6 @@
 use crate::workspace::{GlobalStore, Workspace, WorkspacesPanel};
 use bedtime_filetree::FileTree;
+use bedtime_workbench::WorkbenchWorldExt as _;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout,
     LayoutFallback, PanelFactory,
@@ -157,7 +158,9 @@ fn open_first(world: &mut World) {
     }
     if world.layouts().active().is_none() {
         let result = switch(world, LayoutSlot(0));
-        crate::status::notify_failure(world, "Couldn't open a layout", result);
+        world
+            .workbench_mut()
+            .notify_failure("Couldn't open a layout", result);
     }
 }
 

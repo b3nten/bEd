@@ -213,6 +213,18 @@ pressed where it does nothing) isn't a failure and isn't reported. Anything
 that could lose work, such as a document that won't save, asks with a dialog
 instead.
 
+## Status bar (`ui` feature)
+
+`status::body` is a window body (`SurfaceBody(status::body)`): the panels,
+with a bar along the bottom. Its left side is the workbench's: what's going
+on (`StatusActivity`: a plugin sets what it's doing, `set("git",
+Some("fetching"))`, and clears it after; shown with a spinner), then the
+latest notification for a few seconds (hover for recent ones). Its right
+side is the app's: the items it adds with `app.add_status_item(item)`, the
+first added rightmost. Plugins export items for it, such as
+`workspaces::status_item` (the workspace's name). `notify_failure(doing,
+result)` turns an error into a notification.
+
 ## Opening
 
 `open_document(source, OpenOptions)` shows a document in a viewer panel with

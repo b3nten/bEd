@@ -609,3 +609,16 @@ mod tests {
         fs::remove_dir_all(&directory).unwrap();
     }
 }
+
+/// A status bar item: the workspace's name (`app.add_status_item`).
+#[cfg(feature = "ui")]
+pub fn status_item(
+    ui: &mut bedtime_ui::egui::Ui,
+    world: &World,
+    context: &bedtime_ui::UiContext<'_>,
+) {
+    if let Some(workspace) = world.get_resource::<Workspace>() {
+        ui.weak(workspace.name());
+        ui.add_space(context.metrics.spacing[0]);
+    }
+}

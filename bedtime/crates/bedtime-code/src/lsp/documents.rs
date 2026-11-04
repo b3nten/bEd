@@ -125,6 +125,7 @@ impl Plugin for LanguageServersPlugin {
 
 fn install(app: &mut App) {
     super::actions::install(app);
+    app.add_systems(Update, super::status::report_activity);
     app.init_resource::<LanguageServers>()
         .init_resource::<super::InstalledServers>()
         .init_resource::<Definitions>()

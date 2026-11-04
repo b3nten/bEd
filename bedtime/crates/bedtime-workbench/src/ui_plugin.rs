@@ -8,7 +8,9 @@ use bevy::prelude::*;
 pub struct WorkbenchUiPlugin;
 impl Plugin for WorkbenchUiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_modal(crate::dialogs::draw_close_prompt);
+        app.add_modal(crate::dialogs::draw_close_prompt)
+            .init_resource::<crate::status::StatusActivity>()
+            .init_resource::<crate::status::StatusItems>();
     }
     fn finish(&self, app: &mut App) {
         assert!(

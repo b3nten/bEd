@@ -409,9 +409,18 @@ bedtime-document: detection reads files and the registry is an app resource.
     (they write `AppearanceSettings::theme`). Bed's screen effects and
     language-server settings stay with bed's panels.
   - Saved keys didn't change, so existing settings files still apply.
-- **Status bar:** the left side is for notifications, which any plugin can
-  post, including ongoing work such as "indexing…". The right side belongs to
-  the app; plugins can export widgets for it.
+- **Status bar** (done in step 6): workbench's `status` module (`ui`
+  feature). `status::body` is a window body: the panels with a bar along the
+  bottom.
+  - Left side, the workbench's: `StatusActivity` (any plugin sets what it's
+    doing by source, with a spinner) then the latest notification.
+  - Right side, the app's: `add_status_item(item)`, the first added
+    rightmost. Plugins export items: `workspaces::status_item` (name) and
+    `bedtime_code::lsp::status::status_item` (the focused editor's server and
+    its error and warning counts).
+  - Language-server progress ("rust-analyzer: indexing", "loading") moved
+    from the right-side item to status activity on the left.
+  - `Workbench::notify_failure(doing, result)` replaces bed's helper.
 - **Keybindings:** plugins provide handlers but don't bind app-level keys.
   The app binds them with a macro that works with settings. Keys inside a
   panel (an editor's cursor movement, paste) stay with the panel. Plugins may
@@ -455,7 +464,7 @@ bedtime-document: detection reads files and the registry is an app resource.
      moves to bedtime-document; siblings sync in memory on idle and on focus
      change.~~ (done)
 5. ~~Settings declared by the crates that own them; the generic settings panel.~~ (done)
-6. Status bar contributions.
+6. ~~Status bar contributions.~~ (done)
 7. Route `New` through the focused panel.
 8. Move the LSP panel and theme editor.
 9. Single-store workspaces.
@@ -528,3 +537,7 @@ Do one step at a time, then review it before starting the next.
   settings in their crates. Bed's settings.rs is its theme setting, its
   defaults and its layout. `app.open_settings` is now `settings.open`
   (automation scripts updated). Workbench gained a `system-fonts` feature.
+- 2026-11-04: step 6 done. Workbench `status` module (body, `StatusActivity`,
+  `StatusItems`/`add_status_item`), `notify_failure`, workspaces' status item;
+  bedtime-code's `lsp::status` (item and activity report). Bed's status.rs is
+  gone; main adds the two items.

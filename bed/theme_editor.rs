@@ -6,6 +6,7 @@ use bedtime_ui::{
     BuiltinIcon, UiContext, egui,
     theme::{Appearance, Palette, Rgba, Theme, ThemeFolder},
 };
+use bedtime_workbench::WorkbenchWorldExt as _;
 use bedtime_workbench::appearance::AppearanceSettings;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
@@ -140,7 +141,7 @@ impl Panel for ThemeEditorPanel {
         }
         if let Some(request) = request {
             let result = act(world, panel, request);
-            crate::status::notify_failure(world, "Theme Editor", result);
+            world.workbench_mut().notify_failure("Theme Editor", result);
         }
     }
 }
@@ -403,7 +404,9 @@ fn autosave(world: &mut World) {
     }
     for (id, theme) in due {
         let result = save(world, &id, &theme);
-        crate::status::notify_failure(world, &format!("Couldn't save the theme {id}"), result);
+        world
+            .workbench_mut()
+            .notify_failure(&format!("Couldn't save the theme {id}"), result);
     }
 }
 

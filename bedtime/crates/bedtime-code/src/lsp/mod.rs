@@ -18,6 +18,7 @@ mod protocol;
 pub use activity::{
     MessageKind, ProgressToken, ProjectStatus, ServerActivity, ServerMessage, WorkProgress,
 };
+pub mod status;
 #[cfg(unix)]
 mod transport;
 #[cfg(unix)]

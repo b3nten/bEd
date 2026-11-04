@@ -192,6 +192,13 @@ connects servers to workbench documents:
   without the UI.
 - Restart Language Server; `restart` and `stop` for apps.
 
+## Status bar
+
+`lsp::status::status_item` is a status bar item for the app to add: the
+focused editor's language server, whether it's running, and its errors and
+warnings for the file. What servers are working on (progress, loading the
+project) is reported as status activity, on the bar's left.
+
 ## Tests
 
 ```sh

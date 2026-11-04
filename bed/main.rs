@@ -1,7 +1,7 @@
 use bedtime_ui::UiPlugin;
 use bedtime_workbench::{
     AreaBackground, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility, Titlebar,
-    WorkbenchPlugins,
+    WorkbenchPlugins, status::StatusAppExt,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 use std::path::PathBuf;
@@ -20,7 +20,6 @@ mod new;
 mod preview;
 mod search;
 mod settings;
-mod status;
 mod terminal;
 mod theme_editor;
 mod themes;
@@ -81,6 +80,9 @@ pub fn app(start: Start) -> App {
         theme_editor::ThemeEditorPlugin,
     ))
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
+    // The status bar's right side: the workspace, then the language server.
+    .add_status_item(bedtime_workbench::workspaces::status_item)
+    .add_status_item(bedtime_code::lsp::status::status_item)
     .add_systems(Startup, setup);
     #[cfg(target_os = "macos")]
     app.add_plugins(dock::DockMenuPlugin);
@@ -125,7 +127,7 @@ fn setup(mut commands: Commands, window: Single<Entity, With<PrimaryWindow>>) {
             ..default()
         },
         // The panels, with the status bar under them.
-        SurfaceBody(status::body),
+        SurfaceBody(bedtime_workbench::status::body),
         Titlebar {
             height: if cfg!(target_os = "macos") {
                 18.0

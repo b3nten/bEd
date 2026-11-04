@@ -16,6 +16,8 @@ mod panel_actions;
 pub mod persistence;
 #[cfg(feature = "persistence")]
 pub mod settings;
+#[cfg(feature = "ui")]
+pub mod status;
 mod untitled;
 pub mod work;
 #[cfg(feature = "workspaces")]
