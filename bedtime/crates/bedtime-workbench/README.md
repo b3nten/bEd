@@ -42,6 +42,9 @@ A workspace is a folder with its own store (`WorkbenchStore`, under
 `GlobalStore` (`<config>/global/`, with the global settings layer and the
 recent list). Each session has a folder workspace or the default workspace (home folder).
 A lock prevents concurrent instances from saving the same workspace.
+An app whose folders don't need settings of their own builds the plugin with
+`.global_settings_only()`: every setting is global, and a folder's store
+still holds its layout and whatever else the app saves there.
 
 ~~~rust,ignore
 fn app(start: Start) -> App {

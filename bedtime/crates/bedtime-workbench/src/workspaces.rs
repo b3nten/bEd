@@ -223,6 +223,8 @@ pub struct WorkspacesPlugin {
     recent: RecentWorkspaces,
     /// Couldn't update the recent list.
     remembered: Result<(), String>,
+    /// A folder gets its own settings layer (over the global one).
+    workspace_settings: bool,
 }
 
 /// Where workspaces are kept, and how to build the App for another one.
@@ -261,7 +263,17 @@ impl WorkspacesPlugin {
             settings: WorkspaceSettings { config, app },
             recent,
             remembered,
+            workspace_settings: true,
         }
+    }
+
+    /// Keep every setting in the global layer: no workspace settings layer,
+    /// for an app whose folders don't need settings of their own. Each folder
+    /// still has its own store (its layout, what the app saves there) and
+    /// gives the app its working folder (`Root`).
+    pub fn global_settings_only(mut self) -> Self {
+        self.workspace_settings = false;
+        self
     }
 
     /// The workspace this App opens.
@@ -292,7 +304,7 @@ impl Plugin for WorkspacesPlugin {
         // A folder's settings override global ones. Without a claimed store
         // they still apply, but only in memory. The default workspace has none:
         // it's just where the app is without a project.
-        if !workspace.default {
+        if !workspace.default && self.workspace_settings {
             app.add_settings_layer::<WorkbenchStore>()
                 .label_settings_layer::<WorkbenchStore>(format!("Workspace: {}", workspace.name()));
         }
@@ -587,6 +599,36 @@ mod tests {
         // Already gone is fine.
         delete(&opened.workspace, &config).unwrap();
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_folder_has_its_own_settings_layer_unless_settings_are_global_only() {
+        let base =
+            std::env::temp_dir().join(format!("bedtime-workspace-layers-{}", std::process::id()));
+        let folder = base.join("project");
+        fs::create_dir_all(&folder).unwrap();
+        let layers = |plugin: WorkspacesPlugin| {
+            let mut app = App::new();
+            app.add_plugins((crate::WorkbenchCorePlugins, plugin));
+            let count = app
+                .world()
+                .resource::<crate::settings::Settings>()
+                .layers()
+                .count();
+            // Release the folder's claim for the next App.
+            app.world_mut().remove_resource::<WorkspaceLock>();
+            count
+        };
+        let open = || {
+            WorkspacesPlugin::new(
+                Start::Folder(folder.clone()),
+                Some(base.join("config")),
+                |_| App::new(),
+            )
+        };
+        assert_eq!(layers(open()), 2);
+        assert_eq!(layers(open().global_settings_only()), 1);
+        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]

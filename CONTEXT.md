@@ -449,9 +449,11 @@ bedtime-document: detection reads files and the registry is an app resource.
   - The dock menu becomes `set_dock_menu([actions])` in workbench's native
     module (step 10).
   - `+open` goes to the defaults layer (not done; see the end of the plan).
-  - Workspaces stay required (they provide the working folder), with a
-    single-store mode for apps that don't need a separate workspace settings
-    layer (step 9).
+  - Workspaces stay required (they provide the working folder). Done in step
+    9: `WorkspacesPlugin::new(..).global_settings_only()` drops the
+    workspace settings layer, so every setting is global; each folder keeps
+    its own store for its layout. (Folders still hash to their own store
+    directory; only settings are shared.)
 
 ## Open questions
 
@@ -484,7 +486,7 @@ bedtime-document: detection reads files and the registry is an app resource.
 6. ~~Status bar contributions.~~ (done)
 7. ~~Route `New` through the focused panel.~~ (done)
 8. ~~Move the LSP panel and theme editor.~~ (done)
-9. Single-store workspaces.
+9. ~~Single-store workspaces.~~ (done: `global_settings_only`)
 10. Plugin menu items (including `ForPanel`), the dock menu, and the
     standard menus.
 
@@ -567,3 +569,5 @@ Do one step at a time, then review it before starting the next.
   `ShippedThemes` moved to workbench `appearance`. Bed lost
   language_servers.rs and theme_editor.rs; themes.rs is its theme files.
   Action keys: `code.show_language_servers`, `appearance.show_theme_editor`.
+- 2026-11-04: step 9 done. `WorkspacesPlugin::global_settings_only()`, with
+  a test that a folder has two settings layers by default and one with it.
