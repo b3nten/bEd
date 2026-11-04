@@ -3,23 +3,29 @@
 //! theme. `AppearancePlugin` (in `WorkbenchPlugins`) registers them; disable
 //! it to style surfaces yourself.
 //!
-//! The theme is `AppearanceSettings::theme`, a theme id looked up in
-//! bedtime-ui's `ThemeFolder` (bedtime's own dark theme without one). Which
-//! themes exist is the app's: it sets `theme` (bed does, from its theme
-//! setting).
+//! The theme is `ColorTheme`, a theme id looked up in bedtime-ui's
+//! `ThemeFolder` (bedtime's own dark theme without one). Which themes exist
+//! is the app's: `ThemesPlugin` installs its shipped themes into its themes
+//! folder and sets the default. `ThemeEditorPlugin` (opt-in) adds the Theme
+//! Editor panel.
 use crate::settings::{
     Setting, SettingsAppExt, SettingsWorldExt, settings,
-    ui::{combo, row},
+    ui::{CONTROL_WIDTH, Marks, columns, combo, row},
 };
 use crate::*;
 use bedtime_persistence::StoreId;
 use bedtime_ui::{
-    Metrics, UiContext, egui,
+    BuiltinIcon, Metrics, UiContext, egui,
     fonts::DEFAULT_FAMILY,
     theme::{FONT_SIZES, ThemeFolder},
 };
 use bevy::prelude::*;
-use std::ops::RangeInclusive;
+use std::{ops::RangeInclusive, path::PathBuf};
+
+mod theme_editor;
+pub use theme_editor::{
+    OpenThemeEditor, ThemeEditorPanel, ThemeEditorPlugin, open as open_theme_editor,
+};
 
 const OPACITY: RangeInclusive<f32> = 0.0..=1.0;
 const PANEL_RADIUS: RangeInclusive<f32> = 0.0..=32.0;
@@ -27,6 +33,14 @@ const PANEL_GAP: RangeInclusive<f32> = 0.0..=32.0;
 
 settings! {
     "Appearance" {
+        /// A theme's id: the name of a file in the themes folder (`tokyo`).
+        pub ColorTheme: String {
+            default: String::new(),
+            key: "appearance.theme",
+            label: "Theme",
+            ui: custom(theme_row),
+            apply: |world, theme| world.resource_mut::<AppearanceSettings>().theme = theme.clone(),
+        }
         /// An installed font family; `None` is the bundled Bedfont.
         pub FontFamily: Option<String> {
             default: None,
@@ -119,6 +133,7 @@ pub struct AppearancePlugin;
 impl Plugin for AppearancePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AppearanceSettings>()
+            .register_setting::<ColorTheme>()
             .register_setting::<FontFamily>()
             .register_setting::<FontSize>()
             .register_setting::<WindowOpacity>()
@@ -127,6 +142,181 @@ impl Plugin for AppearancePlugin {
             .register_setting::<PanelRadius>()
             .register_setting::<PanelGap>()
             .add_systems(Update, apply_appearance);
+    }
+}
+
+/// An app's themes: `folder` (none: only bedtime's own dark theme) gets the
+/// `shipped` themes it's missing (edited ones are left alone), and `default`
+/// is the theme until one's chosen.
+pub struct ThemesPlugin {
+    pub folder: Option<PathBuf>,
+    /// Each shipped theme's id and file (RON).
+    pub shipped: &'static [(&'static str, &'static str)],
+    pub default: &'static str,
+}
+
+impl Plugin for ThemesPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(ShippedThemes(self.shipped))
+            .set_setting_default::<ColorTheme>(self.default.into());
+        let Some(folder) = self.folder.clone() else {
+            return;
+        };
+        let result = install(&folder, self.shipped);
+        app.world_mut().workbench_mut().notify_failure(
+            &format!("Couldn't write themes to {}", folder.display()),
+            result,
+        );
+        app.insert_resource(ThemeFolder::new(folder));
+    }
+}
+
+/// The app's shipped themes: what the Theme Editor can reset one to.
+#[derive(Resource, Clone, Copy)]
+pub struct ShippedThemes(pub &'static [(&'static str, &'static str)]);
+
+impl ShippedThemes {
+    /// A shipped theme's file, if `id` is one.
+    pub fn built_in(&self, id: &str) -> Option<&'static str> {
+        self.0
+            .iter()
+            .find(|(shipped, _)| *shipped == id)
+            .map(|(_, text)| *text)
+    }
+}
+
+/// Write the shipped themes whose files are missing.
+fn install(folder: &std::path::Path, shipped: &[(&str, &str)]) -> std::io::Result<()> {
+    std::fs::create_dir_all(folder)?;
+    for (id, text) in shipped {
+        let path = folder.join(format!("{id}.ron"));
+        if !path.exists() {
+            std::fs::write(path, text)?;
+        }
+    }
+    Ok(())
+}
+
+/// The folder's themes, by name.
+fn theme_choices(folder: Option<&ThemeFolder>) -> Vec<(String, String)> {
+    let mut choices: Vec<_> = folder
+        .into_iter()
+        .flat_map(ThemeFolder::themes)
+        .map(|(id, theme)| (id.to_owned(), theme.name.clone()))
+        .collect();
+    choices.sort_by(|a, b| a.1.cmp(&b.1));
+    choices
+}
+
+/// The Theme row of the settings panel: the themes, a button to edit one in
+/// the Theme Editor (when it's installed), and one to open the folder.
+fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
+    let settings = world.settings();
+    let chosen = settings.get_at::<ColorTheme>(layer);
+    let set_here = settings.get_in::<ColorTheme>(layer).is_some();
+    let marks = Marks::new(
+        settings,
+        layer,
+        settings.overridden_above::<ColorTheme>(layer),
+    );
+    let themes = world.get_resource::<ThemeFolder>();
+    let choices = theme_choices(themes);
+    let found = themes.and_then(|themes| themes.get(&chosen));
+    let shown = found.map_or_else(|| chosen.clone(), |theme| theme.name.clone());
+    let broken: Vec<String> = themes
+        .into_iter()
+        .flat_map(ThemeFolder::errors)
+        .map(|(path, error)| format!("{}: {error}", path.display()))
+        .collect();
+    let folder = themes.map(|themes| themes.path().to_path_buf());
+    let editor = world.contains_resource::<theme_editor::Installed>();
+    let found = found.is_some();
+    let mut value = chosen.clone();
+    let mut reset = false;
+    let mut open_folder = false;
+    let mut edit = false;
+    columns(
+        ui,
+        "Theme",
+        None,
+        |ui| marks.overridden(ui, context),
+        |ui| {
+            egui::ComboBox::from_id_salt("theme")
+                .width(CONTROL_WIDTH)
+                .selected_text(shown)
+                .show_ui(ui, |ui| {
+                    for (id, name) in &choices {
+                        ui.selectable_value(&mut value, id.clone(), name);
+                    }
+                });
+        },
+        |ui| {
+            reset = set_here && marks.reset(ui, context);
+            if editor {
+                let mut frame = context.frame(ui);
+                let button = frame.icon_button_sized(BuiltinIcon::Sliders, 14.0);
+                button.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Edit theme")
+                });
+                frame.tooltip(
+                    &button,
+                    "Edit this theme's colors, or make your own from it",
+                );
+                edit = button.clicked();
+            }
+            if folder.is_some() {
+                let mut frame = context.frame(ui);
+                let button = frame.icon_button_sized(BuiltinIcon::FolderOpen, 14.0);
+                frame.tooltip(&button, "Open the themes folder to edit or add themes");
+                open_folder = button.clicked();
+            }
+            if !found {
+                ui.weak("Not found");
+            }
+            if !broken.is_empty() {
+                let warning = bedtime_ui::theme::color(context.theme.palette.warning);
+                let mut frame = context.frame(ui);
+                let side = context.metrics.font_size;
+                let icon = frame.icon(BuiltinIcon::CircleAlert, side, warning);
+                let label = format!("{} theme file(s) have errors", broken.len());
+                icon.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label)
+                });
+                frame.tooltip(&icon, format!("{label}:\n{}", broken.join("\n")));
+            }
+        },
+    );
+    if value != chosen {
+        let result = world.settings_mut().set::<ColorTheme>(layer, value);
+        world
+            .workbench_mut()
+            .notify_failure("Couldn't change the theme", result);
+    }
+    if reset {
+        let result = world.settings_mut().clear::<ColorTheme>(layer);
+        world
+            .workbench_mut()
+            .notify_failure("Couldn't reset the theme", result);
+    }
+    if edit {
+        let result = theme_editor::open(world, Some(chosen.clone()));
+        world
+            .workbench_mut()
+            .notify_failure("Couldn't open the Theme Editor", result);
+    }
+    if open_folder && let Some(folder) = folder {
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(windows) {
+            "explorer"
+        } else {
+            "xdg-open"
+        };
+        let result = std::fs::create_dir_all(&folder)
+            .and_then(|()| std::process::Command::new(opener).arg(&folder).spawn());
+        world
+            .workbench_mut()
+            .notify_failure(&format!("Couldn't open {}", folder.display()), result);
     }
 }
 

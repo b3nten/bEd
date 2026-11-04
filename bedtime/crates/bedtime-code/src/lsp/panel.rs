@@ -1,13 +1,16 @@
-use bedtime_code::lsp::{
+//! The Language Servers panel: each server, built in or added, what it
+//! runs and how, per settings layer, with its status. The changes are the
+//! `LanguageServerConfig` setting, which builds the `ServerCatalog`.
+use super::{
     InstalledServers, ServerCatalog, ServerEntry, ServerSettings, ServerStatus, config::resolve,
     restart, server_states,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, egui, theme};
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
-    persistence::{ReflectPersist, StoreId, WorkbenchStore},
+    Action, ActionAppExt, Handler, Panel,
+    persistence::{ReflectPersist, StoreId},
     settings::{Settings, SettingsAppExt, SettingsWorldExt, settings, ui::layer_tabs},
-    workspaces::{GlobalStore, Workspace},
+    show_panel,
 };
 use bevy::{platform::collections::HashMap, prelude::*};
 use std::collections::BTreeMap;
@@ -17,13 +20,12 @@ settings! {
     pub LanguageServerConfig: BTreeMap<String, ServerSettings> {
         default: BTreeMap::new(),
         key: "language_servers",
-        only_in: [GlobalStore, WorkbenchStore],
     }
 }
 
 pub struct OpenLanguageServers;
 impl Action for OpenLanguageServers {
-    const KEY: &'static str = "app.open_language_servers";
+    const KEY: &'static str = "code.show_language_servers";
     const LABEL: &'static str = "Language Servers";
 }
 
@@ -33,13 +35,11 @@ impl Plugin for LanguageServersPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<LanguageServersPanel>()
             .register_setting::<LanguageServerConfig>()
-            .add_action_handler::<OpenLanguageServers>(Handler::new(open))
+            .add_action_handler::<OpenLanguageServers>(Handler::new(
+                show_panel::<LanguageServersPanel>,
+            ))
             .add_systems(Update, refresh_catalog.run_if(resource_changed::<Settings>));
     }
-}
-
-fn open(world: &mut World, _: ActionInvocation) -> ActionResult {
-    world.focus_or_open::<LanguageServersPanel>().map(|_| ())
 }
 
 /// Each layer's changes, lowest first, up to `top` (every layer without one).
@@ -129,17 +129,11 @@ impl Panel for LanguageServersPanel {
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         let mut asked = Vec::new();
         egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
-            let Some(layer) = layer_tabs(ui, world, |layer, label| {
-                match world.get_resource::<Workspace>() {
-                    Some(workspace) if layer == StoreId::of::<WorkbenchStore>() => {
-                        format!("{label}: {}", workspace.name())
-                    }
-                    _ => label.to_owned(),
-                }
-            }) else {
+            let Some(layer) = layer_tabs(ui, world, |_, label| label.to_owned()) else {
                 return;
             };
-            let note = if layer == StoreId::of::<GlobalStore>() {
+            // The first layer is everywhere's (global); later ones override it.
+            let note = if world.settings().layers().next() == Some(layer) {
                 "Changes here apply to every workspace."
             } else {
                 "Changes here apply to this workspace, over the global ones."

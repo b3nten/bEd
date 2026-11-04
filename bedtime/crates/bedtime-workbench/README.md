@@ -213,6 +213,18 @@ pressed where it does nothing) isn't a failure and isn't reported. Anything
 that could lose work, such as a document that won't save, asks with a dialog
 instead.
 
+## Appearance (`ui` and `persistence` features)
+
+`appearance::AppearancePlugin` (in `WorkbenchPlugins`) applies the appearance
+settings to every `LayoutSurface`: the theme (`ColorTheme`, an id in
+bedtime-ui's `ThemeFolder`), the font and size, the window's opacity and blur,
+and the panels' opacity, corner radius and gap. `ThemesPlugin { folder,
+shipped, default }` is an app's themes: it writes the shipped themes missing
+from the folder, makes the folder the `ThemeFolder`, and sets the default
+theme. `ThemeEditorPlugin` (opt-in) adds the Theme Editor panel
+(`appearance.show_theme_editor`): duplicate, rename, recolor, reset a
+shipped theme, saved to its file as you edit.
+
 ## Status bar (`ui` feature)
 
 `status::body` is a window body (`SurfaceBody(status::body)`): the panels,

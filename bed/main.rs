@@ -12,7 +12,6 @@ mod dock;
 mod effects;
 mod files;
 mod git;
-mod language_servers;
 mod layouts;
 mod mascots;
 mod menus;
@@ -21,7 +20,6 @@ mod preview;
 mod search;
 mod settings;
 mod terminal;
-mod theme_editor;
 mod themes;
 mod workspace;
 
@@ -58,11 +56,13 @@ pub fn app(start: Start) -> App {
         UiPlugin,
         WorkbenchPlugins,
         workspaces,
+        themes::plugin(),
+        // Language servers as settings, and their panel.
+        bedtime_code::lsp::LanguageServersPanelPlugin,
         settings::BedSettingsPlugin,
         menus::MenusPlugin,
         layouts::LayoutSlotsPlugin,
         effects::EffectsPlugin,
-        themes::ThemesPlugin,
         workspace::WorkspacesPanelPlugin,
         files::FilesPlugin,
         terminal::TerminalsPlugin,
@@ -72,12 +72,10 @@ pub fn app(start: Start) -> App {
     // Look for installed fonts now, so Settings can list them when opened.
     .add_plugins((
         new::NewPlugin,
-        language_servers::LanguageServersPanelPlugin,
         git::BedGitPlugin,
         bedtime_http_client::HttpClientPlugin,
         search::BedSearchPlugin,
         preview::BedPreviewPlugin,
-        theme_editor::ThemeEditorPlugin,
     ))
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     // The status bar's right side: the workspace, then the language server.

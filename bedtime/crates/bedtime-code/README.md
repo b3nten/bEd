@@ -192,6 +192,15 @@ connects servers to workbench documents:
   without the UI.
 - Restart Language Server; `restart` and `stop` for apps.
 
+## Language Servers panel
+
+With `persistence`, `lsp::LanguageServersPanelPlugin` (opt-in) makes the
+servers a setting and adds the Language Servers panel
+(`code.show_language_servers`): each server, built in or added, its program,
+arguments and settings per settings layer, and its status. The changes are
+the `LanguageServerConfig` setting, which builds the `ServerCatalog`.
+Without it, an app sets `LanguageServers` itself.
+
 ## Status bar
 
 `lsp::status::status_item` is a status bar item for the app to add: the

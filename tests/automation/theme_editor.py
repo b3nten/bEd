@@ -16,7 +16,7 @@ with Bed(settings={"appearance.theme": '"tokyo"'}) as bed:
     tokyo = folder / "tokyo.ron"
     shipped = tokyo.read_text()
     bed.key("Primary+2")
-    bed.invoke("app.open_theme_editor")
+    bed.invoke("appearance.show_theme_editor")
     assert bed.exists("Tokyo Night"), "the theme in use is edited"
     assert bed.find("Reset theme")["disabled"], "nothing to reset yet"
     bed.screenshot("theme-editor")

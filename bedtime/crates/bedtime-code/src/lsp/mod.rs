@@ -18,11 +18,17 @@ mod protocol;
 pub use activity::{
     MessageKind, ProgressToken, ProjectStatus, ServerActivity, ServerMessage, WorkProgress,
 };
+#[cfg(feature = "persistence")]
+mod panel;
 pub mod status;
 #[cfg(unix)]
 mod transport;
 #[cfg(unix)]
 pub use backend::*;
+#[cfg(feature = "persistence")]
+pub use panel::{
+    LanguageServerConfig, LanguageServersPanel, LanguageServersPanelPlugin, OpenLanguageServers,
+};
 pub use protocol::{Encoding, FileUri, Position, ProtocolRange};
 #[cfg(unix)]
 pub(crate) mod actions;

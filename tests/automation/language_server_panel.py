@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory() as folder:
         bed.click(row(bed, "src"))
         until(bed, lambda: bed.exists("main.rs"), "src opens")
         bed.click(row(bed, "main.rs"))
-        bed.invoke("app.open_language_servers")
+        bed.invoke("code.show_language_servers")
         until(bed, lambda: bed.exists("rust-analyzer"), "the panel lists rust-analyzer")
         until(bed, lambda: (card_status(bed) or "").startswith("Running"), "rust-analyzer runs", 120)
         assert bed.exists(contains="Not installed ("), "the not-installed section"

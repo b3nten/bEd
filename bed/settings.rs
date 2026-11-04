@@ -1,41 +1,26 @@
-//! bEd's settings: its theme setting, its own defaults for plugins'
-//! settings, and how the Settings panel lays them out. The settings
+//! bEd's settings: its own defaults for plugins' settings, its themes, and
+//! how the Settings panel lays them out. The settings
 //! themselves belong to the crates whose behaviour they change (appearance
 //! and autosave to workbench, the editor's to bedtime-code, the file tree's
 //! to bedtime-filetree, the screen effects to `effects`).
 use bedtime_workbench::{
     appearance::{
-        AppearanceSettings, FontFamily, FontSize, PanelGap, PanelOpacity, PanelRadius,
+        ColorTheme, FontFamily, FontSize, PanelGap, PanelOpacity, PanelRadius, ThemeEditorPlugin,
         WindowBlurEnabled, WindowOpacity,
     },
     settings::{
-        SettingsAppExt, SettingsPanelPlugin, settings,
+        SettingsAppExt, SettingsPanelPlugin,
         ui::{SettingsLayout, SettingsUiAppExt},
     },
     settings_panel,
 };
 use bevy::prelude::*;
 
-settings! {
-    "Appearance" {
-        /// A theme's id: the name of a file in the themes folder (`tokyo`).
-        pub ColorTheme: String {
-            default: crate::themes::DEFAULT.into(),
-            key: "appearance.theme",
-            label: "Theme",
-            ui: custom(crate::themes::row),
-            apply: |world, theme| world.resource_mut::<AppearanceSettings>().theme = theme.clone(),
-        }
-    }
-}
-
 pub struct BedSettingsPlugin;
 
 impl Plugin for BedSettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(SettingsPanelPlugin)
-            .init_resource::<AppearanceSettings>()
-            .register_setting::<ColorTheme>()
+        app.add_plugins((SettingsPanelPlugin, ThemeEditorPlugin))
             // bEd saves as you go.
             .set_setting_default::<bedtime_workbench::Autosave>(true)
             .set_settings_layout(layout());
@@ -64,6 +49,7 @@ fn layout() -> SettingsLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bedtime_workbench::appearance::AppearanceSettings;
     use bedtime_workbench::{
         KeyChord, WorkbenchCorePlugins,
         settings::{SettingsPanel, ui::SettingsUi},
@@ -77,6 +63,11 @@ mod tests {
             bedtime_workbench::DocumentSettingsPlugin,
             BedSettingsPlugin,
             crate::layouts::LayoutSlotsPlugin,
+            // bEd's themes, without writing a folder.
+            bedtime_workbench::appearance::ThemesPlugin {
+                folder: None,
+                ..crate::themes::plugin()
+            },
         ));
         app
     }

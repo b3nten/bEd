@@ -404,10 +404,8 @@ bedtime-document: detection reads files and the registry is an app resource.
     "Workspace: <name>"), errors (`Stores::error_in`), the settings, then
     keyboard shortcuts.
   - `settings::limit` is the shared "clamp a hand-edited number" helper.
-  - Not moved yet: bed's `ColorTheme` setting and theme row stay in bed with
-    its shipped themes and Theme Editor, until step 8 moves the theme editor
-    (they write `AppearanceSettings::theme`). Bed's screen effects and
-    language-server settings stay with bed's panels.
+  - The theme moved in step 8: `ColorTheme` and its row are in workbench
+    `appearance`. Bed's screen-effects settings stay in bed.
   - Saved keys didn't change, so existing settings files still apply.
 - **Status bar** (done in step 6): workbench's `status` module (`ui`
   feature). `status::body` is a window body: the panels with a bar along the
@@ -433,13 +431,27 @@ bedtime-document: detection reads files and the registry is an app resource.
   bed's `new.rs`; moving it means a native file-dialog dependency in
   workbench, left for later.
 - **Moves:**
-  - The LSP panel goes to bedtime-code; the theme editor to bedtime-ui.
+  - Done in step 8:
+    - The Language Servers panel is in bedtime-code
+      (`lsp::LanguageServersPanelPlugin`, `code.show_language_servers`, with
+      `persistence`). It's opt-in: it makes the servers a setting that builds
+      the `ServerCatalog`, and an app (or a test) without it sets
+      `LanguageServers` itself. Its layer labels and notes no longer need
+      workspaces (the first layer is global).
+    - The theme setting, its row and the Theme Editor are in workbench
+      `appearance` (the editor needs settings, so bedtime-ui can't hold it).
+      `ThemesPlugin { folder, shipped, default }` installs an app's shipped
+      themes, sets `ThemeFolder` and the default theme, and keeps the
+      shipped list (`ShippedThemes`) for the editor's Reset.
+      `ThemeEditorPlugin` is opt-in (`appearance.show_theme_editor`); the
+      theme row offers Edit only when it's installed. Bed keeps only its
+      theme files and default (`themes::plugin()`).
   - The dock menu becomes `set_dock_menu([actions])` in workbench's native
-    module.
-  - `+open` goes to the defaults layer.
+    module (step 10).
+  - `+open` goes to the defaults layer (not done; see the end of the plan).
   - Workspaces stay required (they provide the working folder), with a
     single-store mode for apps that don't need a separate workspace settings
-    layer.
+    layer (step 9).
 
 ## Open questions
 
@@ -471,7 +483,7 @@ bedtime-document: detection reads files and the registry is an app resource.
 5. ~~Settings declared by the crates that own them; the generic settings panel.~~ (done)
 6. ~~Status bar contributions.~~ (done)
 7. ~~Route `New` through the focused panel.~~ (done)
-8. Move the LSP panel and theme editor.
+8. ~~Move the LSP panel and theme editor.~~ (done)
 9. Single-store workspaces.
 10. Plugin menu items (including `ForPanel`), the dock menu, and the
     standard menus.
@@ -550,3 +562,8 @@ Do one step at a time, then review it before starting the next.
   feature), the terminal's own New handler; bed's `New` action is gone
   (`app.new` is now `document.new`). Also fixed a dead-code warning from 4a
   without the `files` feature.
+- 2026-11-04: step 8 done. Language Servers panel moved to bedtime-code
+  (opt-in plugin); Theme Editor, theme setting and row, `ThemesPlugin`,
+  `ShippedThemes` moved to workbench `appearance`. Bed lost
+  language_servers.rs and theme_editor.rs; themes.rs is its theme files.
+  Action keys: `code.show_language_servers`, `appearance.show_theme_editor`.

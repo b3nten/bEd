@@ -1,16 +1,15 @@
 //! The Theme Editor panel: pick a theme from the themes folder, duplicate it
 //! under a new name, and change its colors. Changes are saved to the theme's
 //! file shortly after you stop editing; a shipped theme can be reset.
-use crate::{settings::ColorTheme, themes};
+use super::{AppearanceSettings, ColorTheme, ShippedThemes};
+use crate::WorkbenchWorldExt as _;
+use crate::{
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
+    persistence::ReflectPersist, settings::SettingsWorldExt,
+};
 use bedtime_ui::{
     BuiltinIcon, UiContext, egui,
     theme::{Appearance, Palette, Rgba, Theme, ThemeFolder},
-};
-use bedtime_workbench::WorkbenchWorldExt as _;
-use bedtime_workbench::appearance::AppearanceSettings;
-use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
-    persistence::ReflectPersist, settings::SettingsWorldExt,
 };
 use bevy::prelude::*;
 use std::time::{Duration, Instant};
@@ -20,11 +19,15 @@ const SAVE_AFTER: Duration = Duration::from_millis(400);
 
 pub struct OpenThemeEditor;
 impl Action for OpenThemeEditor {
-    const KEY: &'static str = "app.open_theme_editor";
+    const KEY: &'static str = "appearance.show_theme_editor";
     const LABEL: &'static str = "Theme Editor";
 }
 
 pub struct ThemeEditorPlugin;
+
+/// The Theme Editor is installed: the theme row offers to edit a theme.
+#[derive(Resource, Default)]
+pub(super) struct Installed;
 
 impl Plugin for ThemeEditorPlugin {
     fn build(&self, app: &mut App) {
@@ -32,6 +35,7 @@ impl Plugin for ThemeEditorPlugin {
             .add_action_handler::<OpenThemeEditor>(Handler::new(|world, _: ActionInvocation| {
                 open(world, None)
             }))
+            .init_resource::<Installed>()
             .add_systems(Update, autosave);
     }
 }
@@ -105,8 +109,8 @@ impl Panel for ThemeEditorPanel {
         let folder = world.resource::<ThemeFolder>();
         state.load(&id, folder);
         let choices: Vec<(String, String)> = sorted_themes(folder);
-        let shipped = themes::built_in(&id);
-        let differs = shipped.is_some_and(|text| {
+        let shipped = shipped_theme(world, &id);
+        let differs = shipped.as_deref().is_some_and(|text| {
             state
                 .draft
                 .as_ref()
@@ -347,19 +351,24 @@ fn act(world: &mut World, panel: Entity, request: Request) -> Result<(), String>
     let editing = match request {
         Request::Edit(other) => other,
         Request::Copy(name) => {
-            let copy = unused_id(folder, &slug(&name), None);
+            let copy = unused_id(folder, world.get_resource(), &slug(&name), None);
             draft.theme.name = name;
             save(world, &copy, &draft.theme)?;
             copy
         }
         Request::Rename(name) => {
             draft.theme.name = name;
-            if themes::built_in(&id).is_some() {
+            if shipped_theme(world, &id).is_some() {
                 // Shipped themes keep their file; only the name changes.
                 save(world, &id, &draft.theme)?;
                 id
             } else {
-                let renamed = unused_id(folder, &slug(&draft.theme.name), Some(&id));
+                let renamed = unused_id(
+                    folder,
+                    world.get_resource(),
+                    &slug(&draft.theme.name),
+                    Some(&id),
+                );
                 save(world, &renamed, &draft.theme)?;
                 if renamed != id {
                     remove(world, &id)?;
@@ -369,8 +378,8 @@ fn act(world: &mut World, panel: Entity, request: Request) -> Result<(), String>
             }
         }
         Request::Reset => {
-            let text = themes::built_in(&id).ok_or("Only shipped themes can be reset")?;
-            write(world, &id, text)?;
+            let text = shipped_theme(world, &id).ok_or("Only shipped themes can be reset")?;
+            write(world, &id, &text)?;
             id
         }
         Request::Delete => {
@@ -472,12 +481,26 @@ fn slug(name: &str) -> String {
     }
 }
 
+/// A shipped theme's file, if `id` is one (`ThemesPlugin`'s `shipped`).
+fn shipped_theme(world: &World, id: &str) -> Option<String> {
+    world
+        .get_resource::<ShippedThemes>()
+        .and_then(|shipped| shipped.built_in(id))
+        .map(str::to_owned)
+}
+
 /// `wanted`, or `wanted-2`, `wanted-3`… whichever no file (other than
 /// `keeping`'s own) or shipped theme uses.
-fn unused_id(folder: &ThemeFolder, wanted: &str, keeping: Option<&str>) -> String {
+fn unused_id(
+    folder: &ThemeFolder,
+    shipped: Option<&ShippedThemes>,
+    wanted: &str,
+    keeping: Option<&str>,
+) -> String {
     let taken = |id: &str| {
         keeping != Some(id)
-            && (themes::built_in(id).is_some() || folder.path().join(format!("{id}.ron")).exists())
+            && (shipped.is_some_and(|shipped| shipped.built_in(id).is_some())
+                || folder.path().join(format!("{id}.ron")).exists())
     };
     if !taken(wanted) {
         return wanted.into();
@@ -823,10 +846,12 @@ mod tests {
         std::fs::create_dir_all(&path).unwrap();
         std::fs::write(path.join("mine.ron"), Theme::dark().to_ron()).unwrap();
         let folder = ThemeFolder::new(&path);
-        assert_eq!(unused_id(&folder, "mine", None), "mine-2");
-        assert_eq!(unused_id(&folder, "mine", Some("mine")), "mine");
-        assert_eq!(unused_id(&folder, "tokyo", None), "tokyo-2");
-        assert_eq!(unused_id(&folder, "fresh", None), "fresh");
+        let shipped = ShippedThemes(&[("tokyo", "")]);
+        let id = |wanted, keeping| unused_id(&folder, Some(&shipped), wanted, keeping);
+        assert_eq!(id("mine", None), "mine-2");
+        assert_eq!(id("mine", Some("mine")), "mine");
+        assert_eq!(id("tokyo", None), "tokyo-2");
+        assert_eq!(id("fresh", None), "fresh");
         std::fs::remove_dir_all(path).unwrap();
     }
 }

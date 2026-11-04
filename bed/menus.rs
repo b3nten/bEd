@@ -182,14 +182,14 @@ fn compose_menus(mut commands: Commands) {
     commands.spawn((MenuItem::action::<ResetZoom>(), InMenu(view)));
     commands.spawn((MenuSeparator, InMenu(view)));
     commands.spawn((
-        MenuItem::action::<crate::language_servers::OpenLanguageServers>(),
+        MenuItem::action::<bedtime_code::lsp::OpenLanguageServers>(),
         InMenu(view),
     ));
     commands.spawn((MenuItem::action::<bedtime_mascots::ShowBed>(), InMenu(view)));
     commands.spawn((MenuItem::action::<NewTerminal>(), InMenu(view)));
     commands.spawn((MenuItem::action::<OpenWorkspaces>(), InMenu(view)));
     commands.spawn((
-        MenuItem::action::<crate::theme_editor::OpenThemeEditor>(),
+        MenuItem::action::<bedtime_workbench::appearance::OpenThemeEditor>(),
         InMenu(view),
     ));
     commands.spawn((MenuItem::action::<UseLayout<0>>(), InMenu(layout)));
