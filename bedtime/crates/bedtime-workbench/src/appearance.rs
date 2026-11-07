@@ -145,9 +145,10 @@ impl Plugin for AppearancePlugin {
     }
 }
 
-/// An app's themes: `folder` (none: only bedtime's own dark theme) gets the
-/// `shipped` themes it's missing (edited ones are left alone), and `default`
-/// is the theme until one's chosen.
+/// An app's themes: `folder` (none: only bedtime's own dark theme; relative:
+/// under the `PersistenceDirectory`) gets the `shipped` themes it's missing
+/// (edited ones are left alone), and `default` is the theme until one's
+/// chosen.
 pub struct ThemesPlugin {
     pub folder: Option<PathBuf>,
     /// Each shipped theme's id and file (RON).
@@ -159,7 +160,15 @@ impl Plugin for ThemesPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ShippedThemes(self.shipped))
             .set_setting_default::<ColorTheme>(self.default.into());
-        let Some(folder) = self.folder.clone() else {
+        // A relative folder is under the persistence directory, if there is one.
+        let folder = match &self.folder {
+            Some(folder) if folder.is_relative() => app
+                .world()
+                .get_resource::<crate::persistence::PersistenceDirectory>()
+                .and_then(|directory| directory.join(folder)),
+            folder => folder.clone(),
+        };
+        let Some(folder) = folder else {
             return;
         };
         let result = install(&folder, self.shipped);

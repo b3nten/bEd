@@ -35,11 +35,54 @@ use std::path::PathBuf;
 
 /// Loads stores before `Startup` and saves them in `Last`. Adding stores and
 /// persisted types works before or after this plugin.
-pub struct PersistencePlugin;
+///
+/// `directory` is where the app keeps what it saves: the
+/// [`PersistenceDirectory`] resource, which plugins put their stores and
+/// files under. Without one, nothing is saved.
+#[derive(Default)]
+pub struct PersistencePlugin {
+    pub directory: Option<PathBuf>,
+}
+
+impl PersistencePlugin {
+    /// Save under `directory`.
+    pub fn directory(directory: impl Into<PathBuf>) -> Self {
+        Self {
+            directory: Some(directory.into()),
+        }
+    }
+
+    /// Save in `app`'s configuration directory: `$<APP>_CONFIG_DIR` if it's
+    /// set (`BED_CONFIG_DIR` for `bed`), else the usual place
+    /// ([`config_directory`]).
+    pub fn for_app(app: &str) -> Self {
+        let variable = format!("{}_CONFIG_DIR", app.to_uppercase().replace('-', "_"));
+        Self {
+            directory: config_directory(app, Some(&variable)),
+        }
+    }
+}
+
+/// Where the app keeps what it saves, from [`PersistencePlugin`]. `None`
+/// saves nothing.
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PersistenceDirectory(pub Option<PathBuf>);
+
+impl PersistenceDirectory {
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.0.as_deref()
+    }
+
+    /// `relative` under the directory, if there is one.
+    pub fn join(&self, relative: impl AsRef<std::path::Path>) -> Option<PathBuf> {
+        self.0.as_ref().map(|directory| directory.join(relative))
+    }
+}
 
 impl Plugin for PersistencePlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Stores>()
+        app.insert_resource(PersistenceDirectory(self.directory.clone()))
+            .init_resource::<Stores>()
             .init_resource::<world::Hooks>()
             .add_message::<StoreError>()
             .add_systems(PreStartup, stores::load.in_set(StoreSystems::Load))

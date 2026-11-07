@@ -8,7 +8,7 @@
 //! (`bevy::winit::relaunch`, from the bevy_winit fork), so nothing from the
 //! previous workspace survives.
 //!
-//! The config directory holds `global/` (the `GlobalStore`: app-wide settings
+//! The persistence directory (`PersistenceDirectory`) holds `global/` (the `GlobalStore`: app-wide settings
 //! and data, such as the recent list) and `workspaces/<hash>/` (each
 //! workspace's `WorkbenchStore`), keyed by a stable hash of the folder's path
 //! so repositories aren't touched. A lock file stops two instances from saving
@@ -16,8 +16,8 @@
 use crate::{
     ErrorDialog, ErrorDialogWorldExt, Notification, Root, WorkbenchWorldExt,
     persistence::{
-        DirectoryStore, Persisted, PersistenceAppExt, Store, StoreBackend, WorkbenchStore,
-        read_persisted, write_persisted,
+        DirectoryStore, Persisted, PersistenceAppExt, PersistenceDirectory, Store, StoreBackend,
+        WorkbenchStore, read_persisted, write_persisted,
     },
     settings::{Setting, SettingsAppExt, read_setting, settings},
 };
@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, TryLockError},
     path::{Path, PathBuf},
-    sync::Mutex,
 };
 
 /// App-wide settings and data, shared by every workspace: `<config>/global`.
@@ -204,65 +203,34 @@ pub enum Start {
     Default,
 }
 
-/// Opens a workspace for this App and saves it there. Built before the App,
-/// since the window's title usually needs the workspace:
+/// Opens a workspace for this App and saves it under the
+/// `PersistenceDirectory` (`global/` and `workspaces/<hash>/`). Add it after
+/// `PersistencePlugin` (part of `WorkbenchPlugins`).
 ///
-/// ```ignore
-/// let workspaces = WorkspacesPlugin::new(start, config_directory, app);
-/// let title = workspaces.workspace().name();
-/// app.add_plugins(workspaces);
-/// ```
-///
-/// It adds the global store and settings layer, then (for a folder) the
-/// workspace's settings layer and, when it's claimed, its store; and the
-/// `Workspace`, `Root` and `RecentWorkspaces` resources.
+/// It reads what the global store remembers (recent folders, whether to
+/// reopen the last), chooses and claims the workspace, and puts it first on
+/// the recent list. Then it adds the global store and settings layer, then
+/// (for a folder) the workspace's settings layer and, when it's claimed, its
+/// store; and the `Workspace`, `Root` and `RecentWorkspaces` resources.
 pub struct WorkspacesPlugin {
-    opened: Mutex<Option<Opened>>,
-    workspace: Workspace,
-    settings: WorkspaceSettings,
-    recent: RecentWorkspaces,
-    /// Couldn't update the recent list.
-    remembered: Result<(), String>,
+    start: Start,
+    app: fn(Start) -> App,
     /// A folder gets its own settings layer (over the global one).
     workspace_settings: bool,
 }
 
-/// Where workspaces are kept, and how to build the App for another one.
+/// How to build the App for another workspace, when switching.
 #[derive(Resource, Clone)]
 pub struct WorkspaceSettings {
-    /// The config directory; `None` saves nothing.
-    pub config: Option<PathBuf>,
-    /// Builds the App for another workspace, when switching.
     pub app: fn(Start) -> App,
 }
 
 impl WorkspacesPlugin {
-    /// Open `start`'s workspace: read what the global store remembers (recent
-    /// folders, whether to reopen the last), choose and claim the workspace,
-    /// and put it first on the recent list.
-    pub fn new(start: Start, config: Option<PathBuf>, app: fn(Start) -> App) -> Self {
-        let global = config
-            .as_ref()
-            .map(|config| DirectoryStore::new(config.join("global")));
-        let mut recent = RecentWorkspaces::default();
-        let mut reopen_last = <ReopenLastWorkspace as Setting>::default();
-        if let Some(global) = &global {
-            recent = RecentWorkspaces::read(global);
-            reopen_last = read_setting::<ReopenLastWorkspace>(global).unwrap_or(reopen_last);
-        }
-        let opened = choose(start, config.as_deref(), &recent, reopen_last);
-        let remembered = match &global {
-            Some(global) if !opened.workspace.default => {
-                recent.remember(global, &opened.workspace.root)
-            }
-            _ => Ok(()),
-        };
+    /// Open `start`'s workspace; `app` builds the App for another one.
+    pub fn new(start: Start, app: fn(Start) -> App) -> Self {
         Self {
-            workspace: opened.workspace.clone(),
-            opened: Mutex::new(Some(opened)),
-            settings: WorkspaceSettings { config, app },
-            recent,
-            remembered,
+            start,
+            app,
             workspace_settings: true,
         }
     }
@@ -275,26 +243,34 @@ impl WorkspacesPlugin {
         self.workspace_settings = false;
         self
     }
-
-    /// The workspace this App opens.
-    pub fn workspace(&self) -> &Workspace {
-        &self.workspace
-    }
 }
 
 impl Plugin for WorkspacesPlugin {
     fn build(&self, app: &mut App) {
+        let config = app
+            .world()
+            .get_resource::<PersistenceDirectory>()
+            .expect("Add WorkspacesPlugin after PersistencePlugin (part of WorkbenchPlugins)")
+            .0
+            .clone();
+        let global = config
+            .as_ref()
+            .map(|config| DirectoryStore::new(config.join("global")));
+        let mut recent = RecentWorkspaces::default();
+        let mut reopen_last = <ReopenLastWorkspace as Setting>::default();
+        if let Some(global) = &global {
+            recent = RecentWorkspaces::read(global);
+            reopen_last = read_setting::<ReopenLastWorkspace>(global).unwrap_or(reopen_last);
+        }
         let Opened {
             workspace,
             lock,
             unclaimed,
-        } = self
-            .opened
-            .lock()
-            .unwrap()
-            .take()
-            .expect("WorkspacesPlugin is added once");
-        let config = self.settings.config.clone();
+        } = choose(self.start.clone(), config.as_deref(), &recent, reopen_last);
+        let remembered = match &global {
+            Some(global) if !workspace.default => recent.remember(global, &workspace.root),
+            _ => Ok(()),
+        };
         if let Some(config) = &config {
             app.add_store::<GlobalStore>(DirectoryStore::new(config.join("global")));
         }
@@ -319,10 +295,10 @@ impl Plugin for WorkspacesPlugin {
         }
         app.insert_resource(Root(workspace.root.clone()))
             .insert_resource(workspace)
-            .insert_resource(self.recent.clone())
-            .insert_resource(self.settings.clone())
+            .insert_resource(recent)
+            .insert_resource(WorkspaceSettings { app: self.app })
             .add_systems(Update, report_unclaimed);
-        if let Err(error) = &self.remembered {
+        if let Err(error) = &remembered {
             app.world_mut()
                 .workbench_mut()
                 .notify(Notification::error(format!(
@@ -339,10 +315,7 @@ fn settings_location(world: &World, layer: bedtime_persistence::StoreId) -> Opti
     if layer != bedtime_persistence::StoreId::of::<GlobalStore>() {
         return Some("Saved with this workspace. Values set here override the global ones.".into());
     }
-    let Some(config) = world
-        .get_resource::<WorkspaceSettings>()
-        .and_then(|settings| settings.config.clone())
-    else {
+    let Some(config) = world.resource::<PersistenceDirectory>().0.clone() else {
         return Some("Not saved: there's no configuration directory".into());
     };
     let path = config.join("global").join("settings.ron");
@@ -375,7 +348,7 @@ pub fn switch(world: &mut World, start: Start) -> Result<(), String> {
     }
     let settings = world.resource::<WorkspaceSettings>().clone();
     if !next.default
-        && let Some(config) = &settings.config
+        && let Some(config) = world.resource::<PersistenceDirectory>().path()
         && !available(&next.store_directory(config))
     {
         return Err(format!("{} is open in another window.", next.name()));
@@ -609,7 +582,12 @@ mod tests {
         fs::create_dir_all(&folder).unwrap();
         let layers = |plugin: WorkspacesPlugin| {
             let mut app = App::new();
-            app.add_plugins((crate::WorkbenchCorePlugins, plugin));
+            app.add_plugins((
+                crate::WorkbenchCorePlugins.set(crate::persistence::PersistencePlugin::directory(
+                    base.join("config"),
+                )),
+                plugin,
+            ));
             let count = app
                 .world()
                 .resource::<crate::settings::Settings>()
@@ -619,13 +597,7 @@ mod tests {
             app.world_mut().remove_resource::<WorkspaceLock>();
             count
         };
-        let open = || {
-            WorkspacesPlugin::new(
-                Start::Folder(folder.clone()),
-                Some(base.join("config")),
-                |_| App::new(),
-            )
-        };
+        let open = || WorkspacesPlugin::new(Start::Folder(folder.clone()), |_| App::new());
         assert_eq!(layers(open()), 2);
         assert_eq!(layers(open().global_settings_only()), 1);
         fs::remove_dir_all(&base).unwrap();

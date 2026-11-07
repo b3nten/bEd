@@ -18,8 +18,7 @@ fn main() -> AppExit {
 }
 
 pub fn app(start: Start) -> App {
-    let config = bedtime_persistence::config_directory("bed", Some("BED_CONFIG_DIR"));
-    let workspaces = workspace::WorkspacesPlugin::new(start, config.clone(), app);
+    let workspaces = workspace::WorkspacesPlugin::new(start, app);
 
     let mut app = App::new();
 
@@ -42,7 +41,9 @@ pub fn app(start: Start) -> App {
             ..default()
         }),
         UiPlugin,
-        WorkbenchPlugins.set(bedtime_workbench::StandardMenusPlugin { app_name: "bEd" }),
+        WorkbenchPlugins
+            .set(bedtime_workbench::StandardMenusPlugin { app_name: "bEd" })
+            .set(bedtime_persistence::PersistencePlugin::for_app("bed")),
         workspaces,
         themes::plugin(),
         bedtime_code::lsp::LanguageServersPanelPlugin,
@@ -160,7 +161,6 @@ mod themes {
     //! bEd's themes: the ones it ships, which `ThemesPlugin` (workbench) writes
     //! into the config folder's `themes` when missing, and its default.
     use bedtime_workbench::appearance::ThemesPlugin;
-    use std::path::PathBuf;
 
     /// The shipped themes: each id and file.
     pub const BUILT_IN: &[(&str, &str)] = &[
@@ -225,16 +225,11 @@ mod themes {
     /// The default theme's id.
     pub const DEFAULT: &str = "everforest-dark-medium";
 
-    /// Where themes are read from.
-    pub fn folder() -> Option<PathBuf> {
-        bedtime_persistence::config_directory("bed", Some("BED_CONFIG_DIR"))
-            .map(|config| config.join("themes"))
-    }
-
     /// The themes folder, with bEd's shipped themes and default.
     pub fn plugin() -> ThemesPlugin {
         ThemesPlugin {
-            folder: folder(),
+            // Under the persistence directory.
+            folder: Some("themes".into()),
             shipped: BUILT_IN,
             default: DEFAULT,
         }
@@ -889,7 +884,10 @@ mod workspace {
         const LABEL: &'static str = "Workspaces";
 
         fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, _: Entity) {
-            let config = bedtime_persistence::config_directory("bed", Some("BED_CONFIG_DIR"));
+            let config = world
+                .resource::<bedtime_persistence::PersistenceDirectory>()
+                .0
+                .clone();
             let stale = world
                 .resource::<KnownWorkspaces>()
                 .checked

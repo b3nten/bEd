@@ -563,6 +563,44 @@ Renamed action keys (saved custom bindings for these are lost, as agreed):
 `app.open_theme_editor` → `appearance.show_theme_editor`. The automation
 scripts in `tests/automation` use the new keys.
 
+## Workspaces in place (second plan, 2026-11-06)
+
+Setup before the App was brittle: `WorkspacesPlugin::new(start, config, app)`
+ran before `App::new()` because switching rebuilt the App (`relaunch`, from the
+bevy_winit fork) and needed the `app` function and a `Start`. Decided: switch
+workspaces inside the running world instead.
+
+- **Persistence directory, set once:** `PersistencePlugin::for_app("bed")`
+  (`$BED_CONFIG_DIR`, else the usual config folder) or
+  `PersistencePlugin::directory(path)`; without one nothing is saved. It's the
+  `PersistenceDirectory` resource: `global/`, `workspaces/<hash>/` and the
+  themes folder are under it.
+- **A workspace lifecycle in workbench, not behind `workspaces`:** close
+  (save, despawn workspace entities, plugins reset their resources) and open
+  (point the workspace store and settings layer at the folder, restore its
+  layout, plugins' per-workspace setup). Open runs once at startup after
+  stores load; without the `workspaces` feature close never runs. Plugins
+  write against these instead of `Startup` and never ask whether workspaces
+  exist. Workspace state lives on panels or resets on close.
+- **`WorkspacesPlugin` without arguments:** it reads the folder from the
+  command line; switching is a request (`open_workspace`) that asks about
+  unsaved work like quitting. The window title follows `Workspace`. `Start`,
+  `WorkspaceSettings::app`, `relaunch` and the bevy_winit fork go.
+- **The terminal's `+name` helpers** stay the one check before an App is
+  built (they must not open a window). Maybe `bedtime::run(app)` later.
+
+Steps, one at a time:
+
+1. ~~The persistence directory (`PersistencePlugin`), read by workspaces,
+   themes and bed's Workspaces panel. `WorkspacesPlugin` picks its workspace
+   in `build`.~~ (done)
+2. The lifecycle schedules; bed's `open_first` and per-workspace setup and
+   `GitSession` move onto them.
+3. Switching in place: remove `Start`, `relaunch` and the fork. A GUI script
+   switches with a terminal, Git and an editor open and checks nothing
+   carries over, then switches back.
+4. Maybe `bedtime::run`.
+
 ## Log
 
 - 2026-11-03: step 1 done (`6935794`, fast-forwarded onto `main`). actions,
@@ -645,3 +683,11 @@ scripts in `tests/automation` use the new keys.
 - 2026-11-04: step 10a done (`ForPanel`), 10b done (standard menus and
   contributions; bed's items moved into its plugins), 10c done (the Dock
   menu in workbench native). The plan is done; see "What's left".
+- 2026-11-06: workspaces-in-place step 1 done. `PersistencePlugin` has a
+  `directory` (`::for_app("bed")` reads `$BED_CONFIG_DIR`, `::directory(p)`;
+  default none) and inserts `PersistenceDirectory`. `WorkspacesPlugin::new(start,
+  app)` no longer takes the config folder and chooses its workspace in
+  `build` (add it after `PersistencePlugin`); `WorkspaceSettings` only holds
+  `app` now, and `WorkspacesPlugin::workspace()` is gone. `ThemesPlugin`'s
+  `folder` may be relative to the persistence directory (bed: `"themes"`).
+  bed calls `config_directory` nowhere.

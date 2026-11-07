@@ -118,7 +118,7 @@ impl PluginGroup for WorkbenchCorePlugins {
         let group = PluginGroupBuilder::start::<Self>();
         #[cfg(feature = "persistence")]
         let group = group
-            .add(persistence::PersistencePlugin)
+            .add(persistence::PersistencePlugin::default())
             .add(settings::SettingsPlugin);
         group
             .add(WorkPlugin)

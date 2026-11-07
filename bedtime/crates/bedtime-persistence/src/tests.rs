@@ -26,7 +26,7 @@ struct Recent(Vec<String>);
 
 fn app(main: &MemoryStore, global: &MemoryStore) -> App {
     let mut app = App::new();
-    app.add_plugins((MinimalPlugins, PersistencePlugin))
+    app.add_plugins((MinimalPlugins, PersistencePlugin::default()))
         .register_type::<Note>()
         .register_type::<Pinned>()
         .register_type::<Counter>()
@@ -128,7 +128,7 @@ fn a_failing_save_is_reported_once_until_it_changes() {
         }
     }
     let mut app = App::new();
-    app.add_plugins((MinimalPlugins, PersistencePlugin))
+    app.add_plugins((MinimalPlugins, PersistencePlugin::default()))
         .init_resource::<Recent>()
         .add_store::<GlobalStore>(Failing)
         .persist::<Recent, GlobalStore>();

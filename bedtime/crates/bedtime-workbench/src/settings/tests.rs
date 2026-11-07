@@ -48,7 +48,7 @@ fn workspace() -> StoreId {
 /// Global settings under per-workbench ones, each in its own backend.
 fn app(global: &MemoryStore, workbench: &MemoryStore) -> App {
     let mut app = App::new();
-    app.add_plugins((MinimalPlugins, PersistencePlugin, SettingsPlugin))
+    app.add_plugins((MinimalPlugins, PersistencePlugin::default(), SettingsPlugin))
         .init_resource::<Applied>()
         .add_store::<GlobalStore>(global.clone())
         .add_store::<WorkbenchStore>(workbench.clone())
@@ -332,7 +332,7 @@ mod ui {
 
     fn app() -> App {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, PersistencePlugin, SettingsPlugin))
+        app.add_plugins((MinimalPlugins, PersistencePlugin::default(), SettingsPlugin))
             .add_settings_layer::<GlobalStore>()
             .add_settings_layer::<WorkbenchStore>()
             .label_settings_layer::<WorkbenchStore>("Workspace")
