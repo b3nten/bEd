@@ -599,7 +599,7 @@ Steps, one at a time:
 3. ~~Switching in place: remove `Start`, `relaunch` and the fork. A GUI script
    switches with a terminal, Git and an editor open and checks nothing
    carries over, then switches back.~~ (done)
-4. Maybe `bedtime::run`.
+4. ~~Maybe `bedtime::run`.~~ (dropped: `handle_shell_command` stays one line in `main`)
 
 ## Log
 
