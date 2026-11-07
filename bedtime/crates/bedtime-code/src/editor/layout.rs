@@ -8,6 +8,9 @@ use std::{ops::Range, sync::Arc};
 use unicode_segmentation::UnicodeSegmentation;
 
 const MAX_LINE_LAYOUT_BYTES: usize = 32 * 1024;
+/// Drawn after a collapsed fold's last visible text, `FOLD_MARKER_GAP` points on.
+pub(crate) const FOLD_MARKER: &str = " …";
+pub(crate) const FOLD_MARKER_GAP: f32 = 4.0;
 
 pub(crate) struct Metrics {
     pub font: FontId,
@@ -224,11 +227,26 @@ impl Geometry<'_> {
         )
     }
     pub fn segment(&self, row: usize) -> crate::editor::wrapping::Segment {
-        let row = if let Some(diff) = self.diff {
+        self.source_segment(if let Some(diff) = self.diff {
             diff.source(row)
         } else {
             self.folds.source_row(row)
-        };
+        })
+    }
+    /// Where the text a fold hides below visible `row` ends, if it hides any.
+    pub fn fold_end_below(&self, row: usize) -> Option<usize> {
+        if self.diff.is_some() {
+            return None;
+        }
+        let source = self.folds.source_row(row);
+        let next = self.folds.source_row(row + 1);
+        (next > source + 1).then(|| self.source_segment(next - 1).bytes.end)
+    }
+    /// Whether a fold hides `byte`: it is then drawn after its fold's " …".
+    fn folded_away(&self, byte: usize, segment: &crate::editor::wrapping::Segment) -> bool {
+        self.diff.is_none() && self.text.line_of(byte) != segment.line
+    }
+    fn source_segment(&self, row: usize) -> crate::editor::wrapping::Segment {
         self.wrap.map_or_else(
             || crate::editor::wrapping::Segment {
                 line: row,
@@ -273,13 +291,14 @@ impl Geometry<'_> {
     pub fn caret_for(&self, byte: usize, upstream: bool) -> Rect {
         let row = self.visual_row_for(byte, upstream);
         let segment = self.segment(row);
+        let x = if self.folded_away(byte, &segment) {
+            self.fold_marker_end(&segment)
+        } else {
+            (self.text.column(byte).saturating_sub(segment.columns.start) + segment.indent) as f32
+                * self.metrics.cell
+        };
         Rect::from_min_size(
-            egui::pos2(
-                8.0 + (self.text.column(byte).saturating_sub(segment.columns.start)
-                    + segment.indent) as f32
-                    * self.metrics.cell,
-                6.0 + self.row_y(row) * self.metrics.height,
-            ),
+            egui::pos2(8.0 + x, 6.0 + self.row_y(row) * self.metrics.height),
             egui::vec2(0.0, self.metrics.height),
         )
     }
@@ -288,8 +307,31 @@ impl Geometry<'_> {
             .row_at((position.y - 6.0) / self.metrics.height)
             .min(self.rows() - 1);
         let column = ((position.x - 8.0) / self.metrics.cell).floor().max(0.0) as usize;
-        self.line(ui, row, column.saturating_sub(8)..column.saturating_add(16))
-            .hit(position.x - 8.0)
+        let line = self.line(ui, row, column.saturating_sub(8)..column.saturating_add(16));
+        // At or past a fold's " …": after what it hides. (The laid-out cells
+        // reach past the pointer, so `right` is the text's end when it's left
+        // of the pointer.)
+        if let Some(end) = self.fold_end_below(row)
+            && position.x - 8.0 >= line.right() + FOLD_MARKER_GAP
+        {
+            return end;
+        }
+        line.hit(position.x - 8.0)
+    }
+    /// The x just after the " …" drawn at the end of `segment`.
+    fn fold_marker_end(&self, segment: &crate::editor::wrapping::Segment) -> f32 {
+        (self
+            .text
+            .column(segment.bytes.end)
+            .saturating_sub(segment.columns.start)
+            + segment.indent) as f32
+            * self.metrics.cell
+            + FOLD_MARKER_GAP
+            + FOLD_MARKER.chars().count() as f32 * self.metrics.cell
+    }
+    /// The x just after the " …" of a fold hidden below visible `row`.
+    pub fn fold_marker_right(&self, row: usize) -> f32 {
+        self.fold_marker_end(&self.segment(row))
     }
     pub fn vertical(
         &self,
@@ -325,6 +367,9 @@ impl Geometry<'_> {
     }
     pub fn column_for(&self, byte: usize, upstream: bool) -> usize {
         let segment = self.segment(self.visual_row_for(byte, upstream));
+        if self.folded_away(byte, &segment) {
+            return (self.fold_marker_end(&segment) / self.metrics.cell).round() as usize;
+        }
         self.text.column(byte).saturating_sub(segment.columns.start) + segment.indent
     }
 }

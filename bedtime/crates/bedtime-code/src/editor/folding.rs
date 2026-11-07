@@ -316,14 +316,56 @@ impl Folding {
     pub fn reveal(&mut self, text: &TextBuffer, target: &Range<usize>) {
         let before = self.collapsed.len();
         self.collapsed.retain(|r| {
-            let hidden = text.line_start(text.line_of(r.start) + 1)
-                ..text.line_start(text.line_of(r.end.saturating_sub(1)) + 1);
-            !(hidden.contains(&target.start)
-                || hidden.contains(&target.end.saturating_sub(usize::from(!target.is_empty()))))
+            let last = text.line_of(r.end.saturating_sub(1));
+            let hidden = text.line_start(text.line_of(r.start) + 1)..text.line_start(last + 1);
+            // The end of its last line is shown after its " …": a caret
+            // there doesn't open it.
+            let shown = text.line_range(last).end;
+            let opens = |at: usize| hidden.contains(&at) && !(target.is_empty() && at == shown);
+            !(opens(target.start)
+                || opens(target.end.saturating_sub(usize::from(!target.is_empty()))))
         });
         if self.collapsed.len() != before {
             self.map_key = None;
         }
+    }
+    /// Where a selection ending at `byte` really ends: a collapsed fold's
+    /// first line ends visually with its " …", so reaching that end selects
+    /// what the fold hides too, to the end of its last line (where the caret
+    /// is drawn after the " …").
+    pub fn through_collapsed(&self, text: &TextBuffer, byte: usize) -> usize {
+        let line = text.line_of(byte);
+        if self.collapsed.is_empty() || byte != text.line_range(line).end {
+            return byte;
+        }
+        self.collapsed
+            .iter()
+            .filter(|r| text.line_of(r.start) == line)
+            .map(|r| text.line_range(text.line_of(r.end.saturating_sub(1))).end)
+            .max()
+            .map_or(byte, |end| end.max(byte))
+    }
+    /// Each collapsed fold from the end of its first line to the end of its
+    /// last: the two places beside it a caret can be.
+    fn spans<'a>(&'a self, text: &'a TextBuffer) -> impl Iterator<Item = Range<usize>> + 'a {
+        self.collapsed.iter().map(|r| {
+            text.line_range(text.line_of(r.start)).end
+                ..text.line_range(text.line_of(r.end.saturating_sub(1))).end
+        })
+    }
+    /// The outermost collapsed fold hiding `byte` (strictly inside its span).
+    pub fn hidden_span(&self, text: &TextBuffer, byte: usize) -> Option<Range<usize>> {
+        self.spans(text)
+            .filter(|span| span.start < byte && byte < span.end)
+            .max_by_key(|span| span.len())
+    }
+    /// The line a caret at `byte` is drawn on: a fold's first line for what
+    /// it hides, the end of its last line included.
+    pub fn visible_line(&self, text: &TextBuffer, byte: usize) -> usize {
+        self.spans(text)
+            .filter(|span| span.start < byte && byte <= span.end)
+            .max_by_key(|span| span.len())
+            .map_or_else(|| text.line_of(byte), |span| text.line_of(span.start))
     }
     pub fn collapsed_at(&self, text: &TextBuffer, line: usize) -> bool {
         if self.collapsed.is_empty() {
@@ -341,6 +383,26 @@ impl EditorView {
     }
     pub fn collapsed_regions(&self) -> &[Range<usize>] {
         &self.folding.collapsed
+    }
+    /// A selection made with the pointer that reaches the end of a folded
+    /// line takes the folded lines with it, as copying or deleting expects.
+    pub(crate) fn select_through_folds(
+        &self,
+        text: &TextBuffer,
+        selection: crate::editor::TextSelection,
+    ) -> crate::editor::TextSelection {
+        let range = selection.range();
+        if range.is_empty() || self.diff_active() {
+            return selection;
+        }
+        let end = self.folding.through_collapsed(text, range.end);
+        let mut selection = selection;
+        if selection.head >= selection.anchor {
+            selection.head = end;
+        } else {
+            selection.anchor = end;
+        }
+        selection
     }
     pub fn toggle_fold(&mut self, snapshot: &TextSnapshot, line: usize) -> Result<(), EditorError> {
         if self.is_composing() {

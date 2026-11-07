@@ -273,6 +273,9 @@ pub(crate) struct Assistance {
     pub dismissed: bool,
     pub typed: Option<String>,
 }
+/// Suggestions shown at once, when there's room for them.
+const COMPLETION_ROWS: usize = 16;
+
 impl EditorView {
     pub fn set_completions(
         &mut self,
@@ -575,13 +578,35 @@ impl EditorView {
         let mut accepted = None;
         // The editor's style: its panel's zoom, unlike other popups.
         let style = ui.style().clone();
+        let size = egui::TextStyle::Body.resolve(&style).size;
+        // As the rows below lay themselves out: same style, same spacing.
+        let pitch = ui.text_style_height(&egui::TextStyle::Body) + size * 0.2;
+        // Below the caret, unless the list fits better above it: a list
+        // pushed back up by the window's edge would cover the line being typed.
+        let screen = ui.ctx().content_rect().shrink(8.0);
+        let chrome = size * 0.8 + 2.0 * style.visuals.window_stroke.width + 4.0;
+        let wanted = pitch * menu.choices.len().min(COMPLETION_ROWS) as f32 + chrome;
+        let below = screen.bottom() - caret.bottom();
+        let above = caret.top() - screen.top();
+        let upward = wanted > below && above > below;
+        let rows = (((if upward { above } else { below }) - chrome) / pitch)
+            .floor()
+            .clamp(3.0, COMPLETION_ROWS as f32);
         let popup = egui::Area::new(id.with("completion"))
             .order(egui::Order::Foreground)
-            .fixed_pos(caret.left_bottom())
-            .constrain_to(ui.ctx().content_rect().shrink(8.0))
+            .pivot(if upward {
+                egui::Align2::LEFT_BOTTOM
+            } else {
+                egui::Align2::LEFT_TOP
+            })
+            .fixed_pos(if upward {
+                caret.left_top()
+            } else {
+                caret.left_bottom()
+            })
+            .constrain_to(screen)
             .show(ui.ctx(), |ui| {
                 ui.set_style(style);
-                let size = egui::TextStyle::Body.resolve(ui.style()).size;
                 egui::Frame::popup(ui.style())
                     .inner_margin(egui::Margin::symmetric(
                         (size * 0.6) as i8,
@@ -602,11 +627,16 @@ impl EditorView {
                         let selected_fill = background.lerp_to_gamma(accent, 0.24);
                         let hover_fill = background.lerp_to_gamma(accent, 0.16);
                         let row_height = ui.text_style_height(&egui::TextStyle::Body);
+                        let list = (row_height + ui.spacing().item_spacing.y)
+                            * rows.min(menu.choices.len() as f32);
+                        // The area offers only last frame's size, so without a
+                        // floor a long list after a short one stays short.
                         let mut scroll = egui::ScrollArea::vertical()
-                            .max_height((row_height + ui.spacing().item_spacing.y) * 8.0);
+                            .max_height(list)
+                            .min_scrolled_height(list);
                         if menu.reveal {
                             scroll = scroll.vertical_scroll_offset(
-                                (menu.selected.saturating_sub(4)) as f32
+                                (menu.selected.saturating_sub(rows as usize / 2)) as f32
                                     * (row_height + ui.spacing().item_spacing.y),
                             );
                             menu.reveal = false;
@@ -841,6 +871,37 @@ mod tests {
         );
         assert_eq!(view.selection.head(), doc.text().len());
         assert!(view.assistance.snippet.is_none());
+    }
+    #[test]
+    fn completion_list_uses_the_room_it_has_after_a_short_list() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("tall-menu");
+        let mut doc = MemoryTextSession::new("f");
+        let mut view = EditorView::default();
+        focus(&ctx, &mut view, &mut doc, id);
+        let choices = |n: usize| {
+            (0..n)
+                .map(|i| CompletionChoice {
+                    kind: "fn".into(),
+                    label: format!("choice{i}").into(),
+                    detail: "".into(),
+                })
+                .collect::<Vec<_>>()
+        };
+        // A short list first: the popup's area remembers its small size.
+        view.set_completions(0, choices(2));
+        for _ in 0..3 {
+            frame(&ctx, &mut view, &mut doc, id, vec![]);
+        }
+        view.set_completions(0, choices(40));
+        let mut height = 0.0;
+        for _ in 0..3 {
+            frame(&ctx, &mut view, &mut doc, id, vec![]);
+            height = view.assistance.popup_rect.unwrap().height();
+        }
+        let row = ctx.global_style().text_styles[&egui::TextStyle::Body].size;
+        // The 300-point test window has room for well over eight rows below.
+        assert!(height > row * 8.0 * 1.2, "{height} for rows of {row}");
     }
     #[test]
     fn completion_keys_select_without_inserting_newlines_or_tabs() {

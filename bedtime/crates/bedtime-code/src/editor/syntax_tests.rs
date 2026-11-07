@@ -628,3 +628,163 @@ fn provisional_colors_cover_insertions_inside_tokens_and_survive_deleted_lines()
             .any(|(text, color)| text == "other" && *color == view.syntax_palette.function)
     );
 }
+
+#[test]
+fn reaching_the_end_of_a_folded_line_reaches_past_what_it_hides() {
+    let text = TextBuffer::from("0\n1\n2\n3\n4\n5\n6\n7\n8");
+    let mut folds = folding::Folding::default();
+    folds.collapsed = vec![
+        0..text.line_start(4),
+        text.line_start(1)..text.line_start(3),
+        text.line_start(6)..text.len(),
+    ];
+    // The outer fold wins over a nested one: to the end of its last line.
+    assert_eq!(folds.through_collapsed(&text, 1), text.line_range(3).end);
+    // Not the end of a folded line: unchanged.
+    assert_eq!(folds.through_collapsed(&text, 0), 0);
+    assert_eq!(
+        folds.through_collapsed(&text, text.line_range(4).end),
+        text.line_range(4).end
+    );
+    // A fold to the end of the text selects to its end.
+    assert_eq!(
+        folds.through_collapsed(&text, text.line_range(6).end),
+        text.len()
+    );
+    // Inside a fold, between its two caret places; drawn on its first line.
+    let outer = 1..text.line_range(3).end;
+    assert_eq!(folds.hidden_span(&text, 2), Some(outer.clone()));
+    assert_eq!(folds.hidden_span(&text, outer.end), None);
+    assert_eq!(folds.hidden_span(&text, outer.start), None);
+    assert_eq!(folds.visible_line(&text, outer.end), 0);
+    assert_eq!(folds.visible_line(&text, text.line_start(4)), 4);
+}
+
+#[test]
+fn pointer_selections_of_a_folded_line_take_its_hidden_lines() {
+    let mut doc = MemoryTextSession::new(CODE);
+    let snapshot = doc.snapshot().unwrap();
+    let mut view = EditorView::default();
+    view.set_syntax(Some(observation(&doc)));
+    view.settings.line_numbers = false;
+    let ctx = egui::Context::default();
+    let id = egui::Id::new("select-fold");
+    focus(&ctx, &mut view, &mut doc, id);
+    view.toggle_fold(&snapshot, 0).unwrap();
+    for _ in 0..12 {
+        frame(&ctx, &mut view, &mut doc, id, vec![]);
+    }
+    // The end of the fold's last line, its closing brace.
+    let after_fold = CODE.find("}\nfn two").unwrap() + 1;
+    let press =
+        |pos: egui::Pos2, pressed: bool, modifiers: egui::Modifiers| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        };
+    // Triple-click the folded line.
+    let header_caret = frame(&ctx, &mut view, &mut doc, id, vec![]).caret_rect;
+    let header = header_caret.center() + egui::vec2(20.0, 0.0);
+    for _ in 0..3 {
+        frame(
+            &ctx,
+            &mut view,
+            &mut doc,
+            id,
+            vec![
+                egui::Event::PointerMoved(header),
+                press(header, true, egui::Modifiers::NONE),
+                press(header, false, egui::Modifiers::NONE),
+            ],
+        );
+    }
+    assert_eq!(view.selection().range(), 0..after_fold);
+    // Drag from the line's start past its end.
+    for _ in 0..30 {
+        frame(&ctx, &mut view, &mut doc, id, vec![]);
+    }
+    let start = header - egui::vec2(20.0, 0.0);
+    let beyond = header + egui::vec2(400.0, 0.0);
+    frame(
+        &ctx,
+        &mut view,
+        &mut doc,
+        id,
+        vec![
+            egui::Event::PointerMoved(start),
+            press(start, true, egui::Modifiers::NONE),
+        ],
+    );
+    for step in 1..=4 {
+        let at = start + (beyond - start) * step as f32 / 4.0;
+        frame(
+            &ctx,
+            &mut view,
+            &mut doc,
+            id,
+            vec![egui::Event::PointerMoved(at)],
+        );
+    }
+    assert_eq!(view.selection().range(), 0..after_fold);
+    // Dragging back into the line's text selects only that text again.
+    frame(
+        &ctx,
+        &mut view,
+        &mut doc,
+        id,
+        vec![egui::Event::PointerMoved(header)],
+    );
+    let back = view.selection().range();
+    assert!(back.start == 0 && back.end > 0 && back.end < 10, "{back:?}");
+    frame(
+        &ctx,
+        &mut view,
+        &mut doc,
+        id,
+        vec![egui::Event::PointerMoved(beyond)],
+    );
+    frame(
+        &ctx,
+        &mut view,
+        &mut doc,
+        id,
+        vec![press(beyond, false, egui::Modifiers::NONE)],
+    );
+    assert_eq!(view.selection().range(), 0..after_fold);
+    // A plain click there (not a double-click) is a caret after what the
+    // fold hides: drawn on the folded line, after its " …".
+    for _ in 0..30 {
+        frame(&ctx, &mut view, &mut doc, id, vec![]);
+    }
+    frame(
+        &ctx,
+        &mut view,
+        &mut doc,
+        id,
+        vec![
+            egui::Event::PointerMoved(beyond),
+            press(beyond, true, egui::Modifiers::NONE),
+            press(beyond, false, egui::Modifiers::NONE),
+        ],
+    );
+    assert_eq!(view.selection().range(), after_fold..after_fold);
+    let caret = frame(&ctx, &mut view, &mut doc, id, vec![]).caret_rect;
+    assert_eq!(caret.top(), header_caret.top());
+    assert!(caret.left() > header_caret.left() + 10.0, "{caret:?}");
+    // Sideways, the fold is one step each way.
+    let step = |view: &mut EditorView, doc: &mut MemoryTextSession, k| {
+        frame(&ctx, view, doc, id, vec![key(k, egui::Modifiers::NONE)]);
+        view.selection().head()
+    };
+    assert_eq!(step(&mut view, &mut doc, egui::Key::ArrowLeft), 10);
+    assert_eq!(step(&mut view, &mut doc, egui::Key::ArrowRight), after_fold);
+    assert_eq!(
+        step(&mut view, &mut doc, egui::Key::ArrowRight),
+        after_fold + 1
+    );
+    assert_eq!(step(&mut view, &mut doc, egui::Key::ArrowLeft), after_fold);
+    // Home and End act on the folded line the caret is drawn on.
+    assert_eq!(step(&mut view, &mut doc, egui::Key::Home), 0);
+    assert_eq!(view.collapsed_regions().len(), 1);
+}

@@ -11,11 +11,7 @@ fn main() -> AppExit {
     if let Some(exit) = bedtime_terminal::handle_shell_command() {
         return exit;
     }
-    app().run()
-}
-
-pub fn app() -> App {
-
+    
     let mut app = App::new();
 
     app.add_plugins((
@@ -66,7 +62,7 @@ pub fn app() -> App {
     .add_dock_menu_item::<menus::NewWindow>()
     .add_systems(Startup, setup);
 
-    app
+    app.run()
 }
 
 fn setup(

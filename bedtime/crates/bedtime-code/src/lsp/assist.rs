@@ -162,6 +162,10 @@ fn resolve(world: &mut World, panel: Entity, state: &mut Assist, index: usize, a
     }
 }
 
+/// How long the pointer rests on a symbol or diagnostic before its hover is
+/// asked for: long enough that moving across text doesn't flash popups.
+const HOVER_DELAY: f64 = 0.6;
+
 pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: &EditorOutput) {
     let mut state = world.entity_mut(panel).take::<Assist>().unwrap_or_default();
     // Hovers and documentation take the editor's style (its panel's zoom).
@@ -300,12 +304,15 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
     } else if let Some(target) = target {
         state.hover_target = Some(target);
     }
-    let hover_ready = state.hover_armed_at.is_some_and(|armed| now - armed >= 0.2);
+    let hover_ready = state
+        .hover_armed_at
+        .is_some_and(|armed| now - armed >= HOVER_DELAY);
     if let Some(armed) = state.hover_armed_at
         && !hover_ready
     {
-        ui.ctx()
-            .request_repaint_after(Duration::from_secs_f64((0.2 - (now - armed)).max(0.0)));
+        ui.ctx().request_repaint_after(Duration::from_secs_f64(
+            (HOVER_DELAY - (now - armed)).max(0.0),
+        ));
     }
     if hover_ready
         && state.hover_origin.is_none()
@@ -370,7 +377,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
                     egui::Frame::popup(ui.style()).show(ui, |ui| {
                         super::documentation::style(ui);
                         ui.set_width((ui.ctx().content_rect().width() - 40.0).min(460.0 * zoom));
-                        super::documentation::scroll_area(ui, 320.0).show(ui, |ui| {
+                        super::documentation::scroll_area(ui, 480.0 * zoom).show(ui, |ui| {
                             if let Some(documentation) = &mut state.documentation {
                                 documentation.show(ui, &palette);
                             }
@@ -405,7 +412,10 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
                 let position = if region.right() <= menu.left() {
                     egui::pos2(region.right() - width - 16.0, menu.top())
                 } else if region.bottom() <= menu.top() {
-                    egui::pos2(menu.left(), region.bottom() - region.height().min(300.0))
+                    egui::pos2(
+                        menu.left(),
+                        region.bottom() - region.height().min(480.0 * zoom),
+                    )
                 } else {
                     egui::pos2(region.left(), menu.top().max(region.top()))
                 };
@@ -420,7 +430,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, panel: Entity, output: 
                             ui.set_width(width.max(100.0));
                             super::documentation::scroll_area(
                                 ui,
-                                (region.height() - 24.0).min(300.0),
+                                (region.height() - 24.0).min(480.0 * zoom),
                             )
                             .show(ui, |ui| {
                                 if !item.detail.is_empty() {

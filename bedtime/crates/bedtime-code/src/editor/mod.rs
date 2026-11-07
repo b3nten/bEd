@@ -19,6 +19,7 @@ mod colors;
 mod diagnostics;
 mod document;
 mod layout;
+mod overview;
 pub use diagnostics::*;
 mod text {
     pub use bedtime_document::text::*;
@@ -113,9 +114,11 @@ struct Composition {
 pub struct EditorView {
     pub settings: EditorSettings,
     folding: folding::Folding,
-    /// A language server's diagnostics, drawn only at their revision.
     diff: diff::DiffState,
+    /// A language server's diagnostics, drawn only at their revision.
     diagnostics: Option<std::sync::Arc<Diagnostics>>,
+    /// Their marks along the scroll bar.
+    overview: overview::Overview,
     /// Report the word under the pointer (for hover) and Cmd/Ctrl-clicks on
     /// it (go to definition) instead of moving the caret.
     pub language_tools: bool,
@@ -768,6 +771,8 @@ impl EditorView {
                                 };
                             }
                             self.drag_anchor = Some(self.selection.anchor);
+                            self.selection =
+                                self.select_through_folds(&snapshot.text, self.selection);
                         }
                         // A right-click outside the selection moves the caret
                         // there first, so a context menu acts where you clicked.
@@ -826,10 +831,13 @@ impl EditorView {
                                 self.upstream = geometry.visual_row(hit)
                                     > (((local.y - 6.0) / metrics.height).floor().max(0.0)
                                         as usize);
-                                self.selection = TextSelection {
-                                    anchor: self.drag_anchor.unwrap_or(self.selection.anchor),
-                                    head: hit,
-                                };
+                                self.selection = self.select_through_folds(
+                                    &snapshot.text,
+                                    TextSelection {
+                                        anchor: self.drag_anchor.unwrap_or(self.selection.anchor),
+                                        head: hit,
+                                    },
+                                );
                                 reveal = Some((hit..hit, Scroll::Minimal));
                             }
                         }
@@ -1214,7 +1222,14 @@ impl EditorView {
                                 } else {
                                     line.x_at(selected.start)
                                 };
-                                let right = if selected.end > body.end {
+                                let right = if selected.end > body.end
+                                    && geometry
+                                        .fold_end_below(row)
+                                        .is_some_and(|end| selected.end <= end)
+                                {
+                                    // Ending in what a fold hides: through its " …".
+                                    geometry.fold_marker_right(row)
+                                } else if selected.end > body.end {
                                     viewport.right().max(line.right())
                                 } else {
                                     line.x_at(selected.end)
@@ -1255,13 +1270,18 @@ impl EditorView {
                                     );
                                 }
                             }
-                            if segment.part == 0
+                            // After the folded line's last part, where what it
+                            // hides would follow (and where a caret there is).
+                            if segment.bytes.end == display.line_range(segment.line).end
                                 && self.folding.collapsed_at(&display, segment.line)
                             {
                                 painter.text(
-                                    egui::pos2(origin.x + 12.0 + line.right(), y),
+                                    egui::pos2(
+                                        origin.x + 8.0 + layout::FOLD_MARKER_GAP + line.right(),
+                                        y,
+                                    ),
                                     egui::Align2::LEFT_TOP,
-                                    " …",
+                                    layout::FOLD_MARKER,
                                     metrics.font.clone(),
                                     ui.visuals().weak_text_color(),
                                 );
@@ -1298,10 +1318,10 @@ impl EditorView {
                                     .as_ref()
                                     .filter(|d| d.revision == snapshot.revision)
                             {
-                                for (index, diagnostic) in report
-                                    .intersecting(line.start..line.end)
-                                    .take(256)
-                                    .enumerate()
+                                // Their messages show in the language hover
+                                // (`lsp::assist`), not a tooltip of their own.
+                                for diagnostic in
+                                    report.intersecting(line.start..line.end).take(256)
                                 {
                                     let left = line.x_at(diagnostic.range.start.max(line.start));
                                     let right = line
@@ -1326,19 +1346,6 @@ impl EditorView {
                                         ],
                                         egui::Stroke::new(1.0, color),
                                     );
-                                    let rect = egui::Rect::from_min_max(
-                                        egui::pos2(origin.x + 8.0 + left, y),
-                                        egui::pos2(origin.x + 8.0 + right, y + metrics.height),
-                                    )
-                                    .intersect(painter.clip_rect());
-                                    if rect.is_positive() {
-                                        ui.interact(
-                                            rect,
-                                            id.with(("diagnostic", row, index)),
-                                            egui::Sense::hover(),
-                                        )
-                                        .on_hover_text(diagnostic.message.as_ref());
-                                    }
                                 }
                             }
                             // Colors written in the line: underlined in their color.
@@ -1496,6 +1503,31 @@ impl EditorView {
         }
         self.scroll = scroll.state.offset;
         self.observed_revision = Some(snapshot.revision);
+        if self.composition.is_none()
+            && let Some(report) = self
+                .diagnostics
+                .clone()
+                .filter(|d| d.revision == snapshot.revision)
+        {
+            let mut overview = std::mem::take(&mut self.overview);
+            let wrap = self.active_wrap(&snapshot, self.settings.wrap.then_some(1));
+            let geometry = layout::Geometry {
+                text: &snapshot.text,
+                metrics: &metrics,
+                wrap,
+                folds: &self.folding.display_map,
+                diff: self.diff.current(snapshot.revision, wrap),
+            };
+            overview.paint(
+                ui,
+                scroll.inner_rect,
+                &report,
+                &geometry,
+                &self.folding.collapsed,
+                scroll.content_size.y,
+            );
+            self.overview = overview;
+        }
         if self.settings.line_numbers {
             if let Some(projection) = self.diff.current(
                 snapshot.revision,
@@ -1589,7 +1621,11 @@ impl EditorView {
                         egui::Align2::RIGHT_TOP,
                         (row + 1).to_string(),
                         metrics.font.clone(),
-                        if row == snapshot.text.line_of(self.selection.head) {
+                        if row
+                            == self
+                                .folding
+                                .visible_line(&snapshot.text, self.selection.head)
+                        {
                             bedtime_ui::rainbow_ink(ui, motion)
                         } else {
                             ui.visuals().weak_text_color()
@@ -1944,7 +1980,8 @@ impl EditorView {
                     }
                 }
                 let head = self.selection.head;
-                let row = snapshot.text.line_of(head);
+                // The line the caret is drawn on (a fold's first, beside it).
+                let row = self.folding.visible_line(&snapshot.text, head);
                 let body = snapshot.text.line_range(row);
                 let selection = self.selection.range();
                 let mut target_upstream = matches!(key, egui::Key::ArrowLeft | egui::Key::End);
@@ -2044,6 +2081,15 @@ impl EditorView {
                     }
                     _ => None,
                 };
+                // A collapsed fold is one step: from the end of its first line
+                // to the end of its last (drawn after its " …"), never inside.
+                let target = target.map(|target| {
+                    match (key, self.folding.hidden_span(&snapshot.text, target)) {
+                        (egui::Key::ArrowLeft | egui::Key::Home, Some(span)) => span.start,
+                        (_, Some(span)) => span.end,
+                        _ => target,
+                    }
+                });
                 if let Some(target) = target {
                     if !matches!(
                         key,

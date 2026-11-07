@@ -6,14 +6,4 @@
 - drop support for old version of theme files
 - integrate https://github.com/tbillington/bevy_debug_view/tree/main
 
-- show errors somewhere (scroll, or somewhere else for editor)
-- selecting a folded line needs to select the folded contents
-- autocomplete needs to be a much taller box
-- fix double lsp hover tooltips???
-- more editor features
-    - multicursor
-    - auto format on save
-    - comment line
-    - select line
-    
     
