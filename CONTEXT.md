@@ -541,6 +541,13 @@ Not done, or only partly, roughly in order of value:
 - **The `Editor` / `EditorPanel` split** wasn't needed (panel-type identity
   covers the diff panel).
 
+bed is one file now (2026-11-06): `bed/main.rs` (about 2,700 lines) has
+`main` and `app` first, then each former module as an inline `mod` under a
+boxed header (settings, themes, menus, layouts, workspace, files, new,
+preview, terminal, git, search, mascots, effects). Notes above that name
+`bed/<module>.rs` mean that module's section. `bed/themes/` (the theme files),
+`bed/assets/` and `bed/effects.wesl` (the shader) stay separate files.
+
 GUI check (2026-11-04, after step 10): `python3 tools/bed.py run` passes 28
 of 29 scripts. `theme_editor.py` fails the same way on `45c8734` (before
 this work): the accent field it clicks is only partly scrolled into view
