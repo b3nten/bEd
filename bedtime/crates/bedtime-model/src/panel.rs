@@ -22,8 +22,6 @@ const MAX_MODEL: u64 = 128 * 1024 * 1024;
 const MAX_RESOURCE: u64 = 64 * 1024 * 1024;
 
 /// The model viewer: `ModelPlugin`, and an opener for glTF, GLB and STL.
-/// Register the model asset source (`register_asset_source`) before
-/// `AssetPlugin`.
 pub struct ModelViewerPlugin;
 
 impl Plugin for ModelViewerPlugin {

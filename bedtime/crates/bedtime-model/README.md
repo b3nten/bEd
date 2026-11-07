@@ -3,7 +3,6 @@
 Workbench glTF, GLB and STL viewer. Renders in the application's Bevy world.
 
 ```rust,ignore
-bedtime_model::register_asset_source(&mut app); // before DefaultPlugins
 app.add_plugins(ModelViewerPlugin); // after the renderer and UI
 ```
 
@@ -19,11 +18,11 @@ workbench's actions, rather than the panel zooming. Changes to a `.gltf`'s other
 
 ## Embedded scenes
 
-Register `register_asset_source(&mut app)` **before** the host's `AssetPlugin`;
-install `ModelPlugin` after the host renderer and UI. The host supplies Bevy's
+Install `ModelPlugin` after the host renderer and UI. The host supplies Bevy's
 asset, glTF, PBR, anti-aliasing and render plugins (ordinary `DefaultPlugins` with
-this crate's features provides these). The dedicated memory source contains only
-validated, self-contained model snapshots and never loads model sidecars itself.
+this crate's features provides these). Each revision is written as a
+validated, self-contained snapshot to Bevy's `embedded://` source, under
+`bedtime_model/snapshots/`, and never loads model sidecars itself.
 
 On a host-owned worker, call `PreparedModel::prepare(bytes, path, resolve)`.
 `resolve` receives a decoded relative resource path; the host reads it relative

@@ -14,7 +14,6 @@ mod camera;
 mod debug_views;
 mod draco;
 mod environment;
-mod memory;
 mod mesh_compat;
 mod meshopt;
 mod model;
@@ -126,11 +125,6 @@ pub struct ModelInfo {
     pub meshopt_views: usize,
     pub minimum: [f32; 3],
     pub maximum: [f32; 3],
-}
-
-/// Register before AssetPlugin; ModelPlugin itself installs after the host renderer.
-pub fn register_asset_source(app: &mut App) {
-    memory::MemoryAssets::register(app);
 }
 
 pub struct ModelPlugin;

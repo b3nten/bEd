@@ -1,11 +1,18 @@
 //! Document-owned memory assets and inspection snapshots of Bevy's glTF scenes.
+//!
+//! Each revision of a document is written to Bevy's `embedded://` source
+//! under `SNAPSHOTS`, and loaded from there by its glTF loader: the scene
+//! shows the document, not the file on disk, and needs no source of its own.
 #[cfg(test)]
 use crate::model::Material;
 use crate::model::{Primitive, Scene, Vertex};
 #[cfg(test)]
 use bevy::asset::AssetApp;
 use bevy::{
-    asset::{LoadState, RecursiveDependencyLoadState, RenderAssetUsages, io::memory::Dir},
+    asset::{
+        LoadState, RecursiveDependencyLoadState, RenderAssetUsages,
+        io::embedded::{EMBEDDED, EmbeddedAssetRegistry},
+    },
     gltf::{
         Gltf, GltfLoaderSettings, GltfMaterial, GltfMesh,
         convert_coordinates::GltfConvertCoordinates,
@@ -24,9 +31,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Where in `embedded://` document snapshots are written.
+const SNAPSHOTS: &str = "bedtime_model/snapshots";
+
+/// Snapshots of scenes dropped without `clear`, removed by `release_snapshots`.
+type Released = Arc<Mutex<Vec<PathBuf>>>;
+
 #[derive(Resource, Clone)]
 struct ModelAssets {
-    memory: Dir,
+    released: Released,
     meshes: PendingMeshes,
     next_revision: u64,
 }
@@ -52,17 +65,18 @@ impl bevy::gltf::extensions::GltfExtensionHandler for MeshAdapter {
         _: &gltf::Gltf,
         _: &GltfLoaderSettings,
     ) {
-        self.meshes =
-            if context.path().source().as_str() == Some(crate::memory::MEMORY_ASSET_SOURCE) {
-                self.pending
-                    .lock()
-                    .unwrap()
-                    .get(context.path().path())
-                    .cloned()
-                    .unwrap_or_default()
-            } else {
-                Arc::default()
-            };
+        self.meshes = if context.path().source().as_str() == Some(EMBEDDED)
+            && context.path().path().starts_with(SNAPSHOTS)
+        {
+            self.pending
+                .lock()
+                .unwrap()
+                .get(context.path().path())
+                .cloned()
+                .unwrap_or_default()
+        } else {
+            Arc::default()
+        };
     }
 
     async fn on_gltf_primitive(
@@ -126,7 +140,10 @@ struct SkinMaterialCorrection {
 }
 
 pub(super) struct SceneLoading {
-    memory: Dir,
+    released: Released,
+    /// This revision's bytes, for tests to compare with what loaded.
+    #[cfg(test)]
+    source: Option<Arc<[u8]>>,
     meshes: PendingMeshes,
     revision: u64,
     view: u64,
@@ -145,11 +162,6 @@ impl SceneLoading {
         if app.world().contains_resource::<ModelAssets>() {
             return;
         }
-        crate::memory::MemoryAssets::register(app);
-        let memory = app
-            .world()
-            .resource::<crate::memory::MemoryAssets>()
-            .directory();
         let meshes = PendingMeshes::default();
         app.init_resource::<bevy::gltf::extensions::GltfExtensionHandlers>();
         app.world()
@@ -160,8 +172,9 @@ impl SceneLoading {
                 pending: Arc::clone(&meshes),
                 meshes: Arc::default(),
             }));
+        app.add_systems(First, release_snapshots);
         app.insert_resource(ModelAssets {
-            memory,
+            released: Released::default(),
             meshes,
             next_revision: 0,
         });
@@ -174,7 +187,9 @@ impl SceneLoading {
     ) -> Self {
         let assets = world.resource::<ModelAssets>().clone();
         Self {
-            memory: assets.memory,
+            released: assets.released,
+            #[cfg(test)]
+            source: None,
             meshes: assets.meshes,
             revision: 0,
             view,
@@ -199,11 +214,19 @@ impl SceneLoading {
             assets.next_revision += 1;
             assets.next_revision
         };
-        let path = PathBuf::from(format!("view-{}/revision-{}.glb", self.view, self.revision));
-        self.memory.insert_asset(&path, bytes.to_vec());
+        let path = PathBuf::from(format!(
+            "{SNAPSHOTS}/view-{}/revision-{}.glb",
+            self.view, self.revision
+        ));
+        world
+            .resource::<EmbeddedAssetRegistry>()
+            .insert_asset(path.clone(), &path, bytes.to_vec());
+        #[cfg(test)]
+        {
+            self.source = Some(Arc::clone(&bytes));
+        }
         self.meshes.lock().unwrap().insert(path.clone(), meshes);
-        let asset_path = bevy::asset::AssetPath::from(path.clone())
-            .with_source(crate::memory::MEMORY_ASSET_SOURCE);
+        let asset_path = bevy::asset::AssetPath::from(path.clone()).with_source(EMBEDDED);
         self.gltf = Some(
             world
                 .resource::<AssetServer>()
@@ -323,11 +346,7 @@ impl SceneLoading {
             .map_or(0, |source| source.images().len());
         #[cfg(test)]
         {
-            snapshot.source_bytes = self
-                .path
-                .as_ref()
-                .and_then(|path| self.memory.get_asset(path))
-                .map(|asset| Arc::from(asset.value()));
+            snapshot.source_bytes = self.source.clone();
         }
         let center = Vec3::from_array(snapshot.center().to_array());
         let radius = snapshot.radius();
@@ -387,7 +406,9 @@ impl SceneLoading {
         }
         self.gltf = None;
         if let Some(path) = self.path.take() {
-            self.memory.remove_asset(&path);
+            world
+                .resource::<EmbeddedAssetRegistry>()
+                .remove_asset(&path);
             self.meshes.lock().unwrap().remove(&path);
         }
         self.complete = true;
@@ -397,10 +418,25 @@ impl SceneLoading {
 impl Drop for SceneLoading {
     fn drop(&mut self) {
         if let Some(path) = &self.path {
-            self.memory.remove_asset(path);
+            self.released.lock().unwrap().push(path.clone());
             self.meshes.lock().unwrap().remove(path);
         }
     }
+}
+
+/// Remove the snapshots of scenes that were dropped.
+fn release_snapshots(assets: Res<ModelAssets>, registry: Res<EmbeddedAssetRegistry>) {
+    for path in std::mem::take(&mut *assets.released.lock().unwrap()) {
+        registry.remove_asset(&path);
+    }
+}
+
+/// Whether a snapshot is still in `embedded://`.
+#[cfg(test)]
+fn stored(world: &World, path: &std::path::Path) -> bool {
+    let server = world.resource::<AssetServer>();
+    let source = server.get_source(EMBEDDED).unwrap();
+    bevy::tasks::block_on(source.reader().read(path)).is_ok()
 }
 
 // Bevy generates missing tangents from UV0. Keep its material and mesh loader,
@@ -893,9 +929,7 @@ fn inspection_material(world: &World, entity: Entity) -> Material {
 #[cfg(test)]
 pub(crate) fn headless_app() -> (App, SceneLoading) {
     let mut app = App::new();
-    // Match desktop/core ordering: neutral source first, AssetPlugin and glTF
-    // next, then optional model-specific handlers and document state.
-    crate::memory::MemoryAssets::register(&mut app);
+    // Match desktop ordering: AssetPlugin and glTF, then the model plugin.
     app.add_plugins((MinimalPlugins, bevy::asset::AssetPlugin::default()));
     app.init_asset::<bevy::shader::Shader>()
         .init_asset_loader::<bevy::shader::ShaderLoader>();
@@ -1000,8 +1034,8 @@ mod tests {
         let second_path = second.path.clone().unwrap();
         assert_ne!(first_path, second_path);
         first.clear(app.world_mut());
-        assert!(first.memory.get_asset(&first_path).is_none());
-        assert!(second.memory.get_asset(&second_path).is_some());
+        assert!(!stored(app.world(), &first_path));
+        assert!(stored(app.world(), &second_path));
         assert!(
             app.world()
                 .get_entity(scenes[1].as_ref().unwrap().root)
@@ -1078,7 +1112,7 @@ mod tests {
                 .iter()
                 .all(|&entity| app.world().get_entity(entity).is_err())
         );
-        assert!(loading.memory.get_asset(&previous_path).is_none());
+        assert!(!stored(app.world(), &previous_path));
         assert!(loading.pending());
     }
 }
