@@ -575,7 +575,7 @@ mod layouts {
         LayoutFallback, MenusAppExt, PanelFactory, StandardMenu,
         persistence::{LayoutTemplate, Persisted, PersistenceAppExt, ReflectPersist},
     };
-    use bedtime_workbench::{LayoutsWorldExt, SplitAxis};
+    use bedtime_workbench::{LayoutsWorldExt, OnWorkspaceOpen, SplitAxis};
     use bevy::prelude::*;
     use serde::{Deserialize, Serialize};
 
@@ -659,7 +659,7 @@ mod layouts {
                 .add_menu_item::<UseLayout<4>>(LAYOUT, "slots")
                 .add_menu_item::<SaveLayoutAsDefault>(LAYOUT, "defaults")
                 .add_menu_item::<ResetLayout>(LAYOUT, "defaults")
-                .add_systems(Startup, open_first);
+                .add_systems(OnWorkspaceOpen, open_first);
         }
     }
 
@@ -725,7 +725,7 @@ mod layouts {
         Ok(layout)
     }
 
-    /// At startup: the workspace's saved active layout, or layout 1. A workbench
+    /// When a workspace opens: its saved active layout, or layout 1. A workbench
     /// saved before slots existed gets its active layout as layout 1.
     fn open_first(world: &mut World) {
         if world

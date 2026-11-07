@@ -46,7 +46,11 @@ impl Plugin for GitPlugin {
             .add_action_handler::<ShowGit>(Handler::new(show_panel::<GitPanel>))
             .add_menu_item::<ShowGit>(StandardMenu::View, "panels")
             .register_type::<DiffPanel>()
-            .add_systems(Update, update);
+            .add_systems(Update, update)
+            // The session is the workspace folder's; the next one makes its own.
+            .add_systems(OnWorkspaceClose, |world: &mut World| {
+                world.remove_resource::<GitSession>();
+            });
     }
 }
 

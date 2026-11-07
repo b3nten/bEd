@@ -14,6 +14,7 @@ mod opening;
 mod panel_actions;
 #[cfg(feature = "persistence")]
 pub mod persistence;
+mod session;
 #[cfg(feature = "persistence")]
 pub mod settings;
 #[cfg(feature = "ui")]
@@ -44,6 +45,7 @@ pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 pub use opening::*;
 pub use panel_actions::{ClosePanel, ResetZoom, ZoomIn, ZoomOut, show_panel};
+pub use session::{OnWorkspaceClose, OnWorkspaceOpen};
 pub use untitled::{SaveAs, Untitled};
 #[cfg(feature = "native")]
 mod native;
@@ -85,6 +87,7 @@ pub struct DocumentsPlugin;
 impl Plugin for DocumentsPlugin {
     fn build(&self, app: &mut App) {
         lifecycle::install(app);
+        session::install(app);
         #[cfg(feature = "persistence")]
         {
             persistence::register(app);

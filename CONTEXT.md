@@ -594,8 +594,8 @@ Steps, one at a time:
 1. ~~The persistence directory (`PersistencePlugin`), read by workspaces,
    themes and bed's Workspaces panel. `WorkspacesPlugin` picks its workspace
    in `build`.~~ (done)
-2. The lifecycle schedules; bed's `open_first` and per-workspace setup and
-   `GitSession` move onto them.
+2. ~~The lifecycle schedules; bed's `open_first` and per-workspace setup and
+   `GitSession` move onto them.~~ (done)
 3. Switching in place: remove `Start`, `relaunch` and the fork. A GUI script
    switches with a terminal, Git and an editor open and checks nothing
    carries over, then switches back.
@@ -691,3 +691,13 @@ Steps, one at a time:
   `app` now, and `WorkspacesPlugin::workspace()` is gone. `ThemesPlugin`'s
   `folder` may be relative to the persistence directory (bed: `"themes"`).
   bed calls `config_directory` nowhere.
+- 2026-11-06: workspaces-in-place step 2 done. Workbench's `session` module
+  has the `OnWorkspaceOpen` and `OnWorkspaceClose` schedules (core, not
+  behind `workspaces`). Open runs once in `PostStartup`; close only runs
+  before a switch (nothing runs it yet). bed's `open_first` is on open; Git
+  removes `GitSession` on close (`update` makes a new one for the new `Root`
+  when Git panels exist). bed's `setup` stays in `Startup`: it's the window's.
+  To check in step 3, when close first runs: the file tree's `Folders` cache,
+  the LSP `Definitions` / `Queries`, the HTTP client's `Exchanges` /
+  `HttpRequests`, bed's `DroppedFolder`, and whether despawned documents
+  and terminals let go of their files and processes.
