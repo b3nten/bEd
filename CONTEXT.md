@@ -596,9 +596,9 @@ Steps, one at a time:
    in `build`.~~ (done)
 2. ~~The lifecycle schedules; bed's `open_first` and per-workspace setup and
    `GitSession` move onto them.~~ (done)
-3. Switching in place: remove `Start`, `relaunch` and the fork. A GUI script
+3. ~~Switching in place: remove `Start`, `relaunch` and the fork. A GUI script
    switches with a terminal, Git and an editor open and checks nothing
-   carries over, then switches back.
+   carries over, then switches back.~~ (done)
 4. Maybe `bedtime::run`.
 
 ## Log
@@ -701,3 +701,24 @@ Steps, one at a time:
   the LSP `Definitions` / `Queries`, the HTTP client's `Exchanges` /
   `HttpRequests`, bed's `DroppedFolder`, and whether despawned documents
   and terminals let go of their files and processes.
+- 2026-11-07: workspaces-in-place step 3 done. `open_workspace(world,
+  Option<folder>)` replaces `switch(world, Start)`: it ends the session with
+  the new `restart_session` (asks about unsaved work like quitting; after its
+  step, `ManagedWork` accepts work again), then `switch_now` saves every store
+  and settings layer, runs `OnWorkspaceClose`, despawns the layouts (areas and
+  panels go with them), moves the `WorkbenchStore` backend (`Stores::set_backend`)
+  and lock, replaces the workspace settings layer (`settings::replace_layer`),
+  updates `Root` / `Workspace` / the recent list, loads the store
+  (`load_store`) and runs `OnWorkspaceOpen`. `WorkspacesPlugin::default()`
+  reads the command line's folder (`::folder(p)` names one); `Start` is
+  private, `WorkspaceSettings` and the `app` function are gone, bed's `main`
+  is `app().run()`. vendor/bevy_winit and its patch are removed. Close resets:
+  Git's session, the file tree's `Folders` / `FileOperations` (their unowned
+  reads are cancelled by the session's shutdown), the HTTP client's
+  `HttpRequests` / `Exchanges`. Left alone: LSP `Asks` / `Definitions` /
+  `Queries` (keyed by editor and ticket; resetting tickets could match a late
+  answer to a new request). Terminals and language servers stop when their
+  entities go. Automation reports `workspaces` (opens) instead of `launch`;
+  `bed.switched` replaces `bed.relaunched`. New: `workspace_switch.py` and a
+  headless round-trip test. All 30 GUI scripts pass (theme_editor.py too).
+  Window title: bed keeps a fixed "bEd" (the title isn't drawn).

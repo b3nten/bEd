@@ -11,8 +11,7 @@ default = ["workbench"]
 # The framework: documents, unsaved work, actions and keys, menus, settings,
 # background work, with native window and menus and the UI.
 workbench = ["dep:bedtime-workbench", "persistence"]
-# Workspaces: folders with their own store and settings. Needs the bevy_winit
-# fork's `relaunch` (see vendor/bevy_winit/BED_PATCHES.md).
+# Workspaces: folders with their own store and settings.
 workspaces = ["workbench", "bedtime-workbench/workspaces"]
 persistence = ["dep:bedtime-persistence", "bedtime-ui/persistence"]
 documents = ["dep:bedtime-document"]

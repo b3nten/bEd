@@ -134,6 +134,6 @@ with tempfile.TemporaryDirectory() as folder:
         bed.screenshot("files-ops")
 
         # Away and back: src is still open.
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
         until(bed, lambda: bed.exists("main.rs"), "src is open again")

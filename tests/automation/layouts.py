@@ -12,9 +12,9 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     assert bed.exists("Appearance"), "layout 1 kept its panel"
 
     bed.invoke("layout.save_default")
-    # Switching exits this App, which saves the global store.
+    # Switching saves every store, as quitting does.
     # The default workspace hasn't opened layout 1 yet: it's built from the default.
-    bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
+    bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
     assert bed.exists("Appearance"), "the default didn't build layout 1"
     bed.key("Primary+3")
     assert not bed.exists("Appearance")

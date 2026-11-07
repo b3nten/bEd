@@ -21,7 +21,7 @@ close prompt, and `PanelModified` marks unsaved tabs.
 | WorkbenchNativePlugin | Group of native window/chrome/menu plugins |
 | WorkbenchUiPlugin | The unsaved-changes prompt, in the modal layer |
 | WorkbenchPlugins | `WorkbenchCorePlugins` plus clipboard, native and UI, by feature |
-| WorkspacesPlugin (`workspaces` feature) | Workspaces; added by the app, which says how to rebuild itself |
+| WorkspacesPlugin (`workspaces` feature) | Workspaces, switched in place; added by the app |
 
 Default features are ui, native and clipboard. With defaults disabled, the core
 compiles without a renderer, window backend, native menu library or OS clipboard.
@@ -38,32 +38,36 @@ app.add_plugins(WorkbenchCorePlugins);
 ## Workspaces (`workspaces` feature)
 
 A workspace is a folder with its own store (`WorkbenchStore`, under
-`<config>/workspaces/<hash>/`) and settings layer, over the app-wide
-`GlobalStore` (`<config>/global/`, with the global settings layer and the
-recent list). Each session has a folder workspace or the default workspace (home folder).
+`<directory>/workspaces/<hash>/`) and settings layer, over the app-wide
+`GlobalStore` (`<directory>/global/`, with the global settings layer and the
+recent list). `<directory>` is the `PersistenceDirectory`, from
+`PersistencePlugin`. Each session has a folder workspace or the default workspace (home folder).
 A lock prevents concurrent instances from saving the same workspace.
 An app whose folders don't need settings of their own builds the plugin with
 `.global_settings_only()`: every setting is global, and a folder's store
 still holds its layout and whatever else the app saves there.
 
 ~~~rust,ignore
-fn app(start: Start) -> App {
-    let workspaces = WorkspacesPlugin::new(start, config_directory, app);
-    let title = workspaces.workspace().name(); // for the window
-    let mut app = App::new();
-    app.add_plugins((/* DefaultPlugins with the title */, UiPlugin, WorkbenchPlugins, workspaces));
-    app
-}
+app.add_plugins((
+    DefaultPlugins,
+    UiPlugin,
+    WorkbenchPlugins.set(PersistencePlugin::for_app("my-app")),
+    WorkspacesPlugin::default(), // the command line's folder
+));
 ~~~
 
-`WorkspacesPlugin::new` reads the global store (the recent list, whether to
+`WorkspacesPlugin` reads the global store (the recent list, whether to
 reopen the last workspace: the `ReopenLastWorkspace` setting), chooses and
 claims the workspace, and remembers it. Adding it installs the stores and
 layers, and the `Workspace`, `Root` and `RecentWorkspaces` resources.
-`workspaces::switch(world, start)` ends the session the way quitting does
-(`request_exit`), then rebuilds the App in the same window with the function
-the plugin was given; that's `bevy::winit::relaunch`, from the bevy_winit fork,
-so apps using this feature need the same `[patch.crates-io]` entry.
+`workspaces::open_workspace(world, Some(folder))` (`None`: the default
+workspace) ends the session the way quitting does (`restart_session`), then
+switches in the same world: the old workspace's layouts go with their
+panels, the workspace store and settings layer move to the new folder, its
+layout is restored, and `OnWorkspaceClose` / `OnWorkspaceOpen` run around
+it. Plugins keep what belongs to a workspace on its panels, or set it up and
+drop it in those schedules (they run without this feature too: open once at
+startup, close never).
 
 `Root` supplies plugins' working directory. `WorkspacesPlugin` sets it;
 applications without workspaces may set it or leave it unset.

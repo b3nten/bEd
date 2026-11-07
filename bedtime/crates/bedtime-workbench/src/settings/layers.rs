@@ -181,6 +181,20 @@ impl Settings {
             .find_map(|layer| decode::<S>(layer).map(|value| (layer.store, value)))
     }
 
+    /// A new, empty top layer for `store`, labelled after it.
+    fn push_layer(&mut self, store: StoreId) {
+        let name = store.name().rsplit("::").next().unwrap_or(store.name());
+        self.layers.push(Layer {
+            store,
+            label: name.strip_suffix("Store").unwrap_or(name).to_owned().into(),
+            values: BTreeMap::new(),
+            dirty: false,
+            blocked: None,
+            version: None,
+            save_error: None,
+        });
+    }
+
     fn layer_mut(&mut self, store: StoreId) -> Result<&mut Layer, String> {
         self.layers
             .iter_mut()
@@ -294,23 +308,14 @@ impl SettingsAppExt for App {
     }
 
     fn add_settings_layer<S: Store>(&mut self) -> &mut Self {
-        let mut settings = self.world_mut().get_resource_or_init::<Settings>();
         let store = StoreId::of::<S>();
+        let mut settings = self.world_mut().get_resource_or_init::<Settings>();
         assert!(
             settings.layers.iter().all(|layer| layer.store != store),
             "{} was added as a settings layer twice",
             store.name()
         );
-        let name = store.name().rsplit("::").next().unwrap_or(store.name());
-        settings.layers.push(Layer {
-            store,
-            label: name.strip_suffix("Store").unwrap_or(name).to_owned().into(),
-            values: BTreeMap::new(),
-            dirty: false,
-            blocked: None,
-            version: None,
-            save_error: None,
-        });
+        settings.push_layer(store);
         self
     }
 
@@ -390,6 +395,42 @@ fn read_layer(world: &World, store: StoreId) -> Result<Option<LayerFile>, String
 pub(crate) fn load_layers(world: &mut World) {
     let stores: Vec<_> = world.resource::<Settings>().layers().collect();
     for store in stores {
+        read_into_layer(world, store);
+    }
+    check_values(world);
+    apply_changed(world);
+}
+
+/// Point the top layer at `store` while the app runs (a workspace switch):
+/// the layer that was there for it is dropped (save it first, with
+/// `save_layer`), and with `label` a new one is read from the store's
+/// current backend. Settings that changed are applied.
+pub(crate) fn replace_layer(world: &mut World, store: StoreId, label: Option<String>) {
+    let mut settings = world.resource_mut::<Settings>();
+    settings.layers.retain(|layer| layer.store != store);
+    if let Some(label) = label {
+        settings.push_layer(store);
+        settings.layer_mut(store).unwrap().label = label.into();
+        read_into_layer(world, store);
+    }
+    check_values(world);
+    apply_changed(world);
+}
+
+/// Write layer `store` now if it changed.
+pub(crate) fn save_layer(world: &mut World, store: StoreId) {
+    let dirty = world
+        .resource::<Settings>()
+        .layers
+        .iter()
+        .any(|layer| layer.store == store && layer.dirty && layer.blocked.is_none());
+    if dirty {
+        write_layer(world, store);
+    }
+}
+
+fn read_into_layer(world: &mut World, store: StoreId) {
+    {
         let result = read_layer(world, store);
         let mut settings = world.resource_mut::<Settings>();
         let layer = settings.layer_mut(store).unwrap();
@@ -410,8 +451,6 @@ pub(crate) fn load_layers(world: &mut World) {
             }
         }
     }
-    check_values(world);
-    apply_changed(world);
 }
 
 /// A layer whose file changed on disk (edited by hand, or written by another
@@ -491,46 +530,51 @@ pub(crate) fn save_layers(world: &mut World, mut last: Local<Option<Instant>>) {
         .map(|layer| layer.store)
         .collect();
     for store in dirty {
-        let Some(backend) = world
-            .get_resource::<Stores>()
-            .and_then(|stores| stores.backend(store))
-        else {
-            world
-                .resource_mut::<Settings>()
-                .layer_mut(store)
-                .unwrap()
-                .dirty = false;
-            continue;
-        };
-        let settings = world.resource::<Settings>();
-        let layer = settings.layers.iter().find(|l| l.store == store).unwrap();
-        let result = ron::ser::to_string_pretty(&layer.values, ron::ser::PrettyConfig::default())
-            .map_err(|e| e.to_string())
-            .and_then(|text| backend.write(SETTINGS_ENTRY, text.as_bytes()))
-            .and_then(|()| backend.version(SETTINGS_ENTRY));
-        match result {
-            Ok(version) => {
-                let mut settings = world.resource_mut::<Settings>();
-                let layer = settings.layer_mut(store).unwrap();
-                layer.dirty = false;
-                layer.version = version;
-                layer.save_error = None;
+        write_layer(world, store);
+    }
+}
+
+/// Write layer `store` through its backend (none: just mark it saved).
+fn write_layer(world: &mut World, store: StoreId) {
+    let Some(backend) = world
+        .get_resource::<Stores>()
+        .and_then(|stores| stores.backend(store))
+    else {
+        world
+            .resource_mut::<Settings>()
+            .layer_mut(store)
+            .unwrap()
+            .dirty = false;
+        return;
+    };
+    let settings = world.resource::<Settings>();
+    let layer = settings.layers.iter().find(|l| l.store == store).unwrap();
+    let result = ron::ser::to_string_pretty(&layer.values, ron::ser::PrettyConfig::default())
+        .map_err(|e| e.to_string())
+        .and_then(|text| backend.write(SETTINGS_ENTRY, text.as_bytes()))
+        .and_then(|()| backend.version(SETTINGS_ENTRY));
+    match result {
+        Ok(version) => {
+            let mut settings = world.resource_mut::<Settings>();
+            let layer = settings.layer_mut(store).unwrap();
+            layer.dirty = false;
+            layer.version = version;
+            layer.save_error = None;
+        }
+        Err(error) => {
+            // Stays dirty, so the next save retries. Report each failure once.
+            let mut settings = world.resource_mut::<Settings>();
+            let layer = settings.layer_mut(store).unwrap();
+            if layer.save_error.as_ref() == Some(&error) {
+                return;
             }
-            Err(error) => {
-                // Stays dirty, so the next save retries. Report each failure once.
-                let mut settings = world.resource_mut::<Settings>();
-                let layer = settings.layer_mut(store).unwrap();
-                if layer.save_error.as_ref() == Some(&error) {
-                    continue;
-                }
-                layer.save_error = Some(error.clone());
-                world.write_message(StoreError {
-                    store,
-                    entry: SETTINGS_ENTRY.into(),
-                    kind: StoreErrorKind::Save,
-                    error,
-                });
-            }
+            layer.save_error = Some(error.clone());
+            world.write_message(StoreError {
+                store,
+                entry: SETTINGS_ENTRY.into(),
+                kind: StoreErrorKind::Save,
+                error,
+            });
         }
     }
 }

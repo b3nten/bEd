@@ -75,8 +75,8 @@ with tempfile.TemporaryDirectory() as folder:
         bed.screenshot("terminal-open")
 
         # Away and back: the terminal is a fresh shell, and `+open` works.
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
         until(bed, lambda: bed.exists("zsh") or bed.exists("bash") or bed.exists("Terminal"),
               "the terminal is back")
         bed.click(min((w for w in bed.widgets() if w.get("label") in ("zsh", "bash", "Terminal")),
@@ -94,6 +94,6 @@ with tempfile.TemporaryDirectory() as folder:
         def open_here():
             bed.type("+open")
             bed.key("Enter")
-        bed.relaunched(open_here)
+        bed.switched(open_here)
         until(bed, lambda: bed.exists("inside.txt"), "the folder is the workspace")
         bed.screenshot("terminal-open-folder")

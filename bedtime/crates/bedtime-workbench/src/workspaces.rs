@@ -3,10 +3,10 @@
 //!
 //! There's always one: the folder the app was opened at, or the default
 //! workspace, rooted at the home folder, for using the app without a project.
-//! Both are saved the same way. Switching workspace ends the session like
-//! quitting does, then rebuilds the App in the same window
-//! (`bevy::winit::relaunch`, from the bevy_winit fork), so nothing from the
-//! previous workspace survives.
+//! Both are saved the same way. Switching workspace (`open_workspace`) ends
+//! the session like quitting does, then swaps workspaces in the same world:
+//! the old one's layouts go, with their panels, and plugins drop what else
+//! was the workspace's in `OnWorkspaceClose`.
 //!
 //! The persistence directory (`PersistenceDirectory`) holds `global/` (the `GlobalStore`: app-wide settings
 //! and data, such as the recent list) and `workspaces/<hash>/` (each
@@ -14,10 +14,10 @@
 //! so repositories aren't touched. A lock file stops two instances from saving
 //! the same workspace over each other.
 use crate::{
-    ErrorDialog, ErrorDialogWorldExt, Notification, Root, WorkbenchWorldExt,
+    ErrorDialog, ErrorDialogWorldExt, LayoutsWorldExt, Notification, Root, WorkbenchWorldExt,
     persistence::{
         DirectoryStore, Persisted, PersistenceAppExt, PersistenceDirectory, Store, StoreBackend,
-        WorkbenchStore, read_persisted, write_persisted,
+        StoreId, Stores, WorkbenchStore, load_store, save_store, read_persisted, write_persisted,
     },
     settings::{Setting, SettingsAppExt, read_setting, settings},
 };
@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, TryLockError},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 /// App-wide settings and data, shared by every workspace: `<config>/global`.
@@ -191,9 +192,9 @@ pub struct Opened {
     pub unclaimed: Option<String>,
 }
 
-/// Which workspace an App opens.
+/// Which workspace to open.
 #[derive(Clone, Debug)]
-pub enum Start {
+pub(crate) enum Start {
     /// As started from the command line: the folder named there, else (if
     /// `startup.reopen_last`) the most recent folder, else the default.
     CommandLine(Option<PathBuf>),
@@ -203,34 +204,43 @@ pub enum Start {
     Default,
 }
 
-/// Opens a workspace for this App and saves it under the
-/// `PersistenceDirectory` (`global/` and `workspaces/<hash>/`). Add it after
-/// `PersistencePlugin` (part of `WorkbenchPlugins`).
+/// Opens a workspace and saves it under the `PersistenceDirectory`
+/// (`global/` and `workspaces/<hash>/`). Add it after `PersistencePlugin`
+/// (part of `WorkbenchPlugins`). By default it opens the folder named on the
+/// command line (its first argument); `WorkspacesPlugin::folder` names one.
 ///
 /// It reads what the global store remembers (recent folders, whether to
 /// reopen the last), chooses and claims the workspace, and puts it first on
 /// the recent list. Then it adds the global store and settings layer, then
 /// (for a folder) the workspace's settings layer and, when it's claimed, its
 /// store; and the `Workspace`, `Root` and `RecentWorkspaces` resources.
+/// `open_workspace` switches to another one in place.
 pub struct WorkspacesPlugin {
-    start: Start,
-    app: fn(Start) -> App,
+    folder: Option<PathBuf>,
     /// A folder gets its own settings layer (over the global one).
     workspace_settings: bool,
 }
 
-/// How to build the App for another workspace, when switching.
-#[derive(Resource, Clone)]
-pub struct WorkspaceSettings {
-    pub app: fn(Start) -> App,
+impl Default for WorkspacesPlugin {
+    fn default() -> Self {
+        Self {
+            folder: std::env::args_os().nth(1).map(PathBuf::from),
+            workspace_settings: true,
+        }
+    }
+}
+
+/// How workspaces were set up, for switching.
+#[derive(Resource, Clone, Copy)]
+struct WorkspaceOptions {
+    workspace_settings: bool,
 }
 
 impl WorkspacesPlugin {
-    /// Open `start`'s workspace; `app` builds the App for another one.
-    pub fn new(start: Start, app: fn(Start) -> App) -> Self {
+    /// Open `folder` rather than the command line's.
+    pub fn folder(folder: impl Into<PathBuf>) -> Self {
         Self {
-            start,
-            app,
+            folder: Some(folder.into()),
             workspace_settings: true,
         }
     }
@@ -262,17 +272,18 @@ impl Plugin for WorkspacesPlugin {
             recent = RecentWorkspaces::read(global);
             reopen_last = read_setting::<ReopenLastWorkspace>(global).unwrap_or(reopen_last);
         }
+        let start = Start::CommandLine(self.folder.clone());
         let Opened {
             workspace,
             lock,
             unclaimed,
-        } = choose(self.start.clone(), config.as_deref(), &recent, reopen_last);
+        } = choose(start, config.as_deref(), &recent, reopen_last);
         let remembered = match &global {
             Some(global) if !workspace.default => recent.remember(global, &workspace.root),
             _ => Ok(()),
         };
-        if let Some(config) = &config {
-            app.add_store::<GlobalStore>(DirectoryStore::new(config.join("global")));
+        if let Some(global) = global {
+            app.add_store::<GlobalStore>(global);
         }
         app.add_settings_layer::<GlobalStore>()
             .register_setting::<ReopenLastWorkspace>()
@@ -280,9 +291,9 @@ impl Plugin for WorkspacesPlugin {
         // A folder's settings override global ones. Without a claimed store
         // they still apply, but only in memory. The default workspace has none:
         // it's just where the app is without a project.
-        if !workspace.default && self.workspace_settings {
+        if let Some(label) = settings_label(&workspace, self.workspace_settings) {
             app.add_settings_layer::<WorkbenchStore>()
-                .label_settings_layer::<WorkbenchStore>(format!("Workspace: {}", workspace.name()));
+                .label_settings_layer::<WorkbenchStore>(label);
         }
         #[cfg(feature = "ui")]
         app.insert_resource(crate::settings::SettingsLocation(settings_location));
@@ -296,7 +307,9 @@ impl Plugin for WorkspacesPlugin {
         app.insert_resource(Root(workspace.root.clone()))
             .insert_resource(workspace)
             .insert_resource(recent)
-            .insert_resource(WorkspaceSettings { app: self.app })
+            .insert_resource(WorkspaceOptions {
+                workspace_settings: self.workspace_settings,
+            })
             .add_systems(Update, report_unclaimed);
         if let Err(error) = &remembered {
             app.world_mut()
@@ -306,6 +319,11 @@ impl Plugin for WorkspacesPlugin {
                 )));
         }
     }
+}
+
+/// What the workspace's settings layer is called, if it has one.
+fn settings_label(workspace: &Workspace, workspace_settings: bool) -> Option<String> {
+    (!workspace.default && workspace_settings).then(|| format!("Workspace: {}", workspace.name()))
 }
 
 /// Where a settings layer is saved, for the settings panel: the global file
@@ -331,22 +349,20 @@ fn settings_location(world: &World, layer: bedtime_persistence::StoreId) -> Opti
     )
 }
 
-/// Switch this window to `start`'s workspace. This ends the session the way
-/// quitting does (unsaved documents are saved or asked about, and the user can
-/// cancel), then rebuilds the App in the same window. A folder another instance
-/// has open is refused rather than opened unsaved; the default workspace opens
-/// unsaved, as in any other window.
-pub fn switch(world: &mut World, start: Start) -> Result<(), String> {
-    let current = world.resource::<Workspace>();
-    let next = match &start {
-        Start::Folder(path) => Workspace::from_path(path.clone())?,
-        Start::Default => Workspace::default_workspace(),
-        Start::CommandLine(_) => return Err("Can't switch to the command line's workspace".into()),
+/// Switch to `folder`'s workspace, or (`None`) the default one, in this
+/// window. This ends the session the way quitting does (unsaved documents are
+/// saved or asked about, and the user can cancel), then swaps workspaces in
+/// place (`switch_now`). A folder another instance has open is refused
+/// rather than opened unsaved; the default workspace opens unsaved, as in any
+/// other window.
+pub fn open_workspace(world: &mut World, folder: Option<PathBuf>) -> Result<(), String> {
+    let next = match folder {
+        Some(folder) => Workspace::from_path(folder)?,
+        None => Workspace::default_workspace(),
     };
-    if next == *current {
+    if next == *world.resource::<Workspace>() {
         return Ok(());
     }
-    let settings = world.resource::<WorkspaceSettings>().clone();
     if !next.default
         && let Some(config) = world.resource::<PersistenceDirectory>().path()
         && !available(&next.store_directory(config))
@@ -355,15 +371,82 @@ pub fn switch(world: &mut World, start: Start) -> Result<(), String> {
     }
     world
         .workbench_mut()
-        .request_exit("Switch workspace", move |world| {
-            bevy::winit::relaunch(world, move || (settings.app)(start));
-        })
+        .restart_session("Switch workspace", move |world| switch_now(world, next))
+}
+
+/// Close this workspace and open `next` in the same world: save everything,
+/// run `OnWorkspaceClose`, despawn its layouts (their areas and panels go with
+/// them), point the workspace store and settings layer at `next` and claim
+/// it, restore what it saved, and run `OnWorkspaceOpen`.
+fn switch_now(world: &mut World, next: Workspace) {
+    // Save everything, as quitting does.
+    let store = StoreId::of::<WorkbenchStore>();
+    for saved in [StoreId::of::<GlobalStore>(), store] {
+        save_store(world, saved);
+        crate::settings::save_layer(world, saved);
+    }
+    world.run_schedule(crate::OnWorkspaceClose);
+    for layout in world.layouts().all().to_vec() {
+        world.despawn(layout);
+    }
+    world.remove_resource::<WorkspaceLock>();
+
+    let config = world.resource::<PersistenceDirectory>().0.clone();
+    let start = if next.default {
+        Start::Default
+    } else {
+        Start::Folder(next.root.clone())
+    };
+    let recent = world.resource::<RecentWorkspaces>().clone();
+    let Opened {
+        workspace,
+        lock,
+        unclaimed,
+    } = choose(start, config.as_deref(), &recent, false);
+    let backend = lock.as_ref().zip(config.as_ref()).map(|(_, config)| {
+        Arc::new(DirectoryStore::new(workspace.store_directory(config))) as Arc<dyn StoreBackend>
+    });
+    world.resource_mut::<Stores>().set_backend(store, backend);
+    if let Some(lock) = lock {
+        world.insert_resource(lock);
+    }
+    if let Some(unclaimed) = unclaimed {
+        world.insert_resource(Unclaimed(unclaimed));
+    }
+    let options = *world.resource::<WorkspaceOptions>();
+    crate::settings::replace_layer(
+        world,
+        store,
+        settings_label(&workspace, options.workspace_settings),
+    );
+    if !workspace.default {
+        let global = world
+            .resource::<Stores>()
+            .backend(StoreId::of::<GlobalStore>());
+        let mut recent = world.resource::<RecentWorkspaces>().clone();
+        let remembered = match global {
+            Some(global) => recent.remember(global.as_ref(), &workspace.root),
+            None => Ok(()),
+        };
+        world.insert_resource(recent);
+        if let Err(error) = remembered {
+            world
+                .workbench_mut()
+                .notify(Notification::error(format!(
+                    "Couldn't update recent folders: {error}"
+                )));
+        }
+    }
+    world.insert_resource(Root(workspace.root.clone()));
+    world.insert_resource(workspace);
+    load_store(world, store);
+    world.run_schedule(crate::OnWorkspaceOpen);
 }
 
 /// Decide which workspace to open and claim its store. A folder named
 /// explicitly opens even if another instance has it, but isn't saved; one
 /// only reopened from the recent list is skipped instead.
-pub fn choose(
+pub(crate) fn choose(
     start: Start,
     config: Option<&Path>,
     recent: &RecentWorkspaces,
@@ -574,6 +657,89 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// Something a workspace saves in its store.
+    #[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize, Persisted)]
+    #[persisted(key = "note")]
+    struct Note(String);
+
+    #[derive(Resource, Default)]
+    struct Schedules(Vec<&'static str>);
+
+    #[test]
+    fn switching_saves_the_old_workspace_and_opens_the_next_in_place() {
+        let base = scratch("switch");
+        let (a, b) = (base.join("a"), base.join("b"));
+        fs::create_dir_all(&a).unwrap();
+        fs::create_dir_all(&b).unwrap();
+        let config = base.join("config");
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            crate::WorkbenchCorePlugins.set(crate::persistence::PersistencePlugin::directory(
+                config.clone(),
+            )),
+            WorkspacesPlugin::folder(a.clone()),
+        ))
+        .init_resource::<Note>()
+        .persist::<Note, WorkbenchStore>()
+        .init_resource::<Schedules>()
+        .add_systems(crate::OnWorkspaceOpen, |world: &mut World| {
+            world.resource_mut::<Schedules>().0.push("open");
+        })
+        .add_systems(crate::OnWorkspaceClose, |world: &mut World| {
+            world.resource_mut::<Schedules>().0.push("close");
+            // The note is the workspace's.
+            world.insert_resource(Note::default());
+        });
+        app.update();
+        app.world_mut().resource_mut::<Note>().0 = "in a".into();
+
+        let switch = |app: &mut App, folder: &Path| {
+            open_workspace(app.world_mut(), Some(folder.to_owned())).unwrap();
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while app.world().resource::<Workspace>().root != folder {
+                app.update();
+                assert!(std::time::Instant::now() < deadline, "the switch didn't finish");
+            }
+            app.update();
+        };
+        switch(&mut app, &b);
+        let world = app.world();
+        assert_eq!(world.resource::<Root>().0, b);
+        assert_eq!(world.resource::<Note>().0, "", "b has its own store");
+        assert_eq!(
+            world
+                .resource::<crate::settings::Settings>()
+                .label(StoreId::of::<WorkbenchStore>()),
+            Some("Workspace: b")
+        );
+        assert!(!world.resource::<crate::ManagedWork>().is_closing());
+        // A's store was saved and released; b's is claimed.
+        assert!(available(&folder_store(&a, &config)));
+        assert!(!available(&folder_store(&b, &config)));
+
+        switch(&mut app, &a);
+        assert_eq!(app.world().resource::<Note>().0, "in a");
+        assert_eq!(
+            app.world().resource::<Schedules>().0,
+            ["open", "close", "open", "close", "open"]
+        );
+        assert_eq!(
+            app.world().resource::<RecentWorkspaces>().0[..2],
+            [a.clone(), b.clone()]
+        );
+        drop(app);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    fn folder_store(folder: &Path, config: &Path) -> PathBuf {
+        Workspace {
+            root: folder.to_owned(),
+            default: false,
+        }
+        .store_directory(config)
+    }
+
     #[test]
     fn a_folder_has_its_own_settings_layer_unless_settings_are_global_only() {
         let base =
@@ -597,7 +763,7 @@ mod tests {
             app.world_mut().remove_resource::<WorkspaceLock>();
             count
         };
-        let open = || WorkspacesPlugin::new(Start::Folder(folder.clone()), |_| App::new());
+        let open = || WorkspacesPlugin::folder(folder.clone());
         assert_eq!(layers(open()), 2);
         assert_eq!(layers(open().global_settings_only()), 1);
         fs::remove_dir_all(&base).unwrap();

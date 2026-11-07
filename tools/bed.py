@@ -318,21 +318,22 @@ class Bed:
     def wait(self, frames):
         self.input({"wait": frames})
 
-    def relaunched(self, action, timeout=10):
-        """Run `action`, which switches workspace, and wait until the next App
-        (rebuilt in the same window) is drawing. Returns the seconds taken."""
-        launch = self.status()["launch"]
+    def switched(self, action, timeout=10):
+        """Run `action`, which switches workspace, and wait until the next
+        workspace has opened and is drawing. Returns the seconds taken."""
+        opened = self.status()["workspaces"]
         start = time.monotonic()
         action()
         while time.monotonic() - start < timeout:
             try:
-                status = self.status()
-                if status["launch"] > launch and status["frame"] >= 3 and self.widgets():
-                    return time.monotonic() - start
+                if self.status()["workspaces"] > opened:
+                    self.wait(2)
+                    if self.widgets():
+                        return time.monotonic() - start
             except (urllib.error.URLError, ConnectionError, AutomationError):
                 pass
             time.sleep(0.01)
-        raise AutomationError("the next App didn't start drawing")
+        raise AutomationError("the next workspace didn't open")
 
     # --- ending ---
 

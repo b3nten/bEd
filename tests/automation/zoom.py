@@ -92,8 +92,8 @@ with tempfile.TemporaryDirectory() as folder:
         assert not bed.status()["errors"], bed.status()["errors"]
 
         # Away and back: still zoomed; Cmd+0 puts it back.
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
         until(bed, lambda: len(bed.find_all("notes.txt")) == 2, "the editor's tab is restored")
         assert zooms(bed) == [1.1], "the zoom wasn't saved"
         bed.click(tab(bed, "notes.txt"))

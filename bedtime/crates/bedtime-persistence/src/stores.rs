@@ -225,6 +225,21 @@ impl Stores {
             .map(|(_, backend)| backend.clone())
     }
 
+    /// Save store `store` through `backend` from now on, or (`None`) stop
+    /// saving it. What was known about its entries (what's written, what
+    /// couldn't be read) is forgotten: load it again with `load_store`.
+    pub fn set_backend(&mut self, store: StoreId, backend: Option<Arc<dyn StoreBackend>>) {
+        self.backends.retain(|(id, _)| *id != store);
+        if let Some(backend) = backend {
+            self.backends.push((store, backend));
+        }
+        for entry in self.entries.iter_mut().filter(|entry| entry.store == store) {
+            entry.written = None;
+            entry.blocked = None;
+            entry.error = None;
+        }
+    }
+
     /// The store the world snapshot is saved in, if any.
     pub fn world_store(&self) -> Option<StoreId> {
         self.entries
@@ -361,11 +376,29 @@ fn hooks(app: &mut App) -> Mut<'_, Hooks> {
 
 /// Read each entry from its store and load it. A failure blocks the entry.
 pub(crate) fn load(world: &mut World) {
+    load_entries(world, None);
+}
+
+/// Load store `store`'s entries now, as at startup: after `set_backend`, say.
+/// Entries with nothing saved there are left as they are.
+pub fn load_store(world: &mut World, store: StoreId) {
+    load_entries(world, Some(store));
+}
+
+/// Save store `store`'s entries that changed, now.
+pub fn save_store(world: &mut World, store: StoreId) {
+    save_entries(world, Some(store));
+}
+
+fn load_entries(world: &mut World, only: Option<StoreId>) {
     let count = world.resource::<Stores>().entries.len();
     for index in 0..count {
         let stores = world.resource::<Stores>();
         let entry = &stores.entries[index];
         let (store, name, load) = (entry.store, entry.name, entry.load);
+        if only.is_some_and(|only| only != store) {
+            continue;
+        }
         let Some(backend) = stores.backend(store) else {
             continue;
         };
@@ -401,11 +434,18 @@ pub(crate) fn save(world: &mut World, mut last: Local<Option<Instant>>) {
         return;
     }
     *last = Some(Instant::now());
+    save_entries(world, None);
+}
+
+fn save_entries(world: &mut World, only: Option<StoreId>) {
     let count = world.resource::<Stores>().entries.len();
     for index in 0..count {
         let stores = world.resource::<Stores>();
         let entry = &stores.entries[index];
         let (store, name, save) = (entry.store, entry.name, entry.save);
+        if only.is_some_and(|only| only != store) {
+            continue;
+        }
         let Some(backend) = stores.backend(store) else {
             continue;
         };

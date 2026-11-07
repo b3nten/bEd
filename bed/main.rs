@@ -4,8 +4,6 @@ use bedtime_workbench::{
     Titlebar, WorkbenchPlugins, status::StatusAppExt,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
-use std::path::PathBuf;
-use workspace::Start;
 
 mod effects;
 
@@ -13,12 +11,10 @@ fn main() -> AppExit {
     if let Some(exit) = bedtime_terminal::handle_shell_command() {
         return exit;
     }
-    let argument = std::env::args_os().nth(1).map(PathBuf::from);
-    app(Start::CommandLine(argument)).run()
+    app().run()
 }
 
-pub fn app(start: Start) -> App {
-    let workspaces = workspace::WorkspacesPlugin::new(start, app);
+pub fn app() -> App {
 
     let mut app = App::new();
 
@@ -44,7 +40,7 @@ pub fn app(start: Start) -> App {
         WorkbenchPlugins
             .set(bedtime_workbench::StandardMenusPlugin { app_name: "bEd" })
             .set(bedtime_persistence::PersistencePlugin::for_app("bed")),
-        workspaces,
+        workspace::WorkspacesPlugin::default(),
         themes::plugin(),
         bedtime_code::lsp::LanguageServersPanelPlugin,
         settings::BedSettingsPlugin,
@@ -243,7 +239,7 @@ mod themes {
 // ═════════════════════════════════════════════════════════════════════════════
 
 mod menus {
-    use crate::workspace::{self, RecentWorkspaces, Start, Workspace};
+    use crate::workspace::{self, RecentWorkspaces, Workspace};
     use bedtime_code::ShowStructure;
     use bedtime_filetree::{FileTree, ShowFiles};
     use bedtime_git::ShowGit;
@@ -416,7 +412,7 @@ mod menus {
         };
         dialog.0 = None;
         if let Some(folder) = chosen {
-            switch(world, Start::Folder(folder.path().to_owned()));
+            switch(world, Some(folder.path().to_owned()));
         }
     }
 
@@ -428,12 +424,12 @@ mod menus {
         let folder = chosen
             .or_else(|| other_recent(world))
             .ok_or("No recent folder")?;
-        switch(world, Start::Folder(folder));
+        switch(world, Some(folder));
         Ok(())
     }
 
     fn close_folder(world: &mut World, _: ActionInvocation) -> ActionResult {
-        switch(world, Start::Default);
+        switch(world, None);
         Ok(())
     }
 
@@ -450,9 +446,10 @@ mod menus {
         recent.0.iter().find(|path| Some(*path) != current).cloned()
     }
 
-    /// Switch this window to `start`'s workspace, or explain why not.
-    pub fn switch(world: &mut World, start: Start) {
-        if let Err(error) = workspace::switch(world, start) {
+    /// Switch this window to `folder`'s workspace (`None`: the default one),
+    /// or explain why not.
+    pub fn switch(world: &mut World, folder: Option<PathBuf>) {
+        if let Err(error) = workspace::open_workspace(world, folder) {
             world.request_error_dialog(ErrorDialog {
                 title: "Open Folder".into(),
                 message: error,
@@ -951,7 +948,7 @@ mod workspace {
                 None => data.remove::<PathBuf>(confirming_id),
             });
             match action {
-                Some(Choice::Open(folder)) => crate::menus::switch(world, Start::Folder(folder)),
+                Some(Choice::Open(folder)) => crate::menus::switch(world, Some(folder)),
                 Some(Choice::Delete(folder)) => forget(world, &folder, config.as_deref()),
                 None => {}
             }
@@ -1187,7 +1184,7 @@ mod files {
 
     fn open_dropped_folder(world: &mut World) {
         if let Some(folder) = world.resource_mut::<DroppedFolder>().0.take() {
-            crate::menus::switch(world, crate::workspace::Start::Folder(folder));
+            crate::menus::switch(world, Some(folder));
         }
     }
 }
@@ -1379,9 +1376,9 @@ mod terminal {
         };
         if let Some(folder) = folder {
             invocation.reply.complete(Ok(()));
-            // After this frame: switching relaunches the app.
+            // After this frame.
             world.commands().queue(move |world: &mut World| {
-                crate::menus::switch(world, crate::workspace::Start::Folder(folder));
+                crate::menus::switch(world, Some(folder));
             });
             return;
         }
@@ -1464,7 +1461,7 @@ mod git {
     /// The repository's folder as the workspace (after this frame's drawing).
     fn open_folder(world: &mut World, folder: PathBuf) {
         world.commands().queue(move |world: &mut World| {
-            crate::menus::switch(world, crate::workspace::Start::Folder(folder));
+            crate::menus::switch(world, Some(folder));
         });
     }
 

@@ -5,7 +5,7 @@
 //! - [`workbench`] (default): desktop-app services (documents, actions and
 //!   keys, menus, settings, background work) with `WorkbenchPlugins`. Its
 //!   parts are also re-exported here: [`actions`], [`menus`], [`settings`],
-//!   [`work`]. `workspaces` adds workspaces, which need the bevy_winit fork.
+//!   [`work`]. `workspaces` adds workspaces.
 //! - Building blocks below the workbench: [`persistence`], [`document`],
 //!   [`filesystem`].
 //! - Plugins: [`filetree`], [`code`], [`terminal`].

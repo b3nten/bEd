@@ -49,8 +49,8 @@ with tempfile.TemporaryDirectory() as folder:
         assert not bed.status()["errors"], bed.status()["errors"]
 
         # Away and back: still hidden.
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
         until(bed, lambda: bed.exists("notes.txt"), "the tree is restored")
         bed.wait(20)
         assert not bed.exists(".gitignore") and not bed.exists("build.log"), "the tree forgot"

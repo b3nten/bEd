@@ -33,6 +33,6 @@ with tempfile.TemporaryDirectory() as folder:
         bed.screenshot("mascots-ducky")
         assert not bed.status()["errors"], bed.status()["errors"]
 
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
         until(bed, lambda: tab(bed, "Bed") and tab(bed, "Ducky"), "both come back")

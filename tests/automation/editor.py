@@ -80,8 +80,8 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: "auto " in notes.read_text(), "the edit is autosaved")
 
         # Away and back: the editor shows the file again.
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
-        bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
+        bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.open_recent"}))
         until(bed, lambda: bed.exists(contains="hello first line"), "the editor is restored")
         assert wrap(bed) is True, "Word Wrap comes back with the editor"
         bed.wait(30)

@@ -45,6 +45,15 @@ impl Plugin for FileTreePlugin {
                 (view::apply_intents, ops::finish_operations, update_folders)
                     .chain()
                     .in_set(FileTreeSystems),
+            )
+            // Reads and operations under the old folder were cancelled with
+            // the session; the next workspace's trees start fresh.
+            .add_systems(
+                bedtime_workbench::OnWorkspaceClose,
+                |mut commands: Commands| {
+                    commands.insert_resource(Folders::default());
+                    commands.insert_resource(FileOperations::default());
+                },
             );
         #[cfg(feature = "persistence")]
         {

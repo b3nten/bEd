@@ -46,6 +46,15 @@ impl Plugin for HttpClientPlugin {
                 (apply_intents, collect_responses)
                     .chain()
                     .in_set(HttpClientSystems),
+            )
+            // The requests are the workspace's (saved in its store); the next
+            // workspace's are loaded after this.
+            .add_systems(
+                bedtime_workbench::OnWorkspaceClose,
+                |mut commands: Commands| {
+                    commands.insert_resource(HttpRequests::default());
+                    commands.insert_resource(Exchanges::default());
+                },
             );
     }
 }

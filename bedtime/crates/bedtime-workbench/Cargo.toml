@@ -17,9 +17,8 @@ clipboard = ["dep:bedtime-clipboard"]
 system-fonts = ["bedtime-ui/system-fonts"]
 # Saving state, settings in layers, and keybindings as settings.
 persistence = ["dep:bedtime-persistence", "dep:ron", "bedtime-ui/persistence", "dep:bevy_world_serialization"]
-# Workspaces: folders with their own store and settings, switched by
-# rebuilding the App (needs the bevy_winit fork's `relaunch`).
-workspaces = ["persistence", "bevy/bevy_winit"]
+# Workspaces: folders with their own store and settings, switched in place.
+workspaces = ["persistence"]
 # The native menu bar, system clipboard and window chrome.
 native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "dep:muda", "bedtime-ui/native", "dep:objc2", "dep:objc2-foundation", "dep:objc2-app-kit"]
 

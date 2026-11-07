@@ -7,7 +7,7 @@ from bed import Bed
 
 with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     name = Path(folder).resolve().name
-    bed.relaunched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
+    bed.switched(lambda: bed.call("bedtime.invoke", {"command": "app.close_folder"}))
     # Built-in layout 1 of the default workspace, which isn't listed itself
     # (its name is only in the status bar).
     assert bed.exists(name) and len(bed.find_all("Default workspace")) == 1

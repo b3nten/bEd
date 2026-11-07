@@ -208,6 +208,12 @@ impl ManagedWork {
         }
     }
 
+    /// Accept work again after `shutdown`, for a session that goes on
+    /// (`restart_session`).
+    pub(crate) fn reopen(&mut self) {
+        self.closing = false;
+    }
+
     pub fn is_finished(&self) -> bool {
         self.running.values().all(|job| job.worker.is_finished())
     }

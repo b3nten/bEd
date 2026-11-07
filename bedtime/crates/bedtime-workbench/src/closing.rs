@@ -5,7 +5,8 @@
 //! (autosave on) or asks the user: Save, Discard or Cancel. Exiting (quitting, or
 //! an application's own exit such as switching project) asks the same about
 //! every unsaved document, then finishes background work and runs the exit's
-//! last step: `AppExit` for a quit.
+//! last step: `AppExit` for a quit. A restart (`restart_session`, switching
+//! workspace) runs its step, then the session goes on: work is accepted again.
 //! A failed save never closes anything; the prompt shows the error instead.
 //!
 //! The flow is driven headlessly through `close_prompt` and `resolve_close`;
@@ -62,6 +63,8 @@ enum Target {
         name: String,
         /// Taken when it runs.
         then: Option<ExitStep>,
+        /// The session goes on after `then`.
+        restart: bool,
     },
 }
 
@@ -308,7 +311,21 @@ impl Workbench {
         name: impl Into<String>,
         then: impl FnOnce(&mut World) + Send + Sync + 'static,
     ) -> Result<(), String> {
-        let name = name.into();
+        self.end_session(name.into(), Box::new(then), false)
+    }
+
+    /// End the session as `request_exit` does, run `then`, and go on: a new
+    /// session in the same app (switching workspace). `then` replaces what
+    /// the session had; background work is accepted again after it.
+    pub fn restart_session(
+        &mut self,
+        name: impl Into<String>,
+        then: impl FnOnce(&mut World) + Send + Sync + 'static,
+    ) -> Result<(), String> {
+        self.end_session(name.into(), Box::new(then), true)
+    }
+
+    fn end_session(&mut self, name: String, then: ExitStep, restart: bool) -> Result<(), String> {
         let world = &mut self.world;
         if exiting(world) {
             return Err("Already exiting".into());
@@ -329,7 +346,8 @@ impl Workbench {
             .collect();
         let target = Target::Exit {
             name,
-            then: Some(Box::new(then)),
+            then: Some(then),
+            restart,
         };
         if documents.is_empty() {
             world.resource_mut::<PendingClose>().0 = Some(Close {
@@ -392,10 +410,14 @@ fn advance(world: &mut World) {
             }
             if world.resource::<ManagedWork>().is_closing()
                 && world.resource::<ManagedWork>().is_finished()
-                && let Target::Exit { then, .. } = &mut close.target
+                && let Target::Exit { then, restart, .. } = &mut close.target
                 && let Some(then) = then.take()
             {
                 then(world);
+                if *restart {
+                    world.resource_mut::<ManagedWork>().reopen();
+                    return;
+                }
             }
         }
     }

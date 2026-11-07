@@ -9,7 +9,7 @@ use bevy::{
         touch::TouchPhase,
     },
     prelude::*,
-    remote::{BrpError, BrpReceiver, BrpResult, RemotePlugin, error_codes, http::RemoteHttpPlugin},
+    remote::{BrpError, BrpResult, RemotePlugin, error_codes, http::RemoteHttpPlugin},
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
     window::{CursorMoved, PrimaryWindow, WindowEvent},
 };
@@ -40,8 +40,8 @@ pub enum Step {
 
 #[derive(Resource, Default)]
 struct Automation {
-    /// Which App of this process this is, from 1.
-    launch: u64,
+    /// How many times a workspace has opened (at startup, and each switch).
+    workspaces: u64,
     /// Frames finished since startup.
     frame: u64,
     steps: VecDeque<Step>,
@@ -55,18 +55,7 @@ struct Automation {
     errors: Vec<String>,
 }
 
-/// The request mailbox of the HTTP server this process started. The server
-/// outlives an App (it runs on Bevy's global task pool), so when an App exits
-/// its mailbox is kept here for the next App in the same process (after a
-/// relaunch), which serves the same port.
-static MAILBOX: std::sync::Mutex<Option<BrpReceiver>> = std::sync::Mutex::new(None);
-
-/// How many Apps this process has built, so scripts can tell when a relaunch
-/// has happened.
-static LAUNCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-
 pub(crate) fn install(app: &mut App, port: u16) {
-    let launch = LAUNCHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     app.add_plugins(
         RemotePlugin::default()
             .with_method_main("bedtime.status", status)
@@ -76,27 +65,13 @@ pub(crate) fn install(app: &mut App, port: u16) {
             .with_method_main("bedtime.invoke", invoke)
             .with_method_main("bedtime.exit", exit),
     );
-    if MAILBOX.lock().unwrap().is_some() {
-        app.add_systems(Startup, |world: &mut World| {
-            if let Some(mailbox) = MAILBOX.lock().unwrap().take() {
-                world.insert_resource(mailbox);
-            }
-        });
-    } else {
-        app.add_plugins(RemoteHttpPlugin::default().with_port(port));
-    }
-    app.add_systems(Last, |world: &mut World| {
-        if world.resource::<Messages<AppExit>>().is_empty() {
-            return;
-        }
-        if let Some(mailbox) = world.remove_resource::<BrpReceiver>() {
-            *MAILBOX.lock().unwrap() = Some(mailbox);
-        }
-    })
-    .insert_resource(Automation {
-        launch,
-        ..default()
-    })
+    app.add_plugins(RemoteHttpPlugin::default().with_port(port))
+        // Scripts wait for this to change when they switch workspace.
+        .add_systems(
+            bedtime_workbench::OnWorkspaceOpen,
+            |mut automation: ResMut<Automation>| automation.workspaces += 1,
+        )
+        .init_resource::<Automation>()
     .init_resource::<AccessibilityTree>()
     .add_systems(First, (pretend_focus, run_step))
     .add_systems(PostUpdate, stop_pretending)
@@ -132,7 +107,7 @@ fn status(_: In<Option<Value>>, world: &mut World) -> BrpResult {
         });
     let automation = world.resource::<Automation>();
     Ok(json!({
-        "launch": automation.launch,
+        "workspaces": automation.workspaces,
         "frame": automation.frame,
         "pending": automation.steps.len(),
         "window": window,
