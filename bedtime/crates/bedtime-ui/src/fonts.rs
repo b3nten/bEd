@@ -1,0 +1,170 @@
+//! Typography: the bundled Bedfont, the theme's font family, and (with the
+//! `system-fonts` feature) the installed families it can name.
+//!
+//! The UI runtime applies fonts itself: when a context first draws, and when
+//! the theme's `font_family` changes. Hosts never call `set_fonts`.
+use egui::{FontData, FontDefinitions, FontFamily, FontId};
+use std::sync::Arc;
+
+#[cfg(feature = "system-fonts")]
+pub(crate) mod installed;
+#[cfg(feature = "system-fonts")]
+pub use installed::{InstalledFamily, InstalledFonts};
+
+pub const DEFAULT_FAMILY: &str = "Bedfont";
+
+/// The bold companion to `FontId::monospace`, installed by UI.
+pub fn monospace_bold(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("Monospace Bold".into()))
+}
+
+/// Symbol fallback: dingbats (spinner stars, check marks) and other symbols
+/// none of Bedfont or egui's text fonts have.
+const SYMBOLS: &str = "DejaVu Sans Mono";
+
+/// Bedfont (bundled Nordwand Mono) regular/bold, retaining egui's Unicode
+/// fallbacks, with DejaVu Sans Mono ahead of egui's emoji fonts so symbols
+/// they share draw monospaced.
+pub fn definitions() -> FontDefinitions {
+    let mut fonts = FontDefinitions::default();
+    for (name, bytes) in [
+        (
+            DEFAULT_FAMILY,
+            include_bytes!("../assets/fonts/NordwandMono-Regular.ttf").as_slice(),
+        ),
+        (
+            "Bedfont-Bold",
+            include_bytes!("../assets/fonts/NordwandMono-Bold.ttf").as_slice(),
+        ),
+        (
+            SYMBOLS,
+            include_bytes!("../assets/fonts/DejaVuSansMono.ttf").as_slice(),
+        ),
+    ] {
+        fonts
+            .font_data
+            .insert(name.into(), Arc::new(FontData::from_static(bytes)));
+    }
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        let fallbacks = fonts.families.get_mut(&family).unwrap();
+        fallbacks.insert(0, DEFAULT_FAMILY.into());
+        let emoji = fallbacks
+            .iter()
+            .position(|name| name == "NotoEmoji-Regular")
+            .unwrap_or(fallbacks.len());
+        fallbacks.insert(emoji, SYMBOLS.into());
+    }
+    let mut bold = fonts.families[&FontFamily::Monospace].clone();
+    bold.insert(0, "Bedfont-Bold".into());
+    fonts.families.insert(monospace_bold(1.0).family, bold);
+    fonts
+}
+
+/// Bedfont's definitions with `regular` and `bold` in front: they draw what
+/// they cover, Bedfont and egui's fallbacks the rest.
+pub fn with_primary(regular: Arc<FontData>, bold: Arc<FontData>) -> FontDefinitions {
+    let mut fonts = definitions();
+    fonts.font_data.insert("Primary Regular".into(), regular);
+    fonts.font_data.insert("Primary Bold".into(), bold);
+    for family in [FontFamily::Proportional, FontFamily::Monospace] {
+        fonts
+            .families
+            .get_mut(&family)
+            .unwrap()
+            .insert(0, "Primary Regular".into());
+    }
+    fonts
+        .families
+        .get_mut(&monospace_bold(1.0).family)
+        .unwrap()
+        .insert(0, "Primary Bold".into());
+    fonts
+}
+
+/// The definitions for `family` (`None` or Bedfont: the bundled fonts). `None`
+/// while installed fonts are still being discovered: keep the current fonts and
+/// ask again. A family that can't be found falls back to Bedfont.
+pub(crate) fn resolve(
+    world: &bevy::prelude::World,
+    family: Option<&str>,
+) -> Option<FontDefinitions> {
+    let Some(family) = family.filter(|family| *family != DEFAULT_FAMILY) else {
+        return Some(definitions());
+    };
+    #[cfg(feature = "system-fonts")]
+    if let Some(installed) = world.get_resource::<InstalledFonts>() {
+        if installed.loading() {
+            return None;
+        }
+        if let Some(fonts) = installed.definitions(family) {
+            return Some(fonts);
+        }
+    }
+    #[cfg(not(feature = "system-fonts"))]
+    let _ = (world, family);
+    Some(definitions())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn symbol_fallback_covers_tui_spinners_after_bedfont_and_hack() {
+        let monospace = &definitions().families[&FontFamily::Monospace];
+        let at = |name: &str| monospace.iter().position(|n| n == name).unwrap();
+        assert!(at("Hack") < at(SYMBOLS) && at(SYMBOLS) < at("NotoEmoji-Regular"));
+
+        let context = egui::Context::default();
+        context.set_fonts(definitions());
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            // epaint's `has_glyph` is false for anything Hack draws, since
+            // Hack also owns the replacement glyph; compare meshes instead.
+            ui.ctx().fonts_mut(|fonts| {
+                for font in [FontId::monospace(14.0), monospace_bold(14.0)] {
+                    let mut mesh = |ch: char| {
+                        let galley = fonts.layout_no_wrap(
+                            ch.to_string(),
+                            font.clone(),
+                            egui::Color32::WHITE,
+                        );
+                        galley.rows[0].visuals.mesh.clone()
+                    };
+                    let replacement = mesh('◻');
+                    assert_eq!(mesh('⎿'), replacement, "⎿ is still uncovered");
+                    for ch in "·✢✳✶✻✽✓✗✘".chars() {
+                        assert_ne!(mesh(ch), replacement, "{ch} missing from {font:?}");
+                    }
+                }
+            });
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn regular_and_bold_have_matching_monospace_metrics_and_distinct_glyphs() {
+        let context = egui::Context::default();
+        context.set_fonts(definitions());
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+            ui.ctx().fonts_mut(|fonts| {
+                for size in [12.0, 15.5, 24.0] {
+                    let regular = FontId::monospace(size);
+                    let bold = monospace_bold(size);
+                    assert_eq!(fonts.row_height(&regular), fonts.row_height(&bold));
+                    for ch in ['M', 'i', '0', ' '] {
+                        assert_eq!(
+                            fonts.glyph_width(&regular, ch),
+                            fonts.glyph_width(&bold, ch)
+                        );
+                    }
+                    let regular =
+                        fonts.layout_no_wrap("Bold".into(), regular, egui::Color32::WHITE);
+                    let bold = fonts.layout_no_wrap("Bold".into(), bold, egui::Color32::WHITE);
+                    assert_eq!(regular.size(), bold.size());
+                    assert_ne!(regular.rows[0].visuals.mesh, bold.rows[0].visuals.mesh);
+                }
+            });
+        });
+        output.textures_delta.clear();
+    }
+}

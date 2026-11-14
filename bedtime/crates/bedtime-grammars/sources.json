@@ -1,0 +1,610 @@
+[
+  {
+    "language": "rust",
+    "package": "arborium-rust-2.18.2",
+    "repository": "https://codeberg.org/grammar-orchard/tree-sitter-rust-orchard",
+    "commit": "261b20226c04ef601adbdf185a800512a5f66291",
+    "license": "MIT",
+    "package_checksum": "8471397c67c4164b93d6a23ae80fb5b7af5dcc00fa9b143015efb1ea927ca8da",
+    "license_source": "https://codeberg.org/grammar-orchard/tree-sitter-rust-orchard/raw/branch/main/LICENSE",
+    "files": {
+      "LICENSE": "31d5b6f4243d5c7c6e1c4ebbbb9f6407bd1457a08bcc4f706521710341acba36",
+      "UPSTREAM.md": "4563d593183be19cab943691a629e6f2adb57d75d391f876b624b7b935c02506",
+      "highlights.scm": "1af01422bd6c281e29a17541d04876f8d9ec09ce57eb607729ee5876e6dac33c",
+      "injections.scm": "723146f179bc0edfba2f51731c99afce8bed3b677dfb4435c303859fae299ba5",
+      "scanner.c": "e2af39dffd2fa24a244ca3ac74422bccf832ad1b5c4b313ca18439fd1c2ed6ce",
+      "src/parser.c.gz": "cf1be0929457d4198ff26d6eb795ca6b6b3fd427c3c3e693101203bcd34d62bc",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "c",
+    "package": "arborium-c-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-c",
+    "commit": "ae19b676b13bdcc13b7665397e6d9b14975473dd",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-c/ae19b676b13bdcc13b7665397e6d9b14975473dd/LICENSE",
+    "package_checksum": "37615879a3956f8918d43be52c9c4d11d60af5b7bedabca87ab8b47f769fa8c7",
+    "files": {
+      "LICENSE": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+      "UPSTREAM.md": "1384f3f973157462048a9803684347736a5fdbedb23af94f548b500c48fe4223",
+      "highlights.scm": "3378d854dda695b2b282b9468247524ed4271ef74af691033d2e36883379409c",
+      "src/parser.c.gz": "5d3e8205f128de527833a02da22f222866680a046c39efb1d0539fbf038c8abc",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "cpp",
+    "package": "arborium-cpp-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-cpp",
+    "commit": "12bd6f7e96080d2e70ec51d4068f2f66120dde35",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-cpp/12bd6f7e96080d2e70ec51d4068f2f66120dde35/LICENSE",
+    "package_checksum": "736c482444d8d58e7f3cd8df7bc88bf6c4b450e9039a55c43b3aec39d6a805ce",
+    "files": {
+      "LICENSE": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+      "UPSTREAM.md": "6d2fb6cbf0d5ac2709d197d7ccb412a2dd41d29142251af15a6cbc25336e1d9c",
+      "highlights.scm": "da7f4979c8aebcf8432dc454da8c3506c56a8a90ddbc0e5d2c775bbf15ccb5cc",
+      "injections.scm": "0791a308ef7c0a9e40b8415a2e9cee85b528a8bb21697e65c79872e8848dd972",
+      "scanner.c": "512ca7710209c6949134ed8dc9144f12b5aac30e9ce351e5a2238398189cdb1d",
+      "src/parser.c.gz": "b091c0b41e97a258df3b3a6e4a50af9682cd397d0c8e6b51be2987613be76639",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "c-sharp",
+    "package": "arborium-c-sharp-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-c-sharp",
+    "commit": "485f0bae0274ac9114797fc10db6f7034e4086e3",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-c-sharp/485f0bae0274ac9114797fc10db6f7034e4086e3/LICENSE",
+    "package_checksum": "1da8f9108bf98f334190243c27080476b126c54981fe2cb9b04d4f25d092960e",
+    "files": {
+      "LICENSE": "778fb7d63b8c1844da315648c02f325c4713a6f4a5d19644fd413421422776d3",
+      "UPSTREAM.md": "c5eec63f6984b538959c748590432fce4f0c2cfe5bb33dcfd857f300a57ed530",
+      "highlights.scm": "77cf520a0256a61b66db84b683861d78fdfe4c6724a5cbb7fd6c2eb5b55bc544",
+      "scanner.c": "1336b838c54affed8aaa215dd13fbc60d43b89225ab62b5125f25e36257ae6d2",
+      "src/parser.c.gz": "459291e38c6710af9a50b586962210f6de71c134e794b001c890e5d8dd004da9",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "java",
+    "package": "arborium-java-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-java",
+    "commit": "e10607b45ff745f5f876bfa3e94fbcc6b44bdc11",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-java/e10607b45ff745f5f876bfa3e94fbcc6b44bdc11/LICENSE",
+    "package_checksum": "ad9a5d6a278548b7a18bbaf79600402c167cec39d3b63be86daa1f3756b52a82",
+    "files": {
+      "LICENSE": "52ed137b039cd9c46409bc22e89938af911c95b157feae2d040b51e6084369a7",
+      "UPSTREAM.md": "c720d2d2fef0e8b9c0fcd86a03be5e9b283ec911d038c8c835b442f3057211cb",
+      "highlights.scm": "576c0df8df0b116cd642140ddc508c01f9d3283582afd8581c1f35caf4d71386",
+      "src/parser.c.gz": "c93871d78a1a67f327b6f234db8ef926b3f6ba35d593dc88199602e8dd55d615",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "go",
+    "package": "arborium-go-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-go",
+    "commit": "2346a3ab1bb3857b48b29d779a1ef9799a248cd7",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-go/2346a3ab1bb3857b48b29d779a1ef9799a248cd7/LICENSE",
+    "package_checksum": "f297634bca52a796de2725149dc684c18286c78f0a096fa27d532f9627bb1e02",
+    "files": {
+      "LICENSE": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+      "UPSTREAM.md": "5ce2b084b0e5e13b24d164bf4103fad9043b7316e1edc2552ac53e76b323766f",
+      "highlights.scm": "81182c986547eba7fa6316e82dfd621fb13b8fc89efac85432aee51a48ed0896",
+      "src/parser.c.gz": "68aa451e0cecf413c46a292e77c249d0ac6e9133895f29235beb30354dadbedc",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "swift",
+    "package": "arborium-swift-2.18.2",
+    "repository": "https://github.com/alex-pinkus/tree-sitter-swift",
+    "commit": "78d84ef82c387fceeb6094038da28717ea052e39",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/alex-pinkus/tree-sitter-swift/78d84ef82c387fceeb6094038da28717ea052e39/LICENSE",
+    "package_checksum": "db83273e075d168a853cb480805b0614803d43c20c7d5fc3f655dac836dd88e1",
+    "files": {
+      "LICENSE": "3533cec129bb4bba015c0d61d86dd7c3b7e82110e4d2ff7837a01eff5bad5ccc",
+      "UPSTREAM.md": "f0fa5de7559c026e0a094a451c1d760c95300222344a916049f5f3cb55c445f3",
+      "highlights.scm": "b0bbeb918904b252e8bd361f4afb4756647232391110a67deecbf7227464aff8",
+      "injections.scm": "fd541e467fd2667ed7cfdf604b0f3b3d1ac2632791972840eaedd0b99a581e58",
+      "locals.scm": "430a7d71c30212e1e0e21eb1b3ed71959fb71bf74a6fea27a0efbf491ebda1c7",
+      "scanner.c": "f3289419001b907d42000b38b740e2eba5850b500055e57bc056e1424426d2fc",
+      "src/parser.c.gz": "c0d32cd0fbd60151afcdaf978bc7675a1b12660168fcce9483d0a395fef27d70",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "kotlin",
+    "package": "arborium-kotlin-2.18.2",
+    "repository": "https://github.com/fwcd/tree-sitter-kotlin",
+    "commit": "57fb4560ba8641865bc0baa6b3f413b236112c4c",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/fwcd/tree-sitter-kotlin/57fb4560ba8641865bc0baa6b3f413b236112c4c/LICENSE",
+    "package_checksum": "d2be9de4405957a7e6f9684d4774a8e743bb501ce5956d3e91da77e8e18a6fe6",
+    "files": {
+      "LICENSE": "948495f61768f7de26bcc61113d8cd95f50bbc15adb678c28c941c6c8fcd5903",
+      "UPSTREAM.md": "88779a968674060be7eb558388bb1177477d368f71008c88eb4453ea3598eb85",
+      "highlights.scm": "79c8edefef5b5caa4b3861341e6af6edbbb3e1ddea8ba1ca2f172eb4faa4433f",
+      "scanner.c": "ead8ca5c5931e737b63dab018c73acc38382c9babe6d691418446b2d07373735",
+      "src/parser.c.gz": "2937cf977cefdb9b4cebd70139d03b2c90789a58419546fd92931645bc6f39ca",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "dart",
+    "package": "arborium-dart-2.18.2",
+    "repository": "https://github.com/UserNobody14/tree-sitter-dart",
+    "commit": "d4d8f3e337d8be23be27ffc35a0aef972343cd54",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/UserNobody14/tree-sitter-dart/d4d8f3e337d8be23be27ffc35a0aef972343cd54/LICENSE",
+    "package_checksum": "3a8479324e58c3fa5953006e79a79bf74547bb12b618f3856c270e9808a7a34b",
+    "files": {
+      "LICENSE": "d270cb3a4985d75033bd77d875ccebff1d66e32788a3f727891e28d76132dd46",
+      "UPSTREAM.md": "14aca351551ac433dc0fe3389938f84f02db7da3f08886c93c903ff187243ae5",
+      "highlights.scm": "8d6a315bf6db3d1f717bbabb5f6eb68baf56b8119042c0e4a3bc2b1c774b81d0",
+      "scanner.c": "6b8c4b11c664581e4f57e35dfec6b16af8e00b45a083e1cd4187662f719d56af",
+      "src/parser.c.gz": "de8e5686a062e49475b2367e6e920c872d97476e39838854173d527cc27d74b8",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "python",
+    "package": "arborium-python-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-python",
+    "commit": "26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-python/26855eabccb19c6abf499fbc5b8dc7cc9ab8bc64/LICENSE",
+    "package_checksum": "4da0da209e87d12f5922c5a7c005883d48d06baf0bf9b5d05bbe607b532e599f",
+    "files": {
+      "LICENSE": "d724405ce238a22c0d35769c5a36b386ad5958192efe8bbb304fb2896254575f",
+      "UPSTREAM.md": "e7ee7c335b1b75d154aa79849e7d8c7fc7c65b5655d7b2a582de9aeb63a3a889",
+      "highlights.scm": "a6708f209381618e2b398972c8f1ccd892f0c064eab35a2a3f911c3e22e79a7e",
+      "scanner.c": "b63c007c8280a9f4e71943884f75acffa34285f315bb8635f73030614989efa4",
+      "src/parser.c.gz": "0bb32f54b05363c05b0918efa5a493af802ae61d6d38ec48715d67b3627429ea",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "ruby",
+    "package": "arborium-ruby-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-ruby",
+    "commit": null,
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-ruby/HEAD/LICENSE",
+    "package_checksum": "9f791dc0377b8df659b98aed534dddfd4dcb591735cafd05b12e1e1ce3a859a9",
+    "files": {
+      "LICENSE": "ee006f02a3d856df282e409be2a86e24a65bb573a98b9c28343771141351bb6b",
+      "UPSTREAM.md": "850cc2604106f027a64b72e3f3aa92a6d599bfdf8ec4bca092ae10ca29d748c7",
+      "highlights.scm": "0858de9feece6dcd3408a541f995a34918d587ac2c552096026b0e47e2b332e6",
+      "scanner.c": "2707aeed7c7de4d66a96f99127b9ab0bf83667623f34b189d8d543dd78f4f691",
+      "src/parser.c.gz": "2eebecc14bc8f8aa3120a1bdf61dc62169a9022effeceee2cbbba2f9094930ef",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "php",
+    "package": "arborium-php-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-php",
+    "commit": "7d07b41ce2d442ca9a90ed85d0075eccc17ae315",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-php/7d07b41ce2d442ca9a90ed85d0075eccc17ae315/LICENSE",
+    "package_checksum": "1772da0cd2f525332a958f5ebda27eda35be22dfa82b052774b6162b2c20b359",
+    "files": {
+      "LICENSE": "664764fabf40c0b318e06324a5a12379092a2df25b8cbf2415f71bc0bb352346",
+      "UPSTREAM.md": "8af65a9fa6dba66d3ba0842fa9754a7791de344b9791f5767cdc780c85621cea",
+      "common/scanner.h": "de8eb36bc8f517ab9f3eaf82e3825d7b3e11b62e9471545f4c906100cfce0e07",
+      "highlights.scm": "a2a7367659cff3b4be09961c8117d69a9b8703bfc266f8092e089b1760f197e9",
+      "injections.scm": "8ea6bcf32f19a43cb102fb962d8fa9395a51d08102c0a4495b61a923887fc5cd",
+      "scanner.c": "df0449f730dfa7843080842730242cb5adeb62c562404375825adf7e69307b13",
+      "src/parser.c.gz": "a4e83fcea81b5a54f08f6d398d20000cb1561728289c9fd5db4376820d3d313a",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "lua",
+    "package": "arborium-lua-2.18.2",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-lua",
+    "commit": "d76023017f7485eae629cb60d406c7a1ca0f40c9",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-lua/d76023017f7485eae629cb60d406c7a1ca0f40c9/LICENSE.md",
+    "package_checksum": "d5ffae9459733aa8457f88e43672ccae485a77f09b15da83f8655d954c75365f",
+    "files": {
+      "LICENSE": "9a32b02e4c917b1ce6b5e79d8ea81e25cefd7f27d89c7235f2afb262c06cf32e",
+      "UPSTREAM.md": "73063295a8ccb8cd78aac07b76edae93d0295862cd53101657cb47f9ccb47088",
+      "highlights.scm": "cb84108d69ccccbb403069dd69ed402185573e362402c7280ac38266ba50fe42",
+      "injections.scm": "f7b9f46b2666cf96ee17658d150d25c48ed9c69f68de303b77d5315c399fb599",
+      "locals.scm": "a2058ac84ea311dd1768a7f4638ad6c6cd7b8683ad986511666e6a56d21356c0",
+      "scanner.c": "df7506d1120332bb7d3a5ac2dad3f0cff5335b53d7bc662182f2399a6889d0cc",
+      "src/parser.c.gz": "3de6c2c836b82550ffba876d49a415f56c73e40b8084299a73b116f0d2ad83a8",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "bash",
+    "package": "arborium-bash-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-bash",
+    "commit": "20f55fb9663568f16ebceaac7673d2aa530add46",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/20f55fb9663568f16ebceaac7673d2aa530add46/LICENSE",
+    "package_checksum": "ab2a2c191c27ee915e5ae65b619f9f7c1345565d511ce7761d30b4b243b2e333",
+    "files": {
+      "LICENSE": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
+      "UPSTREAM.md": "5af7f14711c95a0ca846ee5e8bd55cb608e98cc2cf8fe15f143a92ed862f5c33",
+      "highlights.scm": "b74220d954f485b7626d2b2b61f37b522e12eb1830803e388e57dd797dc99f11",
+      "scanner.c": "1ecc362a6512a0f15e71d87ece02ee77b940ea24c9297f5dca7e84486b34cf8c",
+      "src/parser.c.gz": "791634ff8f28f187e4645ddcb06af02055b8991e6f16b5e9c777d9b5800efb8d",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "powershell",
+    "package": "arborium-powershell-2.18.2",
+    "repository": "https://github.com/airbus-cert/tree-sitter-powershell",
+    "commit": "9379c77984af1f3d3d7e3cc5e897de3496725280",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/airbus-cert/tree-sitter-powershell/9379c77984af1f3d3d7e3cc5e897de3496725280/LICENSE",
+    "package_checksum": "33e087e691371a5b63c514c7a5c85c213932be5c52ada6107c5fb2314106be07",
+    "files": {
+      "LICENSE": "1fca8454c0d77a73f9922a52d39e1f7c339f5da5d03f2766eff66b859fa19477",
+      "UPSTREAM.md": "8710724b9d08bb299c268caa0f958e28d73eba70673833c0ffc58e67650b14bf",
+      "highlights.scm": "ca7fbd3725832082793510fd478eefeb8ee1588adbbf8d1ff2dcb066249b35ac",
+      "scanner.c": "cd53bb75653012c4c864c593f3f2faf8cee9c0292fdcd3a660ae118babec59e2",
+      "src/parser.c.gz": "0cf7adf2b7ba4f8a74b60f3d9d0cc4ca61bb9a751dd0df3132ac5469333f0d0e",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "javascript",
+    "package": "arborium-javascript-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-javascript",
+    "commit": "58404d8cf191d69f2674a8fd507bd5776f46cb11",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-javascript/58404d8cf191d69f2674a8fd507bd5776f46cb11/LICENSE",
+    "package_checksum": "47b63db8c449ac227061f2bb4ed62673d85c3f567be8f01483b34f266298d061",
+    "files": {
+      "LICENSE": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+      "UPSTREAM.md": "a666ff6d2e92bc1edd12814fb227739008e60cea952f5bf895d3f55a80f24316",
+      "highlights.scm": "d3630ae6dc9b2b27b230b5f8bb92b05cd491fb12bff353dae62a0a6d780461ee",
+      "injections.scm": "bea345407ce1f24bccf2b3c1a128acc14e19301327074285368586e793dcb86d",
+      "locals.scm": "c1dd2cfa1400d397fa974208fc9edfe817be4a3c8b42bb99af5c8d193b1bb753",
+      "scanner.c": "909d2d38284d13471372f886f7fd44c53e168910ca74845df9bcc68ee51941f7",
+      "src/parser.c.gz": "7573632942cfc118bb375e3947949ad593980dc3dc6a0ed6a73f78d7c4be6b77",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "typescript",
+    "package": "arborium-typescript-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-typescript",
+    "commit": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/75b3874edb2dc714fb1fd77a32013d0f8699989f/LICENSE",
+    "package_checksum": "0024689641490077765b291be46197f48d23e75cbade86768b1abed64d406ed1",
+    "files": {
+      "LICENSE": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
+      "UPSTREAM.md": "cfd798562a658f3a791e214b3063699b4bb236176c24e497a26f1daeef8a7219",
+      "common/scanner.h": "da66ef2bd14a3f7ea743e25ba068c6c9aae2c3509db200ff80c4a0e6116e564c",
+      "highlights.scm": "ec85cf7ae80450c513556ee7afda2a010f0b382f36eb4f04c403b2e4ae2546c9",
+      "locals.scm": "c3680f9b56276fb2ccc9f1d5f4d03dbca5d64bdf3e6d52ce5a4ad342cec162d5",
+      "scanner.c": "45e9b406f0980cc963ac90e236a97a131a2cf46ac921d79ac02d80c9d48b08d6",
+      "src/parser.c.gz": "6246c5502e5df995bb452af487dffe112b9d75476dca9794f868a42d6b2585d2",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "tsx",
+    "package": "arborium-tsx-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-typescript",
+    "commit": "75b3874edb2dc714fb1fd77a32013d0f8699989f",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-typescript/75b3874edb2dc714fb1fd77a32013d0f8699989f/LICENSE",
+    "package_checksum": "d3533e40fe9f843290d4ff481c67ed1494595395fb60318dbc1da7e58bba42bb",
+    "files": {
+      "LICENSE": "49bf33cf78ef5897e4e161ce1517df7de1ae5042a65b6bcfd44401e0fc606559",
+      "UPSTREAM.md": "045905c246e256ba5b4adb72ce6eaaab54eb1a18daea354ef4e38d6409c3b9ac",
+      "common/scanner.h": "da66ef2bd14a3f7ea743e25ba068c6c9aae2c3509db200ff80c4a0e6116e564c",
+      "highlights.scm": "dcfe5e3d7a41d8aca2a83ce85b6079c219a9b9f21f0bc77c451afbc3fc36663a",
+      "locals.scm": "c3680f9b56276fb2ccc9f1d5f4d03dbca5d64bdf3e6d52ce5a4ad342cec162d5",
+      "scanner.c": "1a6bd1718dac7509513c26e391b4af683d8e7df7de34efdd0c3351d4baa5dabf",
+      "src/parser.c.gz": "62bf9430a9c8d5b0986b4bb50e5f9c01d891dad3b6fac15b1abfae0683a05114",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "html",
+    "package": "arborium-html-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-html",
+    "commit": "73a3947324f6efddf9e17c0ea58d454843590cc0",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-html/73a3947324f6efddf9e17c0ea58d454843590cc0/LICENSE",
+    "package_checksum": "6ed785a76d53a63ff144b26a68b789fe4d10169a5f683d573ee72f3234d8a9a4",
+    "files": {
+      "LICENSE": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+      "UPSTREAM.md": "055cdd5b0cf5e3330f3be3ed000e32488fc6d2bc59aee6d791661c74f77f7333",
+      "highlights.scm": "1ebb3811a8cdc054385b847a3aac6fbf7079faefd5b3dfab5bbad256cd5afdcf",
+      "injections.scm": "6faa29537e952ee444aaa6ac00f72956d13f65616aade74bd665f5ac405f9c32",
+      "scanner.c": "a7930504620078627ca95aefc33d9a9e3cc8fb256a45b6ef2a1ba4790a79a17d",
+      "src/parser.c.gz": "0dda18c83a651450ed4620f80efd3c29b6fcfc82537db3011b5ec51623d8d823",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2",
+      "tag.h": "aaf1a10c8a2f685ef51a4aa6c01a2cbe166bff67eeccf6b9501a625b71f9ab70"
+    }
+  },
+  {
+    "language": "css",
+    "package": "arborium-css-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-css",
+    "commit": "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-css/dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f/LICENSE",
+    "package_checksum": "d3bf02fc773bafaac2cdc27862d6eb52e86927e740c69e0d87b4123f2589b9af",
+    "files": {
+      "LICENSE": "c5cfb43042b6b72045f4ba997834d0a7786d2793d91680868b5815b39f14fc78",
+      "UPSTREAM.md": "596cb3ceca398878e98f69ca0b47dbe30d1ec575366d3589ed45838c67cb2148",
+      "highlights.scm": "23f7948a3817a0d06d7120158c3bee4ec5b58daa77e524985a4738b364db17b2",
+      "scanner.c": "d68b79aafc19e96e4d3387a291e5c7d53af4aa951281cf787cdbf880649bce39",
+      "src/parser.c.gz": "e75156a49fe2a9abd6a644a3e1a486e47a3ff465f29c8058764e9983e0ad9eee",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "json",
+    "package": "arborium-json-2.18.2",
+    "repository": "https://github.com/tree-sitter/tree-sitter-json",
+    "commit": "001c28d7a29832b06b0e831ec77845553c89b56d",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter/tree-sitter-json/001c28d7a29832b06b0e831ec77845553c89b56d/LICENSE",
+    "package_checksum": "dd1167c5abde6c8d953cc20d88713006c94a009926d39e2217c68cbffbdbf7f0",
+    "files": {
+      "LICENSE": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1",
+      "UPSTREAM.md": "dddc65b427a8424f2ad1b4c6941255f1b6d6fe902d3dcb28350e315a14365fd1",
+      "highlights.scm": "0511524465b56aed122580792254e68b6abbbfde7119f1d02b135acbe278233f",
+      "src/parser.c.gz": "dd244343052a3d64709eba603a3678e69bd52f6ee31bbf5a9921ba12116ca44f",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "yaml",
+    "package": "arborium-yaml-2.18.2",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-yaml",
+    "commit": "7708026449bed86239b1cd5bce6e3c34dbca6415",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-yaml/7708026449bed86239b1cd5bce6e3c34dbca6415/LICENSE",
+    "package_checksum": "528f9c28a2703384a66079b18f29e990f1ed749014a6556242e7c14ed5b29ea9",
+    "files": {
+      "LICENSE": "2d181298822a124f6d106118dcc69c8d4d26ac668559be29682c452e712b0947",
+      "UPSTREAM.md": "5e655f527b5bc8f6444a343d02e78546744996a2d12f6faaed7f7cfb40e9bc8f",
+      "highlights.scm": "2fbfbbd5ca0928d0a7e09e59f8f2964b14a328a7ee0ce799270d9013dcce49a0",
+      "scanner.c": "6ee5d3e90dff540d372c3a2f9bf5772157659f089b273f8aefd2e2bcebc81788",
+      "schema.core.c": "91e56c3f3ae6fad1803b739ce4eb4568a782a9aec710f733db2f3e38d407a4d5",
+      "schema.json.c": "3a18e4406aa8cdaea2806483e11c50e1a392fd72cf8f54ab7f189b3728836949",
+      "schema.legacy.c": "4f7ca12361e848214beceaa95ae615048317039ea4736c6eec956e3e8da4694c",
+      "src/parser.c.gz": "d8d6db9586c60782d8f48e49abfed02570b3f612da85289eb43ec708a02ab35d",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "toml",
+    "package": "arborium-toml-2.18.2",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-toml",
+    "commit": "64b56832c2cffe41758f28e05c756a3a98d16f41",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-toml/64b56832c2cffe41758f28e05c756a3a98d16f41/LICENSE",
+    "package_checksum": "a9f6144d675fbfe2e510c5886955581b6838eb613a3d1af4250ddf10de5bfa5d",
+    "files": {
+      "LICENSE": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46",
+      "UPSTREAM.md": "0ef4691740ab683c403ac25f88cacbf812883ebb61ab199ca104fd95b4e378cb",
+      "highlights.scm": "788d7f2a11ececbc4daa52d7ff3571d910f03dffe857bf3d258d4bc4dc65ab2f",
+      "scanner.c": "04a14ec251fbba4400d388bc5aac1e01775d5cf43f647a390e29693000d695a2",
+      "src/parser.c.gz": "218c8dc7812f866aef61e87a23697a236fb167d2479805ba08e32ce89af39e4a",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "xml",
+    "package": "arborium-xml-2.18.2",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-xml",
+    "commit": "5000ae8f22d11fbe93939b05c1e37cf21117162d",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-xml/5000ae8f22d11fbe93939b05c1e37cf21117162d/LICENSE",
+    "package_checksum": "d01fb3f68edd5d901632cfbc9aa02ba537e16aafc3eda4603573acb2aeef7ae3",
+    "files": {
+      "LICENSE": "3297073719030b7261afd78b7267931ccc03a27f7a65ca6fc644316180f71bf6",
+      "UPSTREAM.md": "43edf9825e8b1850bb9bb2dc31e53c57a848723378a760368a4b8c74795b9f8a",
+      "common/scanner.h": "ce5082af60b1808035a43c3df129df9b811c9c69949fdb664a351f7aae340409",
+      "highlights.scm": "aa4a561c846928c3a4d885acbe690a60689661a45684babe16cf8b7a1509b610",
+      "scanner.c": "831c691fdb58fd7b688b75fa6cf058c959dc89a757cb1fa40aae827ef1dbb758",
+      "src/parser.c.gz": "3a37bb6eac2ef20636d18cc60f13bc65c103dced32c1c7ac19d5caa0d7f29d93",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "markdown",
+    "package": "arborium-markdown-2.18.2",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+    "commit": "2dfd57f547f06ca5631a80f601e129d73fc8e9f0",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-markdown/2dfd57f547f06ca5631a80f601e129d73fc8e9f0/LICENSE",
+    "package_checksum": "f672968e3cddfa59a2b2b7777489078d9d20b220696891eeb35a9f20e51b9312",
+    "files": {
+      "LICENSE": "52ec8a1bf8256511e2a92613e0bb41ffefba3897f16fa958d7bb28c466dd4804",
+      "UPSTREAM.md": "954355ded6f265a7ac162c20a1894e3046161e37946ac6014ecfe66fc5dd1f58",
+      "highlights.scm": "0f8db8b016b0c739db7307215dcd1d33d9cbf5222b64e60d45dc4f4c08dc684b",
+      "injections.scm": "a9e0ea7de87994539acdaa475a7ce1cfc77ddd2310ba35272e23b74d548e5947",
+      "scanner.c": "724336c13ad0f8139486411c01265de74264f4cc1da45868ec2b6d76cefab9bd",
+      "src/parser.c.gz": "e10b83882f27f2c8498b46de1fca248f373f5ab1173101ac11a06b2dda3e5e61",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "sql",
+    "package": "arborium-sql-2.18.2",
+    "repository": "https://github.com/DerekStride/tree-sitter-sql",
+    "commit": "fe77f6868d6cdea593052a6af390116495093dc1",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/DerekStride/tree-sitter-sql/fe77f6868d6cdea593052a6af390116495093dc1/LICENSE",
+    "package_checksum": "67ca021dab5e61d6eb07bad9cf40f5f5e0fb4c6f89f32aa14a1db07431d657f9",
+    "files": {
+      "LICENSE": "3b3e4e4252d5d7d1c18e1257005f23242bf0580ad619204fd093c99b8c56748d",
+      "UPSTREAM.md": "15a4924b3bc46940baf9798cbd82825254d6189b3309eae170d0b39baca5157a",
+      "highlights.scm": "9f7f4e85aabefdc6119cbd692e9b39df77f72dfbd41938a7bc9530bc91974f30",
+      "scanner.c": "593f2ab9843c2147422ee98105958a941ace5f2a9d952c289720fed8716ecd62",
+      "src/parser.c.gz": "5ec950f13d1e039c1e738e1a54e33508b3542d73ef2d136af7689d766f4cc3ed",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "dockerfile",
+    "package": "arborium-dockerfile-2.18.2",
+    "repository": "https://github.com/camdencheek/tree-sitter-dockerfile",
+    "commit": "971acdd908568b4531b0ba28a445bf0bb720aba5",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/camdencheek/tree-sitter-dockerfile/971acdd908568b4531b0ba28a445bf0bb720aba5/LICENSE",
+    "package_checksum": "54f567b2f106cea694126516b8ad20d44cddc40df8c16c77acf61ada303bfd9e",
+    "files": {
+      "LICENSE": "806b8fcd19c1cdf23e178eb25942acc844a38669e36b2c896c7baf5f8bcecbb4",
+      "UPSTREAM.md": "2ba319faf6abbe68f7334a8d2b738b25f548d494e369071f9da75c556c4787ca",
+      "highlights.scm": "665444fb7c8099602c78f9563525dedc23bb227fb0a6323820eb10be2592b318",
+      "scanner.c": "7cb0f9b530461998236552e05e2f51a97fa9964a1aa441e30fd7a56ad9ef997e",
+      "src/parser.c.gz": "c11a821f894bf5979743a550bdad340fff04abd752af3ddecf51ea91c47326ad",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "cmake",
+    "package": "arborium-cmake-2.18.2",
+    "repository": "https://github.com/uyha/tree-sitter-cmake",
+    "commit": null,
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/uyha/tree-sitter-cmake/HEAD/LICENSE",
+    "package_checksum": "428a67eb72ef4bae3d59a588832ef34a6c22d0dc315ded3cbc5a74d01f855021",
+    "files": {
+      "LICENSE": "97334c0f9c0962b33cbe03223f584b8ed64c2d14419ce80cc2e945eb8d367d28",
+      "UPSTREAM.md": "8b1ad236b2fbdc23923169359b59de2ad514ca06a6e3c47e1fbf0af873462dc3",
+      "highlights.scm": "935161098bf9e335d4984496626a46d13a650df9145871a9578fe0e25a3e9a6c",
+      "injections.scm": "e1610c4b058fc5b3b646c4dffcc7327ceaa1a049cdd2058471eb845bd2f08d4d",
+      "scanner.c": "74f545c0fa7602d602a9e07a3a6b1a93e305a4d399c8e9d5326f35c9e83ef9c0",
+      "src/parser.c.gz": "b9e05c5c6c3ca6306992c837fda834053c262b4a41e24578a7d6385ee4992aa5",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "make",
+    "package": "arborium-make-2.18.2",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-make",
+    "commit": "70613f3d812cbabbd7f38d104d60a409c4008b43",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-make/70613f3d812cbabbd7f38d104d60a409c4008b43/LICENSE",
+    "package_checksum": "1bed9575f27d799d26b522d101f50abdb7f4f06d6a7065dbed41a6834b5dfe21",
+    "files": {
+      "LICENSE": "28eecdb75b6de2d9020603531461444bf54db827ee2fb345a8fcf4dbee7c2ad1",
+      "UPSTREAM.md": "56670e1f4b4768ae4a10fb0d76db7a930bd6d8826d7c6c8dafd40b870d91320c",
+      "highlights.scm": "1dbbd978ee09b8d752779d58626d7f11b621d2d3ccc3a1d041b346ddc34e4508",
+      "injections.scm": "207552f71a8bc81da587f4f433b720f4c97e7db43ce84e87685bcd7e36202f9c",
+      "src/parser.c.gz": "31a75ed37c302aa98408230a9fa432df962e4b86850ede2a81e522ac6f99d1ad",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "hcl",
+    "package": "arborium-hcl-2.18.2",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-hcl",
+    "commit": "fad991865fee927dd1de5e172fb3f08ac674d914",
+    "license": "Apache-2.0",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-hcl/fad991865fee927dd1de5e172fb3f08ac674d914/LICENSE",
+    "package_checksum": "30dc0e04b767c8345c41cc96b350e0e991826ff340d973bd52b1f27fc7963a12",
+    "files": {
+      "LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+      "UPSTREAM.md": "18cd1bd17b0c27040537130a1ef5909b2c22e9458d1351288a019ff689144563",
+      "highlights.scm": "afe00d17597f4f32b4a1cdd7f0bc273e7d394e76779dc2bbe7eeb582d1c9a5f9",
+      "scanner.c": "c1a6a1bd5e0ea20c209cf246e1dc37f083361af1a6bbde28ce7d762c2628f474",
+      "src/parser.c.gz": "526cdb2ed84cfdf20dff0cd725855db57d4674bf4e45121056bd8e4d13ad3384",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  },
+  {
+    "language": "markdown_inline",
+    "package": "tree-sitter-md-0.5.3",
+    "repository": "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
+    "commit": "v0.5.3",
+    "license": "MIT",
+    "license_source": "https://raw.githubusercontent.com/tree-sitter-grammars/tree-sitter-markdown/v0.5.3/LICENSE",
+    "package_checksum": "2efd398be546456c814598ee56c0f51769a77241511b4a58077815d120afa882",
+    "files": {
+      "LICENSE": "52ec8a1bf8256511e2a92613e0bb41ffefba3897f16fa958d7bb28c466dd4804",
+      "UPSTREAM.md": "acecf62738ddff5f276b468e6c2c2a340490fc727a7a41be3a954e6f2cec8576",
+      "highlights.scm": "9a88072f0ce54972c32fe7952ccb2d29254b6a7228bda1c7babc18df15cba797",
+      "injections.scm": "97bf17b9a973db8ee6868f543dd1eabdd81f19b8751a4fcf92db45f74462f4c5",
+      "src/parser.c.gz": "bcd1843c6b3268e8a35e8f73b1bb318458f6f3584d08e96bac8f5f8b11d7feb1",
+      "src/scanner.c": "92edf8a2ec9f4ffdc225c35f1cfa6d515f0ec8ca91c215c46c8703ec272c1e85",
+      "src/tree_sitter/alloc.h": "b29c1c9fb7cc82f58c84b376df1297d6e2737a1d655fd356db0859e3c29c2fea",
+      "src/tree_sitter/array.h": "31e60a1bff6f715afacce03b5b70efe42b58371b4f9595dd4af52a577ff9608c",
+      "src/tree_sitter/parser.h": "180b893c8734778fd32f372dfbc27bd6ad1cd2221f26150b31256ff6716320d2"
+    }
+  }
+]

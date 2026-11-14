@@ -1,0 +1,14 @@
+[package]
+name = "bedtime-syntax"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Tree-sitter analysis of source text on a worker: highlights, folds, outline and embedded languages"
+
+[dependencies]
+bedtime-document.workspace = true
+bedtime-grammars.workspace = true
+serde_json.workspace = true
+# Use one pinned native runtime: Cargo permits only one links=tree-sitter.
+tree-sitter = { package = "arborium-tree-sitter", version = "=2.18.2" }

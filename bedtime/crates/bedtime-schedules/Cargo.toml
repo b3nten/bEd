@@ -1,0 +1,31 @@
+[package]
+name = "bedtime-schedules"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Reads a Bevy app's schedules: which systems run, in what order and sets, and the components and resources each reads and writes"
+
+[features]
+default = ["panel"]
+# The Schedules panel. Without it this only reads the schedules.
+panel = ["dep:bedtime-ui", "dep:bedtime-workbench"]
+# How long each system took, from Bevy's `trace` spans, for the panel's
+# timeline. The app installs `profile::layer` in its `LogPlugin`.
+profile = ["dep:tracing", "dep:tracing-subscriber", "bevy/trace"]
+
+[dependencies]
+bedtime-ui = { workspace = true, optional = true }
+bedtime-workbench = { workspace = true, optional = true, features = ["persistence"] }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["registry", "std"] }
+# `debug` keeps system and component names readable.
+bevy = { workspace = true, features = ["std", "bevy_log", "debug"] }
+indexmap = { version = "=2.14.2", default-features = false }
+
+[[test]]
+name = "profile"
+required-features = ["profile"]
+
+[dev-dependencies]
+bevy = { workspace = true, features = ["std", "bevy_log", "debug", "bevy_state", "keyboard"] }

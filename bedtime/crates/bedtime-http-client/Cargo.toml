@@ -1,0 +1,27 @@
+[package]
+name = "bedtime-http-client"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "An HTTP client panel: compose requests, send them and read the response"
+
+[features]
+default = ["workbench"]
+# The HTTP client panel, with its requests saved in the workspace.
+workbench = [
+    "dep:bevy",
+    "dep:bedtime-ui",
+    "dep:bedtime-workbench",
+    "dep:bedtime-persistence",
+]
+
+[dependencies]
+ureq.workspace = true
+encoding_rs.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+bevy = { workspace = true, features = ["std"], optional = true }
+bedtime-ui = { workspace = true, optional = true, features = ["syntax", "image", "data"] }
+bedtime-workbench = { workspace = true, features = ["persistence"], optional = true }
+bedtime-persistence = { workspace = true, optional = true }

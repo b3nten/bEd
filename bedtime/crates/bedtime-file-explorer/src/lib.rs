@@ -1,0 +1,845 @@
+//! A file explorer panel: the folders under the workbench's [`Root`], read in
+//! the background and kept up to date by watching them, shown as a tree or as
+//! columns ([`ViewMode`]; by default whichever suits the panel's shape). A
+//! single click on a file opens a preview of it with `open_path`, a double
+//! click or Enter opens it for good, and its context menu lists `viewers_for`
+//! as "Open With".
+use bedtime_filesystem::{EntryKind, Filesystem, watch::DirectoryWatcher};
+#[cfg(feature = "persistence")]
+use bedtime_workbench::persistence::ReflectPersist;
+use bedtime_workbench::{ManagedTask, ManagedWork, Root};
+use bevy::prelude::*;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+
+mod columns;
+mod motion;
+mod ops;
+mod view;
+pub use bedtime_filesystem::operations::Operation;
+pub use ops::{FileOperations, copy_files, paste_files, run_file_operation};
+pub use view::{
+    ToggleHiddenFiles, ToggleIgnoredFiles, ViewFilesAsColumns, ViewFilesAsTree,
+    ViewFilesAutomatically, file_icon, file_kind, open_files_factory,
+};
+
+#[cfg(test)]
+mod tests;
+
+/// Open a file explorer: a new one, in the focused area.
+pub struct ShowFiles;
+impl bedtime_workbench::Action for ShowFiles {
+    const KEY: &'static str = "files.show";
+    const LABEL: &'static str = "Files";
+}
+
+pub struct FileExplorerPlugin;
+
+impl Plugin for FileExplorerPlugin {
+    fn build(&self, app: &mut App) {
+        app.register_type::<FileExplorer>()
+            .init_resource::<FileExplorerDefaults>()
+            .init_resource::<Folders>()
+            .init_resource::<view::Intents>()
+            .init_resource::<FileOperations>()
+            .add_systems(
+                Update,
+                (view::apply_intents, ops::finish_operations, update_folders)
+                    .chain()
+                    .in_set(FileExplorerSystems),
+            )
+            // Reads and operations under the old folder were cancelled with
+            // the session; the next workspace's trees start fresh.
+            .add_systems(
+                bedtime_workbench::OnWorkspaceClose,
+                |mut commands: Commands| {
+                    commands.insert_resource(Folders::default());
+                    commands.insert_resource(FileOperations::default());
+                },
+            );
+        #[cfg(feature = "persistence")]
+        {
+            use bedtime_workbench::settings::SettingsAppExt;
+            app.register_setting::<ShowHiddenFiles>()
+                .register_setting::<ShowIgnoredFiles>();
+        }
+        bedtime_workbench::ActionAppExt::add_action_handler::<ShowFiles>(
+            app,
+            bedtime_workbench::Handler::new(bedtime_workbench::open_new::<FileExplorer>),
+        );
+        bedtime_workbench::MenusAppExt::add_menu_item::<ShowFiles>(
+            app,
+            bedtime_workbench::StandardMenu::View,
+            "panels",
+        );
+        view::install_actions(app);
+    }
+}
+
+/// Doing what the trees were asked, then reading and watching folders, in `Update`.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub struct FileExplorerSystems;
+
+#[cfg(feature = "persistence")]
+bedtime_workbench::settings! {
+    "Files" {
+        /// Dot files and the like (a tree's menu changes that tree).
+        pub ShowHiddenFiles: bool {
+            default: false,
+            key: "files.show_hidden",
+            label: "Show hidden files",
+            apply: |world, shown| world.resource_mut::<FileExplorerDefaults>().show_hidden = *shown,
+        }
+        /// Files Git ignores.
+        pub ShowIgnoredFiles: bool {
+            default: true,
+            key: "files.show_ignored",
+            label: "Show ignored files",
+            apply: |world, shown| world.resource_mut::<FileExplorerDefaults>().show_ignored = *shown,
+        }
+    }
+}
+
+/// What trees show unless one is told otherwise (`FileExplorer::show_hidden`,
+/// `show_ignored`). By default ignored files show, dimmed; hidden ones don't.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct FileExplorerDefaults {
+    /// Hidden files: dot files, and those the system marks hidden.
+    pub show_hidden: bool,
+    /// Files Git ignores (`.gitignore`, `.git/info/exclude`, the global excludes).
+    pub show_ignored: bool,
+}
+
+impl Default for FileExplorerDefaults {
+    fn default() -> Self {
+        Self {
+            show_hidden: false,
+            show_ignored: true,
+        }
+    }
+}
+
+/// The file explorer panel. How it shows files, which folders are open in
+/// the tree, and whether it shows hidden and ignored files, is saved with it.
+#[bedtime_ui::panel]
+#[derive(Reflect, Clone, Debug)]
+#[reflect(Component, Default)]
+#[cfg_attr(feature = "persistence", reflect(Persist))]
+// Saved under the name it had as bedtime-filetree's `FileTree`, so layouts
+// saved before the rename still open.
+#[type_path = "bedtime_filetree"]
+#[type_name = "FileTree"]
+#[require(ExplorerView)]
+pub struct FileExplorer {
+    /// Tree, columns, or whichever suits the panel's shape.
+    #[reflect(default)]
+    pub mode: ViewMode,
+    /// Open folders in the tree, relative to the root; the empty path is the
+    /// root itself.
+    expanded: Vec<PathBuf>,
+    /// Show hidden files; `None` follows `FileExplorerDefaults`.
+    #[reflect(default)]
+    pub show_hidden: Option<bool>,
+    /// Show files Git ignores; `None` follows `FileExplorerDefaults`.
+    #[reflect(default)]
+    pub show_ignored: Option<bool>,
+    /// Bumped when `expanded` changes, so the rows are worked out again.
+    #[reflect(ignore)]
+    generation: u64,
+}
+
+impl Default for FileExplorer {
+    /// The root open.
+    fn default() -> Self {
+        Self {
+            mode: ViewMode::default(),
+            expanded: vec![PathBuf::new()],
+            show_hidden: None,
+            show_ignored: None,
+            generation: 0,
+        }
+    }
+}
+
+impl FileExplorer {
+    pub fn is_expanded(&self, relative: &Path) -> bool {
+        self.expanded.iter().any(|open| open == relative)
+    }
+
+    pub fn set_expanded(&mut self, relative: &Path, expanded: bool) {
+        if expanded == self.is_expanded(relative) {
+            return;
+        }
+        if expanded {
+            self.expanded.push(relative.to_owned());
+        } else {
+            self.expanded.retain(|open| open != relative);
+        }
+        self.generation += 1;
+    }
+
+    /// Whether hidden and ignored files show, given the defaults.
+    pub fn filter(&self, defaults: &FileExplorerDefaults) -> TreeFilter {
+        TreeFilter {
+            hidden: self.show_hidden.unwrap_or(defaults.show_hidden),
+            ignored: self.show_ignored.unwrap_or(defaults.show_ignored),
+        }
+    }
+
+    /// The open folders, as paths under `root`.
+    pub fn expanded_folders<'a>(&'a self, root: &'a Path) -> impl Iterator<Item = PathBuf> + 'a {
+        self.expanded.iter().map(|relative| {
+            if relative.as_os_str().is_empty() {
+                root.to_owned()
+            } else {
+                root.join(relative)
+            }
+        })
+    }
+}
+
+/// How an explorer shows files. Saved.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ViewMode {
+    Tree,
+    Columns,
+    /// The tree in a tall panel, columns in one wider than it is tall.
+    #[default]
+    Auto,
+}
+
+/// What an explorer shows right now: `ViewMode::Auto` settles on one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Showing {
+    Tree,
+    Columns,
+}
+
+/// How wide a column of the column view is.
+pub const COLUMN_WIDTH: f32 = 220.0;
+
+impl ViewMode {
+    /// What to show in a panel of `size`: Auto shows columns when the panel
+    /// is wider than it is tall, and the tree otherwise.
+    pub fn showing(self, size: Vec2) -> Showing {
+        match self {
+            Self::Tree => Showing::Tree,
+            Self::Columns => Showing::Columns,
+            Self::Auto if size.x > size.y => Showing::Columns,
+            Self::Auto => Showing::Tree,
+        }
+    }
+}
+
+/// Which kinds of files a tree shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeFilter {
+    pub hidden: bool,
+    pub ignored: bool,
+}
+
+impl TreeFilter {
+    pub const ALL: Self = Self {
+        hidden: true,
+        ignored: true,
+    };
+}
+
+/// What's drawn: the tree's rows, the columns, the selection (shared by
+/// both views), scrolling. Not saved.
+#[derive(Component, Default)]
+pub struct ExplorerView {
+    rows: Arc<[Row]>,
+    /// What `rows` was worked out from: root, tree generation, folders
+    /// revision, what shows.
+    rows_from: Option<(PathBuf, u64, u64, TreeFilter)>,
+    columns: Arc<[Column]>,
+    /// What `columns` was worked out from: root, selection, folders revision,
+    /// what shows.
+    columns_from: Option<(PathBuf, Option<PathBuf>, u64, TreeFilter)>,
+    /// The tree or the columns, as last drawn; `None` before the first draw.
+    showing: Option<Showing>,
+    selected: Option<PathBuf>,
+    /// Scroll so this row shows, once it's there.
+    reveal: Option<PathBuf>,
+    /// The context menu's file and what can open it, found when it opened.
+    menu: Option<(PathBuf, Vec<(bedtime_workbench::ViewerId, &'static str)>)>,
+    typed: String,
+    typed_at: f64,
+    /// A name being typed (new file or folder, rename).
+    naming: Option<view::Naming>,
+    /// Rows moving as folders open and close.
+    motions: motion::Motions,
+    /// The entry whose tooltip shows, and its metadata.
+    details: Option<(PathBuf, Option<bedtime_filesystem::Metadata>)>,
+}
+
+impl ExplorerView {
+    pub fn selected(&self) -> Option<&Path> {
+        self.selected.as_deref()
+    }
+
+    pub fn rows(&self) -> &[Row] {
+        &self.rows
+    }
+
+    pub fn columns(&self) -> &[Column] {
+        &self.columns
+    }
+
+    /// What was last drawn.
+    pub fn showing(&self) -> Option<Showing> {
+        self.showing
+    }
+}
+
+/// A column of the column view: a folder's entries.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Column {
+    pub folder: PathBuf,
+    /// Its entries that show; `expanded` marks the one whose column follows.
+    pub rows: Vec<Row>,
+    /// Not read yet.
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+/// One line of the tree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Row {
+    pub path: PathBuf,
+    pub name: String,
+    pub depth: usize,
+    pub kind: EntryKind,
+    /// Hidden, or in a hidden folder.
+    pub hidden: bool,
+    /// Ignored by Git, or in an ignored folder.
+    pub ignored: bool,
+    /// A folder that's open.
+    pub expanded: bool,
+    /// For an open folder: still being read, or why it couldn't be.
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+/// A folder's entry.
+#[derive(Clone, Debug)]
+pub struct Entry {
+    pub path: PathBuf,
+    pub name: String,
+    pub kind: EntryKind,
+    pub hidden: bool,
+    /// Git ignores it. Only worked out on the local filesystem.
+    pub ignored: bool,
+}
+
+/// The folders open in any file tree, shared by them all: their last listing,
+/// and a watch on each. A folder is read again when its watch reports a change;
+/// without a working watcher, every two seconds.
+#[derive(Resource)]
+pub struct Folders {
+    filesystem: Filesystem,
+    /// `Root`, resolved: listings use resolved paths.
+    root: Option<Result<PathBuf, String>>,
+    root_from: Option<PathBuf>,
+    folders: HashMap<PathBuf, Folder>,
+    watcher: Option<Mutex<DirectoryWatcher>>,
+    watch_error: Option<String>,
+    polled: Instant,
+    /// Bumped when any listing changes.
+    revision: u64,
+}
+
+#[derive(Default)]
+struct Folder {
+    entries: Option<Arc<[Entry]>>,
+    error: Option<String>,
+    reading: Option<ManagedTask<Result<Vec<Entry>, String>>>,
+    /// Read again once the current read finishes.
+    stale: bool,
+    /// Watching worked. It's tried again on each read until it does.
+    watched: bool,
+}
+
+impl Default for Folders {
+    fn default() -> Self {
+        Self::new(Filesystem::local())
+    }
+}
+
+/// More open folders than this aren't read.
+pub const MAX_FOLDERS: usize = 512;
+const POLL: Duration = Duration::from_secs(2);
+
+impl Folders {
+    pub fn new(filesystem: Filesystem) -> Self {
+        let (watcher, watch_error) = match DirectoryWatcher::new() {
+            Ok(watcher) => (Some(Mutex::new(watcher)), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        Self {
+            filesystem,
+            root: None,
+            root_from: None,
+            folders: HashMap::new(),
+            watcher,
+            watch_error,
+            polled: Instant::now(),
+            revision: 0,
+        }
+    }
+
+    /// A folder's last listing, sorted folders first then by name.
+    pub fn entries(&self, folder: &Path) -> Option<&[Entry]> {
+        self.folders.get(folder)?.entries.as_deref()
+    }
+
+    pub fn error(&self, folder: &Path) -> Option<&str> {
+        self.folders.get(folder)?.error.as_deref()
+    }
+
+    pub fn is_reading(&self, folder: &Path) -> bool {
+        self.folders
+            .get(folder)
+            .is_some_and(|folder| folder.reading.is_some())
+    }
+
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    /// The root the trees show (`Root`, resolved), or why it can't be shown.
+    pub fn root(&self) -> Option<Result<&Path, &str>> {
+        self.root
+            .as_ref()
+            .map(|root| root.as_deref().map_err(String::as_str))
+    }
+
+    /// Read every open folder again.
+    pub fn refresh(&mut self) {
+        self.root_from = None;
+        for folder in self.folders.values_mut() {
+            folder.stale = true;
+        }
+    }
+
+    /// Why changes aren't being watched, if they aren't.
+    pub fn watch_error(&self) -> Option<&str> {
+        self.watch_error.as_deref()
+    }
+}
+
+/// The root the trees show, if there's one that can be.
+fn root(world: &World) -> Option<PathBuf> {
+    Some(world.resource::<Folders>().root()?.ok()?.to_owned())
+}
+
+/// Keep the folders the trees have open read and watched; let go of the rest.
+fn update_folders(world: &mut World) {
+    let given = world.get_resource::<Root>().map(|root| root.0.clone());
+    let mut folders = world.resource_mut::<Folders>();
+    if folders.root_from != given {
+        folders.root = given.as_ref().map(|root| {
+            folders
+                .filesystem
+                .source(root)
+                .canonicalize()
+                .map(|source| source.path().to_owned())
+                .map_err(|error| error.to_string())
+        });
+        folders.root_from = given;
+    }
+    let wanted: Vec<PathBuf> = match root(world) {
+        Some(root) => {
+            let mut explorers = world.query::<(&FileExplorer, Option<&ExplorerView>)>();
+            let listed = world.resource::<Folders>();
+            let mut wanted: Vec<PathBuf> = explorers
+                .iter(world)
+                .flat_map(|(tree, view)| match view {
+                    // Columns show the folders down to the selection.
+                    Some(view) if view.showing == Some(Showing::Columns) => {
+                        column_folders(&root, view.selected.as_deref(), listed)
+                    }
+                    _ => tree.expanded_folders(&root).collect(),
+                })
+                .collect();
+            wanted.sort();
+            wanted.dedup();
+            wanted.truncate(MAX_FOLDERS);
+            wanted
+        }
+        None => Vec::new(),
+    };
+    world.resource_scope(|world, mut folders: Mut<Folders>| {
+        let folders = &mut *folders;
+        let mut changed = false;
+
+        // Folders no longer open.
+        let gone: Vec<PathBuf> = folders
+            .folders
+            .keys()
+            .filter(|path| wanted.binary_search(path).is_err())
+            .cloned()
+            .collect();
+        for path in gone {
+            let folder = folders.folders.remove(&path).unwrap();
+            if let Some(task) = folder.reading {
+                task.cancel();
+            }
+            if folder.watched
+                && let Some(watcher) = &folders.watcher
+            {
+                let _ = watcher.lock().unwrap().unwatch(&path);
+            }
+        }
+
+        // What changed on disk.
+        if let Some(watcher) = &folders.watcher {
+            match watcher.lock().unwrap().poll() {
+                Ok(batch) => {
+                    if let Some(error) = batch.error {
+                        folders.watch_error = Some(error);
+                    }
+                    // A changed .gitignore can change what's ignored below it.
+                    let ignores_changed = batch
+                        .events
+                        .iter()
+                        .any(|event| event.path.file_name().is_some_and(|n| n == ".gitignore"));
+                    for event in batch.events {
+                        // A changed folder, or a changed entry in one.
+                        for path in [Some(event.path.as_path()), event.path.parent()]
+                            .into_iter()
+                            .flatten()
+                        {
+                            if let Some(folder) = folders.folders.get_mut(path) {
+                                folder.stale = true;
+                            }
+                        }
+                    }
+                    if batch.rescan || ignores_changed {
+                        folders.folders.values_mut().for_each(|f| f.stale = true);
+                    }
+                }
+                Err(error) => folders.watch_error = Some(error.to_string()),
+            }
+        }
+        if folders.watch_error.is_some() && folders.polled.elapsed() >= POLL {
+            folders.polled = Instant::now();
+            folders.folders.values_mut().for_each(|f| f.stale = true);
+        }
+
+        // Finished reads.
+        for folder in folders.folders.values_mut() {
+            let Some(task) = &folder.reading else {
+                continue;
+            };
+            let result = match task.try_recv() {
+                Ok(result) => result,
+                Err(std::sync::mpsc::TryRecvError::Empty) => continue,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    Err("The folder couldn't be read".to_owned())
+                }
+            };
+            folder.reading = None;
+            match result {
+                Ok(entries) => {
+                    // A watch event for an unchanged listing redraws nothing.
+                    if !folder
+                        .entries
+                        .as_deref()
+                        .is_some_and(|old| same(old, &entries))
+                    {
+                        folder.entries = Some(entries.into());
+                        changed = true;
+                    }
+                    changed |= folder.error.take().is_some();
+                }
+                Err(error) => {
+                    // The last listing stays: a failed reread isn't a deletion.
+                    changed |= folder.error.as_ref() != Some(&error);
+                    folder.error = Some(error);
+                }
+            }
+        }
+
+        // New and stale folders. A folder is watched before it's read, so a
+        // change in between isn't missed.
+        let Some(mut work) = world.get_resource_mut::<ManagedWork>() else {
+            return;
+        };
+        for path in &wanted {
+            let folder = folders.folders.entry(path.clone()).or_insert_with(|| {
+                changed = true;
+                Folder {
+                    stale: true,
+                    ..default()
+                }
+            });
+            if folder.stale && folder.reading.is_none() {
+                folder.stale = false;
+                if !folder.watched
+                    && let Some(watcher) = &folders.watcher
+                {
+                    folder.watched = watcher.lock().unwrap().watch(path).is_ok();
+                }
+                let filesystem = folders.filesystem.clone();
+                let target = path.clone();
+                match work.spawn_task(None, format!("Reading {}", path.display()), move |cancel| {
+                    read(&filesystem, &target, &|| cancel.is_cancelled())
+                }) {
+                    Ok(task) => folder.reading = Some(task),
+                    Err(error) => folder.error = Some(error),
+                }
+            }
+        }
+        if changed {
+            folders.revision += 1;
+        }
+    });
+}
+
+fn same(old: &[Entry], new: &[Entry]) -> bool {
+    old.len() == new.len()
+        && old
+            .iter()
+            .zip(new)
+            .all(|(a, b)| a.path == b.path && a.kind == b.kind && a.ignored == b.ignored)
+}
+
+/// A folder's entries: folders first, then by name ignoring case.
+fn read(
+    filesystem: &Filesystem,
+    folder: &Path,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<Entry>, String> {
+    let entries = filesystem
+        .source(folder)
+        .read_directory(cancelled)
+        .map_err(|error| error.to_string())?;
+    let mut entries: Vec<Entry> = entries
+        .into_iter()
+        .map(|entry| Entry {
+            name: entry.name.to_string_lossy().into_owned(),
+            path: entry.path,
+            kind: entry.kind,
+            hidden: entry.hidden,
+            ignored: false,
+        })
+        .collect();
+    if filesystem.is_local() {
+        mark_ignored(folder, &mut entries);
+    }
+    entries.sort_by(|a, b| {
+        (b.kind == EntryKind::Directory)
+            .cmp(&(a.kind == EntryKind::Directory))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            .then_with(|| a.path.cmp(&b.path))
+    });
+    Ok(entries)
+}
+
+/// Mark the entries Git ignores: those a walk of `folder` that applies Git's
+/// ignore files (its own, its parents', `.git/info/exclude`, the global
+/// excludes) leaves out. Outside a Git repository nothing is ignored.
+fn mark_ignored(folder: &Path, entries: &mut [Entry]) {
+    let kept: std::collections::HashSet<PathBuf> = ignore::WalkBuilder::new(folder)
+        .max_depth(Some(1))
+        .standard_filters(false)
+        .git_ignore(true)
+        .git_exclude(true)
+        .git_global(true)
+        .parents(true)
+        .require_git(true)
+        .build()
+        .filter_map(Result::ok)
+        .map(ignore::DirEntry::into_path)
+        .collect();
+    for entry in entries {
+        entry.ignored = !kept.contains(&entry.path);
+    }
+}
+
+/// The rows a tree shows: the root, then each open folder's entries that
+/// `filter` lets through.
+pub fn rows(root: &Path, tree: &FileExplorer, folders: &Folders, filter: TreeFilter) -> Vec<Row> {
+    let mut rows = Vec::new();
+    let name = root.file_name().map_or_else(
+        || root.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    push(
+        &mut rows,
+        root,
+        root,
+        name,
+        0,
+        EntryKind::Directory,
+        (false, false),
+        tree,
+        folders,
+        filter,
+    );
+    rows
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push(
+    rows: &mut Vec<Row>,
+    root: &Path,
+    path: &Path,
+    name: String,
+    depth: usize,
+    kind: EntryKind,
+    (hidden, ignored): (bool, bool),
+    tree: &FileExplorer,
+    folders: &Folders,
+    filter: TreeFilter,
+) {
+    let open = kind == EntryKind::Directory
+        && path
+            .strip_prefix(root)
+            .is_ok_and(|relative| tree.is_expanded(relative));
+    let entries = open.then(|| folders.entries(path)).flatten();
+    rows.push(Row {
+        path: path.to_owned(),
+        name,
+        depth,
+        kind,
+        hidden,
+        ignored,
+        expanded: open,
+        loading: open && entries.is_none() && folders.error(path).is_none(),
+        error: open
+            .then(|| folders.error(path).map(str::to_owned))
+            .flatten(),
+    });
+    for entry in entries.into_iter().flatten() {
+        let hidden = hidden || entry.hidden;
+        let ignored = ignored || entry.ignored;
+        if hidden && !filter.hidden || ignored && !filter.ignored {
+            continue;
+        }
+        push(
+            rows,
+            root,
+            &entry.path,
+            entry.name.clone(),
+            depth + 1,
+            entry.kind,
+            (hidden, ignored),
+            tree,
+            folders,
+            filter,
+        );
+    }
+}
+
+/// The folders the column view shows for `selected`: the root, each folder
+/// down to it, and it if it's a folder. A path not (yet) listed as a folder
+/// ends the columns.
+pub fn column_folders(root: &Path, selected: Option<&Path>, folders: &Folders) -> Vec<PathBuf> {
+    let mut chain = vec![root.to_owned()];
+    let Some(relative) = selected.and_then(|selected| selected.strip_prefix(root).ok()) else {
+        return chain;
+    };
+    for part in relative.components() {
+        let at = chain.last().unwrap();
+        let next = at.join(part);
+        let folder = folders
+            .entries(at)
+            .and_then(|entries| entries.iter().find(|entry| entry.path == next))
+            .is_some_and(|entry| entry.kind == EntryKind::Directory);
+        if !folder {
+            break;
+        }
+        chain.push(next);
+    }
+    chain
+}
+
+/// The columns for `selected`: each of `column_folders`' entries that
+/// `filter` lets through. What's in a hidden or ignored folder is too.
+pub fn columns(
+    root: &Path,
+    selected: Option<&Path>,
+    folders: &Folders,
+    filter: TreeFilter,
+) -> Vec<Column> {
+    let chain = column_folders(root, selected, folders);
+    let (mut hidden, mut ignored) = (false, false);
+    let mut columns = Vec::with_capacity(chain.len());
+    for (index, folder) in chain.iter().enumerate() {
+        let entries = folders.entries(folder);
+        let rows = entries
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| {
+                let hidden = hidden || entry.hidden;
+                let ignored = ignored || entry.ignored;
+                if hidden && !filter.hidden || ignored && !filter.ignored {
+                    return None;
+                }
+                Some(Row {
+                    path: entry.path.clone(),
+                    name: entry.name.clone(),
+                    depth: index + 1,
+                    kind: entry.kind,
+                    hidden,
+                    ignored,
+                    expanded: chain.get(index + 1) == Some(&entry.path),
+                    loading: false,
+                    error: None,
+                })
+            })
+            .collect();
+        if let Some(next) = chain.get(index + 1)
+            && let Some(entry) = entries
+                .into_iter()
+                .flatten()
+                .find(|entry| &entry.path == next)
+        {
+            hidden |= entry.hidden;
+            ignored |= entry.ignored;
+        }
+        columns.push(Column {
+            folder: folder.clone(),
+            rows,
+            loading: entries.is_none() && folders.error(folder).is_none(),
+            error: folders.error(folder).map(str::to_owned),
+        });
+    }
+    columns
+}
+
+/// Bring `view.columns` up to date.
+fn refresh_columns(root: &Path, folders: &Folders, filter: TreeFilter, view: &mut ExplorerView) {
+    let from = (
+        root.to_owned(),
+        view.selected.clone(),
+        folders.revision,
+        filter,
+    );
+    if view.columns_from.as_ref() != Some(&from) {
+        view.columns = columns(root, view.selected.as_deref(), folders, filter).into();
+        view.columns_from = Some(from);
+    }
+}
+
+/// Bring `view.rows` up to date.
+fn refresh_rows(
+    root: &Path,
+    tree: &FileExplorer,
+    folders: &Folders,
+    filter: TreeFilter,
+    view: &mut ExplorerView,
+) {
+    let from = (root.to_owned(), tree.generation, folders.revision, filter);
+    if view.rows_from.as_ref() != Some(&from) {
+        view.rows = rows(root, tree, folders, filter).into();
+        view.rows_from = Some(from);
+    }
+}

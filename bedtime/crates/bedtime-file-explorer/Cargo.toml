@@ -1,0 +1,23 @@
+[package]
+name = "bedtime-file-explorer"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A file tree panel: the workbench root's folders, opening files with open_path"
+
+[features]
+default = ["persistence"]
+# Save which folders are open with the panel.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-filesystem.workspace = true
+bedtime-ui.workspace = true
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }
+# Which entries Git ignores, read like Git does.
+ignore.workspace = true
+
+[dev-dependencies]
+bedtime-document.workspace = true

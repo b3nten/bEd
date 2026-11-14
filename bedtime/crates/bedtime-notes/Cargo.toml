@@ -1,0 +1,17 @@
+[package]
+name = "bedtime-notes"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A notes panel: plain-text notes kept in the workspace's store"
+
+[dependencies]
+bevy = { workspace = true, features = ["std"] }
+bedtime-ui.workspace = true
+bedtime-workbench = { workspace = true, features = ["persistence"] }
+bedtime-persistence.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+ron = "0.12.2"

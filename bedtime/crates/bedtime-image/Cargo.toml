@@ -1,0 +1,19 @@
+[package]
+name = "bedtime-image"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "An image viewer for workbench apps: raster images, animations and SVG, with zoom and pan"
+
+[features]
+default = ["persistence"]
+# Save image panels with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-document.workspace = true
+bedtime-filesystem.workspace = true
+bedtime-ui = { workspace = true, features = ["image"] }
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }

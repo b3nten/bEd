@@ -1,0 +1,19 @@
+[package]
+name = "bedtime-markdown"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Markdown rendered, with its images, for workbench apps. It shows the editor's document, so it follows edits"
+
+[features]
+default = ["persistence"]
+# Save Markdown panels with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-code.workspace = true
+bedtime-document.workspace = true
+bedtime-ui = { workspace = true, features = ["image", "markdown"] }
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }

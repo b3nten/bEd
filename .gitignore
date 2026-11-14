@@ -1,0 +1,18 @@
+/target/
+.DS_Store
+
+# Native captures, nested vendor caches, and local editor state.
+/artifacts/
+**/target/
+**/.undo-redo-bed.json
+
+# Python packaging checks.
+__pycache__/
+*.pyc
+
+.bed
+# Local reference checkout retained outside the maintained source tree.
+/references/zed/
+
+
+.claude

@@ -1,0 +1,36 @@
+[package]
+name = "bedtime-search"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Project search and replace: the engine, and (feature `workbench`) the search panel"
+
+[features]
+default = ["workbench", "persistence"]
+# The search panel.
+workbench = [
+    "dep:bevy",
+    "dep:bedtime-ui",
+    "dep:bedtime-workbench",
+    "dep:bedtime-document",
+    "dep:bedtime-filesystem",
+    "dep:bedtime-file-explorer",
+]
+# Save the search panel's query with the layout.
+persistence = ["workbench", "bedtime-workbench/persistence"]
+
+[dependencies]
+regex.workspace = true
+globset.workspace = true
+ignore.workspace = true
+bevy = { workspace = true, features = ["std"], optional = true }
+bedtime-ui = { workspace = true, optional = true }
+bedtime-workbench = { workspace = true, features = ["files"], optional = true }
+bedtime-document = { workspace = true, optional = true }
+bedtime-filesystem = { workspace = true, optional = true }
+bedtime-file-explorer = { workspace = true, optional = true }
+
+[dev-dependencies]
+ron = "0.12.2"
+serde.workspace = true

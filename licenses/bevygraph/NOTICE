@@ -1,0 +1,6 @@
+bevygraph (https://github.com/tbillington/bevy_debug_view)
+Revision 0d520f5f4e8693166408f082e8d25dd377dabc3e
+
+Its Cargo.toml declares `license = "MIT OR Apache-2.0"`. The repository ships
+no license file and no copyright line at this revision, so none is reproduced
+here. bEd uses it under the MIT license.

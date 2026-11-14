@@ -1,0 +1,6 @@
+X.Org rgb 1.1.0 color-name database, copied unchanged from the official release.
+Source: https://www.x.org/releases/individual/app/rgb-1.1.0.tar.xz
+Archive SHA-256: fc03d7f56e5b2a617668167f8927948cce54f93097e7ccd9f056077f479ed37b
+rgb.txt SHA-256: 3ab43100fec61f86ae6b7abebbf62fda355dff88c7ec9f0eed332520ddbb7965
+COPYING SHA-256: 1d08eb3384f5dedc7735bcfae1aa58cb64643ca9389edce3312b1c3cefbfdaa7
+Original COPYING is retained unchanged as LICENSE in this directory.

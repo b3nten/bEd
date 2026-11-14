@@ -1,0 +1,19 @@
+[package]
+name = "bedtime-datatree"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "JSON and TOML as trees for workbench apps. It shows the editor's document, so it follows edits"
+
+[features]
+default = ["persistence"]
+# Save tree panels with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-code.workspace = true
+bedtime-document.workspace = true
+bedtime-ui = { workspace = true, features = ["data"] }
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }

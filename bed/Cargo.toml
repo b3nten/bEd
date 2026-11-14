@@ -1,0 +1,52 @@
+[package]
+name = "bed"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Minimal Bevy application with a Bedtime workbench"
+
+[[bin]]
+name = "bed"
+path = "main.rs"
+
+[features]
+# Let scripts drive the app (tools/bed.py).
+automation = ["bedtime-automation/enabled"]
+# Time every system, for the Schedules panel's timeline.
+profile = ["bedtime-schedules/profile"]
+
+[dependencies]
+bedtime-audio.workspace = true
+bedtime-automation.workspace = true
+bedtime-code.workspace = true
+bedtime-document.workspace = true
+bedtime-file-explorer.workspace = true
+bedtime-font.workspace = true
+bedtime-http-client.workspace = true
+bedtime-git.workspace = true
+bedtime-search.workspace = true
+bedtime-hex.workspace = true
+bedtime-image.workspace = true
+bedtime-model.workspace = true
+bedtime-mascots.workspace = true
+bedtime-table.workspace = true
+bedtime-terminal.workspace = true
+bedtime-persistence.workspace = true
+bedtime-datatree.workspace = true
+bedtime-markdown.workspace = true
+bedtime-video.workspace = true
+bedtime-web.workspace = true
+bedtime-sqlite.workspace = true
+bedtime-schedules.workspace = true
+bedtime-notes.workspace = true
+bedtime-ui = { workspace = true, features = ["system-fonts", "syntax", "image", "markdown", "data"] }
+bedtime-workbench = { workspace = true, features = ["persistence", "workspaces", "system-fonts"] }
+bevy_egui.workspace = true
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "keyboard", "mouse", "x11", "wayland"] }
+rfd = { workspace = true }
+ron = "0.12.2"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+bevy_framepace = "0.23.0"
+

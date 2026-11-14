@@ -1,0 +1,122 @@
+[workspace]
+members = [
+    "bed",
+    "bedtime/crates/bedtime-clipboard",
+    "bedtime/crates/bedtime-code",
+    "bedtime/crates/bedtime-hex",
+    "bedtime/crates/bedtime-image",
+    "bedtime/crates/bedtime-model",
+    "bedtime/crates/bedtime-document",
+    "bedtime/crates/bedtime-ui",
+    "bedtime/crates/bedtime-ui-macros",
+    "bedtime/crates/bedtime-video",
+    "bedtime/crates/bedtime-audio",
+    "bedtime/crates/bedtime-automation",
+    "bedtime/crates/bedtime-persistence",
+    "bedtime/crates/bedtime-markdown",
+    "bedtime/crates/bedtime-datatree",
+    "bedtime/crates/bedtime-persistence-macros",
+    "bedtime/crates/bedtime-table",
+    "bedtime/crates/bedtime-terminal",
+    "bedtime/crates/bedtime-filesystem",
+    "bedtime/crates/bedtime-file-explorer",
+    "bedtime/crates/bedtime-font",
+    "bedtime/crates/bedtime-git",
+    "bedtime/crates/bedtime-search",
+    "bedtime/crates/bedtime-http-client",
+    "bedtime/crates/bedtime-grammars",
+    "bedtime/crates/bedtime-syntax",
+    "bedtime/crates/bedtime-mascots",
+    "bedtime/crates/bedtime",
+    "bedtime/crates/bedtime-workbench",
+    "bedtime/crates/bedtime-web",
+    "bedtime/crates/bedtime-sqlite",
+    "bedtime/crates/bedtime-schedules",
+    "bedtime/crates/bedtime-notes",
+]
+default-members = ["bed"]
+exclude = ["vendor/arboard", "vendor/egui", "vendor/rio-vt"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+license = "GPL-3.0-only"
+
+# Optimize dependencies while keeping workspace code easy to debug.
+[profile.dev.package."*"]
+opt-level = 1
+
+[workspace.dependencies]
+bedtime-document = { path = "bedtime/crates/bedtime-document" }
+bedtime-code = { path = "bedtime/crates/bedtime-code" }
+bedtime-font = { path = "bedtime/crates/bedtime-font" }
+bedtime-hex = { path = "bedtime/crates/bedtime-hex" }
+bedtime-image = { path = "bedtime/crates/bedtime-image" }
+bedtime-model = { path = "bedtime/crates/bedtime-model" }
+bedtime-clipboard = { path = "bedtime/crates/bedtime-clipboard", default-features = false }
+bedtime-ui = { path = "bedtime/crates/bedtime-ui" }
+bedtime-ui-macros = { path = "bedtime/crates/bedtime-ui-macros" }
+bedtime-video = { path = "bedtime/crates/bedtime-video" }
+bedtime-audio = { path = "bedtime/crates/bedtime-audio" }
+bedtime-automation = { path = "bedtime/crates/bedtime-automation" }
+bedtime-persistence = { path = "bedtime/crates/bedtime-persistence" }
+bedtime-markdown = { path = "bedtime/crates/bedtime-markdown" }
+bedtime-datatree = { path = "bedtime/crates/bedtime-datatree" }
+bedtime-table = { path = "bedtime/crates/bedtime-table" }
+bedtime-terminal = { path = "bedtime/crates/bedtime-terminal" }
+bedtime-filesystem = { path = "bedtime/crates/bedtime-filesystem" }
+bedtime-file-explorer = { path = "bedtime/crates/bedtime-file-explorer" }
+bedtime-git = { path = "bedtime/crates/bedtime-git" }
+bedtime-search = { path = "bedtime/crates/bedtime-search" }
+bedtime-http-client = { path = "bedtime/crates/bedtime-http-client" }
+bedtime-grammars = { path = "bedtime/crates/bedtime-grammars" }
+bedtime-syntax = { path = "bedtime/crates/bedtime-syntax" }
+bedtime-mascots = { path = "bedtime/crates/bedtime-mascots" }
+bedtime-workbench = { path = "bedtime/crates/bedtime-workbench" }
+bedtime-web = { path = "bedtime/crates/bedtime-web" }
+bedtime-sqlite = { path = "bedtime/crates/bedtime-sqlite" }
+bedtime-schedules = { path = "bedtime/crates/bedtime-schedules" }
+bedtime-notes = { path = "bedtime/crates/bedtime-notes" }
+wgpu = "=30.0.1"
+bevy = { version = "=0.20.0", default-features = false }
+egui = "=0.36.2"
+bevy_egui = { version = "=0.43.1", default-features = false, features = ["render", "default_fonts"] }
+stl_io = "=0.10.0"
+arboard = { version = "=3.6.1", default-features = false, features = ["wayland-data-control"] }
+rfd = "=0.17.2"
+serde_json = "1"
+pulldown-cmark = "=0.13.4"
+toml = { version = "=1.1.8", default-features = false }
+fontdb = { version = "=0.24.0", default-features = false, features = ["std", "fs", "fontconfig"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+flate2 = "=1.1.10"
+gltf = { version = "=1.4.1", default-features = false, features = ["utils", "names", "extensions", "KHR_materials_unlit", "KHR_texture_transform", "KHR_materials_emissive_strength"] }
+draco-core = { version = "=2.2.1", default-features = false, features = ["decoder", "edgebreaker_valence_decode", "legacy_bitstream_decode"] }
+glam = "=0.33.12"
+bytemuck = { version = "=1.25.2", features = ["derive"] }
+base64 = "=0.22.1"
+serde = "=1.0.229"
+resvg = { version = "=0.48.1", default-features = false }
+rio-vt = { version = "=0.5.28", default-features = false, features = ["graphics"] }
+rio-graphics = "=0.5.28"
+polling = "=3.11.0"
+unicode-width = "=0.2.2"
+trash = "=5.2.9"
+ignore = "=0.4.33"
+regex = "=1.13.1"
+globset = "=0.4.21"
+ureq = "=3.5.0"
+encoding_rs = "=0.8.44"
+rodio = { version = "=0.21.1", default-features = false, features = ["playback", "symphonia-all"] }
+libc = "=0.2.190"
+muda = { version = "=0.21.0", default-features = false }
+objc2 = "=0.6.5"
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSArray", "NSString", "NSGeometry", "NSObject", "NSThread", "NSObjCRuntime"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["std", "AppKitDefines", "NSButton", "NSButtonCell", "NSCell", "NSColor", "NSControl", "NSEvent", "NSFont", "NSFontDescriptor", "NSGraphics", "NSGraphicsContext", "NSImage", "NSLayoutAnchor", "NSLayoutConstraint", "NSResponder", "NSStackView", "NSText", "NSTextField", "NSTitlebarAccessoryViewController", "NSUserInterfaceLayout", "NSView", "NSViewController", "NSVisualEffectView", "NSWindow", "objc2-quartz-core", "objc2-core-graphics", "objc2-core-foundation"] }
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer"] }
+
+[patch.crates-io]
+bevy_render = { path = "vendor/bevy_render" }
+egui = { path = "vendor/egui" }
+rio-vt = { path = "vendor/rio-vt" }
+arboard = { path = "vendor/arboard" }

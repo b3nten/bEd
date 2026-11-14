@@ -1,0 +1,21 @@
+[package]
+name = "bedtime-sqlite"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "An SQLite database viewer and editor for workbench apps: browse and change tables' rows, see their structure, and run SQL"
+
+[features]
+default = ["persistence"]
+# Save database panels with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-document.workspace = true
+bedtime-filesystem.workspace = true
+bedtime-ui = { workspace = true, features = ["syntax"] }
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }
+# SQLite itself is built in (`bundled`), so nothing is needed from the system.
+rusqlite = { version = "=0.41.1", features = ["bundled"] }
