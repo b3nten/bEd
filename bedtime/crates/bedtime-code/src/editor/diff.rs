@@ -1,7 +1,9 @@
 //! Git-independent, revision-bound inline comparisons. Historical rows are a
 //! sparse projection over the real document, never document edits.
 use super::{
-    EditorError, EditorView, Navigation, Scroll, TextBuffer, TextSnapshot, background::Job,
+    EditorError, EditorView, Navigation, Scroll, TextBuffer, TextSelection, TextSnapshot,
+    background::Job,
+    layout::{Metrics, VisibleLine},
     wrapping::WrapIndex,
 };
 use bedtime_ui::egui;
@@ -304,6 +306,124 @@ impl Projection {
             |w| w.segment(row),
         )
     }
+    /// The change whose old lines visual `row` shows one of.
+    pub fn chunk(&self, visual: usize) -> Option<usize> {
+        let i = self.insertions.partition_point(|r| r.visual <= visual);
+        matches!(self.row(visual), Row::Historical(_)).then(|| i - 1)
+    }
+    /// The text a change removed: the baseline's bytes, up to its last
+    /// line's ending.
+    fn removed(&self, chunk: usize) -> Range<usize> {
+        let old = &self.ranges[chunk].old;
+        if old.is_empty() {
+            return 0..0;
+        }
+        self.baseline.line_start(old.start)..self.baseline.line_range(old.end - 1).end
+    }
+    /// An old row's text, laid out where it's drawn.
+    pub fn historical_line(
+        &self,
+        ui: &egui::Ui,
+        metrics: &Metrics,
+        segment: &super::wrapping::Segment,
+        cells: Range<usize>,
+    ) -> VisibleLine {
+        if self.width.is_some() {
+            VisibleLine::fragment(
+                ui,
+                &self.baseline,
+                metrics,
+                segment.bytes.clone(),
+                (segment.indent as f32 - segment.columns.start as f32) * metrics.cell,
+            )
+        } else {
+            VisibleLine::new(ui, &self.baseline, metrics, segment.line, cells)
+        }
+    }
+    /// The baseline byte at `position` (in the text's coordinates), kept
+    /// within what `chunk` removed: above its old lines is their start, below
+    /// them their end.
+    fn historical_hit(
+        &self,
+        ui: &egui::Ui,
+        metrics: &Metrics,
+        chunk: usize,
+        position: egui::Pos2,
+    ) -> usize {
+        let insertion = &self.insertions[chunk];
+        let bytes = self.removed(chunk);
+        let row = ((position.y - 6.0) / metrics.height).floor();
+        if row <= insertion.visual as f32 {
+            return bytes.start;
+        }
+        let offset = row as usize - insertion.visual - 1;
+        if offset >= insertion.historical.len() {
+            return bytes.end;
+        }
+        let column = ((position.x - 8.0) / metrics.cell).floor().max(0.0) as usize;
+        let segment = self.historical_segment(insertion.historical.start + offset);
+        self.historical_line(
+            ui,
+            metrics,
+            &segment,
+            column.saturating_sub(8)..column.saturating_add(16),
+        )
+        .hit(position.x - 8.0)
+        .clamp(bytes.start, bytes.end)
+    }
+    /// What a press at `position` selects, if it's on a change's old lines:
+    /// a caret there, a word on the second click, the line on the third.
+    /// With `extend` (Shift, in the same change) from that selection's anchor.
+    pub fn press(
+        &self,
+        ui: &egui::Ui,
+        metrics: &Metrics,
+        position: egui::Pos2,
+        clicks: u8,
+        extend: Option<&OldSelection>,
+        document: TextSelection,
+    ) -> Option<OldSelection> {
+        let row = ((position.y - 6.0) / metrics.height).floor().max(0.0) as usize;
+        let chunk = self.chunk(row)?;
+        let hit = self.historical_hit(ui, metrics, chunk, position);
+        let bytes = self.removed(chunk);
+        let range = match clicks {
+            3 => self.baseline.line_range(self.baseline.line_of(hit)),
+            2 => super::word_range(&self.baseline, hit),
+            _ => hit..hit,
+        };
+        let (mut anchor, head) = (range.start.max(bytes.start), range.end.min(bytes.end));
+        if clicks == 1
+            && let Some(old) = extend.filter(|old| {
+                old.comparison == self.comparison
+                    && old.revision == self.revision
+                    && old.chunk == chunk
+            })
+        {
+            anchor = old.anchor;
+        }
+        Some(OldSelection {
+            comparison: self.comparison,
+            revision: self.revision,
+            chunk,
+            anchor,
+            head,
+            document,
+        })
+    }
+    /// Where dragging `selection` to `position` puts its head.
+    pub fn drag(
+        &self,
+        ui: &egui::Ui,
+        metrics: &Metrics,
+        selection: &OldSelection,
+        position: egui::Pos2,
+    ) -> Option<usize> {
+        (selection.comparison == self.comparison
+            && selection.revision == self.revision
+            && selection.chunk < self.insertions.len())
+        .then(|| self.historical_hit(ui, metrics, selection.chunk, position))
+    }
     pub fn old_line(&self, new_line: usize) -> Option<usize> {
         let i = self.ranges.partition_point(|r| r.new.start <= new_line);
         if i == 0 {
@@ -317,6 +437,19 @@ impl Projection {
         }
     }
 }
+/// Text selected in a comparison's old lines, to copy: bytes of the baseline,
+/// within what one change removed. It's not part of the document, so it has
+/// no caret and lasts only until the document's own selection changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OldSelection {
+    comparison: u64,
+    revision: u64,
+    chunk: usize,
+    anchor: usize,
+    pub head: usize,
+    /// The document's selection when this was made.
+    document: TextSelection,
+}
 /// What a projection is for: the comparison, the text's revision, the wrap width.
 type ProjectionKey = (u64, u64, Option<usize>);
 
@@ -326,8 +459,47 @@ pub(crate) struct DiffState {
     pub actions: Vec<DiffAction>,
     projection: Option<Projection>,
     job: Option<(ProjectionKey, Job<Projection>)>,
+    /// Old lines' text selected, and whether a drag is selecting it.
+    pub selection: Option<OldSelection>,
+    pub selecting: bool,
 }
 impl DiffState {
+    pub fn deselect(&mut self) {
+        self.selection = None;
+        self.selecting = false;
+    }
+    /// Drop the old lines' selection once the document's own has changed.
+    pub fn keep_selection(&mut self, document: TextSelection, others: bool) {
+        if self
+            .selection
+            .as_ref()
+            .is_some_and(|old| others || old.document != document)
+        {
+            self.deselect();
+        }
+    }
+    /// The change and the baseline bytes selected in its old lines, while
+    /// the text is at the `revision` they were selected over.
+    pub fn selected(&self, revision: u64) -> Option<(usize, Range<usize>)> {
+        let old = self.selection.as_ref()?;
+        (old.revision == revision
+            && self
+                .input
+                .as_ref()
+                .is_some_and(|input| input.identity == old.comparison))
+        .then(|| {
+            (
+                old.chunk,
+                old.anchor.min(old.head)..old.anchor.max(old.head),
+            )
+        })
+    }
+    /// The old lines' selected text, if any is.
+    pub fn selected_text(&self, revision: u64) -> Option<String> {
+        let (_, range) = self.selected(revision)?;
+        let baseline = &self.input.as_ref()?.baseline;
+        (!range.is_empty()).then(|| baseline.slice(range).to_string())
+    }
     pub fn active(&self) -> bool {
         self.input.is_some()
     }
@@ -389,9 +561,33 @@ impl EditorView {
         if self.diff.input.as_ref().map(|i| i.identity) != comparison.as_ref().map(|i| i.identity) {
             self.diff.projection = None;
             self.diff.job = None;
+            self.diff.deselect();
         }
         self.diff.input = comparison;
         self.diff.actions = actions;
+    }
+    /// Whether text is selected in the comparison's old lines (Copy takes it).
+    pub fn old_lines_selected(&self) -> bool {
+        self.observed_revision
+            .is_some_and(|revision| self.diff.selected_text(revision).is_some())
+    }
+    /// Copy with old lines' text selected takes it. Cut does nothing then:
+    /// they aren't the document's to cut.
+    pub(super) fn old_lines_event(
+        &self,
+        ui: &egui::Ui,
+        event: &egui::Event,
+        revision: u64,
+    ) -> bool {
+        let Some(text) = self.diff.selected_text(revision) else {
+            return false;
+        };
+        match event {
+            egui::Event::Copy => ui.ctx().copy_text(text),
+            egui::Event::Cut => {}
+            _ => return false,
+        }
+        true
     }
     /// Move to an adjacent chunk without moving the canonical caret.
     pub fn navigate_change(
@@ -667,6 +863,98 @@ mod tests {
         ready(&ctx, &mut view, &mut doc, id);
         doc.history(HistoryAction::Undo).unwrap();
         assert_eq!(doc.text(), "new\nkeep\n");
+    }
+    fn pointer(pos: egui::Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+    #[test]
+    fn old_lines_select_within_their_change_and_copy_without_touching_the_document() {
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("diff-old-selection");
+        let mut doc = MemoryTextSession::new("new\nkeep\n");
+        let mut view = EditorView::default();
+        view.set_comparison(
+            Some(Comparison::new(
+                5,
+                TextBuffer::from("old words\nsecond gone\nkeep\n"),
+            )),
+            vec![DiffAction {
+                id: 1,
+                label: "Stage".into(),
+                enabled: true,
+            }],
+        );
+        let output = ready(&ctx, &mut view, &mut doc, id);
+        // Rows: the buttons, two old lines, then the document (caret at 0).
+        let caret = output.caret_rect;
+        let (height, left) = (caret.height(), caret.left());
+        let first = egui::pos2(left + 2.0, caret.top() - 1.5 * height);
+        let below = egui::pos2(left + 400.0, caret.top() + 3.0 * height);
+        let mut send = |view: &mut EditorView, doc: &mut MemoryTextSession, events| {
+            frame(&ctx, view, doc, id, events)
+        };
+        // A press and a drag far past the old lines: all of them, no further.
+        send(
+            &mut view,
+            &mut doc,
+            vec![egui::Event::PointerMoved(first), pointer(first, true)],
+        );
+        send(&mut view, &mut doc, vec![egui::Event::PointerMoved(below)]);
+        send(&mut view, &mut doc, vec![egui::Event::PointerMoved(below)]);
+        assert_eq!(
+            view.diff.selected_text(0).as_deref(),
+            Some("old words\nsecond gone")
+        );
+        assert!(view.old_lines_selected());
+        assert!(view.selection().range().is_empty());
+        send(&mut view, &mut doc, vec![pointer(below, false)]);
+        // Copy takes them (not the caret's line), Cut cuts nothing.
+        send(
+            &mut view,
+            &mut doc,
+            vec![egui::Event::Copy, egui::Event::Cut],
+        );
+        assert_eq!(doc.text(), "new\nkeep\n");
+        assert!(view.old_lines_selected());
+        // A double click selects a word.
+        for _ in 0..2 {
+            send(
+                &mut view,
+                &mut doc,
+                vec![egui::Event::PointerMoved(first), pointer(first, true)],
+            );
+            send(&mut view, &mut doc, vec![pointer(first, false)]);
+        }
+        assert_eq!(view.diff.selected_text(0).as_deref(), Some("old"));
+        // Moving the caret, or clicking in the document, drops it.
+        send(
+            &mut view,
+            &mut doc,
+            vec![crate::editor::tests::key(
+                egui::Key::ArrowRight,
+                egui::Modifiers::NONE,
+            )],
+        );
+        assert!(!view.old_lines_selected());
+        send(
+            &mut view,
+            &mut doc,
+            vec![egui::Event::PointerMoved(first), pointer(first, true)],
+        );
+        send(&mut view, &mut doc, vec![pointer(first, false)]);
+        assert!(view.diff.selection.is_some());
+        let document = egui::pos2(left + 2.0, caret.top() + 0.5 * height);
+        send(
+            &mut view,
+            &mut doc,
+            vec![egui::Event::PointerMoved(document), pointer(document, true)],
+        );
+        assert!(view.diff.selection.is_none());
     }
     #[test]
     fn changing_comparison_rejects_old_worker_results() {

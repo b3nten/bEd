@@ -521,6 +521,10 @@ fn context_menu(world: &mut World, panel: Entity, response: &egui::Response) {
     let has_selection = world
         .get::<EditorPanel>(panel)
         .is_some_and(|editor| !editor.view.selection().range().is_empty());
+    // Text selected in a comparison's old lines can be copied, not cut.
+    let old_lines = world
+        .get::<EditorPanel>(panel)
+        .is_some_and(|editor| editor.view.old_lines_selected());
     let primary = if cfg!(target_os = "macos") {
         "Cmd"
     } else {
@@ -547,11 +551,11 @@ fn context_menu(world: &mut World, panel: Entity, response: &egui::Response) {
             )
             .clicked()
         };
-        if item(ui, "Cut", "X", has_selection && !read_only) {
+        if item(ui, "Cut", "X", has_selection && !read_only && !old_lines) {
             choice = Some(MenuChoice::Event(egui::Event::Cut));
             ui.close();
         }
-        if item(ui, "Copy", "C", has_selection) {
+        if item(ui, "Copy", "C", has_selection || old_lines) {
             choice = Some(MenuChoice::Event(egui::Event::Copy));
             ui.close();
         }

@@ -829,6 +829,7 @@ impl EditorView {
                         }
                         if ui.input(|i| i.pointer.any_released()) {
                             self.box_anchor = None;
+                            self.diff.selecting = false;
                         }
                         let pressed = ui.input(|i| i.pointer.primary_pressed());
                         if response.hovered()
@@ -839,6 +840,14 @@ impl EditorView {
                             self.cancel_composition(session, id);
                             response.request_focus();
                             let position = ui.input(|i| i.pointer.interact_pos()).unwrap();
+                            let clicks = ui.ctx().options(|options| {
+                                self.pointer_presses.press(
+                                    position,
+                                    now,
+                                    options.input_options.max_double_click_delay,
+                                    options.input_options.max_click_dist,
+                                )
+                            });
                             let geometry = layout::Geometry {
                                 text: &snapshot.text,
                                 metrics: &metrics,
@@ -854,53 +863,74 @@ impl EditorView {
                             };
                             let local = position - origin.to_vec2();
                             let hit = geometry.hit(ui, local);
-                            self.upstream = geometry.visual_row(hit)
+                            let upstream = geometry.visual_row(hit)
                                 > (((local.y - 6.0) / metrics.height).floor().max(0.0) as usize);
-                            session.end_undo_group();
-                            self.preferred_column = None;
-                            let clicks = ui.ctx().options(|options| {
-                                self.pointer_presses.press(
-                                    position,
-                                    now,
-                                    options.input_options.max_double_click_delay,
-                                    options.input_options.max_click_dist,
+                            // On a comparison's old lines: select their text
+                            // (to copy), leaving the caret where it is.
+                            let caret = TextSelection {
+                                anchor: self.selection.head,
+                                head: self.selection.head,
+                            };
+                            let old = geometry.diff.and_then(|projection| {
+                                projection.press(
+                                    ui,
+                                    &metrics,
+                                    local,
+                                    clicks,
+                                    self.diff
+                                        .selection
+                                        .as_ref()
+                                        .filter(|_| ui.input(|i| i.modifiers.shift)),
+                                    caret,
                                 )
                             });
-                            // Alt-click adds a caret (or removes one); other
-                            // clicks leave just the primary.
-                            let alt = ui.input(|i| i.modifiers.alt);
-                            if alt {
-                                if let Err(error) = self.sync_others(&*session, &snapshot) {
-                                    failure = Some(error);
-                                }
-                            } else {
+                            session.end_undo_group();
+                            self.preferred_column = None;
+                            if let Some(old) = old {
                                 self.clear_others();
-                            }
-                            if clicks == 3 {
-                                let range = snapshot.text.line_range(snapshot.text.line_of(hit));
-                                self.selection = TextSelection {
-                                    anchor: range.start,
-                                    head: range.end,
-                                };
-                            } else if clicks == 2 {
-                                let range = word_range(&snapshot.text, hit);
-                                self.selection = TextSelection {
-                                    anchor: range.start,
-                                    head: range.end,
-                                };
-                            } else if ui.input(|i| i.modifiers.shift) {
-                                self.selection.head = hit;
-                            } else if alt {
-                                self.toggle_caret(snapshot.revision, hit);
+                                self.selection = caret;
+                                self.diff.selection = Some(old);
+                                self.diff.selecting = true;
                             } else {
-                                self.selection = TextSelection {
-                                    anchor: hit,
-                                    head: hit,
-                                };
+                                self.diff.deselect();
+                                self.upstream = upstream;
+                                // Alt-click adds a caret (or removes one); other
+                                // clicks leave just the primary.
+                                let alt = ui.input(|i| i.modifiers.alt);
+                                if alt {
+                                    if let Err(error) = self.sync_others(&*session, &snapshot) {
+                                        failure = Some(error);
+                                    }
+                                } else {
+                                    self.clear_others();
+                                }
+                                if clicks == 3 {
+                                    let range =
+                                        snapshot.text.line_range(snapshot.text.line_of(hit));
+                                    self.selection = TextSelection {
+                                        anchor: range.start,
+                                        head: range.end,
+                                    };
+                                } else if clicks == 2 {
+                                    let range = word_range(&snapshot.text, hit);
+                                    self.selection = TextSelection {
+                                        anchor: range.start,
+                                        head: range.end,
+                                    };
+                                } else if ui.input(|i| i.modifiers.shift) {
+                                    self.selection.head = hit;
+                                } else if alt {
+                                    self.toggle_caret(snapshot.revision, hit);
+                                } else {
+                                    self.selection = TextSelection {
+                                        anchor: hit,
+                                        head: hit,
+                                    };
+                                }
+                                self.drag_anchor = Some(self.selection.anchor);
+                                self.selection =
+                                    self.select_through_folds(&snapshot.text, self.selection);
                             }
-                            self.drag_anchor = Some(self.selection.anchor);
-                            self.selection =
-                                self.select_through_folds(&snapshot.text, self.selection);
                         }
                         // A right-click outside the selection moves the caret
                         // there first, so a context menu acts where you clicked.
@@ -923,10 +953,21 @@ impl EditorView {
                                     .filter(|_| self.composition.is_none()),
                             };
                             let hit = geometry.hit(ui, position - origin.to_vec2());
+                            // On old lines with some selected: the menu is
+                            // about those.
+                            let on_old = self.diff.selected_text(snapshot.revision).is_some()
+                                && geometry.diff.is_some_and(|projection| {
+                                    let y = (position - origin.to_vec2()).y - 6.0;
+                                    projection
+                                        .chunk(geometry.row_at(y / metrics.height))
+                                        .is_some()
+                                });
                             let selected = self.selection.range();
-                            if !(selected.start..=selected.end).contains(&hit)
-                                || selected.is_empty()
+                            if !on_old
+                                && (!(selected.start..=selected.end).contains(&hit)
+                                    || selected.is_empty())
                             {
+                                self.diff.deselect();
                                 session.end_undo_group();
                                 self.preferred_column = None;
                                 self.clear_others();
@@ -958,19 +999,42 @@ impl EditorView {
                                 };
                                 let local = position - origin.to_vec2();
                                 let hit = geometry.hit(ui, local);
-                                self.upstream = geometry.visual_row(hit)
+                                let upstream = geometry.visual_row(hit)
                                     > (((local.y - 6.0) / metrics.height).floor().max(0.0)
                                         as usize);
-                                self.selection = self.select_through_folds(
-                                    &snapshot.text,
-                                    TextSelection {
-                                        anchor: self.drag_anchor.unwrap_or(self.selection.anchor),
-                                        head: hit,
-                                    },
-                                );
-                                reveal = Some((hit..hit, Scroll::Minimal));
+                                // A drag begun on old lines selects within them.
+                                let old_head = self
+                                    .diff
+                                    .selection
+                                    .as_ref()
+                                    .filter(|_| self.diff.selecting)
+                                    .map(|old| {
+                                        geometry.diff.and_then(|projection| {
+                                            projection.drag(ui, &metrics, old, local)
+                                        })
+                                    });
+                                if let Some(head) = old_head {
+                                    if let (Some(head), Some(old)) =
+                                        (head, self.diff.selection.as_mut())
+                                    {
+                                        old.head = head;
+                                    }
+                                } else {
+                                    self.upstream = upstream;
+                                    self.selection = self.select_through_folds(
+                                        &snapshot.text,
+                                        TextSelection {
+                                            anchor: self
+                                                .drag_anchor
+                                                .unwrap_or(self.selection.anchor),
+                                            head: hit,
+                                        },
+                                    );
+                                    reveal = Some((hit..hit, Scroll::Minimal));
+                                }
                             }
                         }
+                        self.diff.keep_selection(self.selection, self.has_others());
                         let focused =
                             response.has_focus() && ui.input(|i| i.focused) && ui.is_enabled();
                         if !focused && self.composition.is_some() {
@@ -981,6 +1045,11 @@ impl EditorView {
                             let queued = std::mem::take(&mut self.queued);
                             for queued in &queued {
                                 let handled = match queued {
+                                    Queued::Event(event)
+                                        if self.old_lines_event(ui, event, snapshot.revision) =>
+                                    {
+                                        Ok(false)
+                                    }
                                     Queued::Event(event) => self.handle_event(
                                         ui,
                                         id,
@@ -1013,6 +1082,10 @@ impl EditorView {
                             let events = ui.input(|input| input.events.clone());
                             let mut consumed = Vec::new();
                             for (index, event) in events.iter().enumerate() {
+                                if self.old_lines_event(ui, event, snapshot.revision) {
+                                    consumed.push(index);
+                                    continue;
+                                }
                                 match self.handle_event(
                                     ui,
                                     id,
@@ -1053,6 +1126,8 @@ impl EditorView {
                             session.end_undo_group();
                         }
                         self.focused = focused;
+                        self.diff.keep_selection(self.selection, self.has_others());
+                        let old_selected = self.diff.selected(snapshot.revision);
                         if let Err(error) = self.sync_others(session, &snapshot) {
                             failure = Some(error);
                         }
@@ -1302,25 +1377,12 @@ impl EditorView {
                                     }
                                     diff::Row::Historical(old_row) => {
                                         let segment = projection.historical_segment(old_row);
-                                        let line = if projection.width.is_some() {
-                                            layout::VisibleLine::fragment(
-                                                ui,
-                                                &projection.baseline,
-                                                &metrics,
-                                                segment.bytes,
-                                                (segment.indent as f32
-                                                    - segment.columns.start as f32)
-                                                    * metrics.cell,
-                                            )
-                                        } else {
-                                            layout::VisibleLine::new(
-                                                ui,
-                                                &projection.baseline,
-                                                &metrics,
-                                                segment.line,
-                                                first_cell..last_cell,
-                                            )
-                                        };
+                                        let line = projection.historical_line(
+                                            ui,
+                                            &metrics,
+                                            &segment,
+                                            first_cell..last_cell,
+                                        );
                                         painter.rect_filled(
                                             egui::Rect::from_min_max(
                                                 egui::pos2(clip.left(), y),
@@ -1329,6 +1391,31 @@ impl EditorView {
                                             0.0,
                                             ui.visuals().error_fg_color.gamma_multiply(0.12),
                                         );
+                                        if let Some((chunk, selected)) = &old_selected
+                                            && projection.chunk(row) == Some(*chunk)
+                                            && !selected.is_empty()
+                                            && selected.start <= segment.bytes.end
+                                            && selected.end >= segment.bytes.start
+                                        {
+                                            let left =
+                                                line.x_at(selected.start.max(segment.bytes.start));
+                                            let right = if selected.end > segment.bytes.end {
+                                                viewport.right().max(line.right())
+                                            } else {
+                                                line.x_at(selected.end)
+                                            };
+                                            painter.rect_filled(
+                                                egui::Rect::from_min_max(
+                                                    egui::pos2(origin.x + 8.0 + left, y),
+                                                    egui::pos2(
+                                                        origin.x + 8.0 + right,
+                                                        y + metrics.height,
+                                                    ),
+                                                ),
+                                                0.0,
+                                                ui.visuals().selection.bg_fill,
+                                            );
+                                        }
                                         painter.galley(
                                             egui::pos2(origin.x + 8.0 + line.left(), y),
                                             line.galley.clone(),
