@@ -1,7 +1,7 @@
 # bedtime-git
 
 Typed operations through the installed `git` executable. The default
-`workbench` feature adds Git and diff panels.
+`workbench` feature adds Git, History and diff panels.
 
 ```rust,ignore
 app.add_plugins(GitPlugin)
@@ -91,7 +91,26 @@ The comparison is read again after every scan. A new diff goes beside
 editors or diffs, else in the largest area without the Git panel or a file
 tree, else in a split of the Git panel's area.
 
+## The History panel
+
+`HistoryPanel` (`ShowHistory`, "Git History" in the View menu) lists the
+commits reachable from HEAD, newest first, 400 at a time as it's scrolled,
+with the lines of history drawn before them (`history::graph`). A row holds
+the names on the commit (the current branch, branches, remotes, tags), its
+subject and how long ago; from 420 px the author too, from 600 px the hash.
+It's read again when the session's status moves: a commit, a switch, a
+fetch, a refresh.
+
+Selecting a commit (a click, or Up and Down; Escape or a second click puts
+it away) shows its message, author, date and hash (click to copy), and the
+files it changed against its first parent, with lines added and removed:
+beside the list from 640 px, else under it. Clicking a file opens a
+`CommitDiffPanel`: the file as the commit left it, read-only, with what the
+commit changed inline (a preview; double-clicking keeps it).
+
+`history::{log, detail, file_at}` are the GUI-free reads behind it.
+
 ```sh
 cargo test -p bedtime-git
-python3 tools/bed.py run tests/automation/git.py
+python3 tools/bed.py run tests/automation/git.py tests/automation/git_history.py
 ```

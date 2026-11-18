@@ -1,5 +1,6 @@
 //! GUI-free, typed Git operations. Git owns index locks, hooks, signing and config.
 //! Call `execute` from a worker, or use `Job`; neither API performs UI work.
+pub mod history;
 mod process;
 mod repository;
 
@@ -21,7 +22,10 @@ pub use repository::execute;
 #[cfg(feature = "workbench")]
 pub mod workbench;
 #[cfg(feature = "workbench")]
-pub use workbench::{DiffPanel, GitHost, GitPanel, GitPlugin, GitSession, ShowGit};
+pub use workbench::{
+    CommitDiffPanel, DiffPanel, GitHost, GitPanel, GitPlugin, GitSession, HistoryPanel, ShowGit,
+    ShowHistory,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub enum DiffSide {

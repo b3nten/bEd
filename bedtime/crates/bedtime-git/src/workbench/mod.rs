@@ -3,6 +3,7 @@
 //! `Root`. One `GitSession` owns the repository's state and the operation in
 //! flight; panels only show it. All Git and file I/O runs on workers.
 pub mod diff;
+mod history;
 mod panel;
 mod presentation;
 mod status;
@@ -23,6 +24,7 @@ use std::{
 };
 
 pub use diff::DiffPanel;
+pub use history::{CommitDiffPanel, HistoryPanel, ShowHistory};
 pub use panel::{GitHost, GitPanel};
 
 /// Whether a Git operation is under way.
@@ -39,7 +41,7 @@ impl Action for ShowGit {
     const LABEL: &'static str = "Git";
 }
 
-/// The Git and diff panels, and the session behind them.
+/// The Git, History and diff panels, and the session behind them.
 pub struct GitPlugin;
 impl Plugin for GitPlugin {
     fn build(&self, app: &mut App) {
@@ -47,8 +49,12 @@ impl Plugin for GitPlugin {
             .add_action_handler::<ShowGit>(Handler::new(open_new::<GitPanel>))
             .add_menu_item::<ShowGit>(StandardMenu::View, "panels")
             .register_type::<DiffPanel>()
+            .register_type::<HistoryPanel>()
+            .register_type::<CommitDiffPanel>()
+            .add_action_handler::<ShowHistory>(Handler::new(open_new::<HistoryPanel>))
+            .add_menu_item::<ShowHistory>(StandardMenu::View, "panels")
             .add_panel_status::<GitPanel>(status::item)
-            .add_systems(Update, update)
+            .add_systems(Update, (update, history::update_diffs))
             // The session is the workspace folder's; the next one makes its own.
             .add_systems(OnWorkspaceClose, |world: &mut World| {
                 world.remove_resource::<GitSession>();
@@ -706,7 +712,7 @@ fn reproject(world: &mut World, session: &mut GitSession) -> Result<(), String> 
 
 fn update(world: &mut World) {
     let has_panels = world
-        .query_filtered::<Entity, Or<(With<GitPanel>, With<diff::DiffPanel>)>>()
+        .query_filtered::<Entity, Or<(With<GitPanel>, With<diff::DiffPanel>, With<HistoryPanel>)>>()
         .iter(world)
         .next()
         .is_some();
@@ -730,7 +736,7 @@ fn update(world: &mut World) {
     if let Some(mut session) = world.remove_resource::<GitSession>() {
         let closing = world.resource::<ManagedWork>().is_closing();
         let visible = world
-            .query_filtered::<&PanelPresentation, Or<(With<GitPanel>, With<diff::DiffPanel>)>>()
+            .query_filtered::<&PanelPresentation, Or<(With<GitPanel>, With<diff::DiffPanel>, With<HistoryPanel>)>>()
             .iter(world)
             .any(|p| p.visible);
         if has_panels && !session.had_panels {
@@ -849,6 +855,7 @@ fn update(world: &mut World) {
         }
         if !closing {
             diff::update(world, &mut session);
+            history::update(world, &session);
         }
         // Panels keep the draft and view options, to come back with the layout.
         let panels: Vec<Entity> = world
