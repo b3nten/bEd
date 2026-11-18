@@ -9,6 +9,8 @@ No upstream checkout or network is required.
   unchanged upstream model is by glenatron under CC BY 4.0; its source and
   attribution are recorded in [gltf/licence.txt](gltf/licence.txt).
 - `images/sample.png` is a small image-decoding and file-opening fixture.
+- `diagram/sample.diagram` is the diagram viewer's fixture: one of each kind
+  of element, in the form the viewer writes.
 - `fonts/DejaVuSans.ttf` is the font viewer's fixture (and font bytes that
   aren't an image); its original license is retained in
   [fonts/DejaVuSans-LICENSE.txt](fonts/DejaVuSans-LICENSE.txt).

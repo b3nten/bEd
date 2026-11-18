@@ -1,0 +1,24 @@
+[package]
+name = "bedtime-diagram"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A diagram canvas for workbench apps: shapes, lines, text and freehand strokes in .diagram files"
+
+[features]
+default = ["persistence"]
+# Save diagram panels (where they're scrolled and zoomed to) with the layout.
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+bedtime-clipboard.workspace = true
+bedtime-document.workspace = true
+bedtime-filesystem.workspace = true
+bedtime-ui = { workspace = true, features = ["image"] }
+bedtime-workbench = { workspace = true, features = ["files"] }
+bevy = { workspace = true, features = ["std"] }
+image.workspace = true
+rfd.workspace = true
+ron = "0.12.2"
+serde = { workspace = true, features = ["derive"] }

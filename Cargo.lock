@@ -515,6 +515,7 @@ dependencies = [
  "bedtime-automation",
  "bedtime-code",
  "bedtime-datatree",
+ "bedtime-diagram",
  "bedtime-document",
  "bedtime-file-explorer",
  "bedtime-font",
@@ -622,6 +623,22 @@ dependencies = [
  "bedtime-ui",
  "bedtime-workbench",
  "bevy",
+]
+
+[[package]]
+name = "bedtime-diagram"
+version = "0.1.0"
+dependencies = [
+ "bedtime-clipboard",
+ "bedtime-document",
+ "bedtime-filesystem",
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
+ "image",
+ "rfd",
+ "ron",
+ "serde",
 ]
 
 [[package]]

@@ -33,6 +33,7 @@ members = [
     "bedtime/crates/bedtime-sqlite",
     "bedtime/crates/bedtime-schedules",
     "bedtime/crates/bedtime-notes",
+    "bedtime/crates/bedtime-diagram",
 ]
 default-members = ["bed"]
 exclude = ["vendor/arboard", "vendor/egui", "vendor/rio-vt"]
@@ -77,6 +78,7 @@ bedtime-web = { path = "bedtime/crates/bedtime-web" }
 bedtime-sqlite = { path = "bedtime/crates/bedtime-sqlite" }
 bedtime-schedules = { path = "bedtime/crates/bedtime-schedules" }
 bedtime-notes = { path = "bedtime/crates/bedtime-notes" }
+bedtime-diagram = { path = "bedtime/crates/bedtime-diagram" }
 wgpu = "=30.0.1"
 bevy = { version = "=0.20.0", default-features = false }
 egui = "=0.36.2"

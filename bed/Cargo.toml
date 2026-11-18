@@ -40,6 +40,7 @@ bedtime-web.workspace = true
 bedtime-sqlite.workspace = true
 bedtime-schedules.workspace = true
 bedtime-notes.workspace = true
+bedtime-diagram.workspace = true
 bedtime-ui = { workspace = true, features = ["system-fonts", "syntax", "image", "markdown", "data"] }
 bedtime-workbench = { workspace = true, features = ["persistence", "workspaces", "system-fonts"] }
 bevy_egui.workspace = true

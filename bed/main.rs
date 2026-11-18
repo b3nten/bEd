@@ -380,6 +380,7 @@ mod menus {
                 )
                 .add_menu_item::<Quit>(StandardMenu::App, "quit")
                 .add_menu_item::<NewWindow>(StandardMenu::File, "new")
+                .add_menu_item::<bedtime_diagram::NewDiagram>(StandardMenu::File, "new")
                 .add_menu_item::<OpenFolder>(StandardMenu::File, "open")
                 .add_menu_entry(StandardMenu::File, "open", recent_menu)
                 .add_menu_item::<CloseFolder>(StandardMenu::File, "open")
@@ -1203,6 +1204,7 @@ mod workspace {
 mod files {
     use bedtime_audio::AudioPlugin;
     use bedtime_code::CodePlugin;
+    use bedtime_diagram::DiagramPlugin;
     use bedtime_file_explorer::FileExplorerPlugin;
     use bedtime_font::FontPlugin;
     use bedtime_hex::HexPlugin;
@@ -1232,6 +1234,7 @@ mod files {
                     VideoPlugin,
                     TablePlugin,
                     SqlitePlugin,
+                    DiagramPlugin,
                 ));
             // The code actions' keys, as VS Code has them.
             bedtime_workbench::ActionAppExt::add_keymap(app, bedtime_code::keymap::VSCODE);
@@ -1305,9 +1308,19 @@ mod new {
             .get::<bedtime_workbench::Untitled>(document.0)
             .map(|untitled| untitled.name.clone())
             .unwrap_or_default();
+        // A diagram is saved as one; anything else is text.
+        let diagram = world
+            .workbench()
+            .cast_document::<bedtime_diagram::Diagram>(document)
+            .is_ok();
+        let extension = if diagram {
+            bedtime_diagram::EXTENSION
+        } else {
+            "txt"
+        };
         let mut dialog = rfd::AsyncFileDialog::new()
             .set_title("Save")
-            .set_file_name(format!("{name}.txt"));
+            .set_file_name(format!("{name}.{extension}"));
         if let Some(workspace) = world.get_resource::<Workspace>() {
             dialog = dialog.set_directory(&workspace.root);
         }
