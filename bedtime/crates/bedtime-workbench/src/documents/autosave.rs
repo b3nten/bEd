@@ -19,7 +19,8 @@ pub enum DocumentAutosavePolicy {
 }
 
 /// The session's autosave policy. With any policy other than `Never`, closing the
-/// last reference to an unsaved document saves it instead of asking.
+/// last reference to an unsaved document saves it instead of asking. Untitled
+/// documents aren't autosaved: saving one asks the user where.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DocumentAutosave(pub DocumentAutosavePolicy);
 
@@ -102,6 +103,7 @@ pub(crate) fn autosave(
             || info.missing
             || !info.writable
             || info.has_drafts
+            || info.untitled
             || p.attempted == Some(info.revision)
         {
             continue;

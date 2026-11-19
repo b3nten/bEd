@@ -383,14 +383,22 @@ fn changes_since_reports_each_commit() {
 }
 
 #[test]
-fn unsaved_sources_start_dirty_and_saving_makes_them_clean() {
+fn unsaved_sources_are_dirty_once_changed_and_saving_makes_them_clean() {
     let mut app = app();
     let source = MemorySource::unsaved("Untitled", TextBuffer::from("new"));
     let document = open(&mut app, source.clone());
+    assert!(!info(app.world(), document.id()).dirty, "untouched");
+    type_text(app.world_mut(), document, 3, "er");
     assert!(info(app.world(), document.id()).dirty);
+    app.world_mut()
+        .workbench_mut()
+        .undo_document(document.id())
+        .unwrap();
+    assert!(!info(app.world(), document.id()).dirty, "back as it started");
+    type_text(app.world_mut(), document, 3, "s");
     save_and_wait(&mut app, document.id()).unwrap();
     assert!(!info(app.world(), document.id()).dirty);
-    assert_eq!(source.get().unwrap().to_string(), "new");
+    assert_eq!(source.get().unwrap().to_string(), "news");
 }
 
 #[test]

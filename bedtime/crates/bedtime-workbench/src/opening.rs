@@ -1211,11 +1211,23 @@ mod tests {
                 .is_ok_and(|info| info.status == DocumentStatus::Ready)
         });
         let world = app.world_mut();
+        let info = world.workbench().inspect_document(document).unwrap();
+        assert!(info.untitled && !info.dirty, "nothing to lose yet");
         let handle = world
             .workbench()
             .cast_document::<TextBuffer>(document)
             .unwrap();
         type_text(world, handle, 0, "hello");
+        assert!(world.workbench().inspect_document(document).unwrap().dirty);
+        // Autosave leaves it alone (it would have to ask where).
+        world.insert_resource(DocumentAutosave(DocumentAutosavePolicy::AfterIdle(
+            std::time::Duration::ZERO,
+        )));
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        assert!(world.resource::<Asked>().0.is_empty());
+        world.insert_resource(DocumentAutosave::default());
         // Saving asks where, once; meanwhile it counts as saving.
         world.workbench_mut().save_document(document).unwrap();
         world.workbench_mut().save_document(document).unwrap();

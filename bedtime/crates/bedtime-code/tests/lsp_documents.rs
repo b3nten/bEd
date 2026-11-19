@@ -297,6 +297,11 @@ fn saves_asked_for_format_and_tidy_but_programmatic_saves_dont() {
     assert_eq!(text(app.world(), panel), "// formatted\nfn main() {}\n");
 
     // A save nobody asked for (autosave, closing) writes the text as it is.
+    // (The file is written before the document hears its save finished.)
+    until(&mut app, "the save to finish", |world| {
+        let document = world.get::<DocumentReference>(panel).unwrap().document();
+        !world.workbench().inspect_document(document).unwrap().saving
+    });
     let document = edit(&mut app, BufferEdit::new(26..26, "x  "));
     app.world_mut()
         .workbench_mut()

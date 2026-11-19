@@ -136,6 +136,9 @@ pub(super) struct Session<M: DocumentModel> {
     pub(super) history: History<M, DocumentUndoGroup>,
     /// `None` for contents never saved.
     saved: Option<Saved<M>>,
+    /// What never-saved contents started as: until they differ from it (or
+    /// are saved) there's nothing to lose, so they don't count as unsaved.
+    untouched: Option<M>,
     /// An outside change that arrived while there were unsaved changes.
     incoming: Option<Saved<M>>,
     missing: bool,
@@ -535,6 +538,7 @@ impl<M: DocumentModel> Session<M> {
             version: load.version,
         });
         Self {
+            untouched: (!load.saved).then(|| load.model.clone()),
             history: History::new(load.model, HISTORY_LIMIT),
             saved,
             incoming: None,
@@ -546,7 +550,11 @@ impl<M: DocumentModel> Session<M> {
     }
 
     fn dirty(&self) -> bool {
-        self.saved.as_ref().map(|saved| &saved.model) != Some(self.history.content())
+        let base = match &self.saved {
+            Some(saved) => Some(&saved.model),
+            None => self.untouched.as_ref(),
+        };
+        base != Some(self.history.content())
     }
 
     pub(super) fn edit(

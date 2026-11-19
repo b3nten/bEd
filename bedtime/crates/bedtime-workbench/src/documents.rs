@@ -209,6 +209,9 @@ pub struct DocumentInfo {
     /// The last failed save or read, cleared by the next success.
     pub error: Option<String>,
     pub has_drafts: bool,
+    /// It has nowhere to be saved yet (`Untitled`): saving it asks the user
+    /// where, so only the user starts that.
+    pub untitled: bool,
     pub undo_label: Option<String>,
     pub redo_label: Option<String>,
 }
@@ -399,6 +402,7 @@ impl WorkbenchRef {
             writable: info.writable,
             error: info.error,
             has_drafts: world.workbench().document_has_drafts(id),
+            untitled: world.get::<crate::Untitled>(id.0).is_some(),
             undo_label: info.undo_label,
             redo_label: info.redo_label,
         })

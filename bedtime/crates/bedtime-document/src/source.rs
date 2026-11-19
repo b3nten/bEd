@@ -63,8 +63,8 @@ impl std::error::Error for SourceError {}
 pub struct SourceLoad<M> {
     pub model: M,
     pub version: Option<SourceVersion>,
-    /// False for contents that were never saved (a new, untitled document),
-    /// which therefore start out unsaved.
+    /// False for contents that were never saved (a new, untitled document).
+    /// They count as unsaved once they differ from `model`.
     pub saved: bool,
 }
 
@@ -128,7 +128,8 @@ impl<M: DocumentModel> MemorySource<M> {
         Self::create(title.into(), model, true)
     }
 
-    /// Contents that start out unsaved, like a new untitled document.
+    /// Contents that were never saved, like a new untitled document: unsaved
+    /// from the first change.
     pub fn unsaved(title: impl Into<String>, model: M) -> Self {
         Self::create(title.into(), model, false)
     }
