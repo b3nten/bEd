@@ -53,7 +53,7 @@ pub use panel::{
 };
 pub use panel::{
     CodePlugin, ComparisonRequest, EditorComparison, EditorDefaults, EditorPanel, ToggleWordWrap,
-    draw_editor, editor_id,
+    draw_editor, editor_id, navigate_change,
 };
 use std::ops::Range;
 

@@ -1284,15 +1284,23 @@ impl Panel for CommitDiffPanel {
             return;
         };
         let shown = diff.shown.clone();
+        let comparing = matches!(shown, Some(Ok(true)));
+        let mut change = None;
         let margin = egui::Margin::symmetric(12, 6);
         egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(&diff.path).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.weak(egui::RichText::new(history::short(&diff.commit)).monospace());
+                    if comparing {
+                        change = super::diff::change_buttons(ui, context);
+                    }
                 });
             });
         });
+        if let Some(forward) = change {
+            bedtime_code::navigate_change(world, panel, forward);
+        }
         let says = |ui: &mut egui::Ui, text: egui::RichText| {
             egui::Frame::NONE
                 .inner_margin(margin)

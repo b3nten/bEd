@@ -271,8 +271,9 @@ impl WrapIndex {
         let (line, block, base) = self.line(row);
         let column = self.snapshot.text.column(byte);
         let part = match line.breaks {
-            Some(first) => block.breaks[first..first + line.rows - 1]
-                .partition_point(|start| *start <= column),
+            Some(first) => {
+                block.breaks[first..first + line.rows - 1].partition_point(|start| *start <= column)
+            }
             None if column < self.width => 0,
             None => (1 + (column - self.width) / (self.width - line.indent)).min(line.rows - 1),
         };
@@ -520,18 +521,26 @@ mod tests {
         let line = "word ".repeat(LONG / 5 + 10);
         let wrapped = rows(&line, 7);
         assert_eq!(wrapped[0], "word wo");
-        assert!(wrapped[..wrapped.len() - 1].iter().all(|row| row.len() == 7));
+        assert!(
+            wrapped[..wrapped.len() - 1]
+                .iter()
+                .all(|row| row.len() == 7)
+        );
     }
 
     #[test]
     fn updates_match_a_rebuild() {
         let mut snapshot = TextSnapshot {
             revision: 0,
-            text: "alpha beta gamma\n  delta epsilon zeta eta\n".repeat(300).into(),
+            text: "alpha beta gamma\n  delta epsilon zeta eta\n"
+                .repeat(300)
+                .into(),
         };
         let mut index = WrapIndex::build(snapshot.clone(), 11, &AtomicBool::new(false)).unwrap();
         for step in 0..60 {
-            let at = snapshot.text.clamp_boundary((step * 389) % snapshot.text.len());
+            let at = snapshot
+                .text
+                .clamp_boundary((step * 389) % snapshot.text.len());
             let insert = if step % 4 == 0 { "\n" } else { " xyzzy" };
             let edit = bedtime_document::BufferEdit::new(at..at, insert);
             edit.apply(&mut snapshot.text).unwrap();
@@ -543,8 +552,7 @@ mod tests {
                     inserted_bytes: insert.len(),
                 }]
             ));
-            let rebuilt =
-                WrapIndex::build(snapshot.clone(), 11, &AtomicBool::new(false)).unwrap();
+            let rebuilt = WrapIndex::build(snapshot.clone(), 11, &AtomicBool::new(false)).unwrap();
             assert_eq!(index.rows(), rebuilt.rows());
             for row in 0..index.rows() {
                 assert_eq!(index.segment(row).bytes, rebuilt.segment(row).bytes);

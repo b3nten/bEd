@@ -611,8 +611,30 @@ impl StageGuard {
     }
 }
 
+/// Previous / Next Change buttons, for a right-to-left bar (Next is
+/// added first, so it ends up on the right). Returns which was clicked.
+pub(super) fn change_buttons(ui: &mut egui::Ui, context: &UiContext<'_>) -> Option<bool> {
+    ui.separator();
+    let mut frame = context.frame(ui);
+    let mut clicked = None;
+    for (forward, icon, label) in [
+        (true, BuiltinIcon::ChevronDown, "Next Change"),
+        (false, BuiltinIcon::ChevronUp, "Previous Change"),
+    ] {
+        let button = frame.icon_button(icon);
+        frame.tooltip(&button, label);
+        button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        if button.clicked() {
+            clicked = Some(forward);
+        }
+    }
+    clicked
+}
+
 enum Asked {
     Side(bool),
+    /// Next change (true) or previous.
+    Change(bool),
     Open,
     Discard(DiffRequest),
     Keep,
@@ -631,6 +653,7 @@ impl Panel for DiffPanel {
         let confirm = diff.confirm.clone();
         let error = diff.error.clone();
         let loaded = diff.loaded.clone();
+        let comparing = matches!(&loaded, Some(Ok(l)) if l.comparison.is_some());
         let mut asked = None;
         // The bar: the file, which side, open it; questions and problems.
         egui::Frame::NONE
@@ -651,6 +674,9 @@ impl Panel for DiffPanel {
                         }
                         if ui.selectable_label(!staged, "Changes").clicked() && staged {
                             asked = Some(Asked::Side(false));
+                        }
+                        if comparing && let Some(forward) = change_buttons(ui, context) {
+                            asked = Some(Asked::Change(forward));
                         }
                     });
                 });
@@ -706,6 +732,9 @@ impl Panel for DiffPanel {
                 diff.shown = None;
                 diff.confirm = None;
                 world.entity_mut(panel).remove::<EditorComparison>();
+            }
+            Some(Asked::Change(forward)) => {
+                bedtime_code::navigate_change(world, panel, forward);
             }
             Some(Asked::Open) => {
                 if let Err(error) = world

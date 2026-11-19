@@ -149,10 +149,7 @@ fn indent_lines_and_whole_line_clipboard() {
 fn cut_chord_cuts_the_selection_once() {
     let mut f = Fixture::new("one two\nthree");
     f.at(&[(4, 7)]);
-    f.send(vec![
-        key(egui::Key::X, COMMAND),
-        egui::Event::Cut,
-    ]);
+    f.send(vec![key(egui::Key::X, COMMAND), egui::Event::Cut]);
     assert_eq!(f.text(), "one \nthree");
     assert_eq!(f.ranges(), [4..4]);
     f.send(vec![

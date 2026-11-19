@@ -310,6 +310,32 @@ pub struct EditorComparison {
 #[derive(Component, Clone, Debug)]
 pub struct ComparisonRequest(pub super::diff::DiffRequest);
 
+/// Move `panel`'s caret to the next (`forward`) or previous change of its
+/// `EditorComparison`, wrapping around, and give the editor the keyboard.
+/// Returns false when there's nothing to move to yet (no comparison laid
+/// out for the text as it is, or text being composed).
+pub fn navigate_change(world: &mut World, panel: Entity, forward: bool) -> bool {
+    let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document()) else {
+        return false;
+    };
+    let workbench = world.workbench();
+    let Some(snapshot) = workbench
+        .cast_document::<TextBuffer>(document)
+        .and_then(|handle| {
+            Ok(TextSnapshot {
+                text: workbench.read_document(handle)?.clone(),
+                revision: workbench.inspect_document(document)?.revision,
+            })
+        })
+        .ok()
+    else {
+        return false;
+    };
+    world
+        .get_mut::<EditorPanel>(panel)
+        .is_some_and(|mut editor| editor.view.navigate_change(&snapshot, forward).is_ok())
+}
+
 /// The egui id of the editor in `panel` showing `document`.
 pub fn editor_id(panel: Entity, document: DocumentId) -> egui::Id {
     egui::Id::new(("bedtime.editor", panel, document))

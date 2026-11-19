@@ -58,7 +58,8 @@ fn handle_save(add: On<Add<EditorPanel>>, mut commands: Commands) {
         .entity(add.entity)
         .insert(ActionHandler::<SaveDocument>::new(
             Handler::new(save).available_when(|world, panel| {
-                info(world, panel).is_some_and(|i| (i.dirty || i.untitled) && i.writable && !i.saving)
+                info(world, panel)
+                    .is_some_and(|i| (i.dirty || i.untitled) && i.writable && !i.saving)
             }),
         ));
 }
