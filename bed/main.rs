@@ -87,6 +87,8 @@ fn main() -> AppExit {
         ),
     ))
     .add_plugins(bevy_framepace::FramepacePlugin)
+    // Last, so its cleanup sees every schedule the plugins made.
+    .add_plugins(executor::ExecutorPlugin)
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
     .add_status_item(bedtime_workbench::workspaces::status_item)
     .add_status_item(bedtime_code::lsp::status::status_item)
@@ -118,6 +120,47 @@ mod rendering {
             plugins
         } else {
             plugins.disable::<PipelinedRenderingPlugin>()
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// Executor
+//
+// Every schedule runs its systems in turn on the thread that runs it.
+// ═════════════════════════════════════════════════════════════════════════════
+
+mod executor {
+    //! Bevy's multi-threaded executor hands a schedule's systems to worker
+    //! threads and waits on them at each sync point. bEd's systems are small,
+    //! so that buys nothing, and when other processes keep every core busy
+    //! (a cargo build) each hand-off waits for a worker to get a turn: in
+    //! tests/automation timing with every core busy, an update went from
+    //! 4.6 ms to 9.5 ms (18 ms worst) on the multi-threaded executor, and
+    //! stayed at 4.2 ms (6.5 ms worst) on the single-threaded one, which was
+    //! also a little faster idle. Task pools (async tasks) are unaffected.
+    //! `BED_EXECUTOR=multi` turns the multi-threaded executor back on, to
+    //! compare.
+    use bevy::{ecs::schedule::SingleThreadedExecutor, prelude::*};
+
+    pub struct ExecutorPlugin;
+
+    impl Plugin for ExecutorPlugin {
+        fn build(&self, _: &mut App) {}
+
+        /// After every plugin has built and finished, so every schedule
+        /// exists, in the main world and the render world alike.
+        fn cleanup(&self, app: &mut App) {
+            if std::env::var("BED_EXECUTOR").is_ok_and(|value| value == "multi") {
+                return;
+            }
+            for sub_app in app.sub_apps_mut().iter_mut() {
+                if let Some(mut schedules) = sub_app.world_mut().get_resource_mut::<Schedules>() {
+                    for (_, schedule) in schedules.iter_mut() {
+                        schedule.set_executor(SingleThreadedExecutor::new());
+                    }
+                }
+            }
         }
     }
 }

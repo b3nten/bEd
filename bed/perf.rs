@@ -5,6 +5,11 @@
 //! bEd updates on input (and requested repaints) unless something animates,
 //! so the rate is what it actually draws, not what it could: idle, it's low.
 //! While shown, the counter repaints once a second to stay current.
+//!
+//! Update + render includes waiting for the display: without pipelined
+//! rendering, a frame blocks in `prepare_windows` until the window has a
+//! drawable free (at vsync), which is most of an idle frame. That wait is
+//! shown on its own, so the rest is the work.
 use bedtime_ui::{UiContext, UiDiagnostics, egui};
 use bedtime_workbench::{
     settings::{SettingsAppExt, settings},
@@ -12,7 +17,7 @@ use bedtime_workbench::{
 };
 use bevy::{
     prelude::*,
-    render::{Render, RenderApp, RenderSystems},
+    render::{Render, RenderApp, RenderSystems, view::window::prepare_windows},
     winit::{UpdateMode, WinitSettings},
 };
 use std::{
@@ -47,11 +52,26 @@ impl Plugin for PerfPlugin {
         // When the render world finishes a frame, for the update + render time.
         // Headless apps (tests) have no renderer.
         let rendered = app.world().resource::<FrameStats>().rendered.clone();
+        let waits = app.world().resource::<FrameStats>().display_wait.clone();
+        let waiting = waits.clone();
         if let Some(render) = app.get_sub_app_mut(RenderApp) {
             render.add_systems(
                 Render,
-                (move || *rendered.lock().unwrap() = Some(Instant::now()))
-                    .in_set(RenderSystems::PostCleanup),
+                (
+                    (move || *rendered.lock().unwrap() = Some(Instant::now()))
+                        .in_set(RenderSystems::PostCleanup),
+                    // Around the wait for a drawable.
+                    (move || waiting.lock().unwrap().0 = Some(Instant::now()))
+                        .in_set(RenderSystems::PrepareViews)
+                        .before(prepare_windows),
+                    (move || {
+                        let mut wait = waits.lock().unwrap();
+                        let now = Instant::now();
+                        wait.1 = wait.0.take().map(|since| (now, now - since));
+                    })
+                    .in_set(RenderSystems::PrepareViews)
+                    .after(prepare_windows),
+                ),
             );
         }
     }
@@ -68,6 +88,9 @@ pub struct FrameStats {
     current: Option<(Instant, Option<Duration>)>,
     /// When the render world last finished a frame.
     rendered: Arc<Mutex<Option<Instant>>>,
+    /// When the render world started waiting for a drawable, and when it
+    /// last got one and how long it waited.
+    display_wait: Arc<Mutex<(Option<Instant>, Option<(Instant, Duration)>)>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -77,6 +100,8 @@ struct Frame {
     update: Duration,
     /// The update and drawing it, when the render world reported in.
     total: Option<Duration>,
+    /// The part of `total` spent waiting for the display.
+    display_wait: Option<Duration>,
 }
 
 fn shown(stats: Res<FrameStats>) -> bool {
@@ -87,14 +112,19 @@ fn shown(stats: Res<FrameStats>) -> bool {
 fn start_frame(mut stats: ResMut<FrameStats>) {
     let now = Instant::now();
     let rendered = *stats.rendered.lock().unwrap();
+    let display_wait = stats.display_wait.lock().unwrap().1;
     if let Some((started, Some(update))) = stats.current.take() {
         let total = rendered
             .filter(|&at| at >= started + update)
             .map(|at| at - started);
+        let display_wait = display_wait
+            .filter(|&(at, _)| at >= started + update)
+            .map(|(_, wait)| wait);
         stats.push(Frame {
             started,
             update,
             total,
+            display_wait,
         });
     }
     stats.forget_before(now);
@@ -138,6 +168,7 @@ impl FrameStats {
             interval: Spread::of(intervals),
             update: Spread::of(recent.iter().map(|frame| frame.update)),
             total: Spread::of(recent.iter().filter_map(|frame| frame.total)),
+            display_wait: Spread::of(recent.iter().filter_map(|frame| frame.display_wait)),
         }
     }
 }
@@ -149,6 +180,7 @@ struct Summary {
     interval: Option<Spread>,
     update: Option<Spread>,
     total: Option<Spread>,
+    display_wait: Option<Spread>,
 }
 
 /// The average and worst of some durations.
@@ -204,6 +236,7 @@ pub fn status_item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
         ("Frame interval", Spread::text(&summary.interval)),
         ("Update", Spread::text(&summary.update)),
         ("Update + render", Spread::text(&summary.total)),
+        ("Waiting for display", Spread::text(&summary.display_wait)),
     ];
     if let Some(diagnostics) = world.get::<UiDiagnostics>(context.surface) {
         rows.extend([
@@ -258,6 +291,7 @@ mod tests {
             started: start + Duration::from_millis(at_ms),
             update: Duration::from_millis(update_ms),
             total: Some(Duration::from_millis(update_ms * 2)),
+            display_wait: Some(Duration::from_millis(update_ms / 2)),
         });
     }
 
@@ -288,6 +322,7 @@ mod tests {
             })
         );
         assert_eq!(summary.total.unwrap().worst, Duration::from_millis(8));
+        assert_eq!(summary.display_wait.unwrap().worst, Duration::from_millis(2));
     }
 
     #[test]
@@ -322,6 +357,11 @@ mod tests {
         let stats = app.world().resource::<FrameStats>();
         assert!(stats.shown);
         assert_eq!(stats.frames.len(), 2, "the third is still updating");
-        assert!(stats.frames.iter().all(|frame| frame.total.is_none()));
+        assert!(
+            stats
+                .frames
+                .iter()
+                .all(|frame| frame.total.is_none() && frame.display_wait.is_none())
+        );
     }
 }
