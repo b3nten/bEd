@@ -1,4 +1,4 @@
-use crate::canvas::{Camera, Edit, State, Subject, ZOOM};
+use crate::canvas::{Camera, Edit, Pick, Request, State, Subject, ZOOM};
 use crate::edit::{self, Align, Handle, Order, Restyle, Style, Tool};
 use crate::model::*;
 use bedtime_document::{ByteModel, DocumentModel};
@@ -906,10 +906,11 @@ fn a_bound_arrow_moved_with_its_boxes_stays_bound_and_alone_lets_go() {
     assert_eq!((from, to), (Some(ElementId(1)), Some(ElementId(2))));
     assert!(near(points[0], (before[0].x + 10.0, before[0].y + 50.0)), "{points:?}");
 
-    // By itself (dragged by its middle), it comes away from both.
+    // By itself (dragged by other than its middle, which would bend it), it
+    // comes away from both.
     state.selection = vec![ElementId(3)];
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(250.0, 130.0), egui::pos2(250.0, 230.0), false)
+        .drag(&diagram, view, &mut camera, egui::pos2(230.0, 130.0), egui::pos2(230.0, 230.0), false)
         .unwrap();
     let (points, from, to) = ends(&applied(&diagram, &edit), 3);
     assert_eq!((from, to), (None, None));
@@ -1504,6 +1505,176 @@ fn grouped_elements_are_selected_and_moved_together() {
     assert_eq!(state.group(&diagram, true), None);
 }
 
+/// Two boxes in a group, and a third box in none.
+fn a_group_and_another() -> Diagram {
+    let mut elements = two_boxes().elements().to_vec();
+    for element in &mut elements {
+        element.group = Some(1);
+    }
+    elements.push(filled(3, Shape::Rectangle(Rect::new(100.0, 300.0, 100.0, 60.0))));
+    Diagram::new(elements).unwrap()
+}
+
+#[test]
+fn a_double_click_goes_into_a_group_to_move_one_thing() {
+    let (view, mut camera) = plain();
+    let diagram = a_group_and_another();
+    let mut state = State::default();
+    let (first, second, third) = (Point::new(150.0, 130.0), Point::new(350.0, 130.0), Point::new(150.0, 330.0));
+    let click = |state: &mut State, at, shift, twice| {
+        state.click(&diagram, at, 6.0, shift, twice, &Element::bounds);
+    };
+
+    // Once selects the group; twice, the one thing, without writing in it.
+    click(&mut state, first, false, false);
+    assert_eq!(state.selection, vec![ElementId(1), ElementId(2)]);
+    click(&mut state, first, false, true);
+    assert_eq!((state.selection.clone(), state.within), (vec![ElementId(1)], Some(1)));
+    assert!(!state.is_writing());
+
+    // Inside, a click picks the other one alone, and a drag moves it alone.
+    click(&mut state, second, false, false);
+    assert_eq!(state.selection, vec![ElementId(2)]);
+    let edit = state
+        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(150.0, 180.0), false)
+        .unwrap();
+    assert_eq!(state.selection, vec![ElementId(1)]);
+    let moved = applied(&diagram, &edit);
+    assert_eq!(moved.get(ElementId(1)).unwrap().bounds(), Rect::new(100.0, 150.0, 100.0, 60.0));
+    assert_eq!(moved.get(ElementId(2)), diagram.get(ElementId(2)));
+    assert_eq!(moved.get(ElementId(1)).unwrap().group, Some(1), "still in the group");
+
+    // Twice again writes in it, as in anything else.
+    click(&mut state, first, false, true);
+    assert!(state.is_writing());
+    state.writing = None;
+
+    // Ungrouping what's picked inside takes that one out.
+    let edit = state.group(&diagram, false).unwrap();
+    assert_eq!(edit.changes.len(), 1);
+    assert_eq!(state.within, None);
+
+    // A click outside the group leaves it: the group is one thing again.
+    state.within = Some(1);
+    state.selection = vec![ElementId(1)];
+    click(&mut state, third, false, false);
+    assert_eq!((state.selection.clone(), state.within), (vec![ElementId(3)], None));
+    click(&mut state, second, false, false);
+    assert_eq!(state.selection, vec![ElementId(2), ElementId(1)]);
+}
+
+#[test]
+fn shift_adds_a_whole_group_and_takes_it_away() {
+    let diagram = a_group_and_another();
+    let mut state = State::default();
+    let (first, second, third) = (Point::new(150.0, 130.0), Point::new(350.0, 130.0), Point::new(150.0, 330.0));
+    state.click(&diagram, third, 6.0, false, false, &Element::bounds);
+    state.click(&diagram, first, 6.0, true, false, &Element::bounds);
+    assert_eq!(state.selection, vec![ElementId(3), ElementId(1), ElementId(2)]);
+    state.click(&diagram, second, 6.0, true, false, &Element::bounds);
+    assert_eq!(state.selection, vec![ElementId(3)]);
+    // On nothing: with Shift the selection stays, without it's let go of.
+    state.click(&diagram, Point::new(600.0, 500.0), 6.0, true, false, &Element::bounds);
+    assert_eq!(state.selection, vec![ElementId(3)]);
+    state.click(&diagram, Point::new(600.0, 500.0), 6.0, false, false, &Element::bounds);
+    assert!(state.selection.is_empty());
+}
+
+#[test]
+fn the_menu_is_for_what_it_is_asked_on() {
+    let diagram = a_group_and_another();
+    let mut state = State::default();
+    state.tool = Tool::Rectangle;
+    let (first, third, nothing) = (Point::new(150.0, 130.0), Point::new(150.0, 330.0), Point::new(600.0, 500.0));
+
+    // On something not selected: that (with its group), with the Select tool.
+    state.point_at(&diagram, first, 6.0, &Element::bounds);
+    assert_eq!((state.selection.clone(), state.tool), (vec![ElementId(1), ElementId(2)], Tool::Select));
+    // On something selected, the selection stays as it is.
+    state.selection = vec![ElementId(1), ElementId(2), ElementId(3)];
+    state.point_at(&diagram, third, 6.0, &Element::bounds);
+    assert_eq!(state.selection.len(), 3);
+    // On nothing: the canvas's menu, whose Paste is asked of the panel, there.
+    state.point_at(&diagram, nothing, 6.0, &Element::bounds);
+    assert!(state.selection.is_empty());
+    let ctx = egui::Context::default();
+    assert_eq!(state.pick_of(&ctx, &diagram, Pick::Paste, &Element::bounds), None);
+    assert_eq!(state.asked, Some(Request::Paste(nothing)));
+
+    // What it picks is done to the selection, as the keys do it.
+    state.selection = vec![ElementId(1), ElementId(2)];
+    let edit = state.pick_of(&ctx, &diagram, Pick::Group(false), &Element::bounds).unwrap();
+    assert_eq!(edit.label, "Ungroup");
+    assert!(applied(&diagram, &edit).elements().iter().all(|element| element.group.is_none()));
+    let edit = state.pick_of(&ctx, &diagram, Pick::Delete, &Element::bounds).unwrap();
+    assert_eq!(applied(&diagram, &edit).elements().len(), 1);
+    assert!(state.selection.is_empty());
+}
+
+#[test]
+fn a_line_bends_where_its_middle_is_dragged_and_straightens_again() {
+    let (view, mut camera) = plain();
+    let diagram = Diagram::new(vec![line(1, (100.0, 100.0), (300.0, 100.0))]).unwrap();
+    let mut state = State::default();
+    state.selection = vec![ElementId(1)];
+    let points = |diagram: &Diagram| ends(diagram, 1).0;
+
+    // The middle of the segment, dragged, is a new point; the ends stay.
+    let edit = state
+        .drag(&diagram, view, &mut camera, egui::pos2(200.0, 100.0), egui::pos2(200.0, 160.0), false)
+        .unwrap();
+    assert_eq!(edit.label, "Add Point");
+    let bent = applied(&diagram, &edit);
+    assert_eq!(
+        points(&bent),
+        vec![Point::new(100.0, 100.0), Point::new(200.0, 160.0), Point::new(300.0, 100.0)]
+    );
+    // Away from the middle, the line is moved instead.
+    let edit = state
+        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 100.0), egui::pos2(150.0, 160.0), false)
+        .unwrap();
+    assert_eq!(edit.label, "Move");
+
+    // The menu adds one where it's asked for, in the segment nearest.
+    state.point_at(&bent, Point::new(250.0, 131.0), 6.0, &Element::bounds);
+    let ctx = egui::Context::default();
+    let edit = state.pick_of(&ctx, &bent, Pick::AddPoint, &Element::bounds).unwrap();
+    assert_eq!(points(&applied(&bent, &edit))[2], Point::new(250.0, 131.0));
+
+    // A point it bends at is taken out; its ends aren't.
+    let edit = state.remove_point(&bent, 1).unwrap();
+    assert_eq!(edit.label, "Remove Point");
+    assert_eq!(applied(&bent, &edit), diagram);
+    assert_eq!(state.remove_point(&bent, 0), None);
+    assert_eq!(state.remove_point(&bent, 2), None);
+}
+
+#[test]
+fn a_line_s_heads_are_picked_and_it_turns_around() {
+    let diagram = joined();
+    let arrow = diagram.elements().last().unwrap().id;
+    let mut state = State::default();
+    state.selection = vec![arrow, ElementId(1)];
+    let heads = |diagram: &Diagram| edit::heads(diagram.get(arrow).unwrap()).unwrap();
+    assert_eq!(heads(&diagram), (Head::None, Head::Arrow));
+
+    // Only the line takes a head.
+    let edit = state.restyle(&diagram, Restyle::Start(Head::Arrow)).unwrap();
+    assert_eq!(edit.changes.len(), 1);
+    let both = applied(&diagram, &edit);
+    assert_eq!(heads(&both), (Head::Arrow, Head::Arrow));
+    let edit = state.restyle(&both, Restyle::End(Head::None)).unwrap();
+    assert_eq!(heads(&applied(&both, &edit)), (Head::Arrow, Head::None));
+
+    // Turned around, it's bound the other way, between the same places.
+    let edit = state.reverse(&diagram).unwrap().bound(&diagram, &Element::bounds);
+    let turned = applied(&diagram, &edit);
+    assert_eq!(heads(&turned), (Head::Arrow, Head::None));
+    let ((before, from, to), (after, back_from, back_to)) = (ends(&diagram, arrow.0), ends(&turned, arrow.0));
+    assert_eq!((back_from, back_to), (to, from));
+    assert_eq!(after, before.into_iter().rev().collect::<Vec<_>>());
+}
+
 #[test]
 fn copies_of_a_group_are_a_group_of_their_own() {
     let diagram = two_boxes();
@@ -1527,7 +1698,7 @@ fn aligning_lines_things_up_and_a_group_moves_as_one() {
     .unwrap();
     let all = [ElementId(1), ElementId(2), ElementId(3)];
     let lefts = |diagram: &Diagram| -> Vec<f32> { diagram.elements().iter().map(|e| e.bounds().x).collect() };
-    let aligned = |to: Align| made_and_undone(&diagram, &edit::align(&diagram, &all, to, &Element::bounds));
+    let aligned = |to: Align| made_and_undone(&diagram, &edit::align(&diagram, &all, to, None, &Element::bounds));
     assert_eq!(lefts(&aligned(Align::Left)), vec![0.0, 0.0, 0.0]);
     assert_eq!(lefts(&aligned(Align::Right)), vec![260.0, 340.0, 300.0]);
     assert_eq!(lefts(&aligned(Align::Center)), vec![130.0, 170.0, 150.0]);
@@ -1544,12 +1715,16 @@ fn aligning_lines_things_up_and_a_group_moves_as_one() {
     });
     let right = applied(&grouped, &Edit {
         label: String::new(),
-        changes: edit::align(&grouped, &all, Align::Right, &Element::bounds),
+        changes: edit::align(&grouped, &all, Align::Right, None, &Element::bounds),
     });
     assert_eq!(lefts(&right), vec![260.0, 310.0, 300.0]);
     // One thing (a group is one) has nothing to line up with.
-    assert!(edit::align(&grouped, &all[..2], Align::Left, &Element::bounds).is_empty());
-    assert_eq!(edit::unit_count(&grouped, &all), 2);
+    assert!(edit::align(&grouped, &all[..2], Align::Left, None, &Element::bounds).is_empty());
+    assert_eq!(edit::unit_count(&grouped, &all, None), 2);
+    // Gone into, its elements line up with each other.
+    assert_eq!(edit::unit_count(&grouped, &all[..2], Some(1)), 2);
+    let inside = made_and_undone(&grouped, &edit::align(&grouped, &all[..2], Align::Left, Some(1), &Element::bounds));
+    assert_eq!(lefts(&inside), vec![0.0, 0.0, 300.0]);
 }
 
 #[test]

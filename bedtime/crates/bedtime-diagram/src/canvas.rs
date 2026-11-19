@@ -102,6 +102,10 @@ const FRAME_GAP: f32 = 5.0;
 const GRIP: f32 = 8.0;
 /// A side shorter than this on screen has no grip in its middle.
 const SIDE_GRIPS_FROM: f32 = 40.0;
+/// How near the pointer must be to the grip in the middle of a line's
+/// segment, and how short a segment has none, in screen points.
+const MIDDLE_GRIP: f32 = 5.0;
+const MIDDLE_GRIPS_FROM: f32 = 36.0;
 
 /// What the canvas keeps between frames besides the camera: the tool, the
 /// selection, and the gesture under way.
@@ -120,6 +124,29 @@ pub struct State {
     gesture: Option<Gesture>,
     /// The text being written, if any: the canvas waits for it.
     pub(crate) writing: Option<Writing>,
+    /// The group gone into (by a double click on it): its elements are
+    /// picked one by one, until none of them is selected.
+    pub(crate) within: Option<u64>,
+    /// Where the menu was asked for, on the canvas: what's pasted from it
+    /// goes there.
+    menu_at: Point,
+    /// The point of the line selected that the menu was asked for on, if it
+    /// was on one the line can do without.
+    menu_point: Option<usize>,
+    /// Something for whoever shows the canvas to do: taken by them.
+    pub(crate) asked: Option<Request>,
+    /// Text to paste, and where: the answer to `Request::Paste`.
+    pasting: Option<(String, Point)>,
+}
+
+/// What the canvas can't do itself, asked of whoever shows it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Request {
+    /// Paste the clipboard's text here (see `State::paste_text`): only keys
+    /// bring the clipboard with them.
+    Paste(Point),
+    /// Make a picture of the diagram, or of the selection.
+    Picture(crate::Picture),
 }
 
 /// Text being written in place, and what it's for.
@@ -153,16 +180,39 @@ struct Styles {
     size: bool,
     /// Something is selected, to move forward or back.
     order: bool,
-    /// Two things or more are selected, to line up.
+    /// Two things or more are selected, to line up or to group.
     align: bool,
+    /// Something selected is in a group, to take out of it.
+    grouped: bool,
+    /// What the first line selected has on its ends, if a line is selected.
+    heads: Option<(Head, Head)>,
 }
 
-/// What was picked in the style bar.
+/// What was picked in a bar or in the menu.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Pick {
+pub(crate) enum Pick {
     Style(Restyle),
     Order(Order),
     Align(Align),
+    /// Group the selection, or (`false`) ungroup it.
+    Group(bool),
+    /// Write in the one thing selected.
+    Write,
+    Cut,
+    Copy,
+    Paste,
+    Duplicate,
+    Delete,
+    SelectAll,
+    /// Turn the lines selected around.
+    Reverse,
+    /// A point for the line selected to bend at, where the menu was asked for.
+    AddPoint,
+    /// The line selected without the point the menu was asked for on.
+    RemovePoint,
+    /// Show the whole diagram.
+    Fit,
+    Picture(crate::Picture),
 }
 
 /// A finished gesture's changes to the diagram: one step of undo.
@@ -201,11 +251,12 @@ enum Gesture {
         to: Rect,
         grab: (f32, f32),
     },
-    /// Moving one point of a line.
+    /// Moving one point of a line: a new one, put in at `index`, if `insert`.
     MovePoint {
         id: ElementId,
         index: usize,
         to: Point,
+        insert: bool,
     },
     /// Drawing a stroke by hand: where the pointer has been, and how far
     /// from them the stroke kept may stray.
@@ -218,11 +269,29 @@ enum Gesture {
     },
 }
 
-/// Something of the selection to drag: a handle of its box, or a line's point.
+/// Something of the selection to drag: a handle of its box, a line's point,
+/// or the middle of the line's segment that ends at a point (dragged, it's a
+/// new point there).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Grip {
     Box(Handle),
     Point(usize),
+    Middle(usize),
+}
+
+/// The grip under the pointer. The middle of a segment is a smaller thing
+/// to catch: the line is moved by the rest of it.
+fn grip_at(grips: &[(Grip, Pos2)], pointer: Pos2) -> Option<Grip> {
+    grips
+        .iter()
+        .find(|(grip, place)| {
+            let reach = match grip {
+                Grip::Middle(_) => MIDDLE_GRIP,
+                _ => REACH + GRIP / 2.0,
+            };
+            (*place - pointer).length() <= reach
+        })
+        .map(|(grip, _)| *grip)
 }
 
 impl State {
@@ -274,6 +343,8 @@ impl State {
                 size,
                 order: false,
                 align: false,
+                grouped: false,
+                heads: None,
             };
             let styles = match self.tool {
                 Tool::Select => return None,
@@ -293,7 +364,9 @@ impl State {
                 .any(|element| matches!(element.shape, Shape::Rectangle(_))),
             size: selected.iter().any(is_text),
             order: true,
-            align: edit::unit_count(diagram, &self.selection) >= 2,
+            align: edit::unit_count(diagram, &self.selection, self.within) >= 2,
+            grouped: selected.iter().any(|element| element.group.is_some()),
+            heads: selected.iter().rev().find_map(|element| edit::heads(element)),
         };
         // Each kind of style from the first selected element that has it.
         let style = selected
@@ -417,8 +490,12 @@ impl State {
                         let to = handle.drag(*to, Point::new(corner.x + snap.dx, corner.y + snap.dy));
                         edit::remap(element, *from, to)
                     }
-                    Gesture::MovePoint { id, index, to } if *id == element.id => {
-                        let mut moved = edit::with_point(element, *index, *to);
+                    Gesture::MovePoint { id, index, to, insert } if *id == element.id => {
+                        let mut moved = if *insert {
+                            edit::with_point_added(element, *index, *to)
+                        } else {
+                            edit::with_point(element, *index, *to)
+                        };
                         let onto = edit::binding_at(diagram, *to, extent, Some(*id));
                         edit::bind_end(&mut moved, *index, onto);
                         moved
@@ -472,10 +549,199 @@ impl State {
     }
 
     /// The selection without what's gone, and with everything grouped with
-    /// what's in it.
+    /// what's in it: but for the group gone into, which is left once nothing
+    /// of it is selected.
     fn settle_selection(&mut self, diagram: &Diagram) {
         self.selection.retain(|id| diagram.get(*id).is_some());
-        self.selection = edit::with_groups(diagram, &self.selection);
+        let inside = |id: &ElementId| diagram.get(*id).is_some_and(|e| e.group == self.within);
+        if self.within.is_some() && !self.selection.iter().any(inside) {
+            self.within = None;
+        }
+        self.selection = edit::with_groups_but(diagram, &self.selection, self.within);
+    }
+
+    /// A click with the Select tool: it selects what it's on, and with Shift
+    /// adds that to the selection or takes it away. Twice on something in a
+    /// group goes into the group, selecting that alone; twice otherwise
+    /// writes: in text or a box, or new text on nothing.
+    pub(crate) fn click(
+        &mut self,
+        diagram: &Diagram,
+        at: Point,
+        reach: f32,
+        shift: bool,
+        twice: bool,
+        extent: Extent<'_>,
+    ) {
+        let on = edit::topmost_at(diagram, at, reach, extent);
+        if twice {
+            let group = on.and_then(|id| diagram.get(id)?.group);
+            if let Some(id) = on
+                && group.is_some()
+                && group != self.within
+            {
+                self.within = group;
+                self.selection = vec![id];
+                return;
+            }
+            match edit::writable_at(diagram, at, reach, extent) {
+                Some(id) => {
+                    self.selection = vec![id];
+                    // Still in the group it's in, if that was gone into.
+                    self.within = diagram.get(id).and_then(|element| element.group);
+                    self.write(diagram, Subject::Of(id));
+                }
+                None if on.is_none() => self.write_at(diagram, at),
+                None => {}
+            }
+            return;
+        }
+        match on {
+            Some(id) if shift => {
+                // With what it's grouped with, either way.
+                let all = edit::with_groups_but(diagram, &[id], self.within);
+                if self.is_selected(id) {
+                    self.selection.retain(|other| !all.contains(other));
+                } else {
+                    self.selection.push(id);
+                }
+            }
+            Some(id) => self.selection = vec![id],
+            None if shift => {}
+            None => self.selection.clear(),
+        }
+        self.settle_selection(diagram);
+    }
+
+    /// The menu asked for at a place: it's for what's there, which is
+    /// selected if it wasn't; or for the canvas, on nothing.
+    pub(crate) fn point_at(&mut self, diagram: &Diagram, at: Point, reach: f32, extent: Extent<'_>) {
+        self.gesture = None;
+        self.menu_at = at;
+        match edit::topmost_at(diagram, at, reach, extent) {
+            Some(id) => {
+                self.tool = Tool::Select;
+                if !self.is_selected(id) {
+                    self.selection = vec![id];
+                }
+            }
+            None => {
+                let held = bounds(&self.selected(diagram), extent);
+                if !held.is_some_and(|bounds| bounds.contains(at)) {
+                    self.selection.clear();
+                }
+            }
+        }
+        self.settle_selection(diagram);
+    }
+
+    /// The line selected, if that's all that is.
+    fn only_line<'a>(&self, diagram: &'a Diagram) -> Option<&'a Element> {
+        let [only] = self.selection[..] else {
+            return None;
+        };
+        diagram
+            .get(only)
+            .filter(|element| matches!(element.shape, Shape::Line { .. }))
+    }
+
+    /// The line selected with a point to bend at, at a place.
+    pub(crate) fn add_point(&self, diagram: &Diagram, at: Point) -> Option<Edit> {
+        let line = self.only_line(diagram)?;
+        let Shape::Line { points, .. } = &line.shape else {
+            return None;
+        };
+        let element = edit::with_point_added(line, edit::segment_at(points, at)?, at);
+        Some(Edit {
+            label: "Add Point".into(),
+            changes: vec![Change::Replace { element }],
+        })
+    }
+
+    /// The line selected without one of the points it bends at.
+    pub(crate) fn remove_point(&self, diagram: &Diagram, index: usize) -> Option<Edit> {
+        let element = edit::without_point(self.only_line(diagram)?, index)?;
+        Some(Edit {
+            label: "Remove Point".into(),
+            changes: vec![Change::Replace { element }],
+        })
+    }
+
+    /// The lines selected, going the other way.
+    pub(crate) fn reverse(&self, diagram: &Diagram) -> Option<Edit> {
+        let changes: Vec<Change> = self
+            .selected(diagram)
+            .into_iter()
+            .map(edit::reversed)
+            .filter(|turned| diagram.get(turned.id) != Some(turned))
+            .map(|element| Change::Replace { element })
+            .collect();
+        (!changes.is_empty()).then(|| Edit {
+            label: "Reverse Direction".into(),
+            changes,
+        })
+    }
+
+    /// Text from the clipboard to paste at a place, when the canvas is next
+    /// shown: the answer to `Request::Paste`.
+    pub fn paste_text(&mut self, text: String, at: Point) {
+        self.pasting = Some((text, at));
+    }
+
+    /// Everything selected.
+    fn select_all(&mut self, diagram: &Diagram) {
+        self.tool = Tool::Select;
+        self.within = None;
+        self.selection = diagram.elements().iter().map(|element| element.id).collect();
+    }
+
+    /// Something picked in a bar or in the menu, done: the edit it makes,
+    /// if it makes one. (`Pick::Fit` is the camera's.)
+    pub(crate) fn pick_of(
+        &mut self,
+        ctx: &egui::Context,
+        diagram: &Diagram,
+        pick: Pick,
+        extent: Extent<'_>,
+    ) -> Option<Edit> {
+        match pick {
+            Pick::Style(change) => self.restyle(diagram, change),
+            Pick::Order(order) => self.reorder(diagram, order),
+            Pick::Align(to) => self.align(diagram, to, extent),
+            Pick::Group(together) => self.group(diagram, together),
+            Pick::Write => {
+                if let [only] = self.selection[..] {
+                    self.write(diagram, Subject::Of(only));
+                }
+                None
+            }
+            Pick::Cut | Pick::Copy => {
+                if let Some(text) = self.copied(diagram) {
+                    ctx.copy_text(text);
+                }
+                (pick == Pick::Cut)
+                    .then(|| self.remove_selected(diagram, "Cut"))
+                    .flatten()
+            }
+            Pick::Paste => {
+                self.asked = Some(Request::Paste(self.menu_at));
+                None
+            }
+            Pick::Duplicate => self.duplicate(diagram),
+            Pick::Delete => self.remove_selected(diagram, "Delete"),
+            Pick::SelectAll => {
+                self.select_all(diagram);
+                None
+            }
+            Pick::Picture(picture) => {
+                self.asked = Some(Request::Picture(picture));
+                None
+            }
+            Pick::Reverse => self.reverse(diagram),
+            Pick::AddPoint => self.add_point(diagram, self.menu_at),
+            Pick::RemovePoint => self.remove_point(diagram, self.menu_point?),
+            Pick::Fit => None,
+        }
     }
 
     /// The edit that removes the selection.
@@ -563,13 +829,18 @@ impl State {
     }
 
     /// The selection made one group, or taken out of its groups.
-    pub(crate) fn group(&self, diagram: &Diagram, together: bool) -> Option<Edit> {
+    pub(crate) fn group(&mut self, diagram: &Diagram, together: bool) -> Option<Edit> {
         let (changes, label) = if together {
             (edit::group(diagram, &self.selection), "Group")
         } else {
             (edit::ungroup(diagram, &self.selection), "Ungroup")
         };
-        (!changes.is_empty()).then(|| Edit {
+        if changes.is_empty() {
+            return None;
+        }
+        // What's left of a group gone into is a group as before.
+        self.within = None;
+        Some(Edit {
             label: label.into(),
             changes,
         })
@@ -577,7 +848,7 @@ impl State {
 
     /// The selection lined up.
     pub(crate) fn align(&self, diagram: &Diagram, to: Align, extent: Extent<'_>) -> Option<Edit> {
-        let changes = edit::align(diagram, &self.selection, to, extent);
+        let changes = edit::align(diagram, &self.selection, to, self.within, extent);
         (!changes.is_empty()).then(|| Edit {
             label: "Align".into(),
             changes,
@@ -612,7 +883,7 @@ impl State {
             Gesture::Create { to, .. } if matches!(self.tool, Tool::Line | Tool::Arrow) => {
                 edit::binding_at(diagram, *to, extent, None)
             }
-            Gesture::MovePoint { id, index, to } => {
+            Gesture::MovePoint { id, index, to, insert: false } => {
                 let Shape::Line { points, .. } = &diagram.get(*id)?.shape else {
                     return None;
                 };
@@ -709,16 +980,14 @@ impl State {
         let at = camera.to_canvas(view, origin);
         let selected = self.selected(diagram);
         let (_, grips) = grips(&selected, view, camera, extent);
-        if let Some((grip, _)) = grips
-            .iter()
-            .find(|(_, place)| (*place - origin).length() <= REACH + GRIP / 2.0)
-        {
-            match *grip {
-                Grip::Point(index) => {
+        if let Some(grip) = grip_at(&grips, origin) {
+            match grip {
+                Grip::Point(index) | Grip::Middle(index) => {
                     return Gesture::MovePoint {
                         id: selected[0].id,
                         index,
                         to: at,
+                        insert: matches!(grip, Grip::Middle(_)),
                     };
                 }
                 Grip::Box(handle) => {
@@ -844,6 +1113,7 @@ impl State {
             }
             Gesture::Move { .. } => "Move",
             Gesture::Resize { .. } => "Resize",
+            Gesture::MovePoint { insert: true, .. } => "Add Point",
             Gesture::MovePoint { .. } => "Move Point",
         };
         let changes = self.changes(diagram, extent);
@@ -867,6 +1137,7 @@ impl State {
     }
 
     /// The keys, when the canvas has them: tools by letter, Escape, Delete,
+    /// (out of a group gone into, then letting go of the selection),
     /// Enter, the arrows nudging the selection (further with Shift), and
     /// with Cmd/Ctrl: A (all), C, X, V (pasting at `paste_at`), D
     /// (duplicate), G (group; with Shift, ungroup), and ] and [ (forward and
@@ -899,8 +1170,7 @@ impl State {
             let command = egui::Modifiers::COMMAND;
             let shifted = egui::Modifiers::COMMAND | egui::Modifiers::SHIFT;
             if i.consume_key(command, egui::Key::A) {
-                self.tool = Tool::Select;
-                self.selection = diagram.elements().iter().map(|element| element.id).collect();
+                self.select_all(diagram);
             }
             if i.consume_key(command, egui::Key::D) {
                 ask = Some(Ask::Duplicate);
@@ -930,11 +1200,12 @@ impl State {
                 }
             }
             if i.key_pressed(egui::Key::Escape) {
-                // First the drag, then the tool, then the selection.
+                // First the drag, then the tool, then out of the group gone
+                // into (to all of it), then the selection.
                 if self.gesture.take().is_none() {
                     if self.tool != Tool::Select {
                         self.tool = Tool::Select;
-                    } else {
+                    } else if self.within.take().is_none() {
                         self.selection.clear();
                     }
                 }
@@ -1035,7 +1306,8 @@ fn handle_place(handle: Handle, rect: Rect) -> Point {
 }
 
 /// The frame around a selection and its grips, on screen. One line alone has
-/// a grip on each of its points, and no frame; text alone has a frame and no
+/// a grip on each of its points and in the middle of each segment long
+/// enough, and no frame; text alone has a frame and no
 /// grips (it can't be stretched).
 fn grips(
     selected: &[&Element],
@@ -1046,10 +1318,29 @@ fn grips(
     if let [only] = selected
         && let Shape::Line { points, .. } = &only.shape
     {
-        let grips = points
+        let places: Vec<Pos2> = points.iter().map(|point| camera.to_screen(view, *point)).collect();
+        // The label is over the middle of the line: the grip of the segment
+        // it's on is a quarter of the way from one of its ends instead.
+        let label = edit::midpoint(points)
+            .filter(|_| !only.label.is_empty())
+            .map(|middle| camera.to_screen(view, middle));
+        let middles = places.windows(2).enumerate().filter_map(|(index, pair)| {
+            let along = pair[1] - pair[0];
+            let middle = pair[0] + along / 2.0;
+            // Whichever of the middle and the quarters is furthest from it.
+            let place = match label.filter(|label| (*label - middle).length() < along.length() / 4.0) {
+                Some(label) if (label - pair[0]).length() < (label - pair[1]).length() => pair[0] + along * 0.75,
+                Some(_) => pair[0] + along * 0.25,
+                None => middle,
+            };
+            (along.length() >= MIDDLE_GRIPS_FROM).then_some((Grip::Middle(index + 1), place))
+        });
+        // The points first: they're caught before the middles.
+        let grips = places
             .iter()
             .enumerate()
-            .map(|(index, point)| (Grip::Point(index), camera.to_screen(view, *point)))
+            .map(|(index, place)| (Grip::Point(index), *place))
+            .chain(middles)
             .collect();
         return (None, grips);
     }
@@ -1136,6 +1427,10 @@ pub fn show(
     } else {
         None
     };
+    // What the menu's Paste asked for has come.
+    if let Some((text, at)) = state.pasting.take() {
+        edit = state.paste(diagram, &text, at, extent).or(edit);
+    }
     if response.hovered()
         && let Some(pointer) = hover
     {
@@ -1201,37 +1496,34 @@ pub fn show(
     if let Some(at) = clicked_at {
         if state.tool == Tool::Text {
             state.write_at(diagram, at);
-        } else if state.tool == Tool::Select
-            && (response.double_clicked() || response.triple_clicked())
-        {
-            // Twice (or more, quickly) on text or in a box writes there; on
-            // nothing, new text.
-            match edit::writable_at(diagram, at, REACH / camera.zoom, extent) {
-                Some(id) => {
-                    state.selection = vec![id];
-                    state.write(diagram, Subject::Of(id));
-                }
-                None if edit::topmost_at(diagram, at, REACH / camera.zoom, extent).is_none() => {
-                    state.write_at(diagram, at);
-                }
-                None => {}
-            }
         } else if state.tool == Tool::Select {
-            match edit::topmost_at(diagram, at, REACH / camera.zoom, extent) {
-                // Shift adds to the selection, or takes away from it.
-                Some(id) if shift => {
-                    match state.selection.iter().position(|other| *other == id) {
-                        Some(index) => {
-                            state.selection.remove(index);
-                        }
-                        None => state.selection.push(id),
-                    }
-                }
-                Some(id) => state.selection = vec![id],
-                None if shift => {}
-                None => state.selection.clear(),
+            // Twice, or more, quickly.
+            let twice = response.double_clicked() || response.triple_clicked();
+            // Twice on a point a line bends at takes it out.
+            let (_, grips) = grips(&state.selected(diagram), view, camera, extent);
+            let bend = match grip_at(&grips, camera.to_screen(view, at)) {
+                Some(Grip::Point(index)) if twice => state.remove_point(diagram, index),
+                _ => None,
+            };
+            match bend {
+                Some(bend) => edit = Some(bend),
+                None => state.click(diagram, at, REACH / camera.zoom, shift, twice, extent),
             }
         }
+    }
+    // The other button asks for the menu, for what it's on.
+    if !writing
+        && response.secondary_clicked()
+        && let Some(pointer) = response.interact_pointer_pos()
+    {
+        let (_, grips) = grips(&state.selected(diagram), view, camera, extent);
+        let point = match grip_at(&grips, pointer) {
+            Some(Grip::Point(index)) => Some(index),
+            _ => None,
+        };
+        state.point_at(diagram, camera.to_canvas(view, pointer), REACH / camera.zoom, extent);
+        state.menu_point = point
+            .filter(|index| state.only_line(diagram).is_some_and(|line| edit::without_point(line, *index).is_some()));
     }
 
     // What to draw: the diagram as the gesture would leave it, bound lines
@@ -1344,6 +1636,25 @@ pub fn show(
         painter.circle_filled(dot, 4.0, accent);
     }
 
+    // The group gone into: a dashed frame around all of it.
+    if let Some(group) = state.within {
+        let members: Vec<&Element> = shown
+            .iter()
+            .filter(|element| element.group == Some(group))
+            .collect();
+        if let Some(around) = bounds(&members, extent) {
+            let around = on_screen(view, camera, around).expand(FRAME_GAP + 4.0);
+            let corners = vec![
+                around.left_top(),
+                around.right_top(),
+                around.right_bottom(),
+                around.left_bottom(),
+            ];
+            let stroke = Stroke::new(1.0, accent.gamma_multiply(0.6));
+            path(&painter, corners, true, stroke, Some((4.0, 4.0)));
+        }
+    }
+
     // The selection: each element outlined when there are several, a frame
     // around them all, and the grips.
     if selected.len() > 1 {
@@ -1361,6 +1672,10 @@ pub fn show(
     }
     let backdrop = color(theme.palette.panel_background);
     for (grip, place) in &grips {
+        if matches!(grip, Grip::Middle(_)) {
+            painter.circle(*place, 3.0, backdrop, Stroke::new(1.0, accent.gamma_multiply(0.8)));
+            continue;
+        }
         let rect = egui::Rect::from_center_size(*place, Vec2::splat(GRIP));
         let radius = if matches!(grip, Grip::Point(_)) { 4 } else { 1 };
         painter.rect(
@@ -1380,17 +1695,14 @@ pub fn show(
         && let Some(pointer) = hover
     {
         let at = camera.to_canvas(view, pointer);
-        let over_grip = grips
-            .iter()
-            .find(|(_, place)| (*place - pointer).length() <= REACH + GRIP / 2.0)
-            .map(|(grip, _)| *grip);
+        let over_grip = grip_at(&grips, pointer);
         let icon = if space {
             egui::CursorIcon::Grab
         } else if !matches!(state.tool, Tool::Select | Tool::Text) {
             egui::CursorIcon::Crosshair
         } else if let Some(grip) = over_grip {
             match grip {
-                Grip::Point(_) => egui::CursorIcon::Crosshair,
+                Grip::Point(_) | Grip::Middle(_) => egui::CursorIcon::Crosshair,
                 Grip::Box(Handle { x: 0, .. }) => egui::CursorIcon::ResizeVertical,
                 Grip::Box(Handle { y: 0, .. }) => egui::CursorIcon::ResizeHorizontal,
                 Grip::Box(Handle { x, y }) if x == y => egui::CursorIcon::ResizeNwSe,
@@ -1465,13 +1777,42 @@ pub fn show(
         } else {
             None
         };
-        let made = match picked.or(arranged) {
-            Some(Pick::Style(change)) => state.restyle(diagram, change),
-            Some(Pick::Order(order)) => state.reorder(diagram, order),
-            Some(Pick::Align(to)) => state.align(diagram, to, extent),
-            None => None,
+        if let Some(pick) = picked.or(arranged) {
+            edit = state.pick_of(ui.ctx(), diagram, pick, extent).or(edit);
+        }
+    }
+
+    // The menu: for the selection, or for the canvas when there's none.
+    if !writing {
+        let mut picked = None;
+        let styles = state.styles(diagram).map(|(styles, _)| styles);
+        let selected = state.selection.len();
+        let writable = match state.selection[..] {
+            [only] => diagram.get(only).is_some_and(|element| {
+                element.takes_label() || matches!(element.shape, Shape::Text { .. })
+            }),
+            _ => false,
         };
-        edit = made.or(edit);
+        // On the line selected: a point can be added there; on one of the
+        // points it bends at: that can be removed.
+        let on_line = state.only_line(diagram).is_some_and(|line| {
+            edit::hit(line, state.menu_at, REACH / camera.zoom, extent)
+        });
+        let points = (on_line && state.menu_point.is_none(), state.menu_point.is_some());
+        response.context_menu(|ui| {
+            picked = menu(ui, styles.filter(|_| selected > 0), writable, points, diagram.is_empty());
+            if picked.is_some() {
+                ui.close();
+            }
+        });
+        match picked {
+            Some(Pick::Fit) => *camera = Camera::fitting(diagram.bounds(), view.size()),
+            Some(pick) => edit = state.pick_of(ui.ctx(), diagram, pick, extent).or(edit),
+            None => {}
+        }
+        if state.asked.is_some() {
+            ui.ctx().request_repaint();
+        }
     }
 
     // An edit changes what's drawn: draw again once it's made, rather than
@@ -1488,95 +1829,151 @@ const WIDTHS: [(f32, &str); 3] = [(1.0, "Thin"), (2.0, "Regular"), (4.0, "Bold")
 /// The sizes text can be picked to have.
 const SIZES: [(f32, &str); 4] = [(16.0, "S"), (20.0, "M"), (28.0, "L"), (36.0, "XL")];
 
-/// The style bar: a row for each kind of style there is to pick, with the
-/// one in use marked. Returns what was picked.
+/// The style bar: a button for each kind of style there is to pick, showing
+/// the one in use. A button opens its choices; one with two (a rectangle's
+/// corners, a line's heads) turns it on and off. Returns what was picked.
 fn style_bar(ui: &mut egui::Ui, theme: &Theme, styles: Styles, style: Style) -> Option<Pick> {
     let mut picked = None;
-    ui.vertical(|ui| {
+    let mut pick = |change: Restyle| picked = Some(Pick::Style(change));
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = Vec2::new(3.0, 4.0);
-        row(ui, theme, "Stroke", &mut |ui| {
+        let stroke = chip(ui, theme, "Stroke", Some(style.stroke), true, None);
+        choices(&stroke, |ui| {
             for named in Color::ALL {
                 if swatch(ui, theme, "Stroke", Some(named), style.stroke == named) {
-                    picked = Some(Pick::Style(Restyle::Stroke(named)));
+                    pick(Restyle::Stroke(named));
                 }
             }
         });
         if styles.fill {
-            row(ui, theme, "Fill", &mut |ui| {
+            let fill = chip(ui, theme, "Fill", style.fill, false, None);
+            choices(&fill, |ui| {
                 for named in std::iter::once(None).chain(Color::ALL.map(Some)) {
                     if swatch(ui, theme, "Fill", named, style.fill == named) {
-                        picked = Some(Pick::Style(Restyle::Fill(named)));
+                        pick(Restyle::Fill(named));
                     }
                 }
             });
         }
         if styles.stroke {
-            row(ui, theme, "Width", &mut |ui| {
+            let width = button(ui, theme, "Stroke width", |painter, rect, ink| {
+                // The three widths, the one in use marked: told from the
+                // dashes' button by more than a line.
+                let rows = [rect.top(), rect.center().y - 0.5, rect.bottom() - 1.0];
+                for ((width, _), y) in WIDTHS.into_iter().zip(rows) {
+                    let ink = if width == style.width { ink } else { ink.gamma_multiply(0.4) };
+                    painter.hline(rect.x_range(), y, Stroke::new(width.min(3.0), ink));
+                }
+            });
+            choices(&width, |ui| {
                 for (width, name) in WIDTHS {
                     let on = style.width == width;
                     if option(ui, theme, &format!("{name} stroke"), on, |painter, rect, ink| {
                         painter.hline(rect.x_range(), rect.center().y, Stroke::new(width, ink));
                     }) {
-                        picked = Some(Pick::Style(Restyle::Width(width)));
+                        pick(Restyle::Width(width));
                     }
                 }
             });
-            row(ui, theme, "Line", &mut |ui| {
+            let dashed = |painter: &egui::Painter, rect: egui::Rect, ink: Color32, dash: Dash| {
+                let ends = vec![rect.left_center(), rect.right_center()];
+                path(painter, ends, false, Stroke::new(1.5, ink), dashes(dash, 1.5));
+            };
+            let dash = button(ui, theme, "Dashes", |painter, rect, ink| {
+                dashed(painter, rect, ink, style.dash);
+            });
+            choices(&dash, |ui| {
                 for (dash, name) in [
                     (Dash::Solid, "Solid"),
                     (Dash::Dashed, "Dashed"),
                     (Dash::Dotted, "Dotted"),
                 ] {
                     if option(ui, theme, &format!("{name} stroke"), style.dash == dash, |painter, rect, ink| {
-                        let ends = vec![rect.left_center(), rect.right_center()];
-                        path(painter, ends, false, Stroke::new(1.5, ink), dashes(dash, 1.5));
+                        dashed(painter, rect, ink, dash);
                     }) {
-                        picked = Some(Pick::Style(Restyle::Dash(dash)));
+                        pick(Restyle::Dash(dash));
                     }
                 }
             });
         }
-        if styles.corners {
-            row(ui, theme, "Corners", &mut |ui| {
-                for (rounded, name) in [(false, "Sharp corners"), (true, "Round corners")] {
-                    if option(ui, theme, name, style.rounded == rounded, |painter, rect, ink| {
-                        // The top left corner of a box.
-                        let corner = egui::Rect::from_min_size(
-                            rect.left_top() + Vec2::new(3.0, 2.0),
-                            Vec2::splat(rect.height() * 2.0),
-                        );
-                        let radius = if rounded { rect.height() * 0.6 } else { 0.0 };
-                        painter.with_clip_rect(rect.expand(1.0)).rect_stroke(
-                            corner,
-                            radius,
-                            Stroke::new(1.5, ink),
-                            egui::StrokeKind::Middle,
-                        );
-                    }) {
-                        picked = Some(Pick::Style(Restyle::Rounded(rounded)));
-                    }
-                }
-            });
+        if styles.corners
+            && option(ui, theme, "Round corners", style.rounded, |painter, rect, ink| {
+                // The top left corner of a box.
+                let corner = egui::Rect::from_min_size(
+                    rect.left_top() + Vec2::new(3.0, 2.0),
+                    Vec2::splat(rect.height() * 2.0),
+                );
+                painter.with_clip_rect(rect.expand(1.0)).rect_stroke(
+                    corner,
+                    rect.height() * 0.6,
+                    Stroke::new(1.5, ink),
+                    egui::StrokeKind::Middle,
+                );
+            })
+        {
+            pick(Restyle::Rounded(!style.rounded));
         }
         if styles.size {
-            row(ui, theme, "Size", &mut |ui| {
+            let named = SIZES.iter().find(|(size, _)| *size == style.size);
+            let name = named.map_or("…", |(_, name)| name);
+            let size = button(ui, theme, "Text size", |painter, rect, ink| letters(painter, rect, ink, name));
+            choices(&size, |ui| {
                 for (size, name) in SIZES {
                     if option(ui, theme, &format!("Size {name}"), style.size == size, |painter, rect, ink| {
-                        painter.text(
-                            rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            name,
-                            egui::FontId::proportional(11.0),
-                            ink,
-                        );
+                        letters(painter, rect, ink, name);
                     }) {
-                        picked = Some(Pick::Style(Restyle::Size(size)));
+                        pick(Restyle::Size(size));
                     }
                 }
             });
+        }
+        if let Some((start, end)) = styles.heads {
+            for (name, head, at_end) in [("Arrow at start", start, false), ("Arrow at end", end, true)] {
+                let on = head == Head::Arrow;
+                if option(ui, theme, name, on, |painter, rect, ink| {
+                    // A line, with a head at the end it's for.
+                    let stroke = Stroke::new(1.5, ink);
+                    let (tip, back) = if at_end {
+                        (rect.right_center(), -4.0)
+                    } else {
+                        (rect.left_center(), 4.0)
+                    };
+                    painter.hline(rect.x_range(), rect.center().y, stroke);
+                    painter.add(epaint::PathShape::line(
+                        vec![tip + Vec2::new(back, -4.0), tip, tip + Vec2::new(back, 4.0)],
+                        stroke,
+                    ));
+                }) {
+                    let head = if on { Head::None } else { Head::Arrow };
+                    pick(if at_end { Restyle::End(head) } else { Restyle::Start(head) });
+                }
+            }
         }
     });
     picked
+}
+
+/// A few letters as a choice's picture.
+fn letters(painter: &egui::Painter, rect: egui::Rect, ink: Color32, text: &str) {
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(11.0),
+        ink,
+    );
+}
+
+/// The choices a button of the style bar opens, in a row: picking one
+/// closes them.
+fn choices(button: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
+    // Above the bar, which is at the canvas's bottom.
+    egui::Popup::menu(button).align(egui::RectAlign::TOP_START).gap(6.0).show(|ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(3.0, 4.0);
+            add(ui);
+        });
+    });
 }
 
 /// A row of a bar: its name, then its choices.
@@ -1652,6 +2049,97 @@ fn arrange_bar(ui: &mut egui::Ui, theme: &Theme, styles: Styles) -> Option<Pick>
     picked
 }
 
+/// The menu: what can be done with the selection (`styles`, when there is
+/// one; `writable` when it's one thing with text to write; a point to add
+/// to the line it was asked for on, or to remove), or else with the
+/// canvas (`empty` when there's nothing on it). Returns what was picked.
+fn menu(
+    ui: &mut egui::Ui,
+    styles: Option<Styles>,
+    writable: bool,
+    (add_point, remove_point): (bool, bool),
+    empty: bool,
+) -> Option<Pick> {
+    use crate::Picture;
+    let primary = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
+    let mut picked = None;
+    let mut item = |ui: &mut egui::Ui, label: &str, keys: &str, enabled: bool, pick: Pick| {
+        let mut button = egui::Button::new(label);
+        if !keys.is_empty() {
+            button = button.shortcut_text(keys.replace("Cmd", primary));
+        }
+        if ui.add_enabled(enabled, button).clicked() {
+            picked = Some(pick);
+        }
+    };
+    let Some(styles) = styles else {
+        item(ui, "Paste", "Cmd+V", true, Pick::Paste);
+        item(ui, "Select All", "Cmd+A", !empty, Pick::SelectAll);
+        ui.separator();
+        item(ui, "Zoom to Fit", "", !empty, Pick::Fit);
+        ui.separator();
+        item(ui, "Copy as Image", "", !empty, Pick::Picture(Picture::Clipboard));
+        ui.add_enabled_ui(!empty, |ui| {
+            ui.menu_button("Export", |ui| {
+                item(ui, "SVG…", "", true, Pick::Picture(Picture::Svg));
+                item(ui, "PNG…", "", true, Pick::Picture(Picture::Png));
+            });
+        });
+        return picked;
+    };
+    if writable {
+        item(ui, "Edit Text", "Enter", true, Pick::Write);
+    }
+    if add_point {
+        item(ui, "Add Point", "", true, Pick::AddPoint);
+    }
+    if remove_point {
+        item(ui, "Remove Point", "", true, Pick::RemovePoint);
+    }
+    if styles.heads.is_some() {
+        item(ui, "Reverse Direction", "", true, Pick::Reverse);
+    }
+    if writable || styles.heads.is_some() {
+        ui.separator();
+    }
+    item(ui, "Cut", "Cmd+X", true, Pick::Cut);
+    item(ui, "Copy", "Cmd+C", true, Pick::Copy);
+    item(ui, "Paste", "Cmd+V", true, Pick::Paste);
+    item(ui, "Duplicate", "Cmd+D", true, Pick::Duplicate);
+    item(ui, "Delete", "Del", true, Pick::Delete);
+    ui.separator();
+    item(ui, "Group", "Cmd+G", styles.align, Pick::Group(true));
+    item(ui, "Ungroup", "Shift+Cmd+G", styles.grouped, Pick::Group(false));
+    ui.separator();
+    ui.menu_button("Order", |ui| {
+        item(ui, "Bring to Front", "Shift+Cmd+]", true, Pick::Order(Order::Front));
+        item(ui, "Bring Forward", "Cmd+]", true, Pick::Order(Order::Forward));
+        item(ui, "Send Backward", "Cmd+[", true, Pick::Order(Order::Backward));
+        item(ui, "Send to Back", "Shift+Cmd+[", true, Pick::Order(Order::Back));
+    });
+    if styles.align {
+        ui.menu_button("Align", |ui| {
+            for (to, name) in [
+                (Align::Left, "Left"),
+                (Align::Center, "Centers"),
+                (Align::Right, "Right"),
+                (Align::Top, "Top"),
+                (Align::Middle, "Middles"),
+                (Align::Bottom, "Bottom"),
+            ] {
+                item(ui, name, "", true, Pick::Align(to));
+            }
+        });
+    }
+    ui.separator();
+    item(ui, "Copy Selection as Image", "", true, Pick::Picture(Picture::Clipboard));
+    ui.menu_button("Export Selection", |ui| {
+        item(ui, "SVG…", "", true, Pick::Picture(Picture::Svg));
+        item(ui, "PNG…", "", true, Pick::Picture(Picture::Png));
+    });
+    picked
+}
+
 /// The picture of a way to align: the line things are lined up on, and two
 /// bars lined up on it.
 fn align_picture(painter: &egui::Painter, rect: egui::Rect, ink: Color32, to: Align) {
@@ -1690,17 +2178,38 @@ fn align_picture(painter: &egui::Painter, rect: egui::Rect, ink: Color32, to: Al
 /// A color to pick ("Stroke Red"), or no color (`None`: "Fill None"); ringed
 /// when it's the one in use. Returns whether it was clicked.
 fn swatch(ui: &mut egui::Ui, theme: &Theme, of: &str, named: Option<Color>, on: bool) -> bool {
-    let (rect, response) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::click());
     let name = match named {
         Some(named) => format!("{of} {named:?}"),
         None => format!("{of} None"),
     };
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, &name)
+    chip(ui, theme, &name, named, false, Some(on)).clicked()
+}
+
+/// A square of a color, or of none (struck through): an outline of it if
+/// `hollow` (a stroke's), else filled. One of several to pick from when
+/// `on` says whether it's the one in use (it's ringed if so); a button
+/// otherwise.
+fn chip(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    name: &str,
+    named: Option<Color>,
+    hollow: bool,
+    on: Option<bool>,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(18.0), egui::Sense::click());
+    response.widget_info(|| match on {
+        Some(on) => egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, name),
+        None => egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name),
     });
+    let on = on.unwrap_or(false);
     let painter = ui.painter();
     let chip = rect.shrink(3.0);
     match named {
+        Some(named) if hollow => {
+            let stroke = Stroke::new(2.5, resolve(theme, named));
+            painter.rect_stroke(chip, 3, stroke, egui::StrokeKind::Inside);
+        }
         Some(named) => {
             painter.rect_filled(chip, 3, resolve(theme, named));
         }
@@ -1718,7 +2227,7 @@ fn swatch(ui: &mut egui::Ui, theme: &Theme, of: &str, named: Option<Color>, on: 
         });
         painter.rect_stroke(rect.shrink(0.5), 5, Stroke::new(1.5, ring), egui::StrokeKind::Inside);
     }
-    response.on_hover_text(name).clicked()
+    response.on_hover_text(name)
 }
 
 /// One of a row's choices, with its picture drawn by `draw` in the ink it's
@@ -1730,10 +2239,35 @@ fn option(
     on: bool,
     draw: impl FnOnce(&egui::Painter, egui::Rect, Color32),
 ) -> bool {
+    pictured(ui, theme, name, Some(on), draw).clicked()
+}
+
+/// A button of the style bar that opens choices: its picture is of the one
+/// in use.
+fn button(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    name: &str,
+    draw: impl FnOnce(&egui::Painter, egui::Rect, Color32),
+) -> egui::Response {
+    pictured(ui, theme, name, None, draw)
+}
+
+/// A choice (`on` says whether it's the one in use) or a button, with its
+/// picture.
+fn pictured(
+    ui: &mut egui::Ui,
+    theme: &Theme,
+    name: &str,
+    on: Option<bool>,
+    draw: impl FnOnce(&egui::Painter, egui::Rect, Color32),
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(30.0, 18.0), egui::Sense::click());
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, name)
+    response.widget_info(|| match on {
+        Some(on) => egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, name),
+        None => egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name),
     });
+    let on = on.unwrap_or(false);
     let palette = &theme.palette;
     let ink = color(if on {
         palette.accent
@@ -1746,7 +2280,7 @@ fn option(
         ui.painter().rect_filled(rect, 4, color(palette.surface));
     }
     draw(ui.painter(), rect.shrink2(Vec2::new(7.0, 4.0)), ink);
-    response.on_hover_text(name).clicked()
+    response.on_hover_text(name)
 }
 
 /// A tool's button: its picture, drawn here (they aren't in the icon set).

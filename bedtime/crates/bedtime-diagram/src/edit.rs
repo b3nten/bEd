@@ -177,6 +177,71 @@ pub fn with_point(element: &Element, index: usize, to: Point) -> Element {
     changed
 }
 
+/// A line with a point added at `index` (between the points on either side
+/// of it); anything else as it was.
+pub fn with_point_added(element: &Element, index: usize, at: Point) -> Element {
+    let mut changed = element.clone();
+    if let Shape::Line { points, .. } = &mut changed.shape
+        && (1..points.len()).contains(&index)
+    {
+        points.insert(index, at);
+    }
+    changed
+}
+
+/// A line without one of the points it bends at; `None` for its ends, which
+/// it can't do without.
+pub fn without_point(element: &Element, index: usize) -> Option<Element> {
+    let mut changed = element.clone();
+    let Shape::Line { points, .. } = &mut changed.shape else {
+        return None;
+    };
+    if index == 0 || index + 1 >= points.len() {
+        return None;
+    }
+    points.remove(index);
+    Some(changed)
+}
+
+/// Where among a line's points a point added at `at` goes: into the segment
+/// nearest it.
+pub fn segment_at(points: &[Point], at: Point) -> Option<usize> {
+    (1..points.len()).min_by(|a, b| {
+        let distance = |index: &usize| distance_to_segment(at, points[index - 1], points[*index]);
+        distance(a).total_cmp(&distance(b))
+    })
+}
+
+/// A line going the other way: its heads, and what it's bound to, change
+/// ends with it. Anything else as it was.
+pub fn reversed(element: &Element) -> Element {
+    let mut changed = element.clone();
+    if let Shape::Line {
+        points,
+        start,
+        end,
+        from,
+        to,
+        from_side,
+        to_side,
+    } = &mut changed.shape
+    {
+        points.reverse();
+        std::mem::swap(start, end);
+        std::mem::swap(from, to);
+        std::mem::swap(from_side, to_side);
+    }
+    changed
+}
+
+/// What a line's ends have on them: `None` for anything else.
+pub fn heads(element: &Element) -> Option<(Head, Head)> {
+    match &element.shape {
+        Shape::Line { start, end, .. } => Some((*start, *end)),
+        _ => None,
+    }
+}
+
 fn distance_to_segment(at: Point, a: Point, b: Point) -> f32 {
     let (abx, aby) = (b.x - a.x, b.y - a.y);
     let length = abx * abx + aby * aby;
@@ -606,6 +671,11 @@ pub enum Restyle {
     Rounded(bool),
     /// Text's size.
     Size(f32),
+    /// What a line begins with. (Not a style of what's made next: the Line
+    /// and Arrow tools say that.)
+    Start(Head),
+    /// What a line ends with.
+    End(Head),
 }
 
 /// The element with a style changed, if it takes that style: a line has no
@@ -624,6 +694,16 @@ pub fn restyle(element: &Element, change: Restyle) -> Element {
         Restyle::Size(to) => {
             if let Shape::Text { size, .. } = &mut styled.shape {
                 *size = to;
+            }
+        }
+        Restyle::Start(head) => {
+            if let Shape::Line { start, .. } = &mut styled.shape {
+                *start = head;
+            }
+        }
+        Restyle::End(head) => {
+            if let Shape::Line { end, .. } = &mut styled.shape {
+                *end = head;
             }
         }
         _ => {}
@@ -684,6 +764,7 @@ impl Style {
             Restyle::Dash(dash) => self.dash = dash,
             Restyle::Rounded(rounded) => self.rounded = rounded,
             Restyle::Size(size) => self.size = size,
+            Restyle::Start(_) | Restyle::End(_) => {}
         }
     }
 
@@ -933,9 +1014,16 @@ pub fn reorder(diagram: &Diagram, ids: &[ElementId], order: Order) -> Vec<Change
 
 /// The ids, and those of everything grouped with any of them.
 pub fn with_groups(diagram: &Diagram, ids: &[ElementId]) -> Vec<ElementId> {
+    with_groups_but(diagram, ids, None)
+}
+
+/// The ids, and those of everything grouped with any of them, but for the
+/// group `within`: its elements are picked one by one.
+pub fn with_groups_but(diagram: &Diagram, ids: &[ElementId], within: Option<u64>) -> Vec<ElementId> {
     let groups: Vec<u64> = ids
         .iter()
         .filter_map(|id| diagram.get(*id)?.group)
+        .filter(|group| Some(*group) != within)
         .collect();
     let mut all = ids.to_vec();
     if !groups.is_empty() {
@@ -992,39 +1080,48 @@ pub enum Align {
 }
 
 /// The selection as what moves together: each group, and each element in no
-/// group, with the box around it.
+/// group (or in the group `within`, gone into), with the box around it.
 fn units<'a>(
     diagram: &'a Diagram,
     ids: &[ElementId],
+    within: Option<u64>,
     extent: Extent<'_>,
 ) -> Vec<(Rect, Vec<&'a Element>)> {
     let mut units: Vec<(Option<u64>, Rect, Vec<&Element>)> = Vec::new();
     for element in diagram.elements().iter().filter(|e| ids.contains(&e.id)) {
         let bounds = extent(element);
+        let group = element.group.filter(|group| Some(*group) != within);
         match units
             .iter_mut()
-            .find(|(group, ..)| group.is_some() && *group == element.group)
+            .find(|(other, ..)| other.is_some() && *other == group)
         {
             Some((_, all, members)) => {
                 *all = all.union(&bounds);
                 members.push(element);
             }
-            None => units.push((element.group, bounds, vec![element])),
+            None => units.push((group, bounds, vec![element])),
         }
     }
     units.into_iter().map(|(_, bounds, members)| (bounds, members)).collect()
 }
 
 /// How many things of a selection move on their own (see `align`).
-pub fn unit_count(diagram: &Diagram, ids: &[ElementId]) -> usize {
-    units(diagram, ids, &Element::bounds).len()
+pub fn unit_count(diagram: &Diagram, ids: &[ElementId], within: Option<u64>) -> usize {
+    units(diagram, ids, within, &Element::bounds).len()
 }
 
 /// The changes that line some elements up: their left sides with the
 /// leftmost, their middles with the middle of them all, and so on. A group
-/// moves as one. None for fewer than two things to line up.
-pub fn align(diagram: &Diagram, ids: &[ElementId], to: Align, extent: Extent<'_>) -> Vec<Change> {
-    let units = units(diagram, ids, extent);
+/// moves as one, but for the group `within`. None for fewer than two things
+/// to line up.
+pub fn align(
+    diagram: &Diagram,
+    ids: &[ElementId],
+    to: Align,
+    within: Option<u64>,
+    extent: Extent<'_>,
+) -> Vec<Change> {
+    let units = units(diagram, ids, within, extent);
     let Some(all) = units
         .iter()
         .map(|(bounds, _)| *bounds)

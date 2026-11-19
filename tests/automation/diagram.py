@@ -3,8 +3,11 @@ In, Zoom Out and Reset Zoom zoom the canvas; scrolling pans it; New Diagram
 makes an untitled one. The tools (by key or button) draw shapes, which are
 selected, moved and deleted; the Text tool writes text where it's clicked, and
 a double click in a box writes its label; an arrow drawn from one shape's side
-to another's is bound to both, pinned to those sides, and follows them; the style bar restyles what's selected; the pen draws a stroke by hand; what's selected is duplicated, copied and
-pasted, grouped and lined up; Undo takes each step back; Save
+to another's is bound to both, pinned to those sides, and follows them; the
+style bar's buttons open the styles to pick for what's selected; a line takes
+heads, and bends where its middle is dragged; the pen draws a stroke by hand; what's selected is duplicated, copied and
+pasted, grouped and lined up; a double click goes into a group; the other
+button's menu ungroups; Undo takes each step back; Save
 writes the file."""
 import math
 import re
@@ -161,9 +164,17 @@ with tempfile.TemporaryDirectory() as folder:
         assert about(points[0], -45, 60) and about(points[1], 45, -20), points
 
         # The rectangle is selected: the style bar's picks are its style.
-        for pick in ("Fill Blue", "Bold stroke", "Dashed stroke", "Round corners"):
+        # A button of the bar opens its choices; the corners' turns them round.
+        for opener, pick in (("Fill", "Fill Blue"), ("Stroke width", "Bold stroke"), ("Dashes", "Dashed stroke")):
+            bed.click(opener)
+            until(bed, lambda: bed.exists(pick), f"the choices of {opener}")
+            if opener == "Fill":
+                bed.screenshot("diagram_style_choices")
             bed.click(pick)
-            bed.wait(2)
+            until(bed, lambda: not bed.exists(pick), f"the choices of {opener} closed")
+        assert not bed.exists("Arrow at end"), "a rectangle has no heads"
+        bed.click("Round corners")
+        bed.wait(2)
         bed.screenshot("diagram_styled")
         bed.invoke("document.save")
         until(
@@ -171,6 +182,29 @@ with tempfile.TemporaryDirectory() as folder:
             lambda: "fill: Some(Blue), width: 4.0, dash: Dashed, rounded: true" in drawing.read_text(),
             "the rectangle's style saved",
         )
+
+        # The arrow: a head for its start from the
+        # bar; its middle, dragged, is a point it bends at; twice on that
+        # point straightens it again.
+        bed.click((cx - 10, cy + 29))
+        until(bed, lambda: shows(bed, "1 selected") and bed.exists("Arrow at start"), "the arrow selected")
+        bed.click("Arrow at start")
+        # (Its label is over its middle: the grip is a quarter along.)
+        bed.drag((cx - 22.5, cy + 40), (cx, cy + 90))
+        bed.screenshot("diagram_bent")
+        bed.invoke("document.save")
+        until(bed, lambda: "start: Arrow, end: Arrow" in drawing.read_text(), "both heads saved")
+        points, bound = arrow(drawing.read_text())
+        assert bound and len(points) == 3 and about(points[1], 0, 90), points
+        at = {"move": {"x": cx, "y": cy + 90}}
+        bed.input(at, {"press": "Left"}, {"release": "Left"}, {"press": "Left"}, {"release": "Left"})
+        bed.invoke("document.save")
+        until(bed, lambda: len(arrow(drawing.read_text())[0]) == 2, "the bend taken out")
+        for _ in range(3):
+            bed.invoke("document.undo")
+        bed.invoke("document.save")
+        until(bed, lambda: "start: Arrow" not in drawing.read_text(), "the arrow as it was")
+        bed.key("Escape")
 
         # Text, where the Text tool clicks; Cmd/Ctrl+Enter keeps it.
         bed.key("t")
@@ -243,6 +277,37 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: drawing.read_text().count("group: Some(1)") == 6, "the group saved")
         lefts = set(re.findall(r"(?:Rectangle|Ellipse)\(x: (-?[\d.]+)", drawing.read_text()))
         assert lefts == {"-150.0"}, f"not lined up on the left: {lefts}"
+        # Twice on one of a group goes into it: that one alone, to move on its
+        # own. Escape leaves the group (or first, if a third click came,
+        # the writing), then lets go.
+        at = {"move": {"x": cx - 100, "y": cy + 60}}
+        bed.input(at, {"press": "Left"}, {"release": "Left"}, {"press": "Left"}, {"release": "Left"})
+        until(bed, lambda: shows(bed, "1 selected"), "one of the group, by a double click")
+        bed.screenshot("diagram_within_group")
+        for _ in range(3):
+            if not shows(bed, "0 selected"):
+                bed.key("Escape")
+                bed.wait(2)
+        until(bed, lambda: shows(bed, "0 selected", "Select"), "out of the group")
+        # The other button's menu is for what it's on: the group, to ungroup.
+        bed.click((cx - 100, cy + 60), button="Right")
+        menu = lambda name: bed.find_all(contains=name, role="Button")
+        until(bed, lambda: shows(bed, "6 selected") and menu("Duplicate"), "the group's menu")
+        assert menu("Ungroup") and menu("Order") and menu("Export Selection")
+        bed.screenshot("diagram_menu")
+        bed.click(menu("Ungroup")[0])
+        until(bed, lambda: not menu("Duplicate"), "the menu closed")
+        bed.invoke("document.save")
+        until(bed, lambda: "group" not in drawing.read_text(), "the group taken apart")
+        bed.key("Escape")
+        # On nothing, it's the canvas's menu.
+        bed.click((cx + 250, cy - 150), button="Right")
+        until(bed, lambda: menu("Select All") and menu("Zoom to Fit"), "the canvas's menu")
+        assert not menu("Ungroup")
+        bed.screenshot("diagram_canvas_menu")
+        bed.click(menu("Select All")[0])
+        until(bed, lambda: shows(bed, "6 selected"), "everything selected from the menu")
+        bed.invoke("document.undo")
         # Back to the four: the group, the alignment, the paste and the duplicate.
         for _ in range(4):
             bed.invoke("document.undo")

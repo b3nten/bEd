@@ -317,6 +317,16 @@ impl Panel for DiagramPanel {
         if camera != diagram.camera() {
             diagram.set_camera(camera);
         }
+        // What the canvas's menu asked for: the clipboard's text to paste
+        // (pasted when it's next drawn), or a picture.
+        let mut pasting = None;
+        match diagram.bypass_change_detection().canvas.asked.take() {
+            Some(canvas::Request::Paste(at)) => pasting = Some(at),
+            Some(canvas::Request::Picture(picture)) => {
+                diagram.bypass_change_detection().picture = Some(picture);
+            }
+            None => {}
+        }
         let asked = diagram.bypass_change_detection().picture.take();
         let selection = diagram.canvas.selection.clone();
         if let Some(asked) = asked {
@@ -327,6 +337,17 @@ impl Panel for DiagramPanel {
                 .unwrap_or_default();
             let made = make_picture(world, asked, &document.model, &selection, context.theme, &title);
             world.workbench_mut().notify_failure("Couldn't export", made);
+        }
+        if let Some(at) = pasting {
+            let text = world
+                .get_resource_mut::<bedtime_clipboard::Clipboard>()
+                .and_then(|mut clipboard| clipboard.read_text_if_present().ok().flatten());
+            if let Some(text) = text
+                && let Some(mut diagram) = world.get_mut::<DiagramPanel>(panel)
+            {
+                diagram.bypass_change_detection().canvas.paste_text(text, at);
+                ui.ctx().request_repaint();
+            }
         }
         if let Some(edit) = edit {
             let made = world.workbench_mut().edit_document_transaction(
