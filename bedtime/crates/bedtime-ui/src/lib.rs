@@ -676,8 +676,7 @@ impl Plugin for UiPlugin {
         // frame: the whole window flashes.
         .configure_sets(
             PostUpdate,
-            bevy_egui::EguiPostUpdateSet::PostProcessOutput
-                .before(bevy::asset::AssetEventSystems),
+            bevy_egui::EguiPostUpdateSet::PostProcessOutput.before(bevy::asset::AssetEventSystems),
         );
         #[cfg(target_os = "macos")]
         macos_output::install(app);

@@ -159,4 +159,6 @@ icon_catalog! {
     SymbolElement => "symbol-element",
     SymbolRule => "symbol-rule",
     Pin => "pin",
+    ChevronUp => "chevron-up",
+    PanelLeft => "panel-left",
 }

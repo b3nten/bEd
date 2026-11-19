@@ -106,3 +106,13 @@ fn notes_survive_a_round_trip_through_the_store() {
     let sparse: Notes = ron::from_str("(notes: [(id: 3)])").unwrap();
     assert_eq!(sparse.notes[0].label(), "Untitled");
 }
+
+#[test]
+fn the_list_hides_and_shows_again() {
+    let (mut world, panel) = world_with_panel();
+    assert!(!world.get::<NotesPanel>(panel).unwrap().list_hidden);
+    apply(&mut world, panel, vec![Intent::HideList(true)]);
+    assert!(world.get::<NotesPanel>(panel).unwrap().list_hidden);
+    apply(&mut world, panel, vec![Intent::HideList(false)]);
+    assert!(!world.get::<NotesPanel>(panel).unwrap().list_hidden);
+}

@@ -135,13 +135,17 @@ impl Notes {
     }
 }
 
-/// The Notes panel. Which note it shows is saved with it.
+/// The Notes panel. Which note it shows, and whether the list is hidden, are
+/// saved with it.
 #[bedtime_ui::panel]
 #[derive(Reflect, Default)]
 #[reflect(Component, Default, Persist)]
 #[require(NotesView)]
 pub struct NotesPanel {
     pub selected: Option<u64>,
+    /// The list of notes is collapsed, leaving the editor the whole panel.
+    #[reflect(default)]
+    pub list_hidden: bool,
 }
 
 /// A panel's prompts and pending focus. Not saved.
@@ -173,6 +177,8 @@ pub enum Intent {
     SetText(u64, String),
     Duplicate(u64),
     Delete(u64),
+    /// Hide the list of notes (true) or show it.
+    HideList(bool),
 }
 
 /// Do what panel `panel` asked.
@@ -181,6 +187,14 @@ pub fn apply(world: &mut World, panel: Entity, intents: Vec<Intent>) {
         let select = {
             let mut notes = world.resource_mut::<Notes>();
             match intent {
+                Intent::HideList(hidden) => {
+                    if let Some(mut shown) = world.get_mut::<NotesPanel>(panel)
+                        && shown.list_hidden != hidden
+                    {
+                        shown.list_hidden = hidden;
+                    }
+                    continue;
+                }
                 Intent::New => Some((Some(notes.add("", "")), Some(Field::Title))),
                 Intent::Select(id) => Some((Some(id), None)),
                 Intent::Rename(id, title) => {
@@ -247,19 +261,26 @@ impl Panel for NotesPanel {
         }
         let mut intents = Vec::new();
         let margin = egui::Margin::symmetric(8, 6);
-        egui::Panel::left(egui::Id::new((panel, "notes-list")))
-            .resizable(true)
-            .default_size(190.0)
-            .size_range(120.0..=420.0)
-            .frame(egui::Frame::NONE.inner_margin(margin))
-            .show(ui, |ui| {
-                sidebar(ui, context, panel, notes, &shown, &mut view, &mut intents)
-            });
+        let hidden = shown.list_hidden;
+        if !hidden {
+            egui::Panel::left(egui::Id::new((panel, "notes-list")))
+                .resizable(true)
+                .default_size(190.0)
+                .size_range(120.0..=420.0)
+                .frame(egui::Frame::NONE.inner_margin(margin))
+                .show(ui, |ui| {
+                    sidebar(ui, context, panel, notes, &shown, &mut view, &mut intents)
+                });
+        }
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(12, 8)))
             .show(ui, |ui| match shown.selected.and_then(|id| notes.get(id)) {
-                Some(note) => editor(ui, context, panel, note, &mut view, &mut intents),
+                Some(note) => editor(ui, context, panel, note, hidden, &mut view, &mut intents),
                 None => {
+                    if hidden {
+                        list_toggle(ui, context, true, &mut intents);
+                        ui.add_space(6.0);
+                    }
                     ui.weak("No notes in this workspace yet.");
                     ui.add_space(6.0);
                     if ui.button("New Note").clicked() {
@@ -282,7 +303,7 @@ fn sidebar(
     intents: &mut Vec<Intent>,
 ) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Notes").strong());
+        list_toggle(ui, context, false, intents);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let mut frame = context.frame(ui);
             let new = frame.icon_button(BuiltinIcon::Plus);
@@ -367,6 +388,28 @@ fn sidebar(
         });
 }
 
+/// The button that hides the list (in its header) or shows it again (beside
+/// the note's title).
+fn list_toggle(
+    ui: &mut egui::Ui,
+    context: &UiContext<'_>,
+    hidden: bool,
+    intents: &mut Vec<Intent>,
+) {
+    let label = if hidden {
+        "Show Note List"
+    } else {
+        "Hide Note List"
+    };
+    let mut frame = context.frame(ui);
+    let button = frame.icon_button(BuiltinIcon::PanelLeft);
+    frame.tooltip(&button, label);
+    button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    if button.clicked() {
+        intents.push(Intent::HideList(!hidden));
+    }
+}
+
 /// The name of the note being renamed, in its row: Enter (or clicking away)
 /// keeps it, Escape doesn't.
 fn rename_field(ui: &mut egui::Ui, panel: Entity, view: &mut NotesView, intents: &mut Vec<Intent>) {
@@ -405,25 +448,45 @@ fn rename_field(ui: &mut egui::Ui, panel: Entity, view: &mut NotesView, intents:
     }
 }
 
-/// The selected note: its title, then its text, filling the rest.
+/// The selected note: its title, then its text, filling the rest. With the
+/// list hidden, the buttons to show it and to add a note sit before the
+/// title.
 fn editor(
     ui: &mut egui::Ui,
     context: &UiContext<'_>,
     panel: Entity,
     note: &Note,
+    list_hidden: bool,
     view: &mut NotesView,
     intents: &mut Vec<Intent>,
 ) {
     let mut title = note.title.clone();
     let title_id = egui::Id::new((panel, "notes-title", note.id));
-    let title_field = ui.add(
-        egui::TextEdit::singleline(&mut title)
-            .id(title_id)
-            .hint_text("Untitled")
-            .font(egui::FontId::proportional(context.metrics.font_size * 1.25))
-            .frame(egui::Frame::NONE)
-            .desired_width(f32::INFINITY),
-    );
+    let title_field = ui
+        .horizontal(|ui| {
+            if list_hidden {
+                list_toggle(ui, context, true, intents);
+                let mut frame = context.frame(ui);
+                let new = frame.icon_button(BuiltinIcon::Plus);
+                frame.tooltip(&new, "New Note");
+                new.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "New Note")
+                });
+                if new.clicked() {
+                    intents.push(Intent::New);
+                }
+                ui.add_space(4.0);
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut title)
+                    .id(title_id)
+                    .hint_text("Untitled")
+                    .font(egui::FontId::proportional(context.metrics.font_size * 1.25))
+                    .frame(egui::Frame::NONE)
+                    .desired_width(f32::INFINITY),
+            )
+        })
+        .inner;
     title_field
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Title"));
     if title != note.title {
