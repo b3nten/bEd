@@ -667,7 +667,18 @@ impl Plugin for UiPlugin {
             auto_create_primary_context: false,
             ..default()
         })
-        .add_plugins(bevy_egui::EguiPlugin::default());
+        .add_plugins(bevy_egui::EguiPlugin::default())
+        // When egui's font atlas grows or is rebuilt (text drawn at many new
+        // sizes, as zooming a diagram does), bevy_egui replaces the texture
+        // with a new Image asset. Unless that happens before this frame's
+        // asset events, the renderer sees the new image a frame late, and
+        // every egui mesh (all of which sample the atlas) goes undrawn for a
+        // frame: the whole window flashes.
+        .configure_sets(
+            PostUpdate,
+            bevy_egui::EguiPostUpdateSet::PostProcessOutput
+                .before(bevy::asset::AssetEventSystems),
+        );
         #[cfg(target_os = "macos")]
         macos_output::install(app);
         if !app.is_plugin_added::<ViewportHostPlugin>() {
