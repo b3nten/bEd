@@ -58,8 +58,7 @@ impl Camera {
 
     /// Where a canvas point is in a view filling `view`.
     pub fn to_screen(&self, view: egui::Rect, point: Point) -> Pos2 {
-        view.center()
-            + Vec2::new(point.x - self.center.x, point.y - self.center.y) * self.zoom
+        view.center() + Vec2::new(point.x - self.center.x, point.y - self.center.y) * self.zoom
     }
 
     /// The canvas point at a place on screen.
@@ -242,7 +241,10 @@ enum Gesture {
         keep: Vec<ElementId>,
     },
     /// Moving the selection.
-    Move { from: Point, to: Point },
+    Move {
+        from: Point,
+        to: Point,
+    },
     /// Stretching the selection's box `from` to `to` by a handle, held
     /// `grab` away from the handle's place.
     Resize {
@@ -260,7 +262,10 @@ enum Gesture {
     },
     /// Drawing a stroke by hand: where the pointer has been, and how far
     /// from them the stroke kept may stray.
-    Draw { points: Vec<Point>, tolerance: f32 },
+    Draw {
+        points: Vec<Point>,
+        tolerance: f32,
+    },
     /// Making an element with the tool.
     Create {
         from: Point,
@@ -366,7 +371,10 @@ impl State {
             order: true,
             align: edit::unit_count(diagram, &self.selection, self.within) >= 2,
             grouped: selected.iter().any(|element| element.group.is_some()),
-            heads: selected.iter().rev().find_map(|element| edit::heads(element)),
+            heads: selected
+                .iter()
+                .rev()
+                .find_map(|element| edit::heads(element)),
         };
         // Each kind of style from the first selected element that has it.
         let style = selected
@@ -487,10 +495,16 @@ impl State {
                         handle, from, to, ..
                     } if self.is_selected(element.id) => {
                         let corner = dragged_corner(*handle, *to);
-                        let to = handle.drag(*to, Point::new(corner.x + snap.dx, corner.y + snap.dy));
+                        let to =
+                            handle.drag(*to, Point::new(corner.x + snap.dx, corner.y + snap.dy));
                         edit::remap(element, *from, to)
                     }
-                    Gesture::MovePoint { id, index, to, insert } if *id == element.id => {
+                    Gesture::MovePoint {
+                        id,
+                        index,
+                        to,
+                        insert,
+                    } if *id == element.id => {
                         let mut moved = if *insert {
                             edit::with_point_added(element, *index, *to)
                         } else {
@@ -522,7 +536,12 @@ impl State {
                 let Some(held) = bounds(&self.selected(diagram), extent) else {
                     return Snap::default();
                 };
-                let moved = Rect::new(held.x + to.x - from.x, held.y + to.y - from.y, held.w, held.h);
+                let moved = Rect::new(
+                    held.x + to.x - from.x,
+                    held.y + to.y - from.y,
+                    held.w,
+                    held.h,
+                );
                 // Copies snap to what they're copies of, too.
                 let not: &[ElementId] = if self.copy { &[] } else { &self.selection };
                 edit::snap_rect(moved, &edit::snap_targets(diagram, not, extent), reach)
@@ -615,7 +634,13 @@ impl State {
 
     /// The menu asked for at a place: it's for what's there, which is
     /// selected if it wasn't; or for the canvas, on nothing.
-    pub(crate) fn point_at(&mut self, diagram: &Diagram, at: Point, reach: f32, extent: Extent<'_>) {
+    pub(crate) fn point_at(
+        &mut self,
+        diagram: &Diagram,
+        at: Point,
+        reach: f32,
+        extent: Extent<'_>,
+    ) {
         self.gesture = None;
         self.menu_at = at;
         match edit::topmost_at(diagram, at, reach, extent) {
@@ -692,7 +717,11 @@ impl State {
     fn select_all(&mut self, diagram: &Diagram) {
         self.tool = Tool::Select;
         self.within = None;
-        self.selection = diagram.elements().iter().map(|element| element.id).collect();
+        self.selection = diagram
+            .elements()
+            .iter()
+            .map(|element| element.id)
+            .collect();
     }
 
     /// Something picked in a bar or in the menu, done: the edit it makes,
@@ -883,7 +912,12 @@ impl State {
             Gesture::Create { to, .. } if matches!(self.tool, Tool::Line | Tool::Arrow) => {
                 edit::binding_at(diagram, *to, extent, None)
             }
-            Gesture::MovePoint { id, index, to, insert: false } => {
+            Gesture::MovePoint {
+                id,
+                index,
+                to,
+                insert: false,
+            } => {
                 let Shape::Line { points, .. } = &diagram.get(*id)?.shape else {
                     return None;
                 };
@@ -1028,14 +1062,23 @@ impl State {
     }
 
     /// The gesture followed to where the pointer is.
-    fn follow(&mut self, view: egui::Rect, camera: &mut Camera, pointer: Pos2, by: Vec2, constrain: bool) {
+    fn follow(
+        &mut self,
+        view: egui::Rect,
+        camera: &mut Camera,
+        pointer: Pos2,
+        by: Vec2,
+        constrain: bool,
+    ) {
         let at = camera.to_canvas(view, pointer);
         match self.gesture.as_mut() {
             Some(Gesture::Pan) => camera.pan(by),
             Some(Gesture::Marquee { to, .. } | Gesture::Move { to, .. })
             | Some(Gesture::MovePoint { to, .. }) => *to = at,
             Some(Gesture::Create {
-                to, constrain: held, ..
+                to,
+                constrain: held,
+                ..
             }) => {
                 *to = at;
                 *held = constrain;
@@ -1048,9 +1091,9 @@ impl State {
             }) => *to = handle.drag(*from, Point::new(at.x - grab.0, at.y - grab.1)),
             Some(Gesture::Draw { points, .. }) => {
                 // A point for each point of the screen the pointer crosses.
-                let far = points.last().is_none_or(|last| {
-                    (at.x - last.x).hypot(at.y - last.y) * camera.zoom >= 1.0
-                });
+                let far = points
+                    .last()
+                    .is_none_or(|last| (at.x - last.x).hypot(at.y - last.y) * camera.zoom >= 1.0);
                 if far {
                     points.push(at);
                 }
@@ -1125,7 +1168,11 @@ impl State {
                 _ => None,
             })
             .collect();
-        let label = if copied.is_empty() { label } else { "Duplicate" };
+        let label = if copied.is_empty() {
+            label
+        } else {
+            "Duplicate"
+        };
         if !copied.is_empty() {
             self.selection = copied;
         }
@@ -1302,7 +1349,10 @@ fn bounds(elements: &[&Element], extent: Extent<'_>) -> Option<Rect> {
 /// Where a handle is on a box.
 fn handle_place(handle: Handle, rect: Rect) -> Point {
     let along = |way: i8, from: f32, size: f32| from + size * (f32::from(way) + 1.0) / 2.0;
-    Point::new(along(handle.x, rect.x, rect.w), along(handle.y, rect.y, rect.h))
+    Point::new(
+        along(handle.x, rect.x, rect.w),
+        along(handle.y, rect.y, rect.h),
+    )
 }
 
 /// The frame around a selection and its grips, on screen. One line alone has
@@ -1318,7 +1368,10 @@ fn grips(
     if let [only] = selected
         && let Shape::Line { points, .. } = &only.shape
     {
-        let places: Vec<Pos2> = points.iter().map(|point| camera.to_screen(view, *point)).collect();
+        let places: Vec<Pos2> = points
+            .iter()
+            .map(|point| camera.to_screen(view, *point))
+            .collect();
         // The label is over the middle of the line: the grip of the segment
         // it's on is a quarter of the way from one of its ends instead.
         let label = edit::midpoint(points)
@@ -1328,11 +1381,14 @@ fn grips(
             let along = pair[1] - pair[0];
             let middle = pair[0] + along / 2.0;
             // Whichever of the middle and the quarters is furthest from it.
-            let place = match label.filter(|label| (*label - middle).length() < along.length() / 4.0) {
-                Some(label) if (label - pair[0]).length() < (label - pair[1]).length() => pair[0] + along * 0.75,
-                Some(_) => pair[0] + along * 0.25,
-                None => middle,
-            };
+            let place =
+                match label.filter(|label| (*label - middle).length() < along.length() / 4.0) {
+                    Some(label) if (label - pair[0]).length() < (label - pair[1]).length() => {
+                        pair[0] + along * 0.75
+                    }
+                    Some(_) => pair[0] + along * 0.25,
+                    None => middle,
+                };
             (along.length() >= MIDDLE_GRIPS_FROM).then_some((Grip::Middle(index + 1), place))
         });
         // The points first: they're caught before the middles.
@@ -1406,10 +1462,8 @@ pub fn show(
     // While text is being written the canvas waits: a press on it only ends
     // the writing.
     let writing = state.is_writing();
-    let keys = keys
-        && !writing
-        && !ui.ctx().text_edit_focused()
-        && !egui::Popup::is_any_open(ui.ctx());
+    let keys =
+        keys && !writing && !ui.ctx().text_edit_focused() && !egui::Popup::is_any_open(ui.ctx());
     let (space, shift) = ui.input(|i| (keys && i.key_down(egui::Key::Space), i.modifiers.shift));
     // Alt moves copies; Cmd/Ctrl holds snapping off.
     let (alt, command) = ui.input(|i| (i.modifiers.alt, i.modifiers.command));
@@ -1420,7 +1474,9 @@ pub fn show(
     // What's pasted goes under the pointer, or else in the middle.
     let paste_at = camera.to_canvas(
         view,
-        hover.filter(|at| view.contains(*at)).unwrap_or(view.center()),
+        hover
+            .filter(|at| view.contains(*at))
+            .unwrap_or(view.center()),
     );
     let mut edit = if keys {
         state.keys(ui, diagram, paste_at, extent)
@@ -1521,9 +1577,17 @@ pub fn show(
             Some(Grip::Point(index)) => Some(index),
             _ => None,
         };
-        state.point_at(diagram, camera.to_canvas(view, pointer), REACH / camera.zoom, extent);
-        state.menu_point = point
-            .filter(|index| state.only_line(diagram).is_some_and(|line| edit::without_point(line, *index).is_some()));
+        state.point_at(
+            diagram,
+            camera.to_canvas(view, pointer),
+            REACH / camera.zoom,
+            extent,
+        );
+        state.menu_point = point.filter(|index| {
+            state
+                .only_line(diagram)
+                .is_some_and(|line| edit::without_point(line, *index).is_some())
+        });
     }
 
     // What to draw: the diagram as the gesture would leave it, bound lines
@@ -1584,7 +1648,14 @@ pub fn show(
                     points: points.clone(),
                 },
             );
-            paint(&painter, theme, view, camera, &state.style.dress(&drawing), true);
+            paint(
+                &painter,
+                theme,
+                view,
+                camera,
+                &state.style.dress(&drawing),
+                true,
+            );
         }
         Some(Gesture::Marquee { from, to, .. }) => {
             let area = egui::Rect::from_two_pos(
@@ -1673,7 +1744,12 @@ pub fn show(
     let backdrop = color(theme.palette.panel_background);
     for (grip, place) in &grips {
         if matches!(grip, Grip::Middle(_)) {
-            painter.circle(*place, 3.0, backdrop, Stroke::new(1.0, accent.gamma_multiply(0.8)));
+            painter.circle(
+                *place,
+                3.0,
+                backdrop,
+                Stroke::new(1.0, accent.gamma_multiply(0.8)),
+            );
             continue;
         }
         let rect = egui::Rect::from_center_size(*place, Vec2::splat(GRIP));
@@ -1723,8 +1799,7 @@ pub fn show(
     // For screen readers and scripts: what's shown, how closely, what's
     // selected and the tool in hand.
     response.widget_info(|| {
-        let mut info =
-            egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Diagram canvas");
+        let mut info = egui::WidgetInfo::labeled(egui::WidgetType::Other, true, "Diagram canvas");
         let count = diagram.elements().len();
         info.current_text_value = Some(format!(
             "{count} element{} at {:.0}%; {} selected; {}",
@@ -1768,12 +1843,16 @@ pub fn show(
     {
         let picked = Floating::new(id.with("styles"), view, egui::Align2::LEFT_BOTTOM)
             .shown(true)
-            .show(&mut frame, |frame| style_bar(frame.ui, frame.theme, styles, style));
+            .show(&mut frame, |frame| {
+                style_bar(frame.ui, frame.theme, styles, style)
+            });
         // And arranging the selection, at the bottom right.
         let arranged = if styles.order {
             Floating::new(id.with("arrange"), view, egui::Align2::RIGHT_BOTTOM)
                 .shown(true)
-                .show(&mut frame, |frame| arrange_bar(frame.ui, frame.theme, styles))
+                .show(&mut frame, |frame| {
+                    arrange_bar(frame.ui, frame.theme, styles)
+                })
         } else {
             None
         };
@@ -1795,12 +1874,21 @@ pub fn show(
         };
         // On the line selected: a point can be added there; on one of the
         // points it bends at: that can be removed.
-        let on_line = state.only_line(diagram).is_some_and(|line| {
-            edit::hit(line, state.menu_at, REACH / camera.zoom, extent)
-        });
-        let points = (on_line && state.menu_point.is_none(), state.menu_point.is_some());
+        let on_line = state
+            .only_line(diagram)
+            .is_some_and(|line| edit::hit(line, state.menu_at, REACH / camera.zoom, extent));
+        let points = (
+            on_line && state.menu_point.is_none(),
+            state.menu_point.is_some(),
+        );
         response.context_menu(|ui| {
-            picked = menu(ui, styles.filter(|_| selected > 0), writable, points, diagram.is_empty());
+            picked = menu(
+                ui,
+                styles.filter(|_| selected > 0),
+                writable,
+                points,
+                diagram.is_empty(),
+            );
             if picked.is_some() {
                 ui.close();
             }
@@ -1861,23 +1949,39 @@ fn style_bar(ui: &mut egui::Ui, theme: &Theme, styles: Styles, style: Style) -> 
                 // dashes' button by more than a line.
                 let rows = [rect.top(), rect.center().y - 0.5, rect.bottom() - 1.0];
                 for ((width, _), y) in WIDTHS.into_iter().zip(rows) {
-                    let ink = if width == style.width { ink } else { ink.gamma_multiply(0.4) };
+                    let ink = if width == style.width {
+                        ink
+                    } else {
+                        ink.gamma_multiply(0.4)
+                    };
                     painter.hline(rect.x_range(), y, Stroke::new(width.min(3.0), ink));
                 }
             });
             choices(&width, |ui| {
                 for (width, name) in WIDTHS {
                     let on = style.width == width;
-                    if option(ui, theme, &format!("{name} stroke"), on, |painter, rect, ink| {
-                        painter.hline(rect.x_range(), rect.center().y, Stroke::new(width, ink));
-                    }) {
+                    if option(
+                        ui,
+                        theme,
+                        &format!("{name} stroke"),
+                        on,
+                        |painter, rect, ink| {
+                            painter.hline(rect.x_range(), rect.center().y, Stroke::new(width, ink));
+                        },
+                    ) {
                         pick(Restyle::Width(width));
                     }
                 }
             });
             let dashed = |painter: &egui::Painter, rect: egui::Rect, ink: Color32, dash: Dash| {
                 let ends = vec![rect.left_center(), rect.right_center()];
-                path(painter, ends, false, Stroke::new(1.5, ink), dashes(dash, 1.5));
+                path(
+                    painter,
+                    ends,
+                    false,
+                    Stroke::new(1.5, ink),
+                    dashes(dash, 1.5),
+                );
             };
             let dash = button(ui, theme, "Dashes", |painter, rect, ink| {
                 dashed(painter, rect, ink, style.dash);
@@ -1888,47 +1992,70 @@ fn style_bar(ui: &mut egui::Ui, theme: &Theme, styles: Styles, style: Style) -> 
                     (Dash::Dashed, "Dashed"),
                     (Dash::Dotted, "Dotted"),
                 ] {
-                    if option(ui, theme, &format!("{name} stroke"), style.dash == dash, |painter, rect, ink| {
-                        dashed(painter, rect, ink, dash);
-                    }) {
+                    if option(
+                        ui,
+                        theme,
+                        &format!("{name} stroke"),
+                        style.dash == dash,
+                        |painter, rect, ink| {
+                            dashed(painter, rect, ink, dash);
+                        },
+                    ) {
                         pick(Restyle::Dash(dash));
                     }
                 }
             });
         }
         if styles.corners
-            && option(ui, theme, "Round corners", style.rounded, |painter, rect, ink| {
-                // The top left corner of a box.
-                let corner = egui::Rect::from_min_size(
-                    rect.left_top() + Vec2::new(3.0, 2.0),
-                    Vec2::splat(rect.height() * 2.0),
-                );
-                painter.with_clip_rect(rect.expand(1.0)).rect_stroke(
-                    corner,
-                    rect.height() * 0.6,
-                    Stroke::new(1.5, ink),
-                    egui::StrokeKind::Middle,
-                );
-            })
+            && option(
+                ui,
+                theme,
+                "Round corners",
+                style.rounded,
+                |painter, rect, ink| {
+                    // The top left corner of a box.
+                    let corner = egui::Rect::from_min_size(
+                        rect.left_top() + Vec2::new(3.0, 2.0),
+                        Vec2::splat(rect.height() * 2.0),
+                    );
+                    painter.with_clip_rect(rect.expand(1.0)).rect_stroke(
+                        corner,
+                        rect.height() * 0.6,
+                        Stroke::new(1.5, ink),
+                        egui::StrokeKind::Middle,
+                    );
+                },
+            )
         {
             pick(Restyle::Rounded(!style.rounded));
         }
         if styles.size {
             let named = SIZES.iter().find(|(size, _)| *size == style.size);
             let name = named.map_or("…", |(_, name)| name);
-            let size = button(ui, theme, "Text size", |painter, rect, ink| letters(painter, rect, ink, name));
+            let size = button(ui, theme, "Text size", |painter, rect, ink| {
+                letters(painter, rect, ink, name)
+            });
             choices(&size, |ui| {
                 for (size, name) in SIZES {
-                    if option(ui, theme, &format!("Size {name}"), style.size == size, |painter, rect, ink| {
-                        letters(painter, rect, ink, name);
-                    }) {
+                    if option(
+                        ui,
+                        theme,
+                        &format!("Size {name}"),
+                        style.size == size,
+                        |painter, rect, ink| {
+                            letters(painter, rect, ink, name);
+                        },
+                    ) {
                         pick(Restyle::Size(size));
                     }
                 }
             });
         }
         if let Some((start, end)) = styles.heads {
-            for (name, head, at_end) in [("Arrow at start", start, false), ("Arrow at end", end, true)] {
+            for (name, head, at_end) in [
+                ("Arrow at start", start, false),
+                ("Arrow at end", end, true),
+            ] {
                 let on = head == Head::Arrow;
                 if option(ui, theme, name, on, |painter, rect, ink| {
                     // A line, with a head at the end it's for.
@@ -1945,7 +2072,11 @@ fn style_bar(ui: &mut egui::Ui, theme: &Theme, styles: Styles, style: Style) -> 
                     ));
                 }) {
                     let head = if on { Head::None } else { Head::Arrow };
-                    pick(if at_end { Restyle::End(head) } else { Restyle::Start(head) });
+                    pick(if at_end {
+                        Restyle::End(head)
+                    } else {
+                        Restyle::Start(head)
+                    });
                 }
             }
         }
@@ -1968,12 +2099,15 @@ fn letters(painter: &egui::Painter, rect: egui::Rect, ink: Color32, text: &str) 
 /// closes them.
 fn choices(button: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
     // Above the bar, which is at the canvas's bottom.
-    egui::Popup::menu(button).align(egui::RectAlign::TOP_START).gap(6.0).show(|ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = Vec2::new(3.0, 4.0);
-            add(ui);
+    egui::Popup::menu(button)
+        .align(egui::RectAlign::TOP_START)
+        .gap(6.0)
+        .show(|ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(3.0, 4.0);
+                add(ui);
+            });
         });
-    });
 }
 
 /// A row of a bar: its name, then its choices.
@@ -2021,7 +2155,11 @@ fn arrange_bar(ui: &mut egui::Ui, theme: &Theme, styles: Styles) -> Option<Pick>
                             stroke,
                         ));
                         if matches!(order, Order::Back | Order::Front) {
-                            painter.hline(rect.center().x - 5.0..=rect.center().x + 5.0, tip.y, stroke);
+                            painter.hline(
+                                rect.center().x - 5.0..=rect.center().x + 5.0,
+                                tip.y,
+                                stroke,
+                            );
                         }
                     }) {
                         picked = Some(Pick::Order(order));
@@ -2039,7 +2177,9 @@ fn arrange_bar(ui: &mut egui::Ui, theme: &Theme, styles: Styles) -> Option<Pick>
                     (Align::Middle, "Align middles"),
                     (Align::Bottom, "Align bottom"),
                 ] {
-                    if option(ui, theme, name, false, |painter, rect, ink| align_picture(painter, rect, ink, to)) {
+                    if option(ui, theme, name, false, |painter, rect, ink| {
+                        align_picture(painter, rect, ink, to)
+                    }) {
                         picked = Some(Pick::Align(to));
                     }
                 }
@@ -2061,7 +2201,11 @@ fn menu(
     empty: bool,
 ) -> Option<Pick> {
     use crate::Picture;
-    let primary = if cfg!(target_os = "macos") { "Cmd" } else { "Ctrl" };
+    let primary = if cfg!(target_os = "macos") {
+        "Cmd"
+    } else {
+        "Ctrl"
+    };
     let mut picked = None;
     let mut item = |ui: &mut egui::Ui, label: &str, keys: &str, enabled: bool, pick: Pick| {
         let mut button = egui::Button::new(label);
@@ -2078,7 +2222,13 @@ fn menu(
         ui.separator();
         item(ui, "Zoom to Fit", "", !empty, Pick::Fit);
         ui.separator();
-        item(ui, "Copy as Image", "", !empty, Pick::Picture(Picture::Clipboard));
+        item(
+            ui,
+            "Copy as Image",
+            "",
+            !empty,
+            Pick::Picture(Picture::Clipboard),
+        );
         ui.add_enabled_ui(!empty, |ui| {
             ui.menu_button("Export", |ui| {
                 item(ui, "SVG…", "", true, Pick::Picture(Picture::Svg));
@@ -2109,13 +2259,43 @@ fn menu(
     item(ui, "Delete", "Del", true, Pick::Delete);
     ui.separator();
     item(ui, "Group", "Cmd+G", styles.align, Pick::Group(true));
-    item(ui, "Ungroup", "Shift+Cmd+G", styles.grouped, Pick::Group(false));
+    item(
+        ui,
+        "Ungroup",
+        "Shift+Cmd+G",
+        styles.grouped,
+        Pick::Group(false),
+    );
     ui.separator();
     ui.menu_button("Order", |ui| {
-        item(ui, "Bring to Front", "Shift+Cmd+]", true, Pick::Order(Order::Front));
-        item(ui, "Bring Forward", "Cmd+]", true, Pick::Order(Order::Forward));
-        item(ui, "Send Backward", "Cmd+[", true, Pick::Order(Order::Backward));
-        item(ui, "Send to Back", "Shift+Cmd+[", true, Pick::Order(Order::Back));
+        item(
+            ui,
+            "Bring to Front",
+            "Shift+Cmd+]",
+            true,
+            Pick::Order(Order::Front),
+        );
+        item(
+            ui,
+            "Bring Forward",
+            "Cmd+]",
+            true,
+            Pick::Order(Order::Forward),
+        );
+        item(
+            ui,
+            "Send Backward",
+            "Cmd+[",
+            true,
+            Pick::Order(Order::Backward),
+        );
+        item(
+            ui,
+            "Send to Back",
+            "Shift+Cmd+[",
+            true,
+            Pick::Order(Order::Back),
+        );
     });
     if styles.align {
         ui.menu_button("Align", |ui| {
@@ -2132,7 +2312,13 @@ fn menu(
         });
     }
     ui.separator();
-    item(ui, "Copy Selection as Image", "", true, Pick::Picture(Picture::Clipboard));
+    item(
+        ui,
+        "Copy Selection as Image",
+        "",
+        true,
+        Pick::Picture(Picture::Clipboard),
+    );
     ui.menu_button("Export Selection", |ui| {
         item(ui, "SVG…", "", true, Pick::Picture(Picture::Svg));
         item(ui, "PNG…", "", true, Pick::Picture(Picture::Png));
@@ -2216,7 +2402,10 @@ fn chip(
         None => {
             let ink = color(theme.palette.muted);
             painter.rect_stroke(chip, 3, Stroke::new(1.0, ink), egui::StrokeKind::Inside);
-            painter.line_segment([chip.left_bottom(), chip.right_top()], Stroke::new(1.0, ink));
+            painter.line_segment(
+                [chip.left_bottom(), chip.right_top()],
+                Stroke::new(1.0, ink),
+            );
         }
     }
     if on || response.hovered() {
@@ -2225,7 +2414,12 @@ fn chip(
         } else {
             theme.palette.muted
         });
-        painter.rect_stroke(rect.shrink(0.5), 5, Stroke::new(1.5, ring), egui::StrokeKind::Inside);
+        painter.rect_stroke(
+            rect.shrink(0.5),
+            5,
+            Stroke::new(1.5, ring),
+            egui::StrokeKind::Inside,
+        );
     }
     response.on_hover_text(name)
 }
@@ -2416,15 +2610,17 @@ fn paint(
 ) {
     let ink = resolve(theme, element.stroke);
     let stroke = Stroke::new((element.width * camera.zoom).max(0.5), ink);
-    let fill = element
-        .fill
-        .map_or(Color32::TRANSPARENT, |fill| {
-            resolve(theme, fill).gamma_multiply(FILL_OPACITY)
-        });
+    let fill = element.fill.map_or(Color32::TRANSPARENT, |fill| {
+        resolve(theme, fill).gamma_multiply(FILL_OPACITY)
+    });
     let place = |point: &Point| camera.to_screen(view, *point);
     let dashes = dashes(element.dash, stroke.width);
     // A dashed outline is drawn over a fill with no stroke.
-    let edge = if dashes.is_some() { Stroke::NONE } else { stroke };
+    let edge = if dashes.is_some() {
+        Stroke::NONE
+    } else {
+        stroke
+    };
     match &element.shape {
         Shape::Rectangle(rect) => {
             let radius = if element.rounded {
@@ -2465,7 +2661,11 @@ fn paint(
                 rect.center_bottom(),
                 rect.left_center(),
             ];
-            painter.add(epaint::PathShape::convex_polygon(corners.clone(), fill, edge));
+            painter.add(epaint::PathShape::convex_polygon(
+                corners.clone(),
+                fill,
+                edge,
+            ));
             if dashes.is_some() {
                 path(painter, corners, true, stroke, dashes);
             }
@@ -2520,7 +2720,12 @@ fn paint(
     {
         let rect = on_screen(view, camera, element.bounds());
         let galley = painter.fonts_mut(|fonts| {
-            fonts.layout_job(label_job(&element.label, font, ink, label_width(rect, camera)))
+            fonts.layout_job(label_job(
+                &element.label,
+                font,
+                ink,
+                label_width(rect, camera),
+            ))
         });
         painter.galley(
             Pos2::new(rect.center().x, rect.center().y - galley.size().y / 2.0),
@@ -2590,7 +2795,12 @@ fn path(
 /// The points around a rectangle with its corners rounded by `radius`.
 fn rounded_corners(rect: egui::Rect, radius: f32) -> Vec<Pos2> {
     if radius < 0.5 {
-        return vec![rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()];
+        return vec![
+            rect.left_top(),
+            rect.right_top(),
+            rect.right_bottom(),
+            rect.left_bottom(),
+        ];
     }
     let inner = rect.shrink(radius);
     let quarter = std::f32::consts::FRAC_PI_2;

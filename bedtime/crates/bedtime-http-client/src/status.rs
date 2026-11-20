@@ -4,8 +4,7 @@ use crate::{
     Exchange, Exchanges, HttpClientPanel, HttpRequests, Method, Received,
     panel::{duration, size},
 };
-use bedtime_ui::{UiContext, egui, theme};
-use bedtime_workbench::status::StatusPieces;
+use bedtime_workbench::status::{PanelStatus, Tone};
 use bevy::prelude::*;
 use std::time::Duration;
 
@@ -32,7 +31,7 @@ enum Outcome {
 }
 
 /// The status bar item for an HTTP client panel.
-pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, panel: Entity) {
+pub fn item(world: &World, panel: Entity, status: &mut PanelStatus) {
     let Some(id) = world.get::<HttpClientPanel>(panel).and_then(|p| p.selected) else {
         return;
     };
@@ -42,39 +41,36 @@ pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, panel: En
     else {
         return;
     };
-    let palette = &context.theme.palette;
-    let mut row = StatusPieces::new(ui, context);
-    // Right to left: the exchange (its last piece first), then the request.
+    // The request, then the exchange.
+    let target = target(request.method, &request.url);
+    if !target.is_empty() {
+        status.weak(target);
+    }
     let exchange = world.get_resource::<Exchanges>().and_then(|e| e.get(id));
     match exchange.map(outcome) {
         Some(Outcome::Sending(text)) => {
-            row.weak(text);
-            row.ui()
-                .ctx()
-                .request_repaint_after(Duration::from_millis(500));
+            status.weak(text);
+            status.refresh_after(Duration::from_millis(500));
         }
-        Some(Outcome::Response(status, tint, details)) => {
-            for detail in details.into_iter().rev() {
-                row.weak(detail);
-            }
-            match tint {
-                Tint::Weak => row.weak(status),
-                Tint::Normal => row.label(status),
-                Tint::Warning => row.colored(theme::color(palette.warning), status),
-                Tint::Error => row.colored(theme::color(palette.error), status),
+        Some(Outcome::Response(code, tint, details)) => {
+            let tone = match tint {
+                Tint::Weak => Tone::Weak,
+                Tint::Normal => Tone::Normal,
+                Tint::Warning => Tone::Warning,
+                Tint::Error => Tone::Error,
             };
+            status.add(tone, code);
+            for detail in details {
+                status.weak(detail);
+            }
         }
         Some(Outcome::Failed(shown, full)) => {
-            let label = row.colored(theme::color(palette.error), shown);
+            let piece = status.error(shown);
             if let Some(full) = full {
-                label.on_hover_text(full);
+                piece.tooltip(full);
             }
         }
         None => {}
-    }
-    let target = target(request.method, &request.url);
-    if !target.is_empty() {
-        row.weak(target);
     }
 }
 

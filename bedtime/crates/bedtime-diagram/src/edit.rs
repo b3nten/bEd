@@ -70,7 +70,13 @@ pub const SMALLEST: f32 = 4.0;
 
 /// The element `tool` makes by dragging from `from` to `to`, if the drag is
 /// long enough. `constrain` makes boxes square and lines turn in steps of 15°.
-pub fn create(tool: Tool, id: ElementId, from: Point, to: Point, constrain: bool) -> Option<Element> {
+pub fn create(
+    tool: Tool,
+    id: ElementId,
+    from: Point,
+    to: Point,
+    constrain: bool,
+) -> Option<Element> {
     let (mut dx, mut dy) = (to.x - from.x, to.y - from.y);
     if dx.abs() < SMALLEST && dy.abs() < SMALLEST {
         return None;
@@ -154,9 +160,13 @@ pub fn remap(element: &Element, from: Rect, to: Rect) -> Element {
         Shape::Rectangle(rect) | Shape::Ellipse(rect) | Shape::Diamond(rect) => {
             let corner = place(&Point::new(rect.x, rect.y));
             let opposite = place(&Point::new(rect.right(), rect.bottom()));
-            *rect =
-                Rect::new(corner.x, corner.y, opposite.x - corner.x, opposite.y - corner.y)
-                    .normalized();
+            *rect = Rect::new(
+                corner.x,
+                corner.y,
+                opposite.x - corner.x,
+                opposite.y - corner.y,
+            )
+            .normalized();
         }
         Shape::Line { points, .. } | Shape::Freehand { points } => {
             points.iter_mut().for_each(|point| *point = place(point));
@@ -434,7 +444,11 @@ pub fn side_at(target: &Element, at: Point, extent: Extent<'_>) -> Side {
     if across.abs().max(down.abs()) < 0.5 {
         Side::Auto
     } else if across.abs() > down.abs() {
-        if across > 0.0 { Side::Right } else { Side::Left }
+        if across > 0.0 {
+            Side::Right
+        } else {
+            Side::Left
+        }
     } else if down > 0.0 {
         Side::Bottom
     } else {
@@ -522,10 +536,7 @@ pub fn attach(target: &Element, toward: Point, extent: Extent<'_>) -> Point {
     };
     let length = dx.hypot(dy);
     let off = (BIND_GAP + target.width / 2.0) / length;
-    Point::new(
-        center.x + dx * (along + off),
-        center.y + dy * (along + off),
-    )
+    Point::new(center.x + dx * (along + off), center.y + dy * (along + off))
 }
 
 /// Where a line pinned to a side of `target` meets it: the middle of that
@@ -636,7 +647,10 @@ pub fn with_bindings(diagram: &Diagram, changes: Vec<Change>, extent: Extent<'_>
 pub fn midpoint(points: &[Point]) -> Option<Point> {
     let (first, rest) = points.split_first()?;
     let length = |a: &Point, b: &Point| (b.x - a.x).hypot(b.y - a.y);
-    let total: f32 = points.windows(2).map(|pair| length(&pair[0], &pair[1])).sum();
+    let total: f32 = points
+        .windows(2)
+        .map(|pair| length(&pair[0], &pair[1]))
+        .sum();
     let mut left = total / 2.0;
     let mut from = first;
     for to in rest {
@@ -741,7 +755,11 @@ impl Style {
         let is_text = matches!(element.shape, Shape::Text { .. });
         Self {
             stroke: element.stroke,
-            fill: if element.is_box() { element.fill } else { self.fill },
+            fill: if element.is_box() {
+                element.fill
+            } else {
+                self.fill
+            },
             width: if is_text { self.width } else { element.width },
             dash: if is_text { self.dash } else { element.dash },
             rounded: if matches!(element.shape, Shape::Rectangle(_)) {
@@ -1019,7 +1037,11 @@ pub fn with_groups(diagram: &Diagram, ids: &[ElementId]) -> Vec<ElementId> {
 
 /// The ids, and those of everything grouped with any of them, but for the
 /// group `within`: its elements are picked one by one.
-pub fn with_groups_but(diagram: &Diagram, ids: &[ElementId], within: Option<u64>) -> Vec<ElementId> {
+pub fn with_groups_but(
+    diagram: &Diagram,
+    ids: &[ElementId],
+    within: Option<u64>,
+) -> Vec<ElementId> {
     let groups: Vec<u64> = ids
         .iter()
         .filter_map(|id| diagram.get(*id)?.group)
@@ -1102,7 +1124,10 @@ fn units<'a>(
             None => units.push((group, bounds, vec![element])),
         }
     }
-    units.into_iter().map(|(_, bounds, members)| (bounds, members)).collect()
+    units
+        .into_iter()
+        .map(|(_, bounds, members)| (bounds, members))
+        .collect()
 }
 
 /// How many things of a selection move on their own (see `align`).

@@ -1,5 +1,5 @@
-//! The frame rate in the status bar (`ShowFrameRate`, off by default), with
-//! more on hover: how long frames take, the UI's share, and how bEd is
+//! The frame rate in the status bar (`ShowFrameRate`, off
+//! by default), with how long frames take, the UI's share, and how bEd is
 //! updating.
 //!
 //! bEd updates on input (and requested repaints) unless something animates,
@@ -10,10 +10,10 @@
 //! rendering, a frame blocks in `prepare_windows` until the window has a
 //! drawable free (at vsync), which is most of an idle frame. That wait is
 //! shown on its own, so the rest is the work.
-use bedtime_ui::{UiContext, UiDiagnostics, egui};
+use bedtime_ui::UiDiagnostics;
 use bedtime_workbench::{
     settings::{SettingsAppExt, settings},
-    status::StatusPieces,
+    status::{GlobalStatus, Tone},
 };
 use bevy::{
     prelude::*,
@@ -192,11 +192,10 @@ struct Spread {
 
 impl Spread {
     fn of(durations: impl IntoIterator<Item = Duration>) -> Option<Self> {
-        let (count, sum, worst) = durations
-            .into_iter()
-            .fold((0u32, Duration::ZERO, Duration::ZERO), |(n, sum, worst), d| {
-                (n + 1, sum + d, worst.max(d))
-            });
+        let (count, sum, worst) = durations.into_iter().fold(
+            (0u32, Duration::ZERO, Duration::ZERO),
+            |(n, sum, worst), d| (n + 1, sum + d, worst.max(d)),
+        );
         (count > 0).then(|| Spread {
             average: sum / count,
             worst,
@@ -205,11 +204,7 @@ impl Spread {
 
     fn text(spread: &Option<Self>) -> String {
         match spread {
-            Some(spread) => format!(
-                "{} avg · {} worst",
-                ms(spread.average),
-                ms(spread.worst)
-            ),
+            Some(spread) => format!("{} avg · {} worst", ms(spread.average), ms(spread.worst)),
             None => "–".into(),
         }
     }
@@ -219,9 +214,9 @@ fn ms(duration: Duration) -> String {
     format!("{:.1} ms", duration.as_secs_f64() * 1000.0)
 }
 
-/// A status bar item (`app.add_status_item`): frames drawn in the last
-/// second, with frame times and the UI's stats on hover.
-pub fn status_item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
+/// A global status item (`app.add_global_status`): frames drawn in the last
+/// second, frame times and the UI's stats.
+pub fn status_item(world: &World, status: &mut GlobalStatus) {
     let Some(stats) = world.get_resource::<FrameStats>() else {
         return;
     };
@@ -229,7 +224,6 @@ pub fn status_item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
         return;
     }
     let summary = stats.summary(Instant::now());
-    let label = StatusPieces::new(ui, context).weak(format!("{} fps", summary.fps));
 
     let mut rows = vec![
         ("Frame rate", format!("{} fps", summary.fps)),
@@ -238,7 +232,10 @@ pub fn status_item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
         ("Update + render", Spread::text(&summary.total)),
         ("Waiting for display", Spread::text(&summary.display_wait)),
     ];
-    if let Some(diagnostics) = world.get::<UiDiagnostics>(context.surface) {
+    let diagnostics = world
+        .try_query::<&UiDiagnostics>()
+        .and_then(|mut query| query.iter(world).next().cloned());
+    if let Some(diagnostics) = diagnostics {
         rows.extend([
             ("UI draw", format!("{:.1} ms", diagnostics.draw_ms)),
             (
@@ -267,19 +264,12 @@ pub fn status_item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
         };
         rows.push(("Updating", mode.into()));
     }
-    context.frame(ui).tooltip_ui(&label, |frame| {
-        egui::Grid::new("frame-stats")
-            .num_columns(2)
-            .spacing([context.metrics.spacing[0] * 3.0, context.metrics.spacing[1]])
-            .show(frame.ui, |ui| {
-                for (name, value) in rows {
-                    ui.weak(name);
-                    ui.label(value);
-                    ui.end_row();
-                }
-            });
-    });
-    ui.ctx().request_repaint_after(WINDOW);
+    status.text(format!("{} fps", summary.fps));
+    status.heading("Performance");
+    for (name, value) in rows {
+        status.row(name, value).tone(Tone::Weak);
+    }
+    status.refresh_after(WINDOW);
 }
 
 #[cfg(test)]
@@ -322,7 +312,10 @@ mod tests {
             })
         );
         assert_eq!(summary.total.unwrap().worst, Duration::from_millis(8));
-        assert_eq!(summary.display_wait.unwrap().worst, Duration::from_millis(2));
+        assert_eq!(
+            summary.display_wait.unwrap().worst,
+            Duration::from_millis(2)
+        );
     }
 
     #[test]
@@ -335,9 +328,7 @@ mod tests {
     #[test]
     fn frames_are_recorded_only_while_shown() {
         use bedtime_workbench::{
-            WorkbenchCorePlugins,
-            persistence::StoreId,
-            settings::SettingsWorldExt,
+            WorkbenchCorePlugins, persistence::StoreId, settings::SettingsWorldExt,
         };
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugins, PerfPlugin))

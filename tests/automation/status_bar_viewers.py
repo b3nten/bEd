@@ -1,5 +1,6 @@
-"""Status bar: Git, a terminal, a database and the HTTP client each show
-what they're about while focused (`add_panel_status`)."""
+"""Status bar: Git's branch and changes are in the global status; a terminal,
+a database and the HTTP client each show what they're about while focused
+(`add_panel_status`)."""
 import sqlite3, subprocess, tempfile, threading, time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path

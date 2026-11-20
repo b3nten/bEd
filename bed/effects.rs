@@ -1,4 +1,3 @@
-
 use bedtime_ui::{UiSystems, egui};
 use bedtime_workbench::{
     ActiveLayout, LayoutCamera,
@@ -9,7 +8,6 @@ use bevy::{
     asset::{AssetPath, embedded_asset, embedded_path},
     core_pipeline::{Core2d, FullscreenShader, upscaling::upscaling},
     prelude::*,
-    winit::WinitSettings,
     render::{
         Render, RenderApp, RenderStartup, RenderSystems,
         extract_component::{
@@ -23,6 +21,7 @@ use bevy::{
         renderer::{RenderContext, RenderDevice, ViewQuery},
         view::ViewTarget,
     },
+    winit::WinitSettings,
 };
 use bevy_egui::{EguiInput, EguiPreUpdateSet, render::egui_pass};
 use std::ops::RangeInclusive;
@@ -174,8 +173,8 @@ impl Plugin for EffectsPlugin {
 /// off, only on input and requested repaints. A script driving bEd counts
 /// frames and asks between inputs, so then too it updates every frame.
 fn pace_frames(effects: Res<Effects>, mut commands: Commands, mut scripted: Local<Option<bool>>) {
-    let scripted = *scripted
-        .get_or_insert_with(|| bedtime_automation::AutomationPlugin::from_env().active());
+    let scripted =
+        *scripted.get_or_insert_with(|| bedtime_automation::AutomationPlugin::from_env().active());
     commands.insert_resource(if effects.enabled || scripted {
         WinitSettings::game()
     } else {
@@ -715,8 +714,9 @@ mod tests {
             .add_settings_layer::<crate::workspace::GlobalStore>();
         app.update();
         use bevy::winit::UpdateMode;
-        let continuous =
-            |app: &App| app.world().resource::<WinitSettings>().focused_mode == UpdateMode::Continuous;
+        let continuous = |app: &App| {
+            app.world().resource::<WinitSettings>().focused_mode == UpdateMode::Continuous
+        };
         assert!(!continuous(&app));
         let world = app.world_mut();
         assert!(!world.resource::<Effects>().enabled);

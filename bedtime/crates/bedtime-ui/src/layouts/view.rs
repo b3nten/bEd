@@ -216,7 +216,7 @@ pub(crate) fn draw_active(ui: &mut egui::Ui, world: &mut World, context: &UiCont
             root.painter().rect_filled(
                 band,
                 0.0,
-                crate::theme::color(frame.theme.palette.background),
+                crate::window_fill(world, frame.surface, frame.theme),
             );
             // Register the background first: child widgets own presses that begin on
             // them, including drag sources, even after the pointer leaves their bounds.
@@ -870,7 +870,7 @@ fn draw(
     );
     frame.ui.advance_cursor_after_rect(outer);
     root.set_clip_rect(outer);
-    let background = crate::theme::color(frame.theme.palette.background);
+    let background = crate::window_fill(world, frame.surface, frame.theme);
     if panels_visible {
         root.painter().rect_filled(outer, 0.0, background);
     }

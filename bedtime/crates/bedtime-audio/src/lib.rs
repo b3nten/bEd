@@ -163,9 +163,10 @@ impl Panel for AudioPanel {
         }
         let asked = draw(ui, context, panel, &mut audio, &sound, focused);
         if asked.toggle
-            && let Err(error) = toggle(world, panel, &sound) {
-                world.workbench_mut().notify(Notification::warning(error));
-            }
+            && let Err(error) = toggle(world, panel, &sound)
+        {
+            world.workbench_mut().notify(Notification::warning(error));
+        }
         if let Some(at) = asked.seek {
             let mut audio = world.get_mut::<AudioPanel>(panel).unwrap();
             let at = at.min(sound.duration);

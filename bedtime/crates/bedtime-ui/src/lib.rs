@@ -3,6 +3,7 @@
 extern crate self as bedtime_ui;
 /// `#[bedtime_ui::panel]`: see [`layouts::panel`].
 pub use layouts::panel;
+mod backdrop;
 mod clipping;
 pub mod code;
 mod combo_box;
@@ -31,6 +32,7 @@ pub mod theme;
 pub mod tree;
 mod viewport;
 use bevy::prelude::*;
+pub use backdrop::{BackdropStatus, SurfaceBackdrop, window_fill};
 pub use code::CodeView;
 pub use combo_box::ComboBox;
 pub use component::{UiComponent, UiContext, UiDraw};
@@ -691,6 +693,7 @@ impl Plugin for UiPlugin {
         );
         icons::install(app);
         viewport::install(app);
+        backdrop::install(app);
         theme::install_system_appearance(app);
         app.add_message::<UiError>()
             .init_resource::<bedtime_clipboard::Clipboard>()

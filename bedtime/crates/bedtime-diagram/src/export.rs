@@ -30,7 +30,10 @@ pub struct Inks {
 
 impl Inks {
     fn of(&self, color: Color) -> String {
-        let index = Color::ALL.iter().position(|named| *named == color).unwrap_or(0);
+        let index = Color::ALL
+            .iter()
+            .position(|named| *named == color)
+            .unwrap_or(0);
         hex(self.named[index])
     }
 }
@@ -215,7 +218,15 @@ fn draw(out: &mut String, element: &Element, inks: &Inks) {
             );
         }
         Shape::Text { at, text, size } => {
-            lines(out, text, at.x, at.y, *size, "start", &inks.of(element.stroke));
+            lines(
+                out,
+                text,
+                at.x,
+                at.y,
+                *size,
+                "start",
+                &inks.of(element.stroke),
+            );
         }
     }
     if element.label.is_empty() {
@@ -228,13 +239,23 @@ fn draw(out: &mut String, element: &Element, inks: &Inks) {
         let middle = element.bounds().center().x;
         let top = y + h / 2.0 - count * TEXT_SIZE * LINE_HEIGHT / 2.0;
         lines(out, &element.label, middle, top, TEXT_SIZE, "middle", &ink);
-    } else if let Shape::Line { points: through, .. } = &element.shape
+    } else if let Shape::Line {
+        points: through, ..
+    } = &element.shape
         && let Some(middle) = edit::midpoint(through)
     {
         // Over the line, on a patch of the background.
         let size = LINE_LABEL_SIZE;
-        let widest = element.label.lines().map(|line| line.chars().count()).max().unwrap_or(0);
-        let (width, height) = (widest as f32 * size * LETTER + 6.0, count * size * LINE_HEIGHT + 6.0);
+        let widest = element
+            .label
+            .lines()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0);
+        let (width, height) = (
+            widest as f32 * size * LETTER + 6.0,
+            count * size * LINE_HEIGHT + 6.0,
+        );
         let _ = writeln!(
             out,
             r#"<rect x="{}" y="{}" width="{}" height="{}" rx="2" fill="{}"/>"#,
@@ -280,7 +301,12 @@ fn head(out: &mut String, from: Point, tip: Point, reach: f32, stroke: &str) {
     let reach = reach.min(length * 0.5);
     let (back_x, back_y) = (-dx / length * reach, -dy / length * reach);
     let (sin, cos) = 0.45_f32.sin_cos();
-    let barb = |sin: f32| Point::new(tip.x + back_x * cos - back_y * sin, tip.y + back_x * sin + back_y * cos);
+    let barb = |sin: f32| {
+        Point::new(
+            tip.x + back_x * cos - back_y * sin,
+            tip.y + back_x * sin + back_y * cos,
+        )
+    };
     let _ = writeln!(
         out,
         r#"<polyline points="{}" fill="none" {stroke}/>"#,

@@ -119,30 +119,32 @@ pub(crate) fn reset_visibility(mut viewports: Query<&mut UiViewport>) {
 
 pub(crate) fn resize_targets(
     viewports: Query<&UiViewport>,
+    backdrops: Query<&crate::backdrop::BackdropImage>,
     mut images: ResMut<Assets<Image>>,
     mut cameras: Query<(&RenderTarget, &mut Projection)>,
 ) {
     let mut resized = std::collections::HashSet::new();
-    for viewport in &viewports {
-        if !viewport.visible {
-            continue;
-        }
-        let Some(image) = images.get(&viewport.image) else {
+    let wanted = viewports
+        .iter()
+        .filter(|viewport| viewport.visible)
+        .map(|viewport| (&viewport.image, viewport.physical_size))
+        .chain(backdrops.iter().map(|drawn| (&drawn.image, drawn.size)));
+    for (handle, size) in wanted {
+        let Some(image) = images.get(handle) else {
             continue;
         };
-        if image.size() == viewport.physical_size {
+        if image.size() == size {
             continue;
         }
-        let size = viewport.physical_size;
         images
-            .get_mut(&viewport.image)
+            .get_mut(handle)
             .unwrap()
             .resize(bevy::render::render_resource::Extent3d {
                 width: size.x,
                 height: size.y,
                 depth_or_array_layers: 1,
             });
-        resized.insert(viewport.image.id());
+        resized.insert(handle.id());
     }
     // Camera updates normally see image events one frame later. Request an
     // immediate projection refresh so shrinking a target never leaves a camera

@@ -2,36 +2,31 @@
 //! the selected table or view and which of its rows show, or what Query's
 //! last run came to; and whether the database is read-only.
 use crate::{Kind, Mode, Outcome, Page, SqlitePanel, db::grouped};
-use bedtime_ui::{UiContext, egui, theme};
-use bedtime_workbench::status::StatusPieces;
+use bedtime_workbench::status::PanelStatus;
 use bevy::prelude::*;
 use std::time::Duration;
 
 /// The status bar item for a database panel.
-pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, panel: Entity) {
+pub fn item(world: &World, panel: Entity, status: &mut PanelStatus) {
     let Some(sqlite) = world.get::<SqlitePanel>(panel) else {
         return;
     };
-    let palette = &context.theme.palette;
-    let mut row = StatusPieces::new(ui, context);
-    // Right to left: read-only, then what shows (its last piece first).
-    if sqlite.read_only() {
-        row.colored(theme::color(palette.warning), "read-only");
-    }
-    let shown = match sqlite.mode {
+    // What shows, then read-only.
+    match sqlite.mode {
         Mode::Query if sqlite.running() => {
-            row.ui()
-                .ctx()
-                .request_repaint_after(Duration::from_millis(250));
-            vec!["running…".to_owned()]
+            status.weak("running…");
+            status.refresh_after(Duration::from_millis(250));
         }
         Mode::Query => match sqlite.outcome() {
-            Some(Ok(outcome)) => outcome_pieces(outcome),
-            Some(Err(_)) => {
-                row.colored(theme::color(palette.error), "query failed");
-                Vec::new()
+            Some(Ok(outcome)) => {
+                for piece in outcome_pieces(outcome) {
+                    status.weak(piece);
+                }
             }
-            None => Vec::new(),
+            Some(Err(_)) => {
+                status.error("query failed");
+            }
+            None => {}
         },
         Mode::Data | Mode::Structure => {
             let selected = sqlite.selected.as_deref();
@@ -44,13 +39,16 @@ pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, panel: En
                 .flatten()
                 .filter(|(_, browse)| Some(browse.table.as_str()) == selected)
                 .map(|(page, browse)| (page, !browse.filter.trim().is_empty()));
-            object
+            for piece in object
                 .map(|object| browse_pieces(object, rows))
                 .unwrap_or_default()
+            {
+                status.weak(piece);
+            }
         }
-    };
-    for piece in shown.into_iter().rev() {
-        row.weak(piece);
+    }
+    if sqlite.read_only() {
+        status.warning("read-only");
     }
 }
 

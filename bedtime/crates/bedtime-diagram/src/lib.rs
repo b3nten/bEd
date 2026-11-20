@@ -31,9 +31,7 @@ mod tests;
 
 pub use canvas::Camera;
 pub use edit::{Restyle, Style, Tool};
-pub use model::{
-    Change, Color, Dash, Diagram, Element, ElementId, Head, Point, Rect, Shape, Side,
-};
+pub use model::{Change, Color, Dash, Diagram, Element, ElementId, Head, Point, Rect, Shape, Side};
 
 pub struct DiagramPlugin;
 
@@ -157,7 +155,9 @@ fn poll_saving(world: &mut World) {
     };
     if let Some(file) = chosen {
         let written = std::fs::write(file.path(), bytes);
-        world.workbench_mut().notify_failure("Couldn't export", written);
+        world
+            .workbench_mut()
+            .notify_failure("Couldn't export", written);
     }
 }
 
@@ -170,7 +170,11 @@ fn make_picture(
     theme: &bedtime_ui::theme::Theme,
     title: &str,
 ) -> Result<(), String> {
-    let scale = if picture == Picture::Svg { 1.0 } else { PNG_SCALE };
+    let scale = if picture == Picture::Svg {
+        1.0
+    } else {
+        PNG_SCALE
+    };
     let svg = svg(diagram, only, theme, scale).ok_or("There's nothing to export")?;
     if picture == Picture::Clipboard {
         let ([width, height], rgba) = rendered(&svg)?;
@@ -188,7 +192,9 @@ fn make_picture(
         _ => ("png", "PNG", png(&svg)?),
     };
     // Named after the diagram: "flow.diagram" as "flow.svg".
-    let name = title.strip_suffix(&format!(".{EXTENSION}")).unwrap_or(title);
+    let name = title
+        .strip_suffix(&format!(".{EXTENSION}"))
+        .unwrap_or(title);
     let dialog = rfd::AsyncFileDialog::new()
         .set_title("Export")
         .add_filter(kind, &[extension])
@@ -335,8 +341,17 @@ impl Panel for DiagramPanel {
                 .inspect_document(document.handle.id())
                 .map(|info| info.title)
                 .unwrap_or_default();
-            let made = make_picture(world, asked, &document.model, &selection, context.theme, &title);
-            world.workbench_mut().notify_failure("Couldn't export", made);
+            let made = make_picture(
+                world,
+                asked,
+                &document.model,
+                &selection,
+                context.theme,
+                &title,
+            );
+            world
+                .workbench_mut()
+                .notify_failure("Couldn't export", made);
         }
         if let Some(at) = pasting {
             let text = world
@@ -345,7 +360,10 @@ impl Panel for DiagramPanel {
             if let Some(text) = text
                 && let Some(mut diagram) = world.get_mut::<DiagramPanel>(panel)
             {
-                diagram.bypass_change_detection().canvas.paste_text(text, at);
+                diagram
+                    .bypass_change_detection()
+                    .canvas
+                    .paste_text(text, at);
                 ui.ctx().request_repaint();
             }
         }

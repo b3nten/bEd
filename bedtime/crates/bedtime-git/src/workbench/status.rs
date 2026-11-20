@@ -1,10 +1,10 @@
-//! The Git panel in the status bar (`add_panel_status::<GitPanel>`): the
-//! branch, how far it is from its upstream, the changes, conflicts, a merge
-//! or rebase under way, and the operation running.
+//! The repository in the status bar's global status: the branch, how far
+//! it is from its upstream, the changes, conflicts, a merge or rebase under
+//! way, and the operation running.
 use super::GitSession;
 use crate::{RepositoryOperation, Status};
-use bedtime_ui::{UiContext, egui};
-use bedtime_workbench::status::StatusPieces;
+use bedtime_ui::BuiltinIcon;
+use bedtime_workbench::status::{GlobalStatus, Tone};
 use bevy::prelude::*;
 use std::time::Duration;
 
@@ -60,35 +60,39 @@ fn summary(status: &Status, staged: usize) -> Summary {
     }
 }
 
-/// The status bar item for the Git panel.
-pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, _panel: Entity) {
+/// A global status item (`app.add_global_status`): the branch, with how
+/// far it is from its upstream, the changes, conflicts, a merge or rebase
+/// under way, and the operation running on hover. While Git's panels are open (the
+/// session follows them).
+pub fn global_item(world: &World, status: &mut GlobalStatus) {
     let Some(session) = world.get_resource::<GitSession>() else {
         return;
     };
-    let palette = &context.theme.palette;
-    let mut pieces = StatusPieces::new(ui, context);
-    // Right to left: changes, branch, conflicts, operation, progress.
-    if let Some(view) = &session.view
-        && !view.status.branch.is_empty()
-    {
+    let view = session
+        .view
+        .as_ref()
+        .filter(|view| !view.status.branch.is_empty());
+    let progress = session.progress();
+    if view.is_none() && progress.is_none() {
+        return;
+    }
+    status.icon(BuiltinIcon::GitBranch);
+    status.heading("Git");
+    if let Some(view) = view {
         let summary = summary(&view.status, view.staged_count);
-        if let Some(changes) = summary.changes {
-            pieces.weak(changes);
-        }
-        pieces.weak(summary.branch);
+        status.text(summary.branch.clone());
+        status.row("Branch", summary.branch);
+        status.row("Changes", summary.changes.unwrap_or_else(|| "none".into()));
         if let Some(conflicts) = summary.conflicts {
-            pieces.colored(bedtime_ui::theme::color(palette.error), conflicts);
+            status.row("Conflicts", conflicts).tone(Tone::Error);
         }
         if let Some(operation) = summary.operation {
-            pieces.colored(bedtime_ui::theme::color(palette.warning), operation);
+            status.row("In progress", operation).tone(Tone::Warning);
         }
     }
-    if let Some(progress) = session.progress() {
-        pieces.weak(progress);
-        pieces
-            .ui()
-            .ctx()
-            .request_repaint_after(Duration::from_millis(250));
+    if let Some(progress) = progress {
+        status.row("Running", progress).busy();
+        status.refresh_after(Duration::from_millis(250));
     }
 }
 

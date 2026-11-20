@@ -88,13 +88,21 @@ impl Rect {
 
     /// Grown by `by` on every side (shrunk, if negative).
     pub fn expand(&self, by: f32) -> Self {
-        Self::new(self.x - by, self.y - by, self.w + 2.0 * by, self.h + 2.0 * by)
+        Self::new(
+            self.x - by,
+            self.y - by,
+            self.w + 2.0 * by,
+            self.h + 2.0 * by,
+        )
     }
 
     /// Whether the point is in it, edges included. Nothing is in a box of
     /// negative size.
     pub fn contains(&self, point: Point) -> bool {
-        point.x >= self.x && point.x <= self.right() && point.y >= self.y && point.y <= self.bottom()
+        point.x >= self.x
+            && point.x <= self.right()
+            && point.y >= self.y
+            && point.y <= self.bottom()
     }
 
     /// Whether all of `other` is in it.
@@ -205,7 +213,9 @@ pub enum Shape {
         to_side: Side,
     },
     /// A stroke drawn by hand.
-    Freehand { points: Vec<Point> },
+    Freehand {
+        points: Vec<Point>,
+    },
     /// Text from its top left corner, `size` high.
     Text {
         at: Point,
@@ -329,10 +339,17 @@ pub struct Diagram {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Change {
     /// Add an element at `index`, counting from the back.
-    Insert { index: usize, element: Element },
-    Remove { id: ElementId },
+    Insert {
+        index: usize,
+        element: Element,
+    },
+    Remove {
+        id: ElementId,
+    },
     /// Swap the element of this id for this one, where it is.
-    Replace { element: Element },
+    Replace {
+        element: Element,
+    },
 }
 
 impl Diagram {
@@ -420,8 +437,10 @@ impl DocumentModel for Diagram {
             }
             Change::Replace { element } => {
                 let index = self.index_of(element.id)?;
-                let previous =
-                    std::mem::replace(&mut Arc::make_mut(&mut self.elements)[index], element.clone());
+                let previous = std::mem::replace(
+                    &mut Arc::make_mut(&mut self.elements)[index],
+                    element.clone(),
+                );
                 Ok(Change::Replace { element: previous })
             }
         }

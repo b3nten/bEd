@@ -1,74 +1,117 @@
-//! Language servers in the status bar: an item for the right side (the
-//! focused editor's server, and its errors and warnings for the file), and
-//! what servers are working on, reported as status activity on the left.
+//! Language servers in the status bar: each server in the global status
+//! (whether it's running, and the errors and warnings it reports for open
+//! files), the focused editor's file's errors and warnings among its
+//! status, and what servers are working on, reported as status activity.
 use super::{DocumentServer, LanguageServer, ServerStatus};
-use bedtime_ui::{UiContext, egui};
-use bedtime_workbench::status::{StatusActivity, StatusPieces};
+use crate::editor::EditorPanel;
+use bedtime_workbench::status::{GlobalStatus, PanelStatus, StatusActivity, Tone};
 use bevy::prelude::*;
+use std::time::Duration;
 
-/// A status bar item (`app.add_status_item`): the language server of the
-/// focused editor (or the last one), whether it's running, and how many
-/// errors and warnings it reports for the file.
-pub fn status_item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>) {
-    let Some(editor) = world
-        .get_resource::<crate::structure::StructureSource>()
-        .and_then(|source| source.0)
-    else {
+/// A global status item (`app.add_global_status`): an icon, coloured by the
+/// worst a server reports, with each server on hover: whether it's running,
+/// and the errors and warnings it reports for the files open.
+pub fn global_item(world: &World, status: &mut GlobalStatus) {
+    let mut servers: Vec<(Entity, &LanguageServer)> = world
+        .try_query::<(Entity, &LanguageServer)>()
+        .map(|mut query| query.iter(world).collect())
+        .unwrap_or_default();
+    if servers.is_empty() {
         return;
-    };
-    let Some(document) = world
-        .get::<bedtime_workbench::DocumentReference>(editor)
-        .map(|reference| reference.document().entity())
-    else {
-        return;
-    };
-    let Some(connection) = world.get::<DocumentServer>(document) else {
-        return;
-    };
-    let Some(server) = world.get::<LanguageServer>(connection.server) else {
-        return;
-    };
-    let palette = &context.theme.palette;
-    let program = server.name();
-    let (text, tint, detail) = match server.status() {
-        ServerStatus::Starting => (format!("{program} starting"), palette.muted, None),
-        ServerStatus::Ready => (program.to_owned(), palette.muted, None),
-        ServerStatus::Failed(error) => (
-            format!("{program} failed"),
-            palette.error,
-            Some(format!("{error}\n{}", server.activity().stderr)),
-        ),
-        ServerStatus::Stopped => (format!("{program} stopped"), palette.muted, None),
-    };
-    let mut pieces = StatusPieces::new(ui, context);
-    if let Some(report) = &connection.diagnostics {
-        let [errors, warnings, ..] = report.counts();
-        let count = |n: usize, what: &str| match n {
-            0 => None,
-            1 => Some(format!("1 {what}")),
-            n => Some(format!("{n} {what}s")),
-        };
-        let counts: Vec<String> = [count(errors, "error"), count(warnings, "warning")]
-            .into_iter()
-            .flatten()
-            .collect();
-        if !counts.is_empty() {
-            let tint = if errors > 0 {
-                palette.error
-            } else {
-                palette.warning
-            };
-            pieces.colored(bedtime_ui::theme::color(tint), counts.join(", "));
+    }
+    servers.sort_by(|a, b| a.1.name().cmp(b.1.name()));
+    // Errors and warnings per server, over its open documents.
+    let mut counts = std::collections::HashMap::<Entity, [usize; 2]>::new();
+    if let Some(mut documents) = world.try_query::<&DocumentServer>() {
+        for connection in documents.iter(world) {
+            if let Some(report) = &connection.diagnostics {
+                let [errors, warnings, ..] = report.counts();
+                let count = counts.entry(connection.server).or_default();
+                count[0] += errors;
+                count[1] += warnings;
+            }
         }
     }
-    let label = pieces.colored(bedtime_ui::theme::color(tint), text);
-    if let Some(detail) = detail.or_else(|| connection.error.clone()) {
-        label.on_hover_text(detail);
+    status.icon(bedtime_ui::BuiltinIcon::Diagnostics);
+    status.heading("Language servers");
+    for (entity, server) in servers {
+        let [errors, warnings] = counts.get(&entity).copied().unwrap_or_default();
+        let problems = problems(errors, warnings);
+        let name = server.name();
+        match server.status() {
+            ServerStatus::Starting => {
+                status.row(name, "starting").tone(Tone::Weak).busy();
+                status.refresh_after(Duration::from_millis(250));
+            }
+            ServerStatus::Ready => {
+                let (value, tone) = match problems {
+                    Some((text, tone)) => (format!("ready, {text} in open files"), tone),
+                    None => ("ready".to_owned(), Tone::Normal),
+                };
+                status.row(name, value).tone(tone);
+            }
+            ServerStatus::Failed(error) => {
+                status
+                    .row(name, format!("failed: {error}"))
+                    .tone(Tone::Error);
+            }
+            ServerStatus::Stopped => {
+                status.row(name, "stopped").tone(Tone::Weak);
+            }
+        }
     }
-    if server.status() == ServerStatus::Starting {
-        ui.ctx()
-            .request_repaint_after(std::time::Duration::from_millis(250));
+}
+
+/// A panel status item for editors (`add_panel_status::<EditorPanel>`): the
+/// errors and warnings its server reports for the file, and a problem with
+/// the file's connection.
+pub fn file_item(world: &World, panel: Entity, status: &mut PanelStatus) {
+    if world.get::<EditorPanel>(panel).is_none() {
+        return;
     }
+    let Some(connection) = world
+        .get::<bedtime_workbench::DocumentReference>(panel)
+        .and_then(|reference| world.get::<DocumentServer>(reference.document().entity()))
+    else {
+        return;
+    };
+    if let Some(report) = &connection.diagnostics {
+        let [errors, warnings, ..] = report.counts();
+        if let Some((text, tone)) = problems(errors, warnings) {
+            status.add(tone, text);
+        }
+    }
+    if let Some(error) = &connection.error {
+        let server = world
+            .get::<LanguageServer>(connection.server)
+            .map_or("language server", |server| server.name());
+        status
+            .warning(format!("{server} error"))
+            .tooltip(error.clone());
+    }
+}
+
+/// "2 errors, 1 warning", in the error colour if there are errors; nothing
+/// for none.
+fn problems(errors: usize, warnings: usize) -> Option<(String, Tone)> {
+    let count = |n: usize, what: &str| match n {
+        0 => None,
+        1 => Some(format!("1 {what}")),
+        n => Some(format!("{n} {what}s")),
+    };
+    let counts: Vec<String> = [count(errors, "error"), count(warnings, "warning")]
+        .into_iter()
+        .flatten()
+        .collect();
+    if counts.is_empty() {
+        return None;
+    }
+    let tone = if errors > 0 {
+        Tone::Error
+    } else {
+        Tone::Warning
+    };
+    Some((counts.join(", "), tone))
 }
 
 /// What each server is working on, as status activity: its first progress
@@ -108,4 +151,19 @@ pub(super) fn report_activity(
         activity.set(gone.clone(), None);
     }
     *reported = now;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn problems_count_errors_and_warnings() {
+        assert_eq!(problems(0, 0), None);
+        assert_eq!(problems(0, 1), Some(("1 warning".into(), Tone::Warning)));
+        assert_eq!(
+            problems(2, 3),
+            Some(("2 errors, 3 warnings".into(), Tone::Error))
+        );
+    }
 }

@@ -6,13 +6,13 @@ pub mod diff;
 mod history;
 mod panel;
 mod presentation;
-mod status;
+pub mod status;
 use presentation::{ChangeSet, DirectoryKey, Group, RepositoryView, Row};
 pub use presentation::{GitPanelOptions, GroupBy, StagingStyle, ViewMode};
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::{CommitMode, DiffSide, Job, Operation, Output, StatusEntry};
-use bedtime_workbench::{status::StatusAppExt, *};
+use bedtime_workbench::*;
 use bevy::prelude::*;
 use std::{
     path::{Path, PathBuf},
@@ -53,7 +53,6 @@ impl Plugin for GitPlugin {
             .register_type::<CommitDiffPanel>()
             .add_action_handler::<ShowHistory>(Handler::new(open_new::<HistoryPanel>))
             .add_menu_item::<ShowHistory>(StandardMenu::View, "panels")
-            .add_panel_status::<GitPanel>(status::item)
             .add_systems(Update, (update, history::update_diffs))
             // The session is the workspace folder's; the next one makes its own.
             .add_systems(OnWorkspaceClose, |world: &mut World| {

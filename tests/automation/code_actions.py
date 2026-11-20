@@ -33,12 +33,16 @@ def until(bed, check, what, seconds=60):
 
 
 def settled(bed, seconds=2.0):
-    """rust-analyzer is ready and idle (just its name in the status bar), and
-    stays so for `seconds`: it reports loading only once it has started."""
+    """rust-analyzer is ready (the status bar's global status says so) and
+    idle (no activity of its own), and stays so for `seconds`: it reports
+    loading only once it has started."""
     deadline = time.monotonic() + 180
     since = None
     while time.monotonic() < deadline:
-        if bed.exists("rust-analyzer"):
+        idle = not any(
+            (w.get("label") or "").startswith("rust-analyzer: ") for w in bed.widgets()
+        )
+        if bed.exists(contains="rust-analyzer: ready") and idle:
             since = since or time.monotonic()
             if time.monotonic() - since >= seconds:
                 return
@@ -79,7 +83,7 @@ with tempfile.TemporaryDirectory() as folder:
         x0, y0, x1, y1 = row(bed, "main.rs")["rect"]
         at = {"move": {"x": (x0 + x1) / 2, "y": (y0 + y1) / 2}}
         bed.input(at, {"press": "Left"}, {"release": "Left"}, {"press": "Left"}, {"release": "Left"})
-        # Ready and not loading: the status shows just the server's name.
+        # Ready and not loading.
         settled(bed)
 
         # The caret onto `helper` (line 4, column 13).

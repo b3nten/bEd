@@ -180,7 +180,11 @@ fn update(world: &mut World, panel: Entity, text: &TextBuffer, revision: u64) {
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
         }
     }
-    if state.table.as_ref().is_some_and(|(read, _)| *read == revision) {
+    if state
+        .table
+        .as_ref()
+        .is_some_and(|(read, _)| *read == revision)
+    {
         return;
     }
     let text = text.clone();

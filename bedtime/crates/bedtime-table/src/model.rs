@@ -118,8 +118,9 @@ impl Table {
                     ),
                     // Past the row's end: pad it with empty fields.
                     None => {
-                        let mut padded =
-                            (delimiter as char).to_string().repeat(column + 1 - spans.len());
+                        let mut padded = (delimiter as char)
+                            .to_string()
+                            .repeat(column + 1 - spans.len());
                         padded.push_str(&value);
                         BufferEdit::new(line.end..line.end, padded)
                     }

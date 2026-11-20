@@ -72,12 +72,12 @@ pub(crate) fn install(app: &mut App, port: u16) {
             |mut automation: ResMut<Automation>| automation.workspaces += 1,
         )
         .init_resource::<Automation>()
-    .init_resource::<AccessibilityTree>()
-    .add_systems(First, (pretend_focus, run_step))
-    .add_systems(PostUpdate, stop_pretending)
-    .add_systems(Last, |mut automation: ResMut<Automation>| {
-        automation.frame += 1
-    });
+        .init_resource::<AccessibilityTree>()
+        .add_systems(First, (pretend_focus, run_step))
+        .add_systems(PostUpdate, stop_pretending)
+        .add_systems(Last, |mut automation: ResMut<Automation>| {
+            automation.frame += 1
+        });
 }
 
 fn params<T: for<'de> Deserialize<'de>>(params: Option<Value>) -> BrpResult<T> {

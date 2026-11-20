@@ -2,8 +2,7 @@
 //! running, where, the size, and how far back it's scrolled; or how the
 //! shell ended.
 use crate::{TerminalPanel, TerminalStatus};
-use bedtime_ui::{UiContext, egui};
-use bedtime_workbench::status::StatusPieces;
+use bedtime_workbench::status::{PanelStatus, Tone};
 use bevy::prelude::*;
 use std::path::Path;
 
@@ -15,7 +14,7 @@ enum Tint {
 }
 
 /// The status bar item for a terminal panel.
-pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, panel: Entity) {
+pub fn item(world: &World, panel: Entity, status: &mut PanelStatus) {
     let Some(terminal) = world.get::<TerminalPanel>(panel) else {
         return;
     };
@@ -32,14 +31,12 @@ pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, panel: En
         [snapshot.cols, snapshot.rows],
         snapshot.display_offset,
     );
-    let palette = &context.theme.palette;
-    // Right to left: the last piece first.
-    let mut row = StatusPieces::new(ui, context);
-    for (text, tint) in pieces.into_iter().rev() {
-        match tint {
-            Tint::Weak => row.weak(text),
-            Tint::Error => row.colored(bedtime_ui::theme::color(palette.error), text),
+    for (text, tint) in pieces {
+        let tone = match tint {
+            Tint::Weak => Tone::Weak,
+            Tint::Error => Tone::Error,
         };
+        status.add(tone, text);
     }
 }
 

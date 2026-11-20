@@ -238,6 +238,7 @@ pub(crate) fn draw(world: &mut World) {
             ui.painter()
                 .rect_filled(ui.max_rect(), 0.0, theme::color(theme.palette.background));
         }
+        crate::backdrop::paint(ui, world, surface, &theme, policy);
         for view in &views {
             if world.get::<UiView>(*view).is_none() {
                 continue;

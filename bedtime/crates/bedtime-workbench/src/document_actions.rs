@@ -90,7 +90,9 @@ impl Workbench {
         let mut registry = world.resource_mut::<ActionRegistry>();
         registry.set_global_handler::<SaveDocument>(Some(Handler::new(save).available_when(
             |world, panel| {
-                info(world, panel).is_some_and(|info| (info.dirty || info.untitled) && info.writable && !info.saving)
+                info(world, panel).is_some_and(|info| {
+                    (info.dirty || info.untitled) && info.writable && !info.saving
+                })
             },
         )));
         registry.set_global_handler::<UndoDocument>(Some(Handler::new(undo).available_when(

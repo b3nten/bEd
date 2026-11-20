@@ -2,8 +2,7 @@
 //! the caret is, or how much is selected, and the text's language.
 use super::{EditorPanel, TextSelection};
 use bedtime_document::TextBuffer;
-use bedtime_ui::{UiContext, egui};
-use bedtime_workbench::{DocumentReference, WorkbenchWorldExt, status::StatusPieces};
+use bedtime_workbench::{DocumentReference, WorkbenchWorldExt, status::PanelStatus};
 use bevy::prelude::*;
 
 /// Selections longer than this (in bytes) are counted in lines, not
@@ -11,7 +10,7 @@ use bevy::prelude::*;
 const COUNT_CHARACTERS_UP_TO: usize = 1 << 20;
 
 /// The status bar item for an editor panel.
-pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, panel: Entity) {
+pub fn item(world: &World, panel: Entity, status: &mut PanelStatus) {
     let Some(editor) = world.get::<EditorPanel>(panel) else {
         return;
     };
@@ -26,14 +25,12 @@ pub fn item(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, panel: En
     else {
         return;
     };
-    // Right to left: the language, then the position.
-    let mut pieces = StatusPieces::new(ui, context);
-    pieces.weak(language_label(editor.view.language));
-    pieces.weak(position(
+    status.weak(position(
         text,
         editor.view.selection(),
         editor.view.caret_count(),
     ));
+    status.weak(language_label(editor.view.language));
 }
 
 /// "Ln 12, Col 4", with what's selected after it, or how many carets.

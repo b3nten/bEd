@@ -17,7 +17,7 @@ use crate::{
     ErrorDialog, ErrorDialogWorldExt, LayoutsWorldExt, Notification, Root, WorkbenchWorldExt,
     persistence::{
         DirectoryStore, Persisted, PersistenceAppExt, PersistenceDirectory, Store, StoreBackend,
-        StoreId, Stores, WorkbenchStore, load_store, save_store, read_persisted, write_persisted,
+        StoreId, Stores, WorkbenchStore, load_store, read_persisted, save_store, write_persisted,
     },
     settings::{Setting, SettingsAppExt, read_setting, settings},
 };
@@ -440,11 +440,9 @@ fn switch_now(world: &mut World, next: Workspace) {
         };
         world.insert_resource(recent);
         if let Err(error) = remembered {
-            world
-                .workbench_mut()
-                .notify(Notification::error(format!(
-                    "Couldn't update recent folders: {error}"
-                )));
+            world.workbench_mut().notify(Notification::error(format!(
+                "Couldn't update recent folders: {error}"
+            )));
         }
     }
     world.insert_resource(Root(workspace.root.clone()));
@@ -723,7 +721,10 @@ mod tests {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
             while app.world().resource::<Workspace>().root != folder {
                 app.update();
-                assert!(std::time::Instant::now() < deadline, "the switch didn't finish");
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "the switch didn't finish"
+                );
             }
             app.update();
         };
@@ -821,14 +822,12 @@ mod tests {
     }
 }
 
-/// A status bar item: the workspace's name (`app.add_status_item`).
+/// A global status item (`app.add_global_status`): the workspace's name,
+/// with its folder on hover.
 #[cfg(feature = "ui")]
-pub fn status_item(
-    ui: &mut bedtime_ui::egui::Ui,
-    world: &World,
-    _context: &bedtime_ui::UiContext<'_>,
-) {
+pub fn status_item(world: &World, status: &mut crate::status::GlobalStatus) {
     if let Some(workspace) = world.get_resource::<Workspace>() {
-        ui.weak(workspace.name());
+        status.text(workspace.name());
+        status.row("Folder", workspace.root.display().to_string());
     }
 }

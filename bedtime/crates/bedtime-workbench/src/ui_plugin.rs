@@ -10,7 +10,7 @@ impl Plugin for WorkbenchUiPlugin {
     fn build(&self, app: &mut App) {
         app.add_modal(crate::dialogs::draw_close_prompt)
             .init_resource::<crate::status::StatusActivity>()
-            .init_resource::<crate::status::StatusItems>()
+            .init_resource::<crate::status::GlobalStatusItems>()
             .init_resource::<crate::status::PanelStatusItems>()
             .init_resource::<crate::status::StatusSource>()
             .add_systems(Update, crate::status::follow_focus);

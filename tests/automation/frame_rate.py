@@ -10,8 +10,10 @@ with Bed() as bed:
 
 with Bed(settings={"status.frame_rate": True}) as bed:
     bed.wait(30)
+    # Its text, then its rows (for automation and screen readers).
     counter = bed.find(contains=" fps")
-    assert re.fullmatch(r"\d+ fps", counter.get("label") or counter.get("value")), counter
+    label = counter.get("label") or counter.get("value")
+    assert re.match(r"\d+ fps\n", label), label
     x = sum(counter["rect"][0::2]) / 2
     y = sum(counter["rect"][1::2]) / 2
     bed.move(x, y)

@@ -42,11 +42,21 @@ fn sample() -> Diagram {
         Element::new(
             ElementId(4),
             Shape::Freehand {
-                points: vec![Point::new(1.0, 2.0), Point::new(3.0, 4.0), Point::new(5.0, 6.0)],
+                points: vec![
+                    Point::new(1.0, 2.0),
+                    Point::new(3.0, 4.0),
+                    Point::new(5.0, 6.0),
+                ],
             },
         ),
-        Element::new(ElementId(5), Shape::Ellipse(Rect::new(0.0, 0.0, 10.0, 20.0))),
-        Element::new(ElementId(6), Shape::Diamond(Rect::new(-5.0, -5.0, 10.0, 20.0))),
+        Element::new(
+            ElementId(5),
+            Shape::Ellipse(Rect::new(0.0, 0.0, 10.0, 20.0)),
+        ),
+        Element::new(
+            ElementId(6),
+            Shape::Diamond(Rect::new(-5.0, -5.0, 10.0, 20.0)),
+        ),
     ])
     .unwrap()
 }
@@ -108,7 +118,11 @@ fn changes_that_cannot_apply_are_refused() {
             })
             .is_err()
     );
-    assert!(diagram.apply(&Change::Remove { id: ElementId(99) }).is_err());
+    assert!(
+        diagram
+            .apply(&Change::Remove { id: ElementId(99) })
+            .is_err()
+    );
     assert!(
         diagram
             .apply(&Change::Replace {
@@ -142,7 +156,10 @@ fn files_keep_one_element_per_line() {
         lines[3],
         "        (id: 1, shape: Rectangle(x: 10.0, y: 0.0, w: 100.0, h: 50.0), fill: Some(Blue)),"
     );
-    assert!(lines[5].contains(r#"text: "two\nlines, \"quoted\"""#), "{text}");
+    assert!(
+        lines[5].contains(r#"text: "two\nlines, \"quoted\"""#),
+        "{text}"
+    );
 }
 
 #[test]
@@ -282,17 +299,43 @@ fn outlines_are_picked_by_their_stroke_and_fills_anywhere() {
         Point::new(0.0, 30.0),
         Point::new(-20.0, 30.0),
     );
-    for shape in [Shape::Rectangle(rect), Shape::Ellipse(rect), Shape::Diamond(rect)] {
+    for shape in [
+        Shape::Rectangle(rect),
+        Shape::Ellipse(rect),
+        Shape::Diamond(rect),
+    ] {
         let hollow = outline(1, shape.clone());
-        assert!(edit::hit(&hollow, edge, 3.0, &Element::bounds), "{shape:?} edge");
-        assert!(!edit::hit(&hollow, middle, 3.0, &Element::bounds), "{shape:?} middle");
-        assert!(!edit::hit(&hollow, outside, 3.0, &Element::bounds), "{shape:?} outside");
-        assert!(edit::hit(&filled(1, shape.clone()), middle, 3.0, &Element::bounds), "{shape:?} filled");
+        assert!(
+            edit::hit(&hollow, edge, 3.0, &Element::bounds),
+            "{shape:?} edge"
+        );
+        assert!(
+            !edit::hit(&hollow, middle, 3.0, &Element::bounds),
+            "{shape:?} middle"
+        );
+        assert!(
+            !edit::hit(&hollow, outside, 3.0, &Element::bounds),
+            "{shape:?} outside"
+        );
+        assert!(
+            edit::hit(&filled(1, shape.clone()), middle, 3.0, &Element::bounds),
+            "{shape:?} filled"
+        );
     }
     // A box's corner is outside an ellipse and a diamond in it.
     let corner = Point::new(2.0, 2.0);
-    assert!(!edit::hit(&filled(1, Shape::Ellipse(rect)), corner, 1.0, &Element::bounds));
-    assert!(!edit::hit(&filled(1, Shape::Diamond(rect)), corner, 1.0, &Element::bounds));
+    assert!(!edit::hit(
+        &filled(1, Shape::Ellipse(rect)),
+        corner,
+        1.0,
+        &Element::bounds
+    ));
+    assert!(!edit::hit(
+        &filled(1, Shape::Diamond(rect)),
+        corner,
+        1.0,
+        &Element::bounds
+    ));
 }
 
 #[test]
@@ -300,7 +343,11 @@ fn lines_are_picked_along_their_length() {
     let line = outline(
         1,
         Shape::Line {
-            points: vec![Point::new(0.0, 0.0), Point::new(100.0, 0.0), Point::new(100.0, 100.0)],
+            points: vec![
+                Point::new(0.0, 0.0),
+                Point::new(100.0, 0.0),
+                Point::new(100.0, 100.0),
+            ],
             start: Head::None,
             end: Head::None,
             from: None,
@@ -309,10 +356,30 @@ fn lines_are_picked_along_their_length() {
             to_side: Side::Auto,
         },
     );
-    assert!(edit::hit(&line, Point::new(50.0, 3.0), 3.0, &Element::bounds));
-    assert!(edit::hit(&line, Point::new(98.0, 70.0), 3.0, &Element::bounds));
-    assert!(!edit::hit(&line, Point::new(50.0, 50.0), 3.0, &Element::bounds));
-    assert!(!edit::hit(&line, Point::new(-10.0, 0.0), 3.0, &Element::bounds));
+    assert!(edit::hit(
+        &line,
+        Point::new(50.0, 3.0),
+        3.0,
+        &Element::bounds
+    ));
+    assert!(edit::hit(
+        &line,
+        Point::new(98.0, 70.0),
+        3.0,
+        &Element::bounds
+    ));
+    assert!(!edit::hit(
+        &line,
+        Point::new(50.0, 50.0),
+        3.0,
+        &Element::bounds
+    ));
+    assert!(!edit::hit(
+        &line,
+        Point::new(-10.0, 0.0),
+        3.0,
+        &Element::bounds
+    ));
 }
 
 #[test]
@@ -323,24 +390,40 @@ fn the_frontmost_element_is_picked() {
         filled(2, Shape::Ellipse(rect)),
     ])
     .unwrap();
-    assert_eq!(edit::topmost_at(&diagram, rect.center(), 1.0, &Element::bounds), Some(ElementId(2)));
+    assert_eq!(
+        edit::topmost_at(&diagram, rect.center(), 1.0, &Element::bounds),
+        Some(ElementId(2))
+    );
     // The ellipse doesn't reach the corner; the rectangle behind it does.
-    assert_eq!(edit::topmost_at(&diagram, Point::new(2.0, 2.0), 1.0, &Element::bounds), Some(ElementId(1)));
-    assert_eq!(edit::topmost_at(&diagram, Point::new(500.0, 0.0), 1.0, &Element::bounds), None);
+    assert_eq!(
+        edit::topmost_at(&diagram, Point::new(2.0, 2.0), 1.0, &Element::bounds),
+        Some(ElementId(1))
+    );
+    assert_eq!(
+        edit::topmost_at(&diagram, Point::new(500.0, 0.0), 1.0, &Element::bounds),
+        None
+    );
 }
 
 #[test]
 fn a_box_encloses_what_is_wholly_inside_it() {
     let diagram = Diagram::new(vec![
-        rectangle(1), // x 10..110
+        rectangle(1),  // x 10..110
         rectangle(20), // x 200..300
     ])
     .unwrap();
     // Dragged from the bottom right: the same box.
     let area = Rect::new(150.0, 80.0, -150.0, -90.0);
-    assert_eq!(edit::enclosed(&diagram, area, &Element::bounds), vec![ElementId(1)]);
     assert_eq!(
-        edit::enclosed(&diagram, Rect::new(0.0, -10.0, 250.0, 100.0), &Element::bounds),
+        edit::enclosed(&diagram, area, &Element::bounds),
+        vec![ElementId(1)]
+    );
+    assert_eq!(
+        edit::enclosed(
+            &diagram,
+            Rect::new(0.0, -10.0, 250.0, 100.0),
+            &Element::bounds
+        ),
         vec![ElementId(1)],
         "half of the second isn't enough"
     );
@@ -351,10 +434,16 @@ fn tools_make_their_shapes() {
     let (from, to) = (Point::new(100.0, 100.0), Point::new(40.0, 130.0));
     let made = edit::create(Tool::Ellipse, ElementId(7), from, to, false).unwrap();
     assert_eq!(made.id, ElementId(7));
-    assert_eq!(made.shape, Shape::Ellipse(Rect::new(40.0, 100.0, 60.0, 30.0)));
+    assert_eq!(
+        made.shape,
+        Shape::Ellipse(Rect::new(40.0, 100.0, 60.0, 30.0))
+    );
     // Constrained: square, still from where the drag began.
     let square = edit::create(Tool::Rectangle, ElementId(1), from, to, true).unwrap();
-    assert_eq!(square.shape, Shape::Rectangle(Rect::new(40.0, 100.0, 60.0, 60.0)));
+    assert_eq!(
+        square.shape,
+        Shape::Rectangle(Rect::new(40.0, 100.0, 60.0, 60.0))
+    );
     let arrow = edit::create(Tool::Arrow, ElementId(1), from, to, false).unwrap();
     assert_eq!(
         arrow.shape,
@@ -378,7 +467,16 @@ fn tools_make_their_shapes() {
     };
     assert!((points[1].y - 100.0).abs() < 1e-3, "{points:?}");
     // A click makes nothing, and neither does the Select tool.
-    assert!(edit::create(Tool::Rectangle, ElementId(1), from, Point::new(101.0, 102.0), false).is_none());
+    assert!(
+        edit::create(
+            Tool::Rectangle,
+            ElementId(1),
+            from,
+            Point::new(101.0, 102.0),
+            false
+        )
+        .is_none()
+    );
     assert!(edit::create(Tool::Select, ElementId(1), from, to, false).is_none());
     assert!(edit::create(Tool::Text, ElementId(1), from, to, false).is_none());
     assert!(edit::create(Tool::Pen, ElementId(1), from, to, false).is_none());
@@ -389,7 +487,11 @@ fn moving_moves_every_kind() {
     for element in sample().elements() {
         let moved = edit::translate(element, 5.0, -7.0);
         let (before, after) = (element.bounds(), moved.bounds());
-        assert_eq!((after.x, after.y), (before.x + 5.0, before.y - 7.0), "{element:?}");
+        assert_eq!(
+            (after.x, after.y),
+            (before.x + 5.0, before.y - 7.0),
+            "{element:?}"
+        );
         assert_eq!((after.w, after.h), (before.w, before.h), "{element:?}");
         assert_eq!(edit::translate(&moved, -5.0, 7.0), *element);
     }
@@ -399,19 +501,39 @@ fn moving_moves_every_kind() {
 fn handles_stretch_and_mirror() {
     let from = Rect::new(0.0, 0.0, 100.0, 50.0);
     let corner = Handle { x: 1, y: 1 };
-    assert_eq!(corner.drag(from, Point::new(200.0, 80.0)), Rect::new(0.0, 0.0, 200.0, 80.0));
+    assert_eq!(
+        corner.drag(from, Point::new(200.0, 80.0)),
+        Rect::new(0.0, 0.0, 200.0, 80.0)
+    );
     // A side's handle leaves the other way alone.
     let side = Handle { x: -1, y: 0 };
-    assert_eq!(side.drag(from, Point::new(-50.0, 999.0)), Rect::new(-50.0, 0.0, 150.0, 50.0));
+    assert_eq!(
+        side.drag(from, Point::new(-50.0, 999.0)),
+        Rect::new(-50.0, 0.0, 150.0, 50.0)
+    );
 
     let to = corner.drag(from, Point::new(200.0, 100.0));
-    let boxed = edit::remap(&outline(1, Shape::Rectangle(Rect::new(50.0, 25.0, 50.0, 25.0))), from, to);
-    assert_eq!(boxed.shape, Shape::Rectangle(Rect::new(100.0, 50.0, 100.0, 50.0)));
+    let boxed = edit::remap(
+        &outline(1, Shape::Rectangle(Rect::new(50.0, 25.0, 50.0, 25.0))),
+        from,
+        to,
+    );
+    assert_eq!(
+        boxed.shape,
+        Shape::Rectangle(Rect::new(100.0, 50.0, 100.0, 50.0))
+    );
 
     // Past the other side: mirrored, and a box is still a box.
     let flipped = corner.drag(from, Point::new(-100.0, 50.0));
-    let boxed = edit::remap(&outline(1, Shape::Rectangle(Rect::new(0.0, 0.0, 25.0, 50.0))), from, flipped);
-    assert_eq!(boxed.shape, Shape::Rectangle(Rect::new(-25.0, 0.0, 25.0, 50.0)));
+    let boxed = edit::remap(
+        &outline(1, Shape::Rectangle(Rect::new(0.0, 0.0, 25.0, 50.0))),
+        from,
+        flipped,
+    );
+    assert_eq!(
+        boxed.shape,
+        Shape::Rectangle(Rect::new(-25.0, 0.0, 25.0, 50.0))
+    );
     let line = outline(
         1,
         Shape::Line {
@@ -484,20 +606,37 @@ fn dragging_with_a_tool_adds_an_element_and_selects_it() {
     let mut state = State::default();
     state.tool = Tool::Diamond;
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(500.0, 300.0), egui::pos2(600.0, 380.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(500.0, 300.0),
+            egui::pos2(600.0, 380.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Add Diamond");
     let after = applied(&diagram, &edit);
     let made = after.elements().last().unwrap();
     assert_eq!(made.id, ElementId(3));
-    assert_eq!(made.shape, Shape::Diamond(Rect::new(500.0, 300.0, 100.0, 80.0)));
+    assert_eq!(
+        made.shape,
+        Shape::Diamond(Rect::new(500.0, 300.0, 100.0, 80.0))
+    );
     assert_eq!(state.selection, vec![ElementId(3)]);
     assert_eq!(state.tool, Tool::Select, "the tool is put down");
     assert!(!state.is_busy());
 
     // A drag too short to be a shape adds nothing, and keeps the tool.
     state.tool = Tool::Rectangle;
-    let none = state.drag(&diagram, view, &mut camera, egui::pos2(10.0, 10.0), egui::pos2(11.0, 12.0), false);
+    let none = state.drag(
+        &diagram,
+        view,
+        &mut camera,
+        egui::pos2(10.0, 10.0),
+        egui::pos2(11.0, 12.0),
+        false,
+    );
     assert_eq!(none, None);
     assert_eq!(state.tool, Tool::Rectangle);
 }
@@ -508,7 +647,14 @@ fn dragging_an_element_selects_and_moves_it() {
     let diagram = two_boxes();
     let mut state = State::default();
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(170.0, 180.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(170.0, 180.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Move");
     assert_eq!(state.selection, vec![ElementId(1)]);
@@ -517,7 +663,11 @@ fn dragging_an_element_selects_and_moves_it() {
         after.get(ElementId(1)).unwrap().shape,
         Shape::Rectangle(Rect::new(120.0, 150.0, 100.0, 60.0))
     );
-    assert_eq!(after.get(ElementId(2)), diagram.get(ElementId(2)), "the other stays");
+    assert_eq!(
+        after.get(ElementId(2)),
+        diagram.get(ElementId(2)),
+        "the other stays"
+    );
 }
 
 #[test]
@@ -525,13 +675,27 @@ fn dragging_over_nothing_selects_what_the_box_encloses() {
     let (view, mut camera) = plain();
     let diagram = two_boxes();
     let mut state = State::default();
-    let edit = state.drag(&diagram, view, &mut camera, egui::pos2(50.0, 50.0), egui::pos2(450.0, 200.0), false);
+    let edit = state.drag(
+        &diagram,
+        view,
+        &mut camera,
+        egui::pos2(50.0, 50.0),
+        egui::pos2(450.0, 200.0),
+        false,
+    );
     assert_eq!(edit, None);
     assert_eq!(state.selection, vec![ElementId(1), ElementId(2)]);
 
     // Both move together, dragged by either.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(350.0, 130.0), egui::pos2(350.0, 230.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(350.0, 130.0),
+            egui::pos2(350.0, 230.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.changes.len(), 2);
     let after = applied(&diagram, &edit);
@@ -539,11 +703,32 @@ fn dragging_over_nothing_selects_what_the_box_encloses() {
 
     // A box around one, with Shift, adds to what's selected; without, replaces it.
     state.selection = vec![ElementId(2)];
-    state.drag(&diagram, view, &mut camera, egui::pos2(50.0, 50.0), egui::pos2(250.0, 200.0), true);
+    state.drag(
+        &diagram,
+        view,
+        &mut camera,
+        egui::pos2(50.0, 50.0),
+        egui::pos2(250.0, 200.0),
+        true,
+    );
     assert_eq!(state.selection, vec![ElementId(2), ElementId(1)]);
-    state.drag(&diagram, view, &mut camera, egui::pos2(50.0, 50.0), egui::pos2(250.0, 200.0), false);
+    state.drag(
+        &diagram,
+        view,
+        &mut camera,
+        egui::pos2(50.0, 50.0),
+        egui::pos2(250.0, 200.0),
+        false,
+    );
     assert_eq!(state.selection, vec![ElementId(1)]);
-    state.drag(&diagram, view, &mut camera, egui::pos2(500.0, 400.0), egui::pos2(600.0, 500.0), false);
+    state.drag(
+        &diagram,
+        view,
+        &mut camera,
+        egui::pos2(500.0, 400.0),
+        egui::pos2(600.0, 500.0),
+        false,
+    );
     assert!(state.selection.is_empty());
 }
 
@@ -555,7 +740,14 @@ fn dragging_a_corner_resizes_the_selection() {
     state.selection = vec![ElementId(1)];
     // The frame's corner is a little outside the box's (200, 160).
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(205.0, 165.0), egui::pos2(305.0, 225.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(205.0, 165.0),
+            egui::pos2(305.0, 225.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Resize");
     let after = applied(&diagram, &edit);
@@ -584,14 +776,24 @@ fn dragging_a_line_s_end_moves_that_point() {
     let mut state = State::default();
     state.selection = vec![ElementId(1)];
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(300.0, 100.0), egui::pos2(320.0, 240.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(300.0, 100.0),
+            egui::pos2(320.0, 240.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Move Point");
     let after = applied(&diagram, &edit);
     let Shape::Line { points, .. } = &after.get(ElementId(1)).unwrap().shape else {
         panic!("not a line");
     };
-    assert_eq!(*points, vec![Point::new(100.0, 100.0), Point::new(320.0, 240.0)]);
+    assert_eq!(
+        *points,
+        vec![Point::new(100.0, 100.0), Point::new(320.0, 240.0)]
+    );
 }
 
 #[test]
@@ -633,7 +835,11 @@ fn labels_are_kept_in_the_file() {
         written.contains(r#"h: 50.0), label: "Open\nfile"),"#),
         "{written}"
     );
-    assert_eq!(written.matches("label").count(), 1, "no label isn't written");
+    assert_eq!(
+        written.matches("label").count(),
+        1,
+        "no label isn't written"
+    );
     assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), diagram);
 }
 
@@ -656,7 +862,10 @@ fn clicking_with_the_text_tool_writes_new_text() {
     };
     assert_eq!(text, "hello\nthere", "without the last line's end");
     assert_eq!(at.x, 500.0);
-    assert!(at.y < 400.0 && at.y > 400.0 - TEXT_SIZE, "the click is in the first line");
+    assert!(
+        at.y < 400.0 && at.y > 400.0 - TEXT_SIZE,
+        "the click is in the first line"
+    );
     assert_eq!(state.selection, vec![made.id]);
     assert_eq!(state.tool, Tool::Select);
     assert!(!state.is_writing());
@@ -682,7 +891,10 @@ fn writing_in_a_box_sets_its_label() {
     assert_eq!(edit.label, "Edit Text");
     let after = applied(&diagram, &edit);
     assert_eq!(after.get(ElementId(1)).unwrap().label, "Start");
-    assert_eq!(after.get(ElementId(1)).unwrap().shape, diagram.get(ElementId(1)).unwrap().shape);
+    assert_eq!(
+        after.get(ElementId(1)).unwrap().shape,
+        diagram.get(ElementId(1)).unwrap().shape
+    );
 
     // Writing again starts from the label; the same text changes nothing,
     // and none takes the label away.
@@ -696,7 +908,11 @@ fn writing_in_a_box_sets_its_label() {
 
 #[test]
 fn writing_in_text_changes_it_and_emptying_it_removes_it() {
-    let diagram = Diagram::new(vec![rectangle(1), text(2, Point::new(0.0, 100.0), "before")]).unwrap();
+    let diagram = Diagram::new(vec![
+        rectangle(1),
+        text(2, Point::new(0.0, 100.0), "before"),
+    ])
+    .unwrap();
     let mut state = State::default();
     state.selection = vec![ElementId(2)];
     state.write(&diagram, Subject::Of(ElementId(2)));
@@ -733,7 +949,10 @@ fn a_line_s_label_is_written_on_it_and_a_stroke_has_none() {
     assert!(!state.is_writing());
     state.write(&diagram, Subject::Of(ElementId(1)));
     let edit = wrote(&mut state, &diagram, "yes").unwrap();
-    assert_eq!(applied(&diagram, &edit).get(ElementId(1)).unwrap().label, "yes");
+    assert_eq!(
+        applied(&diagram, &edit).get(ElementId(1)).unwrap().label,
+        "yes"
+    );
 }
 
 #[test]
@@ -747,7 +966,10 @@ fn a_box_is_written_in_anywhere_inside_it() {
     .unwrap();
     let at = |x, y| edit::writable_at(&diagram, Point::new(x, y), 3.0, &Element::bounds);
     // An outline's middle isn't picked by a click, but it's where its label goes.
-    assert_eq!(edit::topmost_at(&diagram, rect.center(), 3.0, &Element::bounds), None);
+    assert_eq!(
+        edit::topmost_at(&diagram, rect.center(), 3.0, &Element::bounds),
+        None
+    );
     assert_eq!(at(50.0, 30.0), Some(ElementId(1)));
     assert_eq!(at(250.0, 30.0), Some(ElementId(2)));
     assert_eq!(at(202.0, 2.0), None, "outside the ellipse, in its box");
@@ -795,7 +1017,14 @@ fn joined() -> Diagram {
     let mut state = State::default();
     state.tool = Tool::Arrow;
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(350.0, 130.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(350.0, 130.0),
+            false,
+        )
         .unwrap();
     applied(&diagram, &edit)
 }
@@ -816,11 +1045,18 @@ fn a_line_meets_each_outline_on_the_way_from_its_middle() {
         assert!(near(at, (50.0, below + gap)), "{shape:?} {at:?}");
         // Wherever it comes from, it ends outside the outline.
         let at = edit::attach(&target, Point::new(400.0, 300.0), &Element::bounds);
-        assert!(!edit::hit(&filled(1, shape.clone()), at, 0.0, &Element::bounds), "{shape:?}");
+        assert!(
+            !edit::hit(&filled(1, shape.clone()), at, 0.0, &Element::bounds),
+            "{shape:?}"
+        );
     }
     // A corner: a rectangle's is further out than an ellipse's.
     let toward = Point::new(150.0, 90.0);
-    let square = edit::attach(&outline(1, Shape::Rectangle(rect)), toward, &Element::bounds);
+    let square = edit::attach(
+        &outline(1, Shape::Rectangle(rect)),
+        toward,
+        &Element::bounds,
+    );
     let round = edit::attach(&outline(1, Shape::Ellipse(rect)), toward, &Element::bounds);
     assert!(square.x > round.x && square.y > round.y);
 }
@@ -843,17 +1079,35 @@ fn an_arrow_drawn_over_nothing_is_bound_to_nothing() {
     let mut state = State::default();
     state.tool = Tool::Arrow;
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(100.0, 300.0), egui::pos2(300.0, 400.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(100.0, 300.0),
+            egui::pos2(300.0, 400.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     assert_eq!(
         ends(&after, 3),
-        (vec![Point::new(100.0, 300.0), Point::new(300.0, 400.0)], None, None)
+        (
+            vec![Point::new(100.0, 300.0), Point::new(300.0, 400.0)],
+            None,
+            None
+        )
     );
     // And one that starts and ends in the same box is bound by its start only.
     state.tool = Tool::Arrow;
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(110.0, 110.0), egui::pos2(190.0, 150.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(110.0, 110.0),
+            egui::pos2(190.0, 150.0),
+            false,
+        )
         .unwrap();
     let (_, from, to) = ends(&applied(&diagram, &edit), 3);
     assert_eq!((from, to), (Some(ElementId(1)), None));
@@ -866,7 +1120,14 @@ fn a_bound_arrow_follows_what_it_is_bound_to() {
     let mut state = State::default();
     // The second box, dragged straight down by 200.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(350.0, 130.0), egui::pos2(350.0, 330.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(350.0, 130.0),
+            egui::pos2(350.0, 330.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Move");
     assert_eq!(edit.changes.len(), 2, "the box, and the arrow after it");
@@ -877,15 +1138,28 @@ fn a_bound_arrow_follows_what_it_is_bound_to() {
     let (a, b) = (Point::new(150.0, 130.0), Point::new(350.0, 330.0));
     for point in &points {
         let cross = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x);
-        assert!(cross.abs() < 1.0, "{point:?} is off the way between the middles");
+        assert!(
+            cross.abs() < 1.0,
+            "{point:?} is off the way between the middles"
+        );
     }
-    assert!(points[0].y > 130.0 && points[1].y < 330.0 && points[1].x < 350.0, "{points:?}");
+    assert!(
+        points[0].y > 130.0 && points[1].y < 330.0 && points[1].x < 350.0,
+        "{points:?}"
+    );
 
     // Resizing what it's bound to moves it too.
     state.selection = vec![ElementId(2)];
     let before = ends(&after, 3).0;
     let edit = state
-        .drag(&after, view, &mut camera, egui::pos2(295.0, 295.0), egui::pos2(195.0, 295.0), false)
+        .drag(
+            &after,
+            view,
+            &mut camera,
+            egui::pos2(295.0, 295.0),
+            egui::pos2(195.0, 295.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Resize");
     assert_ne!(ends(&applied(&after, &edit), 3).0, before);
@@ -898,23 +1172,43 @@ fn a_bound_arrow_moved_with_its_boxes_stays_bound_and_alone_lets_go() {
     let mut state = State::default();
     state.selection = vec![ElementId(1), ElementId(2), ElementId(3)];
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(160.0, 180.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(160.0, 180.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     let (before, ..) = ends(&diagram, 3);
     let (points, from, to) = ends(&after, 3);
     assert_eq!((from, to), (Some(ElementId(1)), Some(ElementId(2))));
-    assert!(near(points[0], (before[0].x + 10.0, before[0].y + 50.0)), "{points:?}");
+    assert!(
+        near(points[0], (before[0].x + 10.0, before[0].y + 50.0)),
+        "{points:?}"
+    );
 
     // By itself (dragged by other than its middle, which would bend it), it
     // comes away from both.
     state.selection = vec![ElementId(3)];
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(230.0, 130.0), egui::pos2(230.0, 230.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(230.0, 130.0),
+            egui::pos2(230.0, 230.0),
+            false,
+        )
         .unwrap();
     let (points, from, to) = ends(&applied(&diagram, &edit), 3);
     assert_eq!((from, to), (None, None));
-    assert!(near(points[0], (before[0].x, before[0].y + 100.0)), "{points:?}");
+    assert!(
+        near(points[0], (before[0].x, before[0].y + 100.0)),
+        "{points:?}"
+    );
 }
 
 #[test]
@@ -927,22 +1221,43 @@ fn dragging_an_end_binds_it_to_what_it_is_dropped_on() {
     state.selection = vec![ElementId(3)];
     // Its end, onto the second box.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(250.0, 300.0), egui::pos2(350.0, 140.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(250.0, 300.0),
+            egui::pos2(350.0, 140.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     let (points, from, to) = ends(&after, 3);
     assert_eq!((from, to), (None, Some(ElementId(2))));
     assert_eq!(points[0], Point::new(150.0, 300.0), "the other end stays");
-    assert!(points[1].y > 160.0 && points[1].y < 170.0, "under the box: {points:?}");
+    assert!(
+        points[1].y > 160.0 && points[1].y < 170.0,
+        "under the box: {points:?}"
+    );
 
     // And off it again, onto nothing.
     let end = egui::pos2(points[1].x, points[1].y);
     let edit = state
-        .drag(&after, view, &mut camera, end, egui::pos2(500.0, 500.0), false)
+        .drag(
+            &after,
+            view,
+            &mut camera,
+            end,
+            egui::pos2(500.0, 500.0),
+            false,
+        )
         .unwrap();
     assert_eq!(
         ends(&applied(&after, &edit), 3),
-        (vec![Point::new(150.0, 300.0), Point::new(500.0, 500.0)], None, None)
+        (
+            vec![Point::new(150.0, 300.0), Point::new(500.0, 500.0)],
+            None,
+            None
+        )
     );
 }
 
@@ -975,7 +1290,10 @@ fn deleting_what_an_arrow_is_bound_to_lets_it_go() {
 fn bindings_are_kept_in_the_file() {
     let diagram = joined();
     let written = encoded(&diagram);
-    assert!(written.contains("end: Arrow, from: Some(1), to: Some(2))"), "{written}");
+    assert!(
+        written.contains("end: Arrow, from: Some(1), to: Some(2))"),
+        "{written}"
+    );
     assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), diagram);
     // A line bound to something that isn't there is read, and let go when settled.
     let loose = Diagram::decode(
@@ -988,7 +1306,11 @@ fn bindings_are_kept_in_the_file() {
 
 #[test]
 fn halfway_along_a_line_is_by_its_length() {
-    let bent = [Point::new(0.0, 0.0), Point::new(10.0, 0.0), Point::new(10.0, 30.0)];
+    let bent = [
+        Point::new(0.0, 0.0),
+        Point::new(10.0, 0.0),
+        Point::new(10.0, 30.0),
+    ];
     assert_eq!(edit::midpoint(&bent), Some(Point::new(10.0, 10.0)));
     assert_eq!(edit::midpoint(&bent[..1]), Some(Point::new(0.0, 0.0)));
     assert_eq!(edit::midpoint(&[]), None);
@@ -1023,7 +1345,11 @@ fn an_end_is_pinned_to_the_side_it_is_dropped_near() {
 fn a_pinned_end_is_in_the_middle_of_its_side() {
     let rect = Rect::new(0.0, 0.0, 100.0, 60.0);
     let gap = edit::BIND_GAP + STROKE_WIDTH / 2.0;
-    for shape in [Shape::Rectangle(rect), Shape::Ellipse(rect), Shape::Diamond(rect)] {
+    for shape in [
+        Shape::Rectangle(rect),
+        Shape::Ellipse(rect),
+        Shape::Diamond(rect),
+    ] {
         let target = outline(1, shape);
         let at = |side| edit::attach_side(&target, side, &Element::bounds);
         assert_eq!(at(Side::Top), Some(Point::new(50.0, -gap)));
@@ -1042,23 +1368,49 @@ fn an_arrow_drawn_from_side_to_side_stays_on_those_sides() {
     state.tool = Tool::Arrow;
     // From the bottom of the first box to the top of the second.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 158.0), egui::pos2(350.0, 102.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 158.0),
+            egui::pos2(350.0, 102.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     assert_eq!(sides(&after, 3), (Side::Bottom, Side::Top));
     let gap = edit::BIND_GAP + STROKE_WIDTH / 2.0;
     let (points, ..) = ends(&after, 3);
-    assert_eq!(points, vec![Point::new(150.0, 160.0 + gap), Point::new(350.0, 100.0 - gap)]);
+    assert_eq!(
+        points,
+        vec![
+            Point::new(150.0, 160.0 + gap),
+            Point::new(350.0, 100.0 - gap)
+        ]
+    );
 
     // The second box, moved under the first: its end is still on top.
     state.selection.clear();
     let edit = state
-        .drag(&after, view, &mut camera, egui::pos2(350.0, 130.0), egui::pos2(150.0, 430.0), false)
+        .drag(
+            &after,
+            view,
+            &mut camera,
+            egui::pos2(350.0, 130.0),
+            egui::pos2(150.0, 430.0),
+            false,
+        )
         .unwrap();
     let moved = applied(&after, &edit);
     assert_eq!(sides(&moved, 3), (Side::Bottom, Side::Top));
     let (points, ..) = ends(&moved, 3);
-    assert_eq!(points, vec![Point::new(150.0, 160.0 + gap), Point::new(150.0, 400.0 - gap)]);
+    assert_eq!(
+        points,
+        vec![
+            Point::new(150.0, 160.0 + gap),
+            Point::new(150.0, 400.0 - gap)
+        ]
+    );
 }
 
 #[test]
@@ -1069,7 +1421,14 @@ fn an_end_not_pinned_faces_the_other_s_pinned_end() {
     state.tool = Tool::Arrow;
     // From the first box's middle to the top of the second.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(350.0, 102.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(350.0, 102.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     assert_eq!(sides(&after, 3), (Side::Auto, Side::Top));
@@ -1088,19 +1447,36 @@ fn dragging_an_end_pins_it_anew_and_letting_go_forgets_the_side() {
     // Its end, from the second box's left to near that box's bottom.
     let end = egui::pos2(points[1].x, points[1].y);
     let edit = state
-        .drag(&diagram, view, &mut camera, end, egui::pos2(350.0, 157.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            end,
+            egui::pos2(350.0, 157.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     assert_eq!(sides(&after, 3), (Side::Auto, Side::Bottom));
     let written = encoded(&after);
-    assert!(written.contains("from: Some(1), to: Some(2), to_side: Bottom)"), "{written}");
+    assert!(
+        written.contains("from: Some(1), to: Some(2), to_side: Bottom)"),
+        "{written}"
+    );
     assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), after);
 
     // Then off it, onto nothing: no side is left behind.
     let (points, ..) = ends(&after, 3);
     let end = egui::pos2(points[1].x, points[1].y);
     let edit = state
-        .drag(&after, view, &mut camera, end, egui::pos2(600.0, 500.0), false)
+        .drag(
+            &after,
+            view,
+            &mut camera,
+            end,
+            egui::pos2(600.0, 500.0),
+            false,
+        )
         .unwrap();
     let loose = applied(&after, &edit);
     assert_eq!(ends(&loose, 3).2, None);
@@ -1149,7 +1525,11 @@ fn picking_a_style_restyles_the_selection_in_one_step() {
     assert_eq!(edit.changes.len(), 1, "the line has no fill to change");
     let after = applied(&diagram, &edit);
     assert_eq!(after.get(ElementId(2)).unwrap().fill, None);
-    assert_eq!(after.get(ElementId(1)), diagram.get(ElementId(1)), "not selected");
+    assert_eq!(
+        after.get(ElementId(1)),
+        diagram.get(ElementId(1)),
+        "not selected"
+    );
 
     let edit = state.restyle(&after, Restyle::Dash(Dash::Dotted)).unwrap();
     assert_eq!(edit.changes.len(), 2);
@@ -1176,7 +1556,14 @@ fn what_is_made_next_is_in_the_style_last_picked() {
     }
     state.tool = Tool::Rectangle;
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(100.0, 100.0), egui::pos2(200.0, 160.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(100.0, 100.0),
+            egui::pos2(200.0, 160.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     let made = &after.elements()[0];
@@ -1187,7 +1574,14 @@ fn what_is_made_next_is_in_the_style_last_picked() {
     // An arrow takes the stroke, but not the fill or the corners.
     state.tool = Tool::Arrow;
     let edit = state
-        .drag(&after, view, &mut camera, egui::pos2(100.0, 300.0), egui::pos2(200.0, 300.0), false)
+        .drag(
+            &after,
+            view,
+            &mut camera,
+            egui::pos2(100.0, 300.0),
+            egui::pos2(200.0, 300.0),
+            false,
+        )
         .unwrap();
     let arrow = applied(&after, &edit);
     let made = arrow.elements().last().unwrap();
@@ -1212,10 +1606,16 @@ fn a_style_shows_what_an_element_has() {
     boxed.rounded = true;
     boxed.dash = Dash::Dotted;
     let style = Style::default().of(&boxed);
-    assert_eq!((style.fill, style.rounded, style.dash), (Some(Color::Blue), true, Dash::Dotted));
+    assert_eq!(
+        (style.fill, style.rounded, style.dash),
+        (Some(Color::Blue), true, Dash::Dotted)
+    );
     // Text has no stroke to show: those stay as they were.
     let style = style.of(&text(2, Point::new(0.0, 0.0), "words"));
-    assert_eq!((style.fill, style.dash, style.size), (Some(Color::Blue), Dash::Dotted, TEXT_SIZE));
+    assert_eq!(
+        (style.fill, style.dash, style.size),
+        (Some(Color::Blue), Dash::Dotted, TEXT_SIZE)
+    );
 }
 
 #[test]
@@ -1225,8 +1625,15 @@ fn styles_are_kept_in_the_file() {
     boxed.rounded = true;
     let diagram = Diagram::new(vec![boxed, rectangle(2)]).unwrap();
     let written = encoded(&diagram);
-    assert!(written.contains("h: 50.0), dash: Dashed, rounded: true),"), "{written}");
-    assert_eq!(written.matches("dash").count(), 1, "a solid stroke isn't written");
+    assert!(
+        written.contains("h: 50.0), dash: Dashed, rounded: true),"),
+        "{written}"
+    );
+    assert_eq!(
+        written.matches("dash").count(),
+        1,
+        "a solid stroke isn't written"
+    );
     assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), diagram);
 }
 
@@ -1241,7 +1648,11 @@ fn simplifying_keeps_the_points_that_matter() {
         .collect();
     assert_eq!(
         edit::simplify(&drawn, 0.5),
-        vec![Point::new(0.0, 0.0), Point::new(100.0, 0.0), Point::new(100.0, 50.0)]
+        vec![
+            Point::new(0.0, 0.0),
+            Point::new(100.0, 0.0),
+            Point::new(100.0, 50.0)
+        ]
     );
     // Looked at more closely, the wobble matters.
     assert!(edit::simplify(&drawn, 0.1).len() > 10);
@@ -1262,7 +1673,11 @@ fn a_stroke_is_kept_to_a_tenth_and_is_at_least_a_line() {
     assert_eq!(
         made.shape,
         Shape::Freehand {
-            points: vec![Point::new(0.0, 0.0), Point::new(10.3, 5.1), Point::new(20.0, -4.0)]
+            points: vec![
+                Point::new(0.0, 0.0),
+                Point::new(10.3, 5.1),
+                Point::new(20.0, -4.0)
+            ]
         }
     );
     // The pointer held still isn't a stroke.
@@ -1288,10 +1703,22 @@ fn a_smooth_curve_goes_through_every_point() {
     // No two of its points are far apart, and it rounds the corners: it
     // leaves the straight lines between the points given.
     for pair in curve.windows(2) {
-        assert!((pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y) < 6.0, "{pair:?}");
+        assert!(
+            (pair[1].x - pair[0].x).hypot(pair[1].y - pair[0].y) < 6.0,
+            "{pair:?}"
+        );
     }
-    let straight = outline(1, Shape::Freehand { points: points.to_vec() });
-    assert!(curve.iter().any(|point| !edit::hit(&straight, *point, 0.0, &Element::bounds)));
+    let straight = outline(
+        1,
+        Shape::Freehand {
+            points: points.to_vec(),
+        },
+    );
+    assert!(
+        curve
+            .iter()
+            .any(|point| !edit::hit(&straight, *point, 0.0, &Element::bounds))
+    );
     // A line stays a line.
     assert_eq!(edit::smooth(&points[..2], 4.0), points[..2].to_vec());
 }
@@ -1305,7 +1732,14 @@ fn the_pen_draws_a_stroke_in_the_style_picked_and_stays_in_hand() {
     state.restyle(&diagram, Restyle::Stroke(Color::Magenta));
     state.restyle(&diagram, Restyle::Fill(Some(Color::Blue)));
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(500.0, 300.0), egui::pos2(560.0, 340.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(500.0, 300.0),
+            egui::pos2(560.0, 340.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Draw");
     let after = applied(&diagram, &edit);
@@ -1316,7 +1750,11 @@ fn the_pen_draws_a_stroke_in_the_style_picked_and_stays_in_hand() {
             points: vec![Point::new(500.0, 300.0), Point::new(560.0, 340.0)]
         }
     );
-    assert_eq!((made.stroke, made.fill), (Color::Magenta, None), "a stroke has no fill");
+    assert_eq!(
+        (made.stroke, made.fill),
+        (Color::Magenta, None),
+        "a stroke has no fill"
+    );
     assert_eq!(state.tool, Tool::Pen);
     assert!(state.selection.is_empty());
     // It doesn't bind to what it's drawn over, and a press that goes nowhere
@@ -1329,13 +1767,20 @@ fn the_pen_draws_a_stroke_in_the_style_picked_and_stays_in_hand() {
 
 /// The ids, back to front.
 fn order(diagram: &Diagram) -> Vec<u64> {
-    diagram.elements().iter().map(|element| element.id.0).collect()
+    diagram
+        .elements()
+        .iter()
+        .map(|element| element.id.0)
+        .collect()
 }
 
 /// The changes made, and then undone as history would: the diagram after.
 fn made_and_undone(diagram: &Diagram, changes: &[Change]) -> Diagram {
     let mut after = diagram.clone();
-    let inverses: Vec<Change> = changes.iter().map(|change| after.apply(change).unwrap()).collect();
+    let inverses: Vec<Change> = changes
+        .iter()
+        .map(|change| after.apply(change).unwrap())
+        .collect();
     let mut undone = after.clone();
     for inverse in inverses.iter().rev() {
         undone.apply(inverse).unwrap();
@@ -1353,11 +1798,17 @@ fn copies_are_new_elements_bound_to_each_other() {
     let diagram = joined();
     let all: Vec<&Element> = diagram.elements().iter().collect();
     let copies = edit::copies(&all, &diagram, 0.0, 200.0);
-    assert_eq!(copies.iter().map(|copy| copy.id.0).collect::<Vec<_>>(), vec![4, 5, 6]);
-    let after = applied(&diagram, &Edit {
-        label: String::new(),
-        changes: edit::insertions(&diagram, copies),
-    });
+    assert_eq!(
+        copies.iter().map(|copy| copy.id.0).collect::<Vec<_>>(),
+        vec![4, 5, 6]
+    );
+    let after = applied(
+        &diagram,
+        &Edit {
+            label: String::new(),
+            changes: edit::insertions(&diagram, copies),
+        },
+    );
     // The copied arrow joins the copied boxes, not the originals.
     let (points, from, to) = ends(&after, 6);
     assert_eq!((from, to), (Some(ElementId(4)), Some(ElementId(5))));
@@ -1366,7 +1817,14 @@ fn copies_are_new_elements_bound_to_each_other() {
     // Copied without its boxes, it's bound to nothing.
     let arrow = [diagram.get(ElementId(3)).unwrap()];
     let alone = edit::copies(&arrow, &diagram, 5.0, 5.0);
-    assert!(matches!(alone[0].shape, Shape::Line { from: None, to: None, .. }));
+    assert!(matches!(
+        alone[0].shape,
+        Shape::Line {
+            from: None,
+            to: None,
+            ..
+        }
+    ));
 }
 
 #[test]
@@ -1394,7 +1852,14 @@ fn a_move_with_copy_held_leaves_the_original() {
     let mut state = State::default();
     state.copy = true;
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(150.0, 330.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(150.0, 330.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Duplicate");
     let after = applied(&diagram, &edit);
@@ -1426,12 +1891,23 @@ fn what_is_copied_is_pasted_where_asked() {
     assert_eq!(edit.label, "Paste");
     let after = applied(&other, &edit);
     assert_eq!(order(&after), vec![1, 2, 3, 4, 5]);
-    assert_eq!(state.selection, vec![ElementId(3), ElementId(4), ElementId(5)]);
+    assert_eq!(
+        state.selection,
+        vec![ElementId(3), ElementId(4), ElementId(5)]
+    );
     assert_eq!(state.tool, Tool::Select);
     let pasted: Vec<&Element> = after.elements()[2..].iter().collect();
-    let around = pasted.iter().map(|e| e.bounds()).reduce(|a, b| a.union(&b)).unwrap();
+    let around = pasted
+        .iter()
+        .map(|e| e.bounds())
+        .reduce(|a, b| a.union(&b))
+        .unwrap();
     assert_eq!(around.center(), Point::new(1000.0, 1000.0));
-    assert_eq!(ends(&after, 5).1, Some(ElementId(3)), "still bound, to the pasted box");
+    assert_eq!(
+        ends(&after, 5).1,
+        Some(ElementId(3)),
+        "still bound, to the pasted box"
+    );
 }
 
 #[test]
@@ -1439,7 +1915,12 @@ fn other_text_is_pasted_as_text() {
     let diagram = two_boxes();
     let mut state = State::default();
     let edit = state
-        .paste(&diagram, "just words\n", Point::new(5.0, 6.0), &Element::bounds)
+        .paste(
+            &diagram,
+            "just words\n",
+            Point::new(5.0, 6.0),
+            &Element::bounds,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     assert_eq!(
@@ -1450,7 +1931,10 @@ fn other_text_is_pasted_as_text() {
             size: TEXT_SIZE
         }
     );
-    assert_eq!(state.paste(&diagram, "  \n", Point::default(), &Element::bounds), None);
+    assert_eq!(
+        state.paste(&diagram, "  \n", Point::default(), &Element::bounds),
+        None
+    );
 }
 
 #[test]
@@ -1458,7 +1942,10 @@ fn elements_move_forward_and_back_among_the_rest() {
     let diagram = five();
     let moved = |ids: &[u64], to: Order| {
         let ids: Vec<ElementId> = ids.iter().map(|id| ElementId(*id)).collect();
-        order(&made_and_undone(&diagram, &edit::reorder(&diagram, &ids, to)))
+        order(&made_and_undone(
+            &diagram,
+            &edit::reorder(&diagram, &ids, to),
+        ))
     };
     assert_eq!(moved(&[2, 4], Order::Front), vec![1, 3, 5, 2, 4]);
     assert_eq!(moved(&[2, 4], Order::Back), vec![2, 4, 1, 3, 5]);
@@ -1482,15 +1969,29 @@ fn grouped_elements_are_selected_and_moved_together() {
     let grouped = made_and_undone(&diagram, &edit.changes);
     assert_eq!(grouped.get(ElementId(1)).unwrap().group, Some(1));
     assert_eq!(grouped.get(ElementId(2)).unwrap().group, Some(1));
-    assert_eq!(state.group(&grouped, true).map(|edit| edit.changes.len()), Some(2), "a new group");
+    assert_eq!(
+        state.group(&grouped, true).map(|edit| edit.changes.len()),
+        Some(2),
+        "a new group"
+    );
 
     // Dragging one moves both, and both are selected.
     state.selection.clear();
     let edit = state
-        .drag(&grouped, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(150.0, 230.0), false)
+        .drag(
+            &grouped,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(150.0, 230.0),
+            false,
+        )
         .unwrap();
     assert_eq!(state.selection, vec![ElementId(1), ElementId(2)]);
-    assert_eq!(applied(&grouped, &edit).bounds(), Some(Rect::new(100.0, 200.0, 300.0, 60.0)));
+    assert_eq!(
+        applied(&grouped, &edit).bounds(),
+        Some(Rect::new(100.0, 200.0, 300.0, 60.0))
+    );
 
     // In the file, and out of the group again.
     let written = encoded(&grouped);
@@ -1511,7 +2012,10 @@ fn a_group_and_another() -> Diagram {
     for element in &mut elements {
         element.group = Some(1);
     }
-    elements.push(filled(3, Shape::Rectangle(Rect::new(100.0, 300.0, 100.0, 60.0))));
+    elements.push(filled(
+        3,
+        Shape::Rectangle(Rect::new(100.0, 300.0, 100.0, 60.0)),
+    ));
     Diagram::new(elements).unwrap()
 }
 
@@ -1520,7 +2024,11 @@ fn a_double_click_goes_into_a_group_to_move_one_thing() {
     let (view, mut camera) = plain();
     let diagram = a_group_and_another();
     let mut state = State::default();
-    let (first, second, third) = (Point::new(150.0, 130.0), Point::new(350.0, 130.0), Point::new(150.0, 330.0));
+    let (first, second, third) = (
+        Point::new(150.0, 130.0),
+        Point::new(350.0, 130.0),
+        Point::new(150.0, 330.0),
+    );
     let click = |state: &mut State, at, shift, twice| {
         state.click(&diagram, at, 6.0, shift, twice, &Element::bounds);
     };
@@ -1529,20 +2037,37 @@ fn a_double_click_goes_into_a_group_to_move_one_thing() {
     click(&mut state, first, false, false);
     assert_eq!(state.selection, vec![ElementId(1), ElementId(2)]);
     click(&mut state, first, false, true);
-    assert_eq!((state.selection.clone(), state.within), (vec![ElementId(1)], Some(1)));
+    assert_eq!(
+        (state.selection.clone(), state.within),
+        (vec![ElementId(1)], Some(1))
+    );
     assert!(!state.is_writing());
 
     // Inside, a click picks the other one alone, and a drag moves it alone.
     click(&mut state, second, false, false);
     assert_eq!(state.selection, vec![ElementId(2)]);
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(150.0, 180.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(150.0, 180.0),
+            false,
+        )
         .unwrap();
     assert_eq!(state.selection, vec![ElementId(1)]);
     let moved = applied(&diagram, &edit);
-    assert_eq!(moved.get(ElementId(1)).unwrap().bounds(), Rect::new(100.0, 150.0, 100.0, 60.0));
+    assert_eq!(
+        moved.get(ElementId(1)).unwrap().bounds(),
+        Rect::new(100.0, 150.0, 100.0, 60.0)
+    );
     assert_eq!(moved.get(ElementId(2)), diagram.get(ElementId(2)));
-    assert_eq!(moved.get(ElementId(1)).unwrap().group, Some(1), "still in the group");
+    assert_eq!(
+        moved.get(ElementId(1)).unwrap().group,
+        Some(1),
+        "still in the group"
+    );
 
     // Twice again writes in it, as in anything else.
     click(&mut state, first, false, true);
@@ -1558,7 +2083,10 @@ fn a_double_click_goes_into_a_group_to_move_one_thing() {
     state.within = Some(1);
     state.selection = vec![ElementId(1)];
     click(&mut state, third, false, false);
-    assert_eq!((state.selection.clone(), state.within), (vec![ElementId(3)], None));
+    assert_eq!(
+        (state.selection.clone(), state.within),
+        (vec![ElementId(3)], None)
+    );
     click(&mut state, second, false, false);
     assert_eq!(state.selection, vec![ElementId(2), ElementId(1)]);
 }
@@ -1567,16 +2095,37 @@ fn a_double_click_goes_into_a_group_to_move_one_thing() {
 fn shift_adds_a_whole_group_and_takes_it_away() {
     let diagram = a_group_and_another();
     let mut state = State::default();
-    let (first, second, third) = (Point::new(150.0, 130.0), Point::new(350.0, 130.0), Point::new(150.0, 330.0));
+    let (first, second, third) = (
+        Point::new(150.0, 130.0),
+        Point::new(350.0, 130.0),
+        Point::new(150.0, 330.0),
+    );
     state.click(&diagram, third, 6.0, false, false, &Element::bounds);
     state.click(&diagram, first, 6.0, true, false, &Element::bounds);
-    assert_eq!(state.selection, vec![ElementId(3), ElementId(1), ElementId(2)]);
+    assert_eq!(
+        state.selection,
+        vec![ElementId(3), ElementId(1), ElementId(2)]
+    );
     state.click(&diagram, second, 6.0, true, false, &Element::bounds);
     assert_eq!(state.selection, vec![ElementId(3)]);
     // On nothing: with Shift the selection stays, without it's let go of.
-    state.click(&diagram, Point::new(600.0, 500.0), 6.0, true, false, &Element::bounds);
+    state.click(
+        &diagram,
+        Point::new(600.0, 500.0),
+        6.0,
+        true,
+        false,
+        &Element::bounds,
+    );
     assert_eq!(state.selection, vec![ElementId(3)]);
-    state.click(&diagram, Point::new(600.0, 500.0), 6.0, false, false, &Element::bounds);
+    state.click(
+        &diagram,
+        Point::new(600.0, 500.0),
+        6.0,
+        false,
+        false,
+        &Element::bounds,
+    );
     assert!(state.selection.is_empty());
 }
 
@@ -1585,11 +2134,18 @@ fn the_menu_is_for_what_it_is_asked_on() {
     let diagram = a_group_and_another();
     let mut state = State::default();
     state.tool = Tool::Rectangle;
-    let (first, third, nothing) = (Point::new(150.0, 130.0), Point::new(150.0, 330.0), Point::new(600.0, 500.0));
+    let (first, third, nothing) = (
+        Point::new(150.0, 130.0),
+        Point::new(150.0, 330.0),
+        Point::new(600.0, 500.0),
+    );
 
     // On something not selected: that (with its group), with the Select tool.
     state.point_at(&diagram, first, 6.0, &Element::bounds);
-    assert_eq!((state.selection.clone(), state.tool), (vec![ElementId(1), ElementId(2)], Tool::Select));
+    assert_eq!(
+        (state.selection.clone(), state.tool),
+        (vec![ElementId(1), ElementId(2)], Tool::Select)
+    );
     // On something selected, the selection stays as it is.
     state.selection = vec![ElementId(1), ElementId(2), ElementId(3)];
     state.point_at(&diagram, third, 6.0, &Element::bounds);
@@ -1598,15 +2154,27 @@ fn the_menu_is_for_what_it_is_asked_on() {
     state.point_at(&diagram, nothing, 6.0, &Element::bounds);
     assert!(state.selection.is_empty());
     let ctx = egui::Context::default();
-    assert_eq!(state.pick_of(&ctx, &diagram, Pick::Paste, &Element::bounds), None);
+    assert_eq!(
+        state.pick_of(&ctx, &diagram, Pick::Paste, &Element::bounds),
+        None
+    );
     assert_eq!(state.asked, Some(Request::Paste(nothing)));
 
     // What it picks is done to the selection, as the keys do it.
     state.selection = vec![ElementId(1), ElementId(2)];
-    let edit = state.pick_of(&ctx, &diagram, Pick::Group(false), &Element::bounds).unwrap();
+    let edit = state
+        .pick_of(&ctx, &diagram, Pick::Group(false), &Element::bounds)
+        .unwrap();
     assert_eq!(edit.label, "Ungroup");
-    assert!(applied(&diagram, &edit).elements().iter().all(|element| element.group.is_none()));
-    let edit = state.pick_of(&ctx, &diagram, Pick::Delete, &Element::bounds).unwrap();
+    assert!(
+        applied(&diagram, &edit)
+            .elements()
+            .iter()
+            .all(|element| element.group.is_none())
+    );
+    let edit = state
+        .pick_of(&ctx, &diagram, Pick::Delete, &Element::bounds)
+        .unwrap();
     assert_eq!(applied(&diagram, &edit).elements().len(), 1);
     assert!(state.selection.is_empty());
 }
@@ -1621,24 +2189,44 @@ fn a_line_bends_where_its_middle_is_dragged_and_straightens_again() {
 
     // The middle of the segment, dragged, is a new point; the ends stay.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(200.0, 100.0), egui::pos2(200.0, 160.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(200.0, 100.0),
+            egui::pos2(200.0, 160.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Add Point");
     let bent = applied(&diagram, &edit);
     assert_eq!(
         points(&bent),
-        vec![Point::new(100.0, 100.0), Point::new(200.0, 160.0), Point::new(300.0, 100.0)]
+        vec![
+            Point::new(100.0, 100.0),
+            Point::new(200.0, 160.0),
+            Point::new(300.0, 100.0)
+        ]
     );
     // Away from the middle, the line is moved instead.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 100.0), egui::pos2(150.0, 160.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 100.0),
+            egui::pos2(150.0, 160.0),
+            false,
+        )
         .unwrap();
     assert_eq!(edit.label, "Move");
 
     // The menu adds one where it's asked for, in the segment nearest.
     state.point_at(&bent, Point::new(250.0, 131.0), 6.0, &Element::bounds);
     let ctx = egui::Context::default();
-    let edit = state.pick_of(&ctx, &bent, Pick::AddPoint, &Element::bounds).unwrap();
+    let edit = state
+        .pick_of(&ctx, &bent, Pick::AddPoint, &Element::bounds)
+        .unwrap();
     assert_eq!(points(&applied(&bent, &edit))[2], Point::new(250.0, 131.0));
 
     // A point it bends at is taken out; its ends aren't.
@@ -1659,7 +2247,9 @@ fn a_line_s_heads_are_picked_and_it_turns_around() {
     assert_eq!(heads(&diagram), (Head::None, Head::Arrow));
 
     // Only the line takes a head.
-    let edit = state.restyle(&diagram, Restyle::Start(Head::Arrow)).unwrap();
+    let edit = state
+        .restyle(&diagram, Restyle::Start(Head::Arrow))
+        .unwrap();
     assert_eq!(edit.changes.len(), 1);
     let both = applied(&diagram, &edit);
     assert_eq!(heads(&both), (Head::Arrow, Head::Arrow));
@@ -1667,10 +2257,14 @@ fn a_line_s_heads_are_picked_and_it_turns_around() {
     assert_eq!(heads(&applied(&both, &edit)), (Head::Arrow, Head::None));
 
     // Turned around, it's bound the other way, between the same places.
-    let edit = state.reverse(&diagram).unwrap().bound(&diagram, &Element::bounds);
+    let edit = state
+        .reverse(&diagram)
+        .unwrap()
+        .bound(&diagram, &Element::bounds);
     let turned = applied(&diagram, &edit);
     assert_eq!(heads(&turned), (Head::Arrow, Head::None));
-    let ((before, from, to), (after, back_from, back_to)) = (ends(&diagram, arrow.0), ends(&turned, arrow.0));
+    let ((before, from, to), (after, back_from, back_to)) =
+        (ends(&diagram, arrow.0), ends(&turned, arrow.0));
     assert_eq!((back_from, back_to), (to, from));
     assert_eq!(after, before.into_iter().rev().collect::<Vec<_>>());
 }
@@ -1679,13 +2273,19 @@ fn a_line_s_heads_are_picked_and_it_turns_around() {
 fn copies_of_a_group_are_a_group_of_their_own() {
     let diagram = two_boxes();
     let ids = [ElementId(1), ElementId(2)];
-    let grouped = applied(&diagram, &Edit {
-        label: String::new(),
-        changes: edit::group(&diagram, &ids),
-    });
+    let grouped = applied(
+        &diagram,
+        &Edit {
+            label: String::new(),
+            changes: edit::group(&diagram, &ids),
+        },
+    );
     let all: Vec<&Element> = grouped.elements().iter().collect();
     let copies = edit::copies(&all, &grouped, 0.0, 100.0);
-    assert_eq!(copies.iter().map(|copy| copy.group).collect::<Vec<_>>(), vec![Some(2), Some(2)]);
+    assert_eq!(
+        copies.iter().map(|copy| copy.group).collect::<Vec<_>>(),
+        vec![Some(2), Some(2)]
+    );
 }
 
 #[test]
@@ -1697,33 +2297,57 @@ fn aligning_lines_things_up_and_a_group_moves_as_one() {
     ])
     .unwrap();
     let all = [ElementId(1), ElementId(2), ElementId(3)];
-    let lefts = |diagram: &Diagram| -> Vec<f32> { diagram.elements().iter().map(|e| e.bounds().x).collect() };
-    let aligned = |to: Align| made_and_undone(&diagram, &edit::align(&diagram, &all, to, None, &Element::bounds));
+    let lefts = |diagram: &Diagram| -> Vec<f32> {
+        diagram.elements().iter().map(|e| e.bounds().x).collect()
+    };
+    let aligned = |to: Align| {
+        made_and_undone(
+            &diagram,
+            &edit::align(&diagram, &all, to, None, &Element::bounds),
+        )
+    };
     assert_eq!(lefts(&aligned(Align::Left)), vec![0.0, 0.0, 0.0]);
     assert_eq!(lefts(&aligned(Align::Right)), vec![260.0, 340.0, 300.0]);
     assert_eq!(lefts(&aligned(Align::Center)), vec![130.0, 170.0, 150.0]);
-    let tops: Vec<f32> = aligned(Align::Bottom).elements().iter().map(|e| e.bounds().y).collect();
+    let tops: Vec<f32> = aligned(Align::Bottom)
+        .elements()
+        .iter()
+        .map(|e| e.bounds().y)
+        .collect();
     assert_eq!(tops, vec![240.0, 260.0, 200.0]);
-    let middles: Vec<f32> = aligned(Align::Middle).elements().iter().map(|e| e.bounds().center().y).collect();
+    let middles: Vec<f32> = aligned(Align::Middle)
+        .elements()
+        .iter()
+        .map(|e| e.bounds().center().y)
+        .collect();
     assert_eq!(middles, vec![140.0, 140.0, 140.0]);
     assert_eq!(aligned(Align::Top).bounds().unwrap().h, 80.0);
 
     // The first two as a group keep their places by each other.
-    let grouped = applied(&diagram, &Edit {
-        label: String::new(),
-        changes: edit::group(&diagram, &all[..2]),
-    });
-    let right = applied(&grouped, &Edit {
-        label: String::new(),
-        changes: edit::align(&grouped, &all, Align::Right, None, &Element::bounds),
-    });
+    let grouped = applied(
+        &diagram,
+        &Edit {
+            label: String::new(),
+            changes: edit::group(&diagram, &all[..2]),
+        },
+    );
+    let right = applied(
+        &grouped,
+        &Edit {
+            label: String::new(),
+            changes: edit::align(&grouped, &all, Align::Right, None, &Element::bounds),
+        },
+    );
     assert_eq!(lefts(&right), vec![260.0, 310.0, 300.0]);
     // One thing (a group is one) has nothing to line up with.
     assert!(edit::align(&grouped, &all[..2], Align::Left, None, &Element::bounds).is_empty());
     assert_eq!(edit::unit_count(&grouped, &all, None), 2);
     // Gone into, its elements line up with each other.
     assert_eq!(edit::unit_count(&grouped, &all[..2], Some(1)), 2);
-    let inside = made_and_undone(&grouped, &edit::align(&grouped, &all[..2], Align::Left, Some(1), &Element::bounds));
+    let inside = made_and_undone(
+        &grouped,
+        &edit::align(&grouped, &all[..2], Align::Left, Some(1), &Element::bounds),
+    );
     assert_eq!(lefts(&inside), vec![0.0, 0.0, 300.0]);
 }
 
@@ -1736,7 +2360,14 @@ fn a_moved_box_snaps_into_line_with_another() {
     // The first box (100..200 by 100..160), dragged to 4 short of under the
     // second (300..400): it lines up with it.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(346.0, 332.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(346.0, 332.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     assert_eq!(
@@ -1747,20 +2378,51 @@ fn a_moved_box_snaps_into_line_with_another() {
     // Further off, or with snapping held off, it goes where it's dragged.
     state.selection.clear();
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(340.0, 332.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(340.0, 332.0),
+            false,
+        )
         .unwrap();
-    assert_eq!(applied(&diagram, &edit).get(ElementId(1)).unwrap().bounds().x, 290.0);
+    assert_eq!(
+        applied(&diagram, &edit)
+            .get(ElementId(1))
+            .unwrap()
+            .bounds()
+            .x,
+        290.0
+    );
     state.snap = None;
     state.selection.clear();
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(150.0, 130.0), egui::pos2(346.0, 332.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 130.0),
+            egui::pos2(346.0, 332.0),
+            false,
+        )
         .unwrap();
-    assert_eq!(applied(&diagram, &edit).get(ElementId(1)).unwrap().bounds().x, 296.0);
+    assert_eq!(
+        applied(&diagram, &edit)
+            .get(ElementId(1))
+            .unwrap()
+            .bounds()
+            .x,
+        296.0
+    );
 }
 
 #[test]
 fn snapping_finds_the_nearest_side_or_middle_each_way() {
-    let others = [Rect::new(0.0, 0.0, 100.0, 60.0), Rect::new(300.0, 200.0, 50.0, 50.0)];
+    let others = [
+        Rect::new(0.0, 0.0, 100.0, 60.0),
+        Rect::new(300.0, 200.0, 50.0, 50.0),
+    ];
     // Its middle near the first's middle; its bottom near the second's top.
     let snap = edit::snap_rect(Rect::new(32.0, 147.0, 40.0, 50.0), &others, 5.0);
     assert_eq!((snap.dx, snap.x), (-2.0, Some(50.0)));
@@ -1771,8 +2433,16 @@ fn snapping_finds_the_nearest_side_or_middle_each_way() {
     let snap = edit::snap_point(Point::new(103.0, 500.0), &others, 5.0);
     assert_eq!((snap.dx, snap.dy), (-3.0, 0.0));
     // Lines and strokes aren't snapped to, nor what's being dragged.
-    let diagram = Diagram::new(vec![rectangle(1), line(2, (0.0, 0.0), (9.0, 9.0)), rectangle(3)]).unwrap();
-    assert_eq!(edit::snap_targets(&diagram, &[ElementId(3)], &Element::bounds), vec![rectangle(1).bounds()]);
+    let diagram = Diagram::new(vec![
+        rectangle(1),
+        line(2, (0.0, 0.0), (9.0, 9.0)),
+        rectangle(3),
+    ])
+    .unwrap();
+    assert_eq!(
+        edit::snap_targets(&diagram, &[ElementId(3)], &Element::bounds),
+        vec![rectangle(1).bounds()]
+    );
 }
 
 #[test]
@@ -1784,7 +2454,14 @@ fn a_box_being_made_or_resized_snaps_its_corner() {
     state.tool = Tool::Rectangle;
     // Its right side to 3 past the first box's right, its bottom far from anything.
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(120.0, 300.0), egui::pos2(203.0, 400.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(120.0, 300.0),
+            egui::pos2(203.0, 400.0),
+            false,
+        )
         .unwrap();
     let after = applied(&diagram, &edit);
     assert_eq!(
@@ -1795,7 +2472,14 @@ fn a_box_being_made_or_resized_snaps_its_corner() {
     // it snaps across, and stays as it is up and down.
     state.selection = vec![ElementId(1)];
     let edit = state
-        .drag(&diagram, view, &mut camera, egui::pos2(205.0, 130.0), egui::pos2(302.0, 158.0), false)
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(205.0, 130.0),
+            egui::pos2(302.0, 158.0),
+            false,
+        )
         .unwrap();
     assert_eq!(
         applied(&diagram, &edit).get(ElementId(1)).unwrap().shape,
@@ -1823,13 +2507,19 @@ fn inks() -> crate::export::Inks {
 }
 
 fn fixture() -> Diagram {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../tests/fixtures/diagram/sample.diagram");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../tests/fixtures/diagram/sample.diagram"
+    );
     Diagram::decode(&std::fs::read(path).unwrap()).unwrap()
 }
 
 #[test]
 fn the_fixture_is_as_the_viewer_writes_it() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../../tests/fixtures/diagram/sample.diagram");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../../tests/fixtures/diagram/sample.diagram"
+    );
     assert_eq!(encoded(&fixture()), std::fs::read_to_string(path).unwrap());
 }
 
@@ -1848,13 +2538,25 @@ fn an_svg_draws_each_element_in_the_theme_s_colors() {
         outline(3, Shape::Ellipse(Rect::new(200.0, 0.0, 100.0, 60.0))),
         outline(4, Shape::Diamond(Rect::new(0.0, 100.0, 100.0, 60.0))),
         text(5, Point::new(200.0, 100.0), "two\nlines"),
-        outline(6, Shape::Freehand { points: vec![Point::new(0.0, 200.0), Point::new(50.0, 220.0), Point::new(100.0, 200.0)] }),
+        outline(
+            6,
+            Shape::Freehand {
+                points: vec![
+                    Point::new(0.0, 200.0),
+                    Point::new(50.0, 220.0),
+                    Point::new(100.0, 200.0),
+                ],
+            },
+        ),
     ];
     let all: Vec<&Element> = elements.iter().collect();
     let svg = crate::export::svg(&all, &inks(), 2.0).unwrap();
     // The box around everything, with room, at twice the size; on the background.
     assert!(svg.starts_with(r#"<svg xmlns="http://www.w3.org/2000/svg" width="696" height="536" viewBox="-24 -24 348 268""#), "{svg}");
-    assert!(svg.contains(r##"<rect x="-24" y="-24" width="348" height="268" fill="#102030"/>"##), "{svg}");
+    assert!(
+        svg.contains(r##"<rect x="-24" y="-24" width="348" height="268" fill="#102030"/>"##),
+        "{svg}"
+    );
     for part in [
         // The rounded, dashed, tinted box, and its label, escaped, a line each.
         r##"<rect x="0" y="0" width="100" height="60" rx="15" fill="#0000ff" fill-opacity="0.22" stroke="#eeeeee" stroke-width="2" stroke-dasharray="10 7"/>"##,
@@ -1872,7 +2574,11 @@ fn an_svg_draws_each_element_in_the_theme_s_colors() {
     ] {
         assert!(svg.contains(part), "no {part} in:\n{svg}");
     }
-    assert_eq!(svg.matches("<polyline").count(), 3, "the line, its head, the stroke");
+    assert_eq!(
+        svg.matches("<polyline").count(),
+        3,
+        "the line, its head, the stroke"
+    );
     assert_eq!(crate::export::svg(&[], &inks(), 1.0), None);
 }
 
@@ -1898,6 +2604,9 @@ fn a_png_is_the_svg_rendered() {
     let one = crate::svg(&diagram, &[ElementId(1)], &theme, 1.0).unwrap();
     let [width, height] = crate::rendered(&one).unwrap().0;
     assert_eq!(width, 2048);
-    assert!((height as f32 / width as f32 - 128.0 / 228.0).abs() < 0.01, "{height}");
+    assert!(
+        (height as f32 / width as f32 - 128.0 / 228.0).abs() < 0.01,
+        "{height}"
+    );
     assert_eq!(crate::svg(&Diagram::default(), &[], &theme, 1.0), None);
 }

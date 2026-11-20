@@ -394,7 +394,10 @@ fn unsaved_sources_are_dirty_once_changed_and_saving_makes_them_clean() {
         .workbench_mut()
         .undo_document(document.id())
         .unwrap();
-    assert!(!info(app.world(), document.id()).dirty, "back as it started");
+    assert!(
+        !info(app.world(), document.id()).dirty,
+        "back as it started"
+    );
     type_text(app.world_mut(), document, 3, "s");
     save_and_wait(&mut app, document.id()).unwrap();
     assert!(!info(app.world(), document.id()).dirty);

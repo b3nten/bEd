@@ -124,6 +124,10 @@ impl Plugin for LanguageServersPlugin {
 fn install(app: &mut App) {
     super::actions::install(app);
     app.add_systems(Update, super::status::report_activity);
+    {
+        use bedtime_workbench::status::StatusAppExt;
+        app.add_panel_status::<crate::editor::EditorPanel>(super::status::file_item);
+    }
     app.init_resource::<LanguageServers>()
         .init_resource::<super::InstalledServers>()
         .init_resource::<Definitions>()

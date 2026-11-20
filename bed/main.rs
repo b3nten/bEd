@@ -5,8 +5,11 @@ use bedtime_workbench::{
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 
+mod backdrop;
 mod effects;
+mod internals;
 mod perf;
+mod scene;
 mod widgets;
 
 /// With `profile`, the Schedules panel's timeline is told how long each
@@ -68,6 +71,7 @@ fn main() -> AppExit {
         menus::MenusPlugin,
         layouts::LayoutSlotsPlugin,
         effects::EffectsPlugin,
+        backdrop::BackdropPlugin,
         perf::PerfPlugin,
         workspace::WorkspacesPanelPlugin,
         (
@@ -90,9 +94,10 @@ fn main() -> AppExit {
     // Last, so its cleanup sees every schedule the plugins made.
     .add_plugins(executor::ExecutorPlugin)
     .init_resource::<bedtime_ui::fonts::InstalledFonts>()
-    .add_status_item(bedtime_workbench::workspaces::status_item)
-    .add_status_item(bedtime_code::lsp::status::status_item)
-    .add_status_item(perf::status_item)
+    .add_global_status(bedtime_workbench::workspaces::status_item)
+    .add_global_status(bedtime_git::workbench::status::global_item)
+    .add_global_status(bedtime_code::lsp::status::global_item)
+    .add_global_status(perf::status_item)
     .add_dock_menu_item::<menus::NewWindow>()
     .add_systems(Startup, setup);
     bedtime_workbench::ActionAppExt::add_keymap(&mut app, KEYS);
@@ -233,7 +238,7 @@ mod settings {
                         EffectsEnabled, Scanlines, Vignette, Bloom,
                         Noise, Curvature, PixelGrid, BurnIn, Pulse,
                     }
-                    "Window" { WindowOpacity, WindowBlurEnabled, crate::perf::ShowFrameRate }
+                    "Window" { crate::backdrop::Backdrop, WindowOpacity, WindowBlurEnabled, crate::perf::ShowFrameRate }
                     "Panels" { PanelOpacity, PanelRadius, PanelGap }
                     "Editor" { WrapLines, Autosave, LineNumbers }
                     "Files" { ShowHiddenFiles, ShowIgnoredFiles }
