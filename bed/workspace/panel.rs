@@ -21,6 +21,8 @@ impl Action for OpenWorkspaces {
 #[bedtime_ui::panel]
 #[derive(Reflect, Default)]
 #[reflect(Component, Persist)]
+// Saved layouts name it by this path, wherever its module moves to.
+#[type_path = "bed::workspace"]
 pub struct WorkspacesPanel;
 
 pub struct WorkspacesPanelPlugin;

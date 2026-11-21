@@ -20,6 +20,8 @@ const LAYOUT: StandardMenu = StandardMenu::Custom("Layout");
 /// Which numbered layout this is, from 0.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[reflect(Component, Persist, Default)]
+// Saved layouts name it by this path, wherever its module moves to.
+#[type_path = "bed::layouts"]
 pub struct LayoutSlot(pub usize);
 
 impl LayoutSlot {
