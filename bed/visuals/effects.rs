@@ -1,3 +1,5 @@
+//! Screen effects (scanlines, vignette, bloom, noise, curvature, pixel grid,
+//! burn-in, pulse): a pass over the drawn window, set in Settings.
 use bedtime_ui::{UiSystems, egui};
 use bedtime_workbench::{
     ActiveLayout, LayoutCamera,

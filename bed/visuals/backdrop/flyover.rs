@@ -1,4 +1,4 @@
-//! The 3D backdrop: a slow flight down a valley of low hills at night, under
+//! The flyover backdrop: a slow flight down a valley of low hills at night, under
 //! a moon, in the theme's colours. Its camera draws into an image the window
 //! shows as its backdrop (`SurfaceBackdrop::Target`); fog the colour of the
 //! theme's background hides where the land ends.
@@ -6,79 +6,23 @@
 //! The land is a grid of cells. It is built again each time the flight
 //! crosses into the next row, a row further on, and slides towards the camera
 //! in between.
-use crate::backdrop::{Backdrops, FRAME_RATE};
-use bedtime_ui::{MotionPolicy, Theme, layouts::LayoutSurface, theme::Rgba, viewport_image};
-use bedtime_workbench::LayoutCamera;
+use super::{
+    Backdrops,
+    scene::{SceneImage, free_layer, hash, linear, request_frame, retire, surface_style},
+};
+use bedtime_ui::{theme::Rgba, viewport_image};
 use bevy::{
     asset::RenderAssetUsages,
-    camera::{
-        RenderTarget,
-        visibility::{NoFrustumCulling, RenderLayers},
-    },
+    camera::{RenderTarget, visibility::NoFrustumCulling},
     core_pipeline::tonemapping::Tonemapping,
     pbr::{DistanceFog, FogFalloff},
     prelude::*,
     render::render_resource::PrimitiveTopology,
 };
-use std::time::Duration;
 
 /// The `Backdrop` setting's value for this scene: no file's name has a colon.
 pub const NAME: &str = "scene:flyover";
 pub const LABEL: &str = "Flyover (3D)";
-
-/// bEd's scenes: each one's `Backdrop` setting and name in Settings.
-pub const SCENES: &[(&str, &str)] = &[(NAME, LABEL), (crate::internals::NAME, crate::internals::LABEL)];
-
-/// What the chosen scene's camera draws into: the window's backdrop.
-#[derive(Resource)]
-pub struct SceneImage(pub Handle<Image>);
-
-/// A scene that stopped takes its image back, unless another scene's is
-/// already there in its place.
-pub fn retire(world: &mut World, image: &Handle<Image>) {
-    if world
-        .get_resource::<SceneImage>()
-        .is_some_and(|shown| shown.0 == *image)
-    {
-        world.remove_resource::<SceneImage>();
-    }
-}
-
-/// A render layer nothing uses yet: a scene's camera sees only its scene, and
-/// no other camera sees it.
-pub fn free_layer(world: &mut World) -> RenderLayers {
-    let used: Vec<_> = world.query::<&RenderLayers>().iter(world).cloned().collect();
-    let layer = (1..)
-        .find(|&layer| {
-            used.iter()
-                .all(|layers| !layers.intersects(&RenderLayers::layer(layer)))
-        })
-        .unwrap();
-    RenderLayers::layer(layer)
-}
-
-/// Ask for the window's next frame, for a scene that moves.
-pub fn request_frame(world: &mut World) {
-    let frame = Duration::from_secs_f32(1.0 / FRAME_RATE);
-    let mut contexts = world.query_filtered::<&mut bevy_egui::EguiContext, With<LayoutCamera>>();
-    for mut context in contexts.iter_mut(world) {
-        context.get_mut().request_repaint_after(frame);
-    }
-}
-
-/// The first layout surface's theme, and whether animations are on.
-pub fn surface_style(world: &mut World) -> Option<(Theme, bool)> {
-    world
-        .query_filtered::<(&Theme, Option<&MotionPolicy>), With<LayoutSurface>>()
-        .iter(world)
-        .next()
-        .map(|(theme, motion)| (theme.clone(), motion.is_none_or(|motion| motion.enabled)))
-}
-
-pub fn linear(color: Rgba) -> LinearRgba {
-    let [r, g, b, _] = color;
-    Color::srgb(r, g, b).to_linear()
-}
 
 /// Cells across and ahead, each a unit square.
 const ACROSS: i64 = 72;
@@ -112,12 +56,6 @@ pub struct Flyover {
     flown: f32,
     /// The row and colours the land was last built for.
     built: Option<(i64, Colors)>,
-}
-
-pub fn hash(x: i64, z: i64) -> f32 {
-    let mut n = (x.wrapping_mul(374_761_393) ^ z.wrapping_mul(668_265_263)) as u64;
-    n = (n ^ (n >> 13)).wrapping_mul(1_274_126_177);
-    ((n ^ (n >> 16)) & 0xffff) as f32 / 65535.0
 }
 
 fn noise(p: Vec2) -> f32 {
@@ -353,12 +291,17 @@ pub fn update(world: &mut World) {
         }
         // The land slides a cell's length towards the camera, then is built
         // a row further on.
-        world.get_mut::<Transform>(flyover.land).unwrap().translation.z = flyover.flown.fract();
+        world
+            .get_mut::<Transform>(flyover.land)
+            .unwrap()
+            .translation
+            .z = flyover.flown.fract();
         // The camera sways a little, looking down the valley.
         let sway = flyover.flown * 0.05;
-        *world.get_mut::<Transform>(flyover.camera).unwrap() =
-            Transform::from_translation(EYE + Vec3::new(sway.sin() * 0.8, (sway * 1.7).sin() * 0.25, 0.0))
-                .looking_at(Vec3::new((sway * 0.6).sin() * 3.0, 3.4, -30.0), Vec3::Y);
+        *world.get_mut::<Transform>(flyover.camera).unwrap() = Transform::from_translation(
+            EYE + Vec3::new(sway.sin() * 0.8, (sway * 1.7).sin() * 0.25, 0.0),
+        )
+        .looking_at(Vec3::new((sway * 0.6).sin() * 3.0, 3.4, -30.0), Vec3::Y);
     });
     if moving {
         request_frame(world);

@@ -16,8 +16,8 @@
 //! The rest (pins, sockets, capacitors, vias, the traces of other layers,
 //! connectors) is a board's furniture. Everything that never changes is
 //! gathered into one mesh for each stuff it is made of.
-use crate::{
-    backdrop::Backdrops,
+use super::{
+    Backdrops,
     scene::{SceneImage, free_layer, hash, linear, request_frame, retire, surface_style},
 };
 use bedtime_ui::{UiDiagnostics, layouts::PanelPresentation, theme::Rgba, viewport_image};
@@ -93,8 +93,8 @@ const GLYPHS: &[(char, &str)] = &[
 /// Which of a digit's seven bars are lit: the top, then clockwise, then the
 /// middle, from the lowest bit.
 const DIGITS: [u8; 10] = [
-    0b011_1111, 0b000_0110, 0b101_1011, 0b100_1111, 0b110_0110, 0b110_1101, 0b111_1101,
-    0b000_0111, 0b111_1111, 0b110_1111,
+    0b011_1111, 0b000_0110, 0b101_1011, 0b100_1111, 0b110_0110, 0b110_1101, 0b111_1101, 0b000_0111,
+    0b111_1111, 0b110_1111,
 ];
 
 /// `text` as the board's printed lettering: white on clear, a pixel a dot.
@@ -856,11 +856,7 @@ fn furnish(kit: &mut Kit) {
     .enumerate()
     {
         let coil = Vec3::new(x, 0.0, z);
-        kit.slab(
-            Stuff::Chip,
-            coil + Vec3::Y * 0.3,
-            Vec3::new(1.1, 0.6, 1.1),
-        );
+        kit.slab(Stuff::Chip, coil + Vec3::Y * 0.3, Vec3::new(1.1, 0.6, 1.1));
         kit.put(Stuff::Gold)
             .post(coil + Vec3::Y * 0.6, 0.28 + (at % 2) as f32 * 0.06, 0.03);
         kit.take(coil, Vec2::splat(0.7));
@@ -1071,12 +1067,7 @@ fn spawn(world: &mut World, parts: Survey) -> Internals {
     );
     for pin in 0..17 {
         let along = (pin as f32 - 8.0) * 0.3;
-        for (x, z) in [
-            (along, -2.48),
-            (along, 2.48),
-            (-2.48, along),
-            (2.48, along),
-        ] {
+        for (x, z) in [(along, -2.48), (along, 2.48), (-2.48, along), (2.48, along)] {
             kit.slab(
                 Stuff::Gold,
                 Vec3::new(x, 0.22, z),
@@ -1536,13 +1527,12 @@ pub fn update(world: &mut World) {
             if internals.cards.iter().any(|card| card.panel == *panel) {
                 continue;
             }
-            let material =
-                world
-                    .resource_mut::<Assets<StandardMaterial>>()
-                    .add(StandardMaterial {
-                        unlit: true,
-                        ..default()
-                    });
+            let material = world
+                .resource_mut::<Assets<StandardMaterial>>()
+                .add(StandardMaterial {
+                    unlit: true,
+                    ..default()
+                });
             let entity = world
                 .spawn((
                     ChildOf(internals.root),
@@ -1717,12 +1707,7 @@ pub fn update(world: &mut World) {
         } else {
             internals.still + delta
         };
-        let lamps = [
-            true,
-            readings.focused,
-            readings.key,
-            internals.still < 0.15,
-        ];
+        let lamps = [true, readings.focused, readings.key, internals.still < 0.15];
         if internals.lamps_shown != Some(lamps) {
             internals.lamps_shown = Some(lamps);
             for (lamp, lit) in internals.lamps.iter().zip(lamps) {
@@ -1737,8 +1722,7 @@ pub fn update(world: &mut World) {
             .get(&internals.image)
             .map_or(Vec2::ONE, |image| image.size().as_vec2());
         let reach = (FOV / 2.0).tan();
-        let distance =
-            (VIEW.x / (reach * size.x / size.y.max(1.0))).max(VIEW.y / reach) + 4.0;
+        let distance = (VIEW.x / (reach * size.x / size.y.max(1.0))).max(VIEW.y / reach) + 4.0;
         let turn = (internals.time * 0.07).sin() * 0.1;
         let eye = Quat::from_rotation_y(turn) * Vec3::new(0.0, 0.86, 0.5) * distance;
         *world.get_mut::<Transform>(internals.camera).unwrap() =

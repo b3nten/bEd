@@ -1,0 +1,65 @@
+//! The file tree and the viewers, and what dropped files and folders do.
+use bedtime_audio::AudioPlugin;
+use bedtime_code::CodePlugin;
+use bedtime_diagram::DiagramPlugin;
+use bedtime_file_explorer::FileExplorerPlugin;
+use bedtime_font::FontPlugin;
+use bedtime_hex::HexPlugin;
+use bedtime_image::ImagePlugin;
+use bedtime_model::ModelViewerPlugin;
+use bedtime_sqlite::SqlitePlugin;
+use bedtime_table::TablePlugin;
+use bedtime_video::VideoPlugin;
+use bedtime_workbench::{PanelFactory, WorkbenchWorldExt};
+use bevy::prelude::*;
+
+pub struct FilesPlugin;
+
+impl Plugin for FilesPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(bedtime_workbench::FileDrops(dropped))
+            .init_resource::<DroppedFolder>()
+            .add_systems(Update, open_dropped_folder)
+            .add_plugins((
+                FileExplorerPlugin,
+                CodePlugin,
+                HexPlugin,
+                ImagePlugin,
+                ModelViewerPlugin,
+                FontPlugin,
+                AudioPlugin,
+                VideoPlugin,
+                TablePlugin,
+                SqlitePlugin,
+                DiagramPlugin,
+            ));
+        // The code actions' keys, as VS Code has them.
+        bedtime_workbench::ActionAppExt::add_keymap(app, bedtime_code::keymap::VSCODE);
+        // Save, Undo and Redo act on the focused panel's document.
+        app.world_mut().workbench_mut().register_document_handlers();
+    }
+}
+
+/// A folder dropped on the window, to open as the workspace (in `Update`,
+/// not while the layout draws).
+#[derive(Resource, Default)]
+struct DroppedFolder(Option<std::path::PathBuf>);
+
+/// Files dropped on a layout open where they're dropped; a folder opens as
+/// the workspace.
+fn dropped(world: &mut World, paths: Vec<std::path::PathBuf>) -> Option<PanelFactory> {
+    if let [folder] = paths.as_slice()
+        && folder.is_dir()
+    {
+        world.resource_mut::<DroppedFolder>().0 = Some(folder.clone());
+        return None;
+    }
+    let files: Vec<_> = paths.into_iter().filter(|path| !path.is_dir()).collect();
+    (!files.is_empty()).then(|| bedtime_file_explorer::open_files_factory(files))
+}
+
+fn open_dropped_folder(world: &mut World) {
+    if let Some(folder) = world.resource_mut::<DroppedFolder>().0.take() {
+        crate::workspace::switch(world, Some(folder));
+    }
+}

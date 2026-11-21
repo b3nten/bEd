@@ -1,12 +1,19 @@
 //! The window's backdrop: a fragment shader shown in place of the theme's
 //! background colour. Each `<name>.wgsl` in the config folder's `backdrops`
 //! is one, chosen in Settings; an edited file shows as it is saved. Or a 3D
-//! scene of bEd's own (`scene`).
+//! scene of bEd's own (`flyover`, `internals`; what they share is in `scene`).
+mod flyover;
+mod internals;
+pub mod scene;
+
 use bedtime_ui::{BackdropStatus, SurfaceBackdrop, layouts::LayoutSurface};
 use bedtime_workbench::{
     WorkbenchWorldExt,
     persistence::PersistenceDirectory,
-    settings::{SettingsAppExt, settings, ui::{combo, row}},
+    settings::{
+        SettingsAppExt, settings,
+        ui::{combo, row},
+    },
 };
 use bevy::prelude::*;
 use std::{
@@ -16,12 +23,12 @@ use std::{
 
 /// The backdrops bEd ships: each is written to the folder when missing from it.
 const SHIPPED: &[(&str, &str)] = &[
-    ("aurora", include_str!("backdrops/aurora.wgsl")),
-    ("dots", include_str!("backdrops/dots.wgsl")),
-    ("flow", include_str!("backdrops/flow.wgsl")),
-    ("gradient", include_str!("backdrops/gradient.wgsl")),
-    ("grid", include_str!("backdrops/grid.wgsl")),
-    ("starfield", include_str!("backdrops/starfield.wgsl")),
+    ("aurora", include_str!("shaders/aurora.wgsl")),
+    ("dots", include_str!("shaders/dots.wgsl")),
+    ("flow", include_str!("shaders/flow.wgsl")),
+    ("gradient", include_str!("shaders/gradient.wgsl")),
+    ("grid", include_str!("shaders/grid.wgsl")),
+    ("starfield", include_str!("shaders/starfield.wgsl")),
 ];
 /// How often a moving backdrop redraws, per second.
 pub const FRAME_RATE: f32 = 30.0;
@@ -105,14 +112,9 @@ impl Plugin for BackdropPlugin {
             ..default()
         })
         .register_setting::<Backdrop>()
-        .add_systems(Update, (
-                read,
-                crate::scene::update,
-                crate::internals::update,
-                show,
-                report,
-            )
-                .chain(),
+        .add_systems(
+            Update,
+            (read, flyover::update, internals::update, show, report).chain(),
         );
     }
 }
@@ -127,7 +129,7 @@ fn backdrop_row(
     row::<Backdrop>(ui, world, context, layer, None, |ui, chosen| {
         let before = chosen.clone();
         let scene = |name: &str| {
-            crate::scene::SCENES
+            scene::SCENES
                 .iter()
                 .find(|(scene, _)| *scene == name)
                 .map(|(_, label)| *label)
@@ -139,7 +141,7 @@ fn backdrop_row(
         .to_owned();
         combo(ui, "backdrop", shown, |ui| {
             ui.selectable_value(chosen, String::new(), NONE);
-            for (name, label) in crate::scene::SCENES {
+            for (name, label) in scene::SCENES {
                 ui.selectable_value(chosen, (*name).into(), *label);
             }
             for name in names {
@@ -197,7 +199,7 @@ fn read(world: &mut World) {
 /// Put the backdrop on every layout surface, new ones too.
 fn show(
     backdrops: Res<Backdrops>,
-    scene: Option<Res<crate::scene::SceneImage>>,
+    scene: Option<Res<scene::SceneImage>>,
     surfaces: Query<(Entity, Option<&SurfaceBackdrop>), With<LayoutSurface>>,
     mut commands: Commands,
 ) {
