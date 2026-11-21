@@ -112,7 +112,9 @@ class Bed:
         self.name = name or Path(sys.argv[0]).stem or "bed"
         OUTPUT.mkdir(parents=True, exist_ok=True)
         self.config = Path(tempfile.mkdtemp(prefix="bed-automation-"))
-        values = settings or {}
+        # No cat unless a script asks for it: it stands where it likes, in
+        # front of what's there, and keeps the window drawing.
+        values = {"appearance.cat": False, **(settings or {})}
         global_dir = self.config / "global"
         global_dir.mkdir()
         (global_dir / "settings.ron").write_text(

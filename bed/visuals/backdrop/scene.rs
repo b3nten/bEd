@@ -1,6 +1,6 @@
 //! What bEd's 3D scenes share: each draws into an image of its own, on a
 //! render layer no other camera sees, and the chosen one's image is the
-//! window's backdrop.
+//! window's backdrop. The cat uses the same render layers.
 use super::{FRAME_RATE, flyover, internals};
 use bedtime_ui::{MotionPolicy, Theme, layouts::LayoutSurface, theme::Rgba};
 use bedtime_workbench::LayoutCamera;

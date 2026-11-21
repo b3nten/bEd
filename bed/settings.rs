@@ -31,7 +31,7 @@ impl Plugin for BedSettingsPlugin {
                     EffectsEnabled, Scanlines, Vignette, Bloom,
                     Noise, Curvature, PixelGrid, BurnIn, Pulse,
                 }
-                "Window" { crate::visuals::backdrop::Backdrop, WindowOpacity, WindowBlurEnabled, crate::perf::ShowFrameRate }
+                "Window" { crate::visuals::backdrop::Backdrop, crate::visuals::cat::ShowCat, crate::visuals::cat::CatColor, WindowOpacity, WindowBlurEnabled, crate::perf::ShowFrameRate }
                 "Panels" { PanelOpacity, PanelRadius, PanelGap }
                 "Editor" { WrapLines, Autosave, LineNumbers }
                 "Files" { ShowHiddenFiles, ShowIgnoredFiles }
