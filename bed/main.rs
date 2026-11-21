@@ -10,7 +10,6 @@ mod effects;
 mod internals;
 mod perf;
 mod scene;
-mod widgets;
 
 /// With `profile`, the Schedules panel's timeline is told how long each
 /// system took: its layer listens to Bevy's spans.
@@ -84,7 +83,6 @@ fn main() -> AppExit {
             bedtime_web::WebPlugin,
             search::BedSearchPlugin,
             preview::BedPreviewPlugin,
-            widgets::WidgetsPlugin,
             bedtime_schedules::SchedulesPlugin,
             bedtime_notes::NotesPlugin,
             bedtime_automation::AutomationPlugin::from_env(),
