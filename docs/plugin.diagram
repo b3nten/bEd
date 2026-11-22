@@ -1,0 +1,62 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -70), text: "What a plugin adds, and where it shows. One call each; nothing for the app to wire.", size: 16), stroke: Muted),
+        (id: "panel-call", shape: Group, label: "a panel the app opens", stroke: Green, children: [
+            (shape: Text(at: (16, 44), text: "impl Panel for P\nimpl ShowPanel for P { SHOW = \"notes.show\" }\napp.add_panel::<P>()", size: 14)),
+        ]),
+        (id: "panel-where", shape: Group, label: "shows as", children: [
+            (shape: Text(at: (656, 44), text: "the View menu's panels, the command palette, a key\nopens a new one in the focused area\nsaved with its layout, if it's marked Persist", size: 14)),
+        ]),
+        (id: "viewer-call", shape: Group, label: "a viewer for a kind of file", stroke: Green, children: [
+            (shape: Text(at: (16, 188), text: "app.register_viewer::<Model, Panel>(\"Table\")\n   .formats([CSV])", size: 14)),
+        ]),
+        (id: "viewer-where", shape: Group, label: "shows as", children: [
+            (shape: Text(at: (656, 188), text: "opening such a file shows it in that panel\nOpen to the Side offers a file's other viewers\n(needs the documents tier)", size: 14)),
+        ]),
+        (id: "action-call", shape: Group, label: "an action", stroke: Green, children: [
+            (shape: Text(at: (16, 332), text: "impl Action for A { KEY, LABEL, DEFAULT_KEYS }\napp.add_action_handler::<A>(handler)\napp.add_menu_item::<A>(menu, group)", size: 14)),
+        ]),
+        (id: "action-where", shape: Group, label: "shows as", children: [
+            (shape: Text(at: (656, 332), text: "the command palette, its key (rebound in Settings)\na menu, in the order plugins are added\nfor the focused panel, or the app", size: 14)),
+        ]),
+        (id: "setting-call", shape: Group, label: "a setting", stroke: Green, children: [
+            (shape: Text(at: (16, 476), text: "settings! { \"Editor\" { pub WrapLines: bool { .. } } }\napp.register_setting::<WrapLines>()", size: 14)),
+        ]),
+        (id: "setting-where", shape: Group, label: "shows as", children: [
+            (shape: Text(at: (656, 476), text: "the Settings panel, in the section it declares\na value per layer: Global, then the workspace's\nsaved in that layer's settings.ron", size: 14)),
+        ]),
+        (id: "status-call", shape: Group, label: "status", stroke: Green, children: [
+            (shape: Text(at: (16, 620), text: "app.add_global_status(item)\napp.add_panel_status::<P>(item)", size: 14)),
+        ]),
+        (id: "status-where", shape: Group, label: "shows as", children: [
+            (shape: Text(at: (656, 620), text: "the status bar: at the left, in plugin order;\nor in the middle, while a P has the focus", size: 14)),
+        ]),
+        (id: "saved-call", shape: Group, label: "something saved", stroke: Green, children: [
+            (shape: Text(at: (16, 746), text: "#[reflect(Persist)] on a component\napp.persist::<T, GlobalStore>()\napp.persist::<T, WorkbenchStore>()", size: 14)),
+        ]),
+        (id: "saved-where", shape: Group, label: "shows as", children: [
+            (shape: Text(at: (656, 746), text: "with the layouts, in the session's world.ron\nits own file, for the whole app\nits own file, for the session or workspace", size: 14)),
+        ]),
+        (id: "gate-call", shape: Group, label: "something not to lose", stroke: Green, children: [
+            (shape: Text(at: (16, 890), text: "app.add_exit_gate(gate)  ", size: 14)),
+        ]),
+        (id: "gate-where", shape: Group, label: "shows as", children: [
+            (shape: Text(at: (656, 890), text: "quitting and switching workspace wait for it,\nor are called off (documents: unsaved changes)", size: 14)),
+        ]),
+        (id: "life-call", shape: Group, label: "a workspace's lifetime", stroke: Green, children: [
+            (shape: Text(at: (16, 1016), text: "systems in OnWorkspaceOpen,\nOnWorkspaceClosing, OnWorkspaceClose", size: 14)),
+        ]),
+        (id: "life-where", shape: Group, label: "shows as", children: [
+            (shape: Text(at: (656, 1016), text: "run at startup and at each switch, with or\nwithout workspaces: set up and drop what's its", size: 14)),
+        ]),
+        (id: "arrow-1", shape: Arrow(from: "panel-call", to: "panel-where", from_side: Right, to_side: Left)),
+        (id: "arrow-2", shape: Arrow(from: "viewer-call", to: "viewer-where", from_side: Right, to_side: Left)),
+        (id: "arrow-3", shape: Arrow(from: "action-call", to: "action-where", from_side: Right, to_side: Left)),
+        (id: "arrow-4", shape: Arrow(from: "setting-call", to: "setting-where", from_side: Right, to_side: Left)),
+        (id: "arrow-5", shape: Arrow(from: "status-call", to: "status-where", from_side: Right, to_side: Left)),
+        (id: "arrow-6", shape: Arrow(from: "saved-call", to: "saved-where", from_side: Right, to_side: Left)),
+        (id: "arrow-7", shape: Arrow(from: "gate-call", to: "gate-where", from_side: Right, to_side: Left)),
+        (id: "arrow-8", shape: Arrow(from: "life-call", to: "life-where", from_side: Right, to_side: Left)),
+    ],
+)

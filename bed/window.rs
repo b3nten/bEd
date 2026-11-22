@@ -23,6 +23,8 @@ pub struct BedWindowPlugin;
 impl Plugin for BedWindowPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup);
+        // The code actions' keys, as VS Code has them, and bEd's own.
+        bedtime::workbench::ActionAppExt::add_keymap(app, bedtime::code::keymap::VSCODE);
         bedtime::workbench::ActionAppExt::add_keymap(app, KEYS);
     }
 }

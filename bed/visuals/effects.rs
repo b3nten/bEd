@@ -149,7 +149,7 @@ impl Plugin for EffectsPlugin {
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
-        // bed's sources sit at the crate root, not under `src`.
+        // bed's library sources are in `bed/`, not under `src`.
         embedded_asset!(app, "bed", "effects.wesl");
         app.add_plugins((
             ExtractComponentPlugin::<EffectsFrame>::default(),

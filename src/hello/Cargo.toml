@@ -16,5 +16,5 @@ automation = ["bedtime/automation"]
 
 # All an app depends on: bedtime, and Bevy for its window and renderer.
 [dependencies]
-bedtime = { path = "../../crates/bedtime" }
+bedtime.workspace = true
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "png", "keyboard", "mouse", "x11", "wayland"] }

@@ -29,9 +29,10 @@ and the decision to make.
   and bedtime-persistence used on their own keep their own traits: the
   wrapper is the workbench's, where nearly all the operations are.
 - The cat and the frame-rate item become bedtime crates.
-- bed becomes a library with a thin `src/bed.rs` binary, so an engine can
+- bed becomes a library with a thin `src/bed/main.rs` binary, so an engine can
   build on it. Done: `bed::BedPlugins`, `bed::default_plugins()`,
-  `bed::runtime`.
+  `bed::runtime` (the library, `bed/`); the app is the `bed` package's
+  binary, `src/bed/main.rs`.
 
 Step 6 (contributions), as decided:
 
@@ -240,7 +241,7 @@ Save, Undo and Redo to work.
 
 ## The second app
 
-`bedtime/examples/hello` is an app that depends on `bedtime` and Bevy only:
+`src/hello` is an app that depends on `bedtime` and Bevy only:
 one panel of its own (a counter), a setting, a status item, an action and a
 menu item, with the settings panel, the command palette, menus, a status bar
 and saving between runs. `tests/automation/hello.py` drives it.
@@ -295,7 +296,7 @@ with `CounterPlugin` saying what a new window starts with.
 
 | Was in bed | Now |
 |---|---|
-| `main.rs` | `bed/src/bed.rs` (the app) and `bed/lib.rs` (`BedPlugins`) |
+| `main.rs` | `src/bed/main.rs` (the app, the `bed` package's binary) and `bed/lib.rs` (its library: `BedPlugins`) |
 | window, camera, status bar setup; the app's name | `AppPlugins`, `ShellPlugin`, `AppInfo` |
 | Quit | `Quit`, in `ShellPlugin` |
 | `settings.rs`' layout of every setting | gone: settings show in their declared sections |
@@ -313,7 +314,7 @@ with `CounterPlugin` saying what a new window starts with.
 
 Still bed's, by choice: its window's surface options and titlebar tools,
 its themes, the section order and Autosave default in `settings.rs`, the
-glue between plugins (`plugins/`: git with the terminal and workspaces,
+glue between plugins (`git.rs`, `search.rs`, `terminal.rs`, `mascots.rs`: git with the terminal and workspaces,
 search seeded from the editor, the shell commands, carried terminals), and
 its look (`visuals/`).
 

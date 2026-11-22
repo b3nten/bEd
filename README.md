@@ -4,7 +4,7 @@ bEd is a next-gen IDE built with [Bevy](https://bevy.org/). it brings code editi
 
 **prerelease:** bEd currently runs on macOS with Apple silicon. expect rough edges and breaking changes to settings and saved workspaces. Linux support is planned.
 
-![screenshot of bed](bed/assets/screenshot_01.png)
+![screenshot of bed](src/bed/assets/screenshot_01.png)
 
 ## features
 
@@ -20,9 +20,9 @@ bEd is a next-gen IDE built with [Bevy](https://bevy.org/). it brings code editi
 - **the workbench:** tabs and split panels, saved layout slots, recent workspaces, multiple windows, and persisted workspace state.
 - **make it yours:** 20 bundled color themes plus a theme editor, configurable fonts and keybindings, global and workspace settings, and shader effects.
 
-![screenshot of bed](bed/assets/screenshot_02.png)
+![screenshot of bed](src/bed/assets/screenshot_02.png)
 
-![screenshot of bed](bed/assets/screenshot_03.png)
+![screenshot of bed](src/bed/assets/screenshot_03.png)
 
 ## installation
 
@@ -64,9 +64,9 @@ bEd is the reference app for **bedtime**, a set of crates for building desktop a
 - **`bedtime-ui`:** themes, fonts, widgets, and layouts of tabbed panels.
 - **`bedtime-workbench`:** an app's services (actions and keys, menus, settings, the status bar, background work), with documents and workspaces as opt-in parts. `AppPlugins::new("Name")` is an app from its name.
 - **plugins:** each feature above is its own crate (`bedtime-code`, `bedtime-git`, `bedtime-terminal`, `bedtime-image`, ...) that an app adds as a Bevy plugin.
-- **`bedtime`:** the one dependency: every crate above re-exported behind a Cargo feature. [`bedtime/examples/hello`](bedtime/examples/hello) is a whole app on it in about a hundred lines.
+- **`bedtime`:** the one dependency: every crate above re-exported behind a Cargo feature. [`src/hello`](src/hello/main.rs) is a whole app on it in about a hundred lines.
 
-bed is a library, [`bed/lib.rs`](bed/lib.rs), which depends on `bedtime` alone, composes its plugins as `BedPlugins` and adds what's bEd's own (its titlebar, themes, look, and the glue between plugins); the app itself is the few lines of [`bed/src/bed.rs`](bed/src/bed.rs). another app can add `BedPlugins` and build on it.
+bEd itself is two small things, in the one `bed` package. its library, [`bed`](bed/lib.rs), is bEd as plugins: it depends on `bedtime` alone, composes its plugins as `BedPlugins` and adds what's bEd's own (its titlebar, themes, look, and the glue between plugins). the app is the few lines of [`src/bed/main.rs`](src/bed/main.rs). another app can add `BedPlugins` and build on it.
 
 useful cargo features for the `bed` package:
 

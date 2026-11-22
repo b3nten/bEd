@@ -1,0 +1,172 @@
+{
+  "features" : [
+    "refractivity"
+  ],
+  "fill" : {
+    "linear-gradient" : [
+      "display-p3:0.47668,0.23643,0.63691,1.00000",
+      "display-p3:0.34262,0.11126,0.81370,1.00000"
+    ]
+  },
+  "groups" : [
+    {
+      "blend-mode" : "normal",
+      "blur-material" : 1,
+      "hidden" : false,
+      "layers" : [
+        {
+          "fill" : {
+            "solid" : "display-p3:0.96783,0.42382,0.00000,1.00000"
+          },
+          "glass" : true,
+          "hidden" : true,
+          "image-name" : "bed-free-5-svgrepo-com.svg",
+          "name" : "bed-free-5-svgrepo-com"
+        },
+        {
+          "blend-mode" : "normal",
+          "fill" : {
+            "solid" : "display-p3:1.00000,0.00207,0.99886,1.00000"
+          },
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "bed-4-svgrepo-com.svg",
+          "name" : "bed-4-svgrepo-com"
+        }
+      ],
+      "lighting" : "individual",
+      "opacity" : 1,
+      "refractivity" : {
+        "depth" : 0.8209765625,
+        "enabled" : true,
+        "strength" : -0.000703125
+      },
+      "shadow" : {
+        "kind" : "neutral",
+        "opacity" : 0.89
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.53
+      }
+    },
+    {
+      "blend-mode" : "screen",
+      "blur-material" : 1,
+      "layers" : [
+        {
+          "hidden" : true,
+          "image-name" : "bed-svgrepo-com-2.svg",
+          "name" : "bed-svgrepo-com-2",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              9.9375,
+              -158.8125
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "opacity" : 1,
+      "refractivity" : {
+        "depth" : 1,
+        "enabled" : true,
+        "strength" : 1
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.17
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0.35
+      }
+    },
+    {
+      "blend-mode" : "screen",
+      "blur-material" : 0.5,
+      "hidden" : true,
+      "layers" : [
+        {
+          "blend-mode" : "overlay",
+          "fill" : "none",
+          "glass" : true,
+          "hidden" : false,
+          "image-name" : "bed-svgrepo-com.svg",
+          "name" : "bed-svgrepo-com",
+          "position" : {
+            "scale" : 1.03,
+            "translation-in-points" : [
+              12,
+              18.3984375
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "refractivity" : {
+        "depth" : 0.9140625,
+        "enabled" : true,
+        "strength" : -0.49484375
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.46
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : false,
+        "value" : 0
+      }
+    },
+    {
+      "blend-mode" : "screen",
+      "blur-material" : 0.5,
+      "layers" : [
+        {
+          "fill" : {
+            "linear-gradient" : [
+              "display-p3:0.00000,1.00000,0.65866,1.00000",
+              "display-p3:0.54683,0.00000,0.96783,1.00000"
+            ]
+          },
+          "hidden" : true,
+          "image-name" : "bed-svgrepo-com-3.svg",
+          "name" : "bed-svgrepo-com-3",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              28.000000000000114,
+              0
+            ]
+          }
+        }
+      ],
+      "lighting" : "individual",
+      "opacity" : 1,
+      "refractivity" : {
+        "depth" : 0.9140625,
+        "enabled" : true,
+        "strength" : -0.49484375
+      },
+      "shadow" : {
+        "kind" : "layer-color",
+        "opacity" : 0.45
+      },
+      "specular" : true,
+      "translucency" : {
+        "enabled" : true,
+        "value" : 0
+      }
+    }
+  ],
+  "supported-platforms" : {
+    "circles" : [
+      "watchOS"
+    ],
+    "squares" : "shared"
+  }
+}

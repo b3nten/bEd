@@ -1,4 +1,4 @@
-"""The hello example (bedtime/examples/hello): an app of bedtime's plugins
+"""The hello example (src/hello): an app of bedtime's plugins
 and one of its own, without bEd. It starts with a counter; a click counts;
 the status bar shows the total; its setting is in Settings without being
 laid out; its action opens another; Quit saves; and the next run has what

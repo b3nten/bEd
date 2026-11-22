@@ -14,7 +14,7 @@ from pathlib import Path
 
 REPOSITORY = Path(__file__).resolve().parent.parent
 # Where bEd keeps the notices of what it embeds or adapts.
-ROOTS = ("bed", "bedtime/crates", "vendor", "licenses")
+ROOTS = ("src", "bed", "bedtime/crates", "vendor", "licenses")
 SKIPPED = {"target", ".git", "__pycache__", "tests", "fixtures", "node_modules"}
 
 

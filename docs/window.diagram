@@ -1,0 +1,34 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -70), text: "A window of a bedtime app: who draws what.", size: 16), stroke: Muted),
+        (id: "win", shape: Rectangle(x: 0, y: 0, w: 1100, h: 640), stroke: Muted, rounded: true),
+        (id: "titlebar", shape: Rectangle(x: 12, y: 12, w: 1076, h: 44), label: "titlebar", stroke: Yellow, fill: Yellow, rounded: true),
+        (id: "area-1", shape: Rectangle(x: 12, y: 68, w: 300, h: 512), rounded: true),
+        (id: "tabs-1", shape: Rectangle(x: 12, y: 68, w: 300, h: 40), label: "tabs", fill: Blue, rounded: true),
+        (id: "panel-1", shape: Rectangle(x: 24, y: 120, w: 276, h: 448), label: "a panel", stroke: Green, fill: Green, rounded: true),
+        (id: "area-2", shape: Rectangle(x: 324, y: 68, w: 764, h: 512), rounded: true),
+        (id: "tabs-2", shape: Rectangle(x: 324, y: 68, w: 764, h: 40), label: "tabs", fill: Blue, rounded: true),
+        (id: "panel-2", shape: Rectangle(x: 336, y: 120, w: 740, h: 448), label: "a panel", stroke: Green, fill: Green, rounded: true),
+        (id: "st-global", shape: Rectangle(x: 12, y: 592, w: 250, h: 36), label: "global items", fill: Cyan, rounded: true),
+        (id: "st-panel", shape: Rectangle(x: 274, y: 592, w: 300, h: 36), label: "the panel's status", fill: Cyan, rounded: true),
+        (id: "st-updates", shape: Rectangle(x: 586, y: 592, w: 330, h: 36), label: "updates", fill: Cyan, rounded: true),
+        (id: "st-name", shape: Rectangle(x: 928, y: 592, w: 160, h: 36), label: "panel name", fill: Cyan, rounded: true),
+        (id: "n-title", shape: Group, label: "the titlebar: the app's", stroke: Yellow, children: [
+            (shape: Text(at: (1236, 44), text: "the menu bar, where the platform has no\nnative one; and what the app puts there\n(bEd: tool buttons that open panels)", size: 14)),
+        ]),
+        (id: "n-layout", shape: Group, label: "areas and tabs: bedtime-ui's layouts", children: [
+            (shape: Text(at: (1236, 194), text: "split, joined and resized by dragging;     \ntabs move between areas; the arrangement\nis a layout, saved with the session", size: 14)),
+        ]),
+        (id: "n-panel", shape: Group, label: "a panel: a plugin's", stroke: Green, children: [
+            (shape: Text(at: (1236, 344), text: "Panel::draw(ui, world, context, panel):\nimmediate mode, with the whole world\nto read and to ask things of", size: 14)),
+        ]),
+        (id: "n-status", shape: Group, label: "the status bar: the app tier's", children: [
+            (shape: Text(at: (1236, 494), text: "global items: plugins', in plugin order\nthe panel's status: the focused panel's plugin's\nupdates: background work, notifications\nthe focused panel's name", size: 14)),
+        ]),
+        (id: "arrow-1", shape: Arrow(from: "n-title", to: "titlebar", from_side: Left, to_side: Right), stroke: Muted, dash: Dashed),
+        (id: "arrow-2", shape: Arrow(from: "n-layout", to: "tabs-2", from_side: Left, to_side: Right), stroke: Muted, dash: Dashed),
+        (id: "arrow-3", shape: Arrow(from: "n-panel", to: "panel-2", from_side: Left, to_side: Right), stroke: Muted, dash: Dashed),
+        (id: "arrow-4", shape: Arrow(from: "n-status", to: "st-name", from_side: Left, to_side: Right), stroke: Muted, dash: Dashed),
+    ],
+)

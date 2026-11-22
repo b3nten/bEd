@@ -5,7 +5,7 @@
 Run this after changing `cat.blend`. Every action becomes an
 animation of the same name, sampled each frame on the bones that carry skin:
 the controls and what they do to the legs are baked in. bEd finds bones and
-animations by name (`bed/visuals/cat/rig.rs`): add a move there to use a
+animations by name (`bedtime/crates/bedtime-cat/src/rig.rs`): add a move there to use a
 new action.
 """
 

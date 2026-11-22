@@ -1,0 +1,100 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -70), text: "How an app is put together: plugin groups, each made of the row below it.\nGreen: what an app writes. Yellow: what it adds if it wants it.", size: 16), stroke: Muted),
+        (id: "writes", shape: Rectangle(x: 0, y: 0, w: 1820, h: 222), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 10), text: "what an app writes", size: 16), stroke: Muted),
+        (id: "appplugins", shape: Rectangle(x: 0, y: 286, w: 1820, h: 240), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 296), text: "AppPlugins::new(name): an app from its name", size: 16), stroke: Muted),
+        (id: "appwindow", shape: Rectangle(x: 0, y: 590, w: 1820, h: 204), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 600), text: "AppWindowPlugins: an app's services with its window", size: 16), stroke: Muted),
+        (id: "appcore", shape: Rectangle(x: 0, y: 858, w: 1820, h: 222), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 868), text: "AppCorePlugins: an app's services without a window (what tests use)", size: 16), stroke: Muted),
+        (id: "optin", shape: Rectangle(x: 0, y: 1144, w: 1820, h: 186), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 1154), text: "what an app adds if it wants it", size: 16), stroke: Muted),
+        (id: "w-hello", shape: Group, label: "hello", stroke: Green, children: [
+            (shape: Text(at: (46, 90), text: "App::new().add_plugins((\n    AppPlugins::new(\"Hello\"),\n    AutomationPlugin::from_env(),\n    CounterPlugin,          // its own\n))", size: 14)),
+        ]),
+        (id: "w-bed", shape: Group, label: "bed", stroke: Green, children: [
+            (shape: Text(at: (435, 90), text: "App::new().add_plugins((\n    bed::default_plugins(),  // Bevy's, bEd's window\n    bed::BedPlugins,\n    LowLatencyPlugin,\n))", size: 14)),
+        ]),
+        (id: "w-bed-plugins", shape: Group, label: "BedPlugins begins with", children: [
+            (shape: Text(at: (968, 90), text: "AppPlugins::new(\"bEd\")\n    .without_bevy_plugins()\nDocumentsPlugins\nWorkspacesPlugin\nthen 25 bedtime plugins", size: 14)),
+        ]),
+        (id: "a-bevy", shape: Group, label: "Bevy's DefaultPlugins", children: [
+            (shape: Text(at: (46, 376), text: "the window: titled `name`,\nclosed when the session\nsays, unfocused for scripts\n\n(left out by\n.without_bevy_plugins())", size: 14)),
+        ]),
+        (id: "a-ui", shape: Group, label: "UiPlugin", children: [
+            (shape: Text(at: (342, 376), text: "egui on Bevy,\nthemes, icons,\nfonts", size: 14)),
+        ]),
+        (id: "a-window", shape: Group, label: "AppWindowPlugins", children: [
+            (shape: Text(at: (528, 376), text: "the app's services, \nwith its window\n\n(the row below)", size: 14)),
+        ]),
+        (id: "a-panels", shape: Group, label: "two panels", children: [
+            (shape: Text(at: (765, 376), text: "SettingsPanelPlugin\nCommandPalettePlugin", size: 14)),
+        ]),
+        (id: "a-shell", shape: Group, label: "ShellPlugin", children: [
+            (shape: Text(at: (1002, 376), text: "AppInfo: the name, once\nQuit\nthe window as panels,\na status bar under them,\na camera", size: 14)),
+        ]),
+        (id: "c-core", shape: Group, label: "AppCorePlugins", children: [
+            (shape: Text(at: (46, 680), text: "the services     \nwithout a window\n\n(the row below)", size: 14)),
+        ]),
+        (id: "c-clip", shape: Group, label: "ClipboardPlugin", children: [
+            (shape: Text(at: (258, 680), text: "the system         \nclipboard", size: 14)),
+        ]),
+        (id: "c-native", shape: Group, label: "native window + menus", children: [
+            (shape: Text(at: (486, 680), text: "the platform's menu bar, \nwindow chrome,\nthe dock menu", size: 14)),
+        ]),
+        (id: "c-ui", shape: Group, label: "WorkbenchUiPlugin", children: [
+            (shape: Text(at: (765, 680), text: "the status bar's     \nitems", size: 14)),
+        ]),
+        (id: "c-menus", shape: Group, label: "StandardMenusPlugin", children: [
+            (shape: Text(at: (1011, 680), text: "App, File, Edit, View, \nWindow, Help", size: 14)),
+        ]),
+        (id: "c-look", shape: Group, label: "AppearancePlugin", children: [
+            (shape: Text(at: (1273, 680), text: "theme, font, opacity,\npanel shape: settings", size: 14)),
+        ]),
+        (id: "k-persist", shape: Group, label: "PersistencePlugin", children: [
+            (shape: Text(at: (46, 948), text: "the config folder,   \nstores", size: 14)),
+        ]),
+        (id: "k-settings", shape: Group, label: "SettingsPlugin", children: [
+            (shape: Text(at: (291, 948), text: "settings in layers", size: 14)),
+        ]),
+        (id: "k-work", shape: Group, label: "WorkPlugin", children: [
+            (shape: Text(at: (512, 948), text: "background work", size: 14)),
+        ]),
+        (id: "k-actions", shape: Group, label: "ActionsPlugin", children: [
+            (shape: Text(at: (706, 948), text: "actions, keys   ", size: 14)),
+        ]),
+        (id: "k-layouts", shape: Group, label: "LayoutsPlugin", children: [
+            (shape: Text(at: (910, 948), text: "layouts, areas, \npanels", size: 14)),
+        ]),
+        (id: "k-session", shape: Group, label: "SessionPlugin", children: [
+            (shape: Text(at: (1113, 948), text: "exit and its gates\nthe workspace's lifetime\nthe global store and layer\nthe session store\nfile pickers, notifications", size: 14)),
+        ]),
+        (id: "o-docs", shape: Group, label: "DocumentsPlugins", stroke: Yellow, children: [
+            (shape: Text(at: (46, 1234), text: "DocumentsPlugin\nDocumentSettingsPlugin\nDocumentFilesPlugin", size: 14)),
+        ]),
+        (id: "o-ws", shape: Group, label: "WorkspacesPlugin", stroke: Yellow, children: [
+            (shape: Text(at: (300, 1234), text: "folders as workspaces,\ntheir File menu items", size: 14)),
+        ]),
+        (id: "o-slots", shape: Group, label: "LayoutSlotsPlugin", stroke: Yellow, children: [
+            (shape: Text(at: (554, 1234), text: "five numbered        \nlayouts", size: 14)),
+        ]),
+        (id: "o-wsp", shape: Group, label: "WorkspacesPanelPlugin", stroke: Yellow, children: [
+            (shape: Text(at: (799, 1234), text: "the Workspaces           \npanel", size: 14)),
+        ]),
+        (id: "o-themes", shape: Group, label: "ThemesPlugin", stroke: Yellow, children: [
+            (shape: Text(at: (1078, 1234), text: "the app's themes;\nThemeEditorPlugin", size: 14)),
+        ]),
+        (id: "o-lat", shape: Group, label: "LowLatencyPlugin", stroke: Yellow, children: [
+            (shape: Text(at: (1290, 1234), text: "for light frames    ", size: 14)),
+        ]),
+        (id: "o-auto", shape: Group, label: "AutomationPlugin", stroke: Yellow, children: [
+            (shape: Text(at: (1527, 1234), text: "scripts             ", size: 14)),
+        ]),
+        (id: "arrow-1", shape: Arrow(from: "a-window", to: "appwindow", from_side: Bottom, to_side: Top), label: "is"),
+        (id: "arrow-2", shape: Arrow(from: "c-core", to: "appcore", from_side: Bottom, to_side: Top), label: "is"),
+        (id: "arrow-3", shape: Arrow(from: "writes", to: "appplugins", from_side: Bottom, to_side: Top)),
+    ],
+)

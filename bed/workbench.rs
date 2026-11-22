@@ -15,6 +15,7 @@ impl Plugin for BedWorkbenchPlugin {
             AppPlugins::new("bEd").without_bevy_plugins(),
             // bEd's panels show documents.
             bedtime::workbench::DocumentsPlugins,
+            NewDocumentPlugin,
             // Right after persistence: it reads the recent folders and
             // adds the settings layers the rest use.
             WorkspacesPlugin::default(),
@@ -24,5 +25,15 @@ impl Plugin for BedWorkbenchPlugin {
             bedtime::code::lsp::LanguageServersPanelPlugin,
             settings::BedSettingsPlugin,
         ));
+    }
+}
+
+/// New makes an untitled text document (a terminal makes another terminal
+/// itself).
+struct NewDocumentPlugin;
+
+impl Plugin for NewDocumentPlugin {
+    fn build(&self, app: &mut App) {
+        bedtime::workbench::NewAppExt::set_new_document::<bedtime::document::TextBuffer>(app);
     }
 }

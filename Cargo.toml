@@ -1,6 +1,45 @@
+# bEd: the library in `bed/` (bEd as plugins: `BedPlugins`, a few plugins on
+# `bedtime`, for the app and for apps that build on it), and the app in
+# `src/bed/` (`main.rs`, a few lines, and its assets). `src/hello` is another
+# app, on `bedtime` alone.
+[package]
+name = "bed"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "bEd, an editor built with Bevy: the app, and bEd as plugins"
+
+[lib]
+path = "bed/lib.rs"
+
+[[bin]]
+name = "bed"
+path = "src/bed/main.rs"
+
+[features]
+# Let scripts drive the app (tools/bed.py).
+automation = ["bedtime/automation"]
+# Time every system, for the Schedules panel's timeline.
+profile = ["bedtime/profile"]
+
+[dependencies]
+# bEd is bedtime's plugins, arranged: everything it's made of comes from here.
+bedtime = { workspace = true, features = [
+    "workspaces", "documents", "filesystem", "system-fonts",
+    "file_explorer", "code", "terminal", "git", "search",
+    "markdown", "datatree", "table", "sqlite", "diagram", "hex",
+    "image", "audio", "video", "model", "font",
+    "http_client", "web", "notes", "schedules", "mascots",
+    "cat", "frame_rate",
+] }
+bevy_egui.workspace = true
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_winit", "bevy_log", "png", "keyboard", "mouse", "x11", "wayland"] }
+
 [workspace]
 members = [
-    "bed",
+    ".",
+    "src/hello",
     "bedtime/crates/bedtime-clipboard",
     "bedtime/crates/bedtime-code",
     "bedtime/crates/bedtime-hex",
@@ -36,9 +75,8 @@ members = [
     "bedtime/crates/bedtime-diagram",
     "bedtime/crates/bedtime-cat",
     "bedtime/crates/bedtime-frame-rate",
-    "bedtime/examples/hello",
 ]
-default-members = ["bed"]
+default-members = ["."]
 exclude = ["vendor/arboard", "vendor/egui", "vendor/rio-vt"]
 resolver = "3"
 

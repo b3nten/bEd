@@ -1,0 +1,35 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -70), text: "What is saved, and where: the app's config folder, ~/.config/<app> (or $<APP>_CONFIG_DIR).", size: 16), stroke: Muted),
+        (id: "s-global", shape: Group, label: "GlobalStore: the whole app's", stroke: Green, children: [
+            (shape: Text(at: (16, 44), text: "always there                     \nthe Global settings layer\napp.persist::<T, GlobalStore>()", size: 14)),
+        ]),
+        (id: "f-global", shape: Group, label: "global/", children: [
+            (shape: Text(at: (576, 44), text: "settings.ron          the Global layer\nrecent.ron            recent folders (workspaces)\nlayout_defaults.ron   each layout slot's default", size: 14)),
+        ]),
+        (id: "s-session", shape: Group, label: "WorkbenchStore: the session's", stroke: Green, children: [
+            (shape: Text(at: (16, 198), text: "always there\nthe world snapshot: layouts, areas,\n  panels, whatever is marked Persist\napp.persist::<T, WorkbenchStore>()", size: 14)),
+        ]),
+        (id: "f-session", shape: Group, label: "session/        (without workspaces)", children: [
+            (shape: Text(at: (576, 198), text: "world.ron             layouts and panels\nnotes.ron, …          what plugins keep with it", size: 14)),
+        ]),
+        (id: "s-ws", shape: Group, label: "with workspaces", stroke: Yellow, children: [
+            (shape: Text(at: (16, 370), text: "the session's store is the open\nfolder's: one for each folder,\nnamed by a hash of its path\nand a settings layer of its own", size: 14)),
+        ]),
+        (id: "f-ws", shape: Group, label: "workspaces/<hash>/   and workspaces/default/", children: [
+            (shape: Text(at: (576, 370), text: "world.ron             that folder's layouts and panels\nsettings.ron          the workspace's layer, over Global\nnotes.ron, …          what plugins keep with it\npath.txt, lock        which folder; one window at a time", size: 14)),
+        ]),
+        (id: "s-files", shape: Group, label: "files of their own", children: [
+            (shape: Text(at: (16, 542), text: "edited by hand or by the app,\nread again when they change", size: 14)),
+        ]),
+        (id: "f-files", shape: Group, label: "themes/   backdrops/", children: [
+            (shape: Text(at: (576, 542), text: "themes/*.ron          shipped ones written when missing\nbackdrops/*.wgsl      bEd's shader backdrops", size: 14)),
+        ]),
+        (id: "arrow-1", shape: Arrow(from: "s-global", to: "f-global", from_side: Right, to_side: Left)),
+        (id: "arrow-2", shape: Arrow(from: "s-session", to: "f-session", from_side: Right, to_side: Left)),
+        (id: "arrow-3", shape: Arrow(from: "s-ws", to: "f-ws", from_side: Right, to_side: Left)),
+        (id: "arrow-4", shape: Arrow(from: "s-files", to: "f-files", from_side: Right, to_side: Left)),
+        (id: "arrow-5", shape: Arrow(from: "s-session", to: "s-ws", from_side: Bottom, to_side: Top), label: "repointed", stroke: Muted, dash: Dashed),
+    ],
+)

@@ -1,5 +1,5 @@
 //! bEd, the app: Bevy's plugins, bEd's (the `bed` library), and how it runs
-//! (low latency: an app that builds on bEd chooses for itself).
+//! (low latency: an app that builds on bed chooses for itself).
 use bevy::prelude::*;
 
 fn main() -> AppExit {
@@ -11,7 +11,7 @@ fn main() -> AppExit {
             bed::default_plugins(),
             bed::BedPlugins,
             // bEd's frames are light: a key shows sooner this way.
-            bedtime::ui::LowLatencyPlugin,
+            bed::runtime::LowLatencyPlugin,
         ))
         .run()
 }

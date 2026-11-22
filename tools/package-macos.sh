@@ -30,7 +30,7 @@ export COPYFILE_DISABLE=1
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 version=$(awk '$1 == "version" {gsub(/"/, "", $3); print $3; exit}' Cargo.toml)
-icon=bed/assets/bEd-iOS-Default-1024@1x.png
+icon=src/bed/assets/bEd-iOS-Default-1024@1x.png
 binary=target/release/bed
 test -f "$icon" || { echo "Missing app icon: $icon" >&2; exit 1; }
 if [ "$skip_build" = false ]; then

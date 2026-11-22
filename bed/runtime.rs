@@ -1,6 +1,7 @@
 //! How bEd runs: bedtime's low latency (`bedtime::ui::latency`: no pipelined
 //! rendering, here; the single-threaded executor and frame pacing,
-//! `LowLatencyPlugin`, in `src/bed.rs`), and its logging.
+//! `LowLatencyPlugin`, in `src/bed/main.rs`), and its logging.
+pub use bedtime::ui::LowLatencyPlugin;
 use bevy::app::PluginGroupBuilder;
 
 /// Bevy's default plugins, as bEd runs them: see [`logging`] and
