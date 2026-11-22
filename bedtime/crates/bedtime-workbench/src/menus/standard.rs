@@ -207,6 +207,7 @@ fn compose(world: &mut World) {
     let contributions = world
         .remove_resource::<MenuContributions>()
         .unwrap_or_default();
+    #[cfg_attr(not(feature = "native"), allow(unused_mut))]
     let mut bar = world.spawn(MenuBar);
     #[cfg(feature = "native")]
     bar.insert(NativeMenuBar);

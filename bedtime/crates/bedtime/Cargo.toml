@@ -7,16 +7,20 @@ license.workspace = true
 description = "Desktop apps with Bevy: a UI toolkit, building blocks and a framework, re-exported by feature"
 
 [features]
-default = ["workbench"]
-# The framework: documents, unsaved work, actions and keys, menus, settings,
-# background work, with native window and menus and the UI.
+# An app: `AppPlugins`, with the platform's window chrome and menus.
+default = ["workbench", "native"]
+# An app's services (`AppPlugins`): actions and keys, menus, settings, the
+# status bar, background work, quitting, saved between runs. Documents and
+# workspaces are features of their own.
 workbench = ["dep:bedtime-workbench", "persistence"]
 # Workspaces: folders with their own store and settings.
 workspaces = ["workbench", "bedtime-workbench/workspaces"]
 persistence = ["dep:bedtime-persistence", "bedtime-ui/persistence"]
-documents = ["dep:bedtime-document"]
+# Documents: with workbench, `DocumentsPlugins` (their store and viewers,
+# New/Save/Undo/Redo, keeping unsaved ones through closing and exiting).
+documents = ["dep:bedtime-document", "bedtime-workbench?/documents"]
 # File sources and watching; with workbench, opening files by path.
-filesystem = ["dep:bedtime-filesystem", "documents"]
+filesystem = ["dep:bedtime-filesystem", "documents", "bedtime-workbench?/files"]
 # The file tree panel.
 file_explorer = ["dep:bedtime-file-explorer", "workbench", "filesystem"]
 # Code editing: the editor, syntax, Structure, language servers.
@@ -38,4 +42,6 @@ bedtime-document = { workspace = true, optional = true }
 bedtime-filesystem = { workspace = true, optional = true }
 bedtime-file-explorer = { workspace = true, optional = true }
 bedtime-persistence = { workspace = true, optional = true }
-bedtime-workbench = { workspace = true, optional = true, features = ["persistence"] }
+# Not the workspace's entry: that one has the workbench's defaults, which
+# include documents.
+bedtime-workbench = { path = "../bedtime-workbench", optional = true, default-features = false, features = ["ui", "clipboard", "persistence"] }

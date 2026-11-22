@@ -279,6 +279,7 @@ mod tests {
         }
         assert!(exited(&app));
         // No documents: nothing of theirs is there to act on.
+        #[cfg(feature = "documents")]
         assert!(
             app.world()
                 .resource::<ActionRegistry>()

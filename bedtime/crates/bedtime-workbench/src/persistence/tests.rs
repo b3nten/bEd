@@ -30,7 +30,7 @@ struct Pointer(#[entities] Entity);
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugins)
+    app.add_plugins(AppCorePlugins)
         .register_type::<Note>()
         .register_type::<Counter>()
         .register_type::<Pointer>()
@@ -319,4 +319,45 @@ fn saved_data_that_cant_be_restored_is_never_overwritten() {
     crate::tests::layout(app.world_mut());
     save_now(&mut app);
     assert_eq!(backend.text("world").unwrap(), "not a world");
+}
+
+/// An app without workspaces still saves: its settings in the global store,
+/// its layouts in the session's.
+#[test]
+fn an_app_has_a_global_store_and_a_session_store_without_workspaces() {
+    use crate::settings::SettingsWorldExt;
+    let config = std::env::temp_dir().join(format!("bedtime-app-stores-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&config);
+    let run = |config: &std::path::Path| {
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AppCorePlugins.set(PersistencePlugin::directory(config)),
+        ))
+        .register_type::<Note>();
+        app.finish();
+        app.update();
+        app
+    };
+
+    let mut app = run(&config);
+    let world = app.world_mut();
+    let layers: Vec<_> = world.settings().layers().collect();
+    assert_eq!(layers, [StoreId::of::<GlobalStore>()]);
+    let layout = crate::tests::layout(world);
+    let area = world.layouts().destination_area(layout).unwrap();
+    note(world, area, "kept");
+    world.write_message(AppExit::Success);
+    app.update();
+    assert!(config.join("session").join("world.ron").exists());
+
+    let mut app = run(&config);
+    let world = app.world_mut();
+    let notes: Vec<_> = world
+        .query::<&Note>()
+        .iter(world)
+        .map(|note| note.text.clone())
+        .collect();
+    assert_eq!(notes, ["kept"]);
+    let _ = std::fs::remove_dir_all(&config);
 }

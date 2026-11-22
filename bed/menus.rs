@@ -1,19 +1,12 @@
-//! bEd's own menu items: quitting, folders (Open, Open Recent, Close) and
-//! new windows.
+//! bEd's own menu items: folders (Open, Open Recent, Close) and new windows.
+//! (Quit is the app plugins'.)
 use crate::workspace::{RecentWorkspaces, Workspace, switch};
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, CloseRequested, Handler, InMenu, Invokes,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, InMenu, Invokes,
     KeyChord, Menu, MenuEntries, MenuItem, MenusAppExt, StandardMenu,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};
-
-pub struct Quit;
-impl Action for Quit {
-    const KEY: &'static str = "app.quit";
-    const LABEL: &'static str = "Quit bEd";
-    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyQ)];
-}
 
 pub struct OpenFolder;
 impl Action for OpenFolder {
@@ -62,7 +55,6 @@ impl Plugin for MenusPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RecentWorkspaces>()
             .init_non_send::<FolderDialog>()
-            .add_action_handler::<Quit>(Handler::new(quit))
             .add_action_handler::<NewWindow>(Handler::new(new_window))
             .add_action_handler::<CloseFolder>(
                 Handler::new(close_folder)
@@ -75,7 +67,6 @@ impl Plugin for MenusPlugin {
             .add_action_handler::<OpenRecent>(
                 Handler::new(open_recent).available_when(|world, _| other_recent(world).is_some()),
             )
-            .add_menu_item::<Quit>(StandardMenu::App, "quit")
             .add_menu_item::<NewWindow>(StandardMenu::File, "new")
             .add_menu_item::<bedtime_diagram::NewDiagram>(StandardMenu::File, "new")
             .add_menu_item::<OpenFolder>(StandardMenu::File, "open")
@@ -133,11 +124,6 @@ fn fill_recent_menu(
             InMenu(menu),
         ));
     }
-}
-
-fn quit(world: &mut World, _: ActionInvocation) -> ActionResult {
-    world.write_message(CloseRequested { window: None });
-    Ok(())
 }
 
 /// The folder picker, while it's open. AppKit owns the dialog, so its future is

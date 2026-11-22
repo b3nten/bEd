@@ -16,7 +16,7 @@
 use crate::{
     ErrorDialog, ErrorDialogWorldExt, LayoutsWorldExt, Notification, Root, WorkbenchWorldExt,
     persistence::{
-        DirectoryStore, Persisted, PersistenceAppExt, PersistenceDirectory, Store, StoreBackend,
+        DirectoryStore, Persisted, PersistenceAppExt, PersistenceDirectory, StoreBackend,
         StoreId, Stores, WorkbenchStore, load_store, read_persisted, save_store, write_persisted,
     },
     settings::{Setting, SettingsAppExt, read_setting, settings},
@@ -29,9 +29,7 @@ use std::{
     sync::Arc,
 };
 
-/// App-wide settings and data, shared by every workspace: `<config>/global`.
-pub struct GlobalStore;
-impl Store for GlobalStore {}
+pub use crate::persistence::GlobalStore;
 
 settings! {
     "Startup" {
@@ -282,11 +280,8 @@ impl Plugin for WorkspacesPlugin {
             Some(global) if !workspace.default => recent.remember(global, &workspace.root),
             _ => Ok(()),
         };
-        if let Some(global) = global {
-            app.add_store::<GlobalStore>(global);
-        }
-        app.add_settings_layer::<GlobalStore>()
-            .register_setting::<ReopenLastWorkspace>()
+        // The global store and its settings layer are the session's.
+        app.register_setting::<ReopenLastWorkspace>()
             .persist::<RecentWorkspaces, GlobalStore>();
         // A folder's settings override global ones. Without a claimed store
         // they still apply, but only in memory. The default workspace has none:

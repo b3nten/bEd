@@ -152,7 +152,7 @@ mod tests {
     #[test]
     fn zooming_steps_a_panel_unless_it_zooms_itself() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugins);
+        app.add_plugins(AppCorePlugins);
         let world = app.world_mut();
         let layout = crate::tests::layout(world);
         let area = world.layouts().destination_area(layout).unwrap();
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn toggling_maximize_fills_the_layout_with_the_focused_area_and_puts_it_back() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugins);
+        app.add_plugins(AppCorePlugins);
         let world = app.world_mut();
         let layout = crate::tests::layout(world);
         let area = world.layouts().destination_area(layout).unwrap();
@@ -229,7 +229,7 @@ mod tests {
     #[test]
     fn close_panel_closes_the_focused_panel() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugins);
+        app.add_plugins(AppCorePlugins);
         let world = app.world_mut();
         let layout = crate::tests::layout(world);
         let area = world.layouts().destination_area(layout).unwrap();

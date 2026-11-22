@@ -331,8 +331,7 @@ mod tests {
             WorkbenchCorePlugins, persistence::StoreId, settings::SettingsWorldExt,
         };
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugins, PerfPlugin))
-            .add_settings_layer::<crate::workspace::GlobalStore>();
+        app.add_plugins((WorkbenchCorePlugins, PerfPlugin));
         app.update();
         app.update();
         assert!(app.world().resource::<FrameStats>().frames.is_empty());

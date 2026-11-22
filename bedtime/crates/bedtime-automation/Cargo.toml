@@ -23,7 +23,8 @@ enabled = [
 [dependencies]
 bevy = { workspace = true, features = ["std", "bevy_window", "bevy_render", "keyboard", "mouse"] }
 bedtime-ui = { workspace = true, optional = true, features = ["accessibility"] }
-bedtime-workbench = { workspace = true, optional = true }
+# Without the workbench's defaults: an app without documents stays without.
+bedtime-workbench = { path = "../bedtime-workbench", optional = true, default-features = false, features = ["ui"] }
 bevy_egui = { workspace = true, optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }

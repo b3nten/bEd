@@ -58,6 +58,7 @@ pub(crate) fn install(app: &mut App) {
 
 /// Documents in the session: their store and viewers, what closing a panel
 /// or exiting does about unsaved ones, and New, Save, Undo and Redo.
+#[cfg(feature = "documents")]
 pub(crate) fn install_documents(app: &mut App) {
     // Uncommitted input must be committed or cancelled before its panel
     // closes; closes the user asks for check for unsaved work first.

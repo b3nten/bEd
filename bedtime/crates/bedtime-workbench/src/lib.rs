@@ -4,15 +4,19 @@ pub mod actions;
 mod app;
 #[cfg(all(feature = "ui", feature = "persistence"))]
 pub mod appearance;
+#[cfg(feature = "documents")]
 mod closing;
+#[cfg(feature = "documents")]
 mod document_actions;
 mod exit;
+#[cfg(feature = "documents")]
 mod documents;
 #[cfg(feature = "files")]
 mod formats;
 mod lifecycle;
 pub mod menus;
 mod notifications;
+#[cfg(feature = "documents")]
 mod opening;
 #[cfg(feature = "ui")]
 pub mod palette;
@@ -24,13 +28,14 @@ mod session;
 pub mod settings;
 #[cfg(feature = "ui")]
 pub mod status;
+#[cfg(feature = "documents")]
 mod untitled;
 pub mod work;
 #[cfg(feature = "workspaces")]
 pub mod workspaces;
 pub use actions::*;
 #[cfg(all(feature = "ui", feature = "persistence"))]
-pub use app::{AppInfo, AppPlugins, ShellPlugin};
+pub use app::{AppInfo, AppPlugins, Quit, ShellPlugin};
 pub use bedtime_ui::layouts::*;
 pub use menus::*;
 pub use work::*;
@@ -43,17 +48,22 @@ pub mod ui {
     pub use crate::actions::ui::*;
     pub use crate::menus::ui::*;
 }
+#[cfg(feature = "documents")]
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
+#[cfg(feature = "documents")]
 pub use document_actions::*;
+#[cfg(feature = "documents")]
 pub use documents::*;
 pub use exit::{ExitAppExt, ExitGate, ExitSystems, Gate};
 #[cfg(feature = "files")]
 pub use formats::*;
 pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
+#[cfg(feature = "documents")]
 pub use opening::*;
 pub use panel_actions::{ClosePanel, ResetZoom, ToggleMaximizePanel, ZoomIn, ZoomOut, open_new};
 pub use session::{InWorkspace, OnWorkspaceClose, OnWorkspaceClosing, OnWorkspaceOpen};
+#[cfg(feature = "documents")]
 pub use untitled::{SaveAs, Untitled};
 #[cfg(feature = "native")]
 mod native;
@@ -64,7 +74,7 @@ pub use native::{
     DockMenu, DockMenuAppExt, DockMenuPlugin, NativeError, NativeSystems, WorkbenchNativePlugin,
     WorkbenchNativeWindowPlugin,
 };
-#[cfg(feature = "ui")]
+#[cfg(all(feature = "ui", feature = "documents"))]
 mod dialogs;
 #[cfg(feature = "ui")]
 mod ui_plugin;
@@ -120,6 +130,7 @@ impl Plugin for SessionPlugin {
         {
             needs::<persistence::PersistencePlugin>(app, "PersistencePlugin");
             needs::<settings::SettingsPlugin>(app, "SettingsPlugin");
+            persistence::finish(app);
         }
     }
 }
@@ -129,7 +140,9 @@ impl Plugin for SessionPlugin {
 /// keeping unsaved ones through closing a panel or exiting (with the `ui`
 /// feature, the prompt that asks). For an app whose panels show documents;
 /// one without them leaves it out.
+#[cfg(feature = "documents")]
 pub struct DocumentsPlugin;
+#[cfg(feature = "documents")]
 impl Plugin for DocumentsPlugin {
     fn build(&self, app: &mut App) {
         lifecycle::install_documents(app);
@@ -165,7 +178,9 @@ impl PluginGroup for AppCorePlugins {
 }
 
 /// Workbench without windows: `AppCorePlugins` and documents.
+#[cfg(feature = "documents")]
 pub struct WorkbenchCorePlugins;
+#[cfg(feature = "documents")]
 impl PluginGroup for WorkbenchCorePlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
@@ -213,7 +228,9 @@ impl PluginGroup for AppWindowPlugins {
 /// Documents, for an app that has them: `DocumentsPlugin`, and its settings
 /// (`persistence` feature). Add it after the app's services (`AppPlugins`,
 /// `AppWindowPlugins` or `AppCorePlugins`).
+#[cfg(feature = "documents")]
 pub struct DocumentsPlugins;
+#[cfg(feature = "documents")]
 impl PluginGroup for DocumentsPlugins {
     fn build(self) -> PluginGroupBuilder {
         let group = PluginGroupBuilder::start::<Self>().add(DocumentsPlugin);
@@ -224,7 +241,9 @@ impl PluginGroup for DocumentsPlugins {
 }
 
 /// The usual workbench: `AppWindowPlugins` and `DocumentsPlugins`.
+#[cfg(feature = "documents")]
 pub struct WorkbenchPlugins;
+#[cfg(feature = "documents")]
 impl PluginGroup for WorkbenchPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()

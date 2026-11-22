@@ -449,7 +449,7 @@ mod tests {
     #[test]
     fn appearance_follows_the_settings_and_stays_in_range() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugins, AppearancePlugin))
+        app.add_plugins((AppCorePlugins, AppearancePlugin))
             .add_settings_layer::<Global>()
             .add_settings_layer::<Workspace>();
         app.update();
@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn an_app_sets_its_own_defaults_for_a_plugins_settings() {
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugins, AppearancePlugin))
+        app.add_plugins((AppCorePlugins, AppearancePlugin))
             .add_settings_layer::<Global>()
             .set_setting_default::<FontSize>(13.0);
         app.update();

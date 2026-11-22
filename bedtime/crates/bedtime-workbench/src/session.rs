@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn a_workspace_opens_once_after_startup() {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, crate::WorkbenchCorePlugins))
+        app.add_plugins((MinimalPlugins, crate::AppCorePlugins))
             .init_resource::<Opened>()
             .add_systems(Startup, |mut opened: ResMut<Opened>| {
                 opened.0.push("startup")
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn layouts_areas_and_panels_are_in_the_workspace() {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, crate::WorkbenchCorePlugins));
+        app.add_plugins((MinimalPlugins, crate::AppCorePlugins));
         let world = app.world_mut();
         let layout = world.spawn(crate::Layout::default()).id();
         let area = world

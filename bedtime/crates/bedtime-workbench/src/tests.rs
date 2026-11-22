@@ -1,12 +1,15 @@
 //! Documents and closing with layouts: the parts of workbench that need both.
 use super::*;
 
+#[cfg(feature = "documents")]
 #[derive(Component, PartialEq, Debug)]
 struct Draft(String);
 
 fn app() -> App {
     let mut app = App::new();
-    app.add_plugins(WorkbenchCorePlugins);
+    app.add_plugins(AppCorePlugins);
+    #[cfg(feature = "documents")]
+    app.add_plugins(DocumentsPlugin);
     layout(app.world_mut());
     app
 }
@@ -32,6 +35,7 @@ fn user_closure_without_unsaved_documents_closes_immediately() {
     assert!(w.world().get_entity(panel).is_ok());
 }
 
+#[cfg(feature = "documents")]
 #[test]
 fn moving_between_layouts_preserves_shared_document_and_local_state() {
     let mut app = app();

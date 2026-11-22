@@ -6,23 +6,19 @@
 //! cargo run -p hello
 //! ```
 //!
-//! This is the measure of how much an app has to write. `AppPlugins` is the
-//! app, from its name; `CounterPlugin` is the app's own feature, and is as
-//! short as a plugin should be. `RestPlugin` is what an app still has to do
-//! and shouldn't have to: each part is a gap for the framework to close (see
-//! docs/concerns.md, "The second app").
+//! This is the measure of how much an app has to write: `AppPlugins` is the
+//! app, from its name, and `CounterPlugin` is its own feature, as short as a
+//! plugin should be (see docs/concerns.md, "The second app").
 use bedtime::{
     AppPlugins,
     automation::AutomationPlugin,
-    persistence::{DirectoryStore, PersistenceAppExt, PersistenceDirectory, ReflectPersist},
+    persistence::ReflectPersist,
     ui::{
         UiContext, egui,
         layouts::{LayoutsWorldExt, Panel, PanelsWorldExt},
     },
     workbench::{
-        Action, ActionAppExt, ActionInvocation, ActionResult, CloseRequested, Handler, KeyChord,
-        MenusAppExt, OnWorkspaceOpen, StandardMenu, open_new,
-        persistence::WorkbenchStore,
+        Action, ActionAppExt, Handler, MenusAppExt, OnWorkspaceOpen, StandardMenu, open_new,
         settings::{SettingsAppExt, SettingsWorldExt, settings},
         status::{GlobalStatus, StatusAppExt},
     },
@@ -34,7 +30,6 @@ fn main() -> AppExit {
         .add_plugins((
             AppPlugins::new("Hello"),
             AutomationPlugin::from_env(),
-            RestPlugin,
             CounterPlugin,
         ))
         .run()
@@ -43,7 +38,7 @@ fn main() -> AppExit {
 // --- The app's own feature -------------------------------------------------
 
 /// Counters: a panel that counts, by a step set in Settings, and their total
-/// in the status bar.
+/// in the status bar. A new window starts with one.
 struct CounterPlugin;
 
 impl Plugin for CounterPlugin {
@@ -52,7 +47,8 @@ impl Plugin for CounterPlugin {
             .register_setting::<Step>()
             .add_action_handler::<ShowCounter>(Handler::new(open_new::<Counter>))
             .add_menu_item::<ShowCounter>(StandardMenu::View, "panels")
-            .add_global_status(total);
+            .add_global_status(total)
+            .add_systems(OnWorkspaceOpen, first_layout);
     }
 }
 
@@ -105,42 +101,6 @@ fn total(world: &World, status: &mut GlobalStatus) {
     };
     let total: i32 = counters.iter(world).map(|counter| counter.count).sum();
     status.text(format!("Total {total}"));
-}
-
-// --- What bedtime should do ------------------------------------------------
-
-/// What's left for an app to do by hand, the same in any app.
-struct RestPlugin;
-
-impl Plugin for RestPlugin {
-    fn build(&self, app: &mut App) {
-        // 1. Somewhere to save: the workbench has a store, but only
-        // workspaces gives it a place and makes it a settings layer.
-        if let Some(directory) = app.world().resource::<PersistenceDirectory>().path() {
-            let directory = directory.to_owned();
-            app.add_store::<WorkbenchStore>(DirectoryStore::new(directory));
-        }
-        app.add_settings_layer::<WorkbenchStore>();
-
-        // 2. Quit: the action, its key and its menu item.
-        app.add_action_handler::<Quit>(Handler::new(quit))
-            .add_menu_item::<Quit>(StandardMenu::App, "quit");
-
-        // 3. A first layout.
-        app.add_systems(OnWorkspaceOpen, first_layout);
-    }
-}
-
-struct Quit;
-impl Action for Quit {
-    const KEY: &'static str = "app.quit";
-    const LABEL: &'static str = "Quit";
-    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyQ)];
-}
-
-fn quit(world: &mut World, _: ActionInvocation) -> ActionResult {
-    world.write_message(CloseRequested { window: None });
-    Ok(())
 }
 
 /// With nothing saved, start with a counter.

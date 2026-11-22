@@ -16,8 +16,11 @@ and the decision to make.
   plugins: `AppCorePlugins` / `AppWindowPlugins` / `AppPlugins` are the app
   tier, `DocumentsPlugins` adds documents, and `WorkbenchPlugins` is both.
   Quitting is the app tier's (`exit`), and documents hold an exit through an
-  `ExitGate`. Still compiled in either way: a Cargo feature is the next
-  cut.
+  `ExitGate`. They are Cargo features too: bedtime-workbench's `documents`
+  and `workspaces`, and the same on `bedtime`, whose default is the app
+  tier alone. Every app has a global store with the Global settings layer,
+  and a session store (`<config>/session`); workspaces gives the session
+  store a place per folder and adds the workspace's layer.
 - bedtime's operations sit on one wrapper over `World`, not on extension
   traits of `World` (nine today).
 - The cat and the frame-rate item become bedtime crates.
@@ -179,13 +182,13 @@ as the generic "open in this app".
 | Settings | global and workspace layers | settings layers |
 | Themes, backdrops | folders under the config directory | files |
 
-`GlobalStore` exists only with the `workspaces` feature. Saved types are
-named by type path, so moving a type breaks saved layouts unless pinned.
+Saved types are named by type path, so moving a type breaks saved layouts
+unless pinned.
 
 **Decide:**
-- Two scopes that always exist (app-wide and session), which workspaces
-  repoint, so a plugin can say which it means without knowing about
-  workspaces.
+- Done: two scopes always exist, `GlobalStore` (app-wide) and
+  `WorkbenchStore` (the session's, which workspaces repoint), so a plugin
+  says which it means without knowing about workspaces.
 - A stable name per saved type, chosen once (not the module path).
 - For the engine: snapshot by scope (a marker, like `InWorkspace`) as well
   as by type, for play / stop.
@@ -221,24 +224,27 @@ one panel of its own (a counter), a setting, a status item, an action and a
 menu item, with the settings panel, the command palette, menus, a status bar
 and saving between runs. `tests/automation/hello.py` drives it.
 
-Its own feature, `CounterPlugin`, is about 60 lines and needs nothing from
-the app. `AppPlugins::new("Hello")` is the app from its name: Bevy's plugins
-with its window, the UI, the workbench in its config folder, the settings
-panel, the palette, and the window's panels with a status bar. What's left
-for the app to do by hand, about 40 lines, is the gaps still open:
+It is 111 lines, all its own feature: `AppPlugins::new("Hello")` is the app
+from its name (Bevy's plugins with its window, the UI, the workbench in its
+config folder, the settings panel, the palette, Quit, and the window's
+panels with a status bar), and `CounterPlugin` is the counter, which also
+says what a new window starts with.
 
-| What the app does by hand | Should be | |
-|---|---|---|
-| Configures Bevy's window so the workbench decides when it closes | the shell's | done: `AppPlugins` |
-| Gives its name for the menu bar, the config folder and the window title | once | done: `AppInfo` |
-| Puts the layout surface, the status bar and a camera on the window | the shell's | done: `ShellPlugin` |
-| Adds the settings panel and the command palette beside the workbench | in the group | done |
-| Opens its window unfocused for scripts | automation's | done: `AutomationPlugin` does it |
-| Adds a store for `WorkbenchStore` and makes it a settings layer; without workspaces nothing is saved and Settings is empty | an app store that always exists | open |
-| Defines Quit: the action, its key, its handler, its menu item | the app tier's | open |
-| Makes a first layout when nothing was saved | a default, with the app naming its first panel | open |
-| Adds `AutomationPlugin` itself (automation depends on the workbench, so the group can't) | in the group | open |
-| Lists Bevy's features, and bedtime's `native` | a default set | open |
+What was by hand, and where it went:
+
+| What the app did by hand | Now |
+|---|---|
+| Configured Bevy's window so the workbench decides when it closes | `AppPlugins` |
+| Gave its name for the menu bar, the config folder and the window title | once: `AppInfo` |
+| Put the layout surface, the status bar and a camera on the window | `ShellPlugin` |
+| Added the settings panel and the command palette beside the workbench | in the group |
+| Opened its window unfocused for scripts | `AutomationPlugin` does it |
+| Added a store and made it a settings layer | every app has `GlobalStore` (with the Global settings layer) and a session store |
+| Defined Quit: the action, its key, its handler, its menu item | `Quit`, in `ShellPlugin` |
+| Listed bedtime's `native` feature | a default of `bedtime` |
+
+Still the app's: adding `AutomationPlugin` (automation depends on the
+workbench, so the group can't have it), and listing Bevy's features.
 
 Documents are the app's choice: `AppPlugins` has none, and an app whose
 panels show documents adds `DocumentsPlugins` (as bed does). hello has no

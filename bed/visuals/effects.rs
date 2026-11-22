@@ -712,8 +712,7 @@ mod tests {
         use bedtime_workbench::{WorkbenchCorePlugins, settings::SettingsAppExt};
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugins, EffectsPlugin))
-            .init_resource::<Time<Real>>()
-            .add_settings_layer::<crate::workspace::GlobalStore>();
+            .init_resource::<Time<Real>>();
         app.update();
         use bevy::winit::UpdateMode;
         let continuous = |app: &App| {

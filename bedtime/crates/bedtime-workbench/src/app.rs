@@ -4,6 +4,8 @@
 //! with a status bar under them. An app adds it, then `DocumentsPlugins` if
 //! its panels show documents, then its own plugins.
 use crate::{
+    Action, ActionAppExt, ActionInvocation, ActionResult, CloseRequested, Handler, KeyChord,
+    MenusAppExt, StandardMenu,
     AppWindowPlugins, CommandPalettePlugin, LayoutCamera, LayoutSurface, StandardMenusPlugin,
     SurfaceBody, persistence::PersistencePlugin, settings::SettingsPanelPlugin,
 };
@@ -98,8 +100,27 @@ pub struct ShellPlugin(pub AppInfo);
 impl Plugin for ShellPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(self.0.clone())
+            .add_action_handler::<Quit>(Handler::new(quit))
+            .add_menu_item_labelled::<Quit>(
+                StandardMenu::App,
+                "quit",
+                format!("Quit {}", self.0.name),
+            )
             .add_systems(PreStartup, shell);
     }
+}
+
+/// Quit the app: what would be lost is settled first (`exit`).
+pub struct Quit;
+impl Action for Quit {
+    const KEY: &'static str = "app.quit";
+    const LABEL: &'static str = "Quit";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyQ)];
+}
+
+fn quit(world: &mut World, _: ActionInvocation) -> ActionResult {
+    world.write_message(CloseRequested { window: None });
+    Ok(())
 }
 
 fn shell(

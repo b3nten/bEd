@@ -1162,7 +1162,7 @@ mod tests {
     #[test]
     fn the_source_follows_focus_and_stays_on_the_last_panel_with_items() {
         let mut app = App::new();
-        app.add_plugins(WorkbenchCorePlugins)
+        app.add_plugins(AppCorePlugins)
             .init_resource::<StatusSource>()
             .add_panel_status::<Described>(noop);
         let world = app.world_mut();

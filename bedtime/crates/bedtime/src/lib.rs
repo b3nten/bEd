@@ -2,10 +2,14 @@
 //!
 //! - [`ui`]: the UI toolkit (theme, fonts, icons, widgets), layouts of
 //!   panels, and window chrome. Always included.
-//! - [`workbench`] (default): desktop-app services (documents, actions and
-//!   keys, menus, settings, background work) with `WorkbenchPlugins`. Its
-//!   parts are also re-exported here: [`actions`], [`menus`], [`settings`],
-//!   [`work`]. `workspaces` adds workspaces.
+//! - [`workbench`] (default): an app's services (actions and keys, menus,
+//!   settings, the status bar, background work, quitting), saved between
+//!   runs. [`AppPlugins`] is all of it from the app's name. Its parts are
+//!   also re-exported here: [`actions`], [`menus`], [`settings`], [`work`].
+//! - `documents` adds documents to it (`workbench::DocumentsPlugins`), and
+//!   `workspaces` folders with their own store and settings
+//!   (`workbench::workspaces`). An app without them leaves them out.
+//! - `native` (default): the platform's window chrome and menu bar.
 //! - Building blocks below the workbench: [`persistence`], [`document`],
 //!   [`filesystem`].
 //! - Plugins: [`file_explorer`], [`code`], [`terminal`].
