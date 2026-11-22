@@ -3,7 +3,7 @@
 //! Settings layout, its menus and the command palette (and the Language
 //! Servers panel, which must come before the editor).
 use crate::{menus, settings, themes};
-use bedtime_workbench::{WorkbenchPlugins, workspaces::WorkspacesPlugin};
+use bedtime_workbench::{AppPlugins, workspaces::WorkspacesPlugin};
 use bevy::prelude::*;
 
 pub struct BedWorkbenchPlugin;
@@ -11,10 +11,8 @@ pub struct BedWorkbenchPlugin;
 impl Plugin for BedWorkbenchPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
-            bedtime_ui::UiPlugin,
-            WorkbenchPlugins
-                .set(bedtime_workbench::StandardMenusPlugin { app_name: "bEd" })
-                .set(bedtime_persistence::PersistencePlugin::for_app("bed")),
+            // Bevy's plugins are the app's (`bed::default_plugins`).
+            AppPlugins::new("bEd").without_bevy_plugins(),
             // Right after persistence: it reads the recent folders and
             // adds the settings layers the rest use.
             WorkspacesPlugin::default(),
@@ -23,7 +21,6 @@ impl Plugin for BedWorkbenchPlugin {
             // it, files no longer open (cause not yet found).
             bedtime_code::lsp::LanguageServersPanelPlugin,
             settings::BedSettingsPlugin,
-            bedtime_workbench::CommandPalettePlugin,
             menus::MenusPlugin,
         ));
     }

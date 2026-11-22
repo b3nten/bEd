@@ -228,9 +228,9 @@ impl EditorState {
                     frame.tooltip(
                         &reset,
                         if differs {
-                            "Reset this theme to the colors bEd ships with"
+                            "Reset this theme to the colors it shipped with"
                         } else {
-                            "This theme is as bEd ships it"
+                            "This theme is as it shipped"
                         },
                     );
                     if reset.clicked() {
@@ -315,7 +315,7 @@ impl EditorState {
         });
         let file = format!("{id}.ron");
         ui.weak(if shipped {
-            format!("{file}, shipped with bEd")
+            format!("{file}, a shipped theme")
         } else {
             file
         });

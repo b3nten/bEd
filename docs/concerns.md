@@ -217,20 +217,23 @@ menu item, with the settings panel, the command palette, menus, a status bar
 and saving between runs. `tests/automation/hello.py` drives it.
 
 Its own feature, `CounterPlugin`, is about 60 lines and needs nothing from
-the app. The rest, `ShellPlugin`, is about 75 lines that every app would
-repeat. Each part is a gap:
+the app. `AppPlugins::new("Hello")` is the app from its name: Bevy's plugins
+with its window, the UI, the workbench in its config folder, the settings
+panel, the palette, and the window's panels with a status bar. What's left
+for the app to do by hand, about 40 lines, is the gaps still open:
 
-| # | What the app does by hand today | Should be |
+| What the app does by hand | Should be | |
 |---|---|---|
-| 1 | Configures Bevy's window with `close_when_requested: false`, or the workbench panics | the shell's |
-| 2 | Gives its name twice (`StandardMenusPlugin`, `PersistencePlugin::for_app`), and again for the window title | once (`AppInfo`) |
-| 3 | Adds a store for `WorkbenchStore` and makes it a settings layer; without workspaces nothing is saved and Settings is empty | the app tier's: an app store that always exists |
-| 4 | Defines Quit: the action, its key, its handler, its menu item | the app tier's |
-| 5 | Puts `LayoutSurface`, `SurfaceBody(status::body)` and a camera on the window in `Startup` | the shell's |
-| 6 | Makes a first layout in `OnWorkspaceOpen` when nothing was saved | a default, with the app naming its first panel |
-| 7 | Adds `SettingsPanelPlugin` and `CommandPalettePlugin` beside `WorkbenchPlugins` | in the group |
-| 8 | Opens its window unfocused for scripts, and adds `AutomationPlugin` | the shell's |
-| 9 | Lists Bevy's features, and bedtime's `native` | a default set |
+| Configures Bevy's window so the workbench decides when it closes | the shell's | done: `AppPlugins` |
+| Gives its name for the menu bar, the config folder and the window title | once | done: `AppInfo` |
+| Puts the layout surface, the status bar and a camera on the window | the shell's | done: `ShellPlugin` |
+| Adds the settings panel and the command palette beside the workbench | in the group | done |
+| Opens its window unfocused for scripts | automation's | done: `AutomationPlugin` does it |
+| Adds a store for `WorkbenchStore` and makes it a settings layer; without workspaces nothing is saved and Settings is empty | an app store that always exists | open |
+| Defines Quit: the action, its key, its handler, its menu item | the app tier's | open |
+| Makes a first layout when nothing was saved | a default, with the app naming its first panel | open |
+| Adds `AutomationPlugin` itself (automation depends on the workbench, so the group can't) | in the group | open |
+| Lists Bevy's features, and bedtime's `native` | a default set | open |
 
 What it gets and didn't ask for, until documents are opt-in: a Documents
 section in Settings (Autosave), and New, Save, Undo and Redo in its menus.

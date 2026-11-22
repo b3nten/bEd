@@ -1,6 +1,8 @@
 //! Composable workbench services; the application supplies Bevy's window and renderer.
 pub mod actions;
 #[cfg(all(feature = "ui", feature = "persistence"))]
+mod app;
+#[cfg(all(feature = "ui", feature = "persistence"))]
 pub mod appearance;
 mod closing;
 mod document_actions;
@@ -26,6 +28,8 @@ pub mod work;
 #[cfg(feature = "workspaces")]
 pub mod workspaces;
 pub use actions::*;
+#[cfg(all(feature = "ui", feature = "persistence"))]
+pub use app::{AppInfo, AppPlugins, ShellPlugin};
 pub use bedtime_ui::layouts::*;
 pub use menus::*;
 pub use work::*;

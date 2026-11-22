@@ -28,4 +28,6 @@ pub use bedtime_terminal as terminal;
 #[cfg(feature = "workbench")]
 pub use bedtime_workbench as workbench;
 #[cfg(feature = "workbench")]
+pub use bedtime_workbench::{AppInfo, AppPlugins};
+#[cfg(feature = "workbench")]
 pub use bedtime_workbench::{actions, menus, settings, work};

@@ -5,7 +5,7 @@
 //! the screen effects to `effects`), and show in the sections they declare.
 use bedtime_workbench::{
     appearance::ThemeEditorPlugin,
-    settings::{SettingsAppExt, SettingsPanelPlugin, ui::SettingsUiAppExt},
+    settings::{SettingsAppExt, ui::SettingsUiAppExt},
 };
 use bevy::prelude::*;
 
@@ -13,7 +13,7 @@ pub struct BedSettingsPlugin;
 
 impl Plugin for BedSettingsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((SettingsPanelPlugin, ThemeEditorPlugin))
+        app.add_plugins(ThemeEditorPlugin)
             .set_setting_default::<bedtime_workbench::Autosave>(true)
             // Sections not named here follow, as their plugins were added.
             .settings_sections([

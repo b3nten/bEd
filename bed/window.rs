@@ -4,8 +4,8 @@
 //! dock menu.
 use crate::{menus, perf, titlebar};
 use bedtime_workbench::{
-    AreaBackground, DockMenuAppExt, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility,
-    Titlebar, status::StatusAppExt,
+    AreaBackground, DockMenuAppExt, LayoutSurface, TabBarVisibility, Titlebar,
+    status::StatusAppExt,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 
@@ -47,12 +47,9 @@ pub fn window_plugin() -> WindowPlugin {
     }
 }
 
-/// The main window: transparent, its content under the titlebar. While a
-/// script drives the app it opens unfocused, behind what's being worked in,
-/// so the script takes neither the keyboard nor the front.
+/// The main window: transparent, its content under the titlebar.
 pub fn window() -> Window {
     Window {
-        focused: !bedtime_automation::AutomationPlugin::from_env().active(),
         resolution: (960, 640).into(),
         titlebar_show_title: false,
         titlebar_transparent: true,
@@ -67,14 +64,10 @@ pub fn window() -> Window {
     }
 }
 
-fn setup(
-    mut commands: Commands,
-    window_ent: Single<Entity, With<PrimaryWindow>>,
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
-) {
-    window.title = "bEd".to_string();
-
-    commands.entity(*window_ent).insert((
+/// bEd's surface and titlebar, on the window of panels the app plugins made
+/// it (`ShellPlugin`: the status bar under the panels, the camera).
+fn setup(mut commands: Commands, window: Single<Entity, With<PrimaryWindow>>) {
+    commands.entity(*window).insert((
         // A layout of one panel is just that panel, drawn onto the window:
         // no tab bar, no background (a terminal looks native this way).
         LayoutSurface {
@@ -82,8 +75,6 @@ fn setup(
             area_background: AreaBackground::MultipleAreas,
             ..default()
         },
-        // The panels, with the status bar under them.
-        SurfaceBody(bedtime_workbench::status::body),
         Titlebar {
             height: if cfg!(target_os = "macos") {
                 18.0
@@ -93,6 +84,4 @@ fn setup(
             draw: titlebar::draw,
         },
     ));
-
-    commands.spawn((Camera2d, LayoutCamera));
 }
