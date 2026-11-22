@@ -347,11 +347,9 @@ fn the_standard_bar_puts_items_in_their_groups_and_leaves_out_empty_menus() {
         })
         .collect();
     // Groups in File's order (new, save, close) with lines between, each in
-    // the order added (workbench's own after the test's); Paste is hidden.
-    assert_eq!(
-        file,
-        ["Copy", "New", "-", "Save", "Save", "-", "Close Panel"]
-    );
+    // the order added; Paste is hidden. Close Panel is the plugin's own:
+    // New, Save, Undo and Redo come with documents.
+    assert_eq!(file, ["Copy", "-", "Save", "-", "Close Panel"]);
 }
 
 #[test]

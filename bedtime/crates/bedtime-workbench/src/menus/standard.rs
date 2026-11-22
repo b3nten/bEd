@@ -194,11 +194,7 @@ impl Plugin for StandardMenusPlugin {
             .insert_resource(AppName(self.app_name))
             .add_systems(PreStartup, compose)
             // Workbench's own.
-            .add_menu_item::<New>(StandardMenu::File, "new")
-            .add_menu_item::<SaveDocument>(StandardMenu::File, "save")
             .add_menu_item::<ClosePanel>(StandardMenu::File, "close")
-            .add_menu_item::<UndoDocument>(StandardMenu::Edit, "history")
-            .add_menu_item::<RedoDocument>(StandardMenu::Edit, "history")
             .add_menu_item::<ToggleMaximizePanel>(StandardMenu::View, "panels")
             .add_menu_item::<ZoomIn>(StandardMenu::View, "zoom")
             .add_menu_item::<ZoomOut>(StandardMenu::View, "zoom")

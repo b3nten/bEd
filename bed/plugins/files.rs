@@ -10,7 +10,7 @@ use bedtime_model::ModelViewerPlugin;
 use bedtime_sqlite::SqlitePlugin;
 use bedtime_table::TablePlugin;
 use bedtime_video::VideoPlugin;
-use bedtime_workbench::{PanelFactory, WorkbenchWorldExt};
+use bedtime_workbench::PanelFactory;
 use bevy::prelude::*;
 
 pub struct FilesPlugin;
@@ -35,8 +35,6 @@ impl Plugin for FilesPlugin {
             ));
         // The code actions' keys, as VS Code has them.
         bedtime_workbench::ActionAppExt::add_keymap(app, bedtime_code::keymap::VSCODE);
-        // Save, Undo and Redo act on the focused panel's document.
-        app.world_mut().workbench_mut().register_document_handlers();
     }
 }
 

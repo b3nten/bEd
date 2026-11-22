@@ -1,14 +1,11 @@
-//! Closing panels and ending the session without losing unsaved work.
+//! Closing panels and ending the session without losing unsaved documents.
 //!
 //! A referenced document lives while something holds a `DocumentReference` to it.
 //! Closing panels that would release an unsaved document either saves it first
-//! (autosave on) or asks the user: Save, Discard or Cancel. Exiting (quitting, or
-//! an application's own exit such as switching project) asks the same about
-//! every unsaved document, then finishes background work and runs the exit's
-//! last step: `AppExit` for a quit. A restart (`restart_session`, switching
-//! workspace) runs `OnWorkspaceClosing`, finishes only the workspace's work
-//! (tasks with no owner, or owned by an `InWorkspace` entity), runs its step,
-//! then the session goes on: work is accepted again.
+//! (autosave on) or asks the user: Save, Discard or Cancel. An exit (`exit`:
+//! quitting, or an application's own exit such as switching workspace) asks
+//! the same about every unsaved document, as one of its gates, and goes on
+//! once they're settled and no save is running.
 //! A failed save never closes anything; the prompt shows the error instead.
 //!
 //! The flow is driven headlessly through `close_prompt` and `resolve_close`;
@@ -42,13 +39,14 @@ pub struct ClosePrompt {
     pub documents: Vec<UnsavedDocument>,
 }
 
-/// An exit's last step, once unsaved work is settled and background work has
-/// finished.
-type ExitStep = Box<dyn FnOnce(&mut World) + Send + Sync>;
-
 /// The close in progress, if any. There is at most one at a time.
 #[derive(Resource, Default)]
-pub(crate) struct PendingClose(Option<Close>);
+pub(crate) struct PendingClose {
+    close: Option<Close>,
+    /// The user cancelled the exit's question: told to the exit when it next
+    /// asks.
+    exit_cancelled: bool,
+}
 
 struct Close {
     target: Target,
@@ -61,21 +59,14 @@ enum Target {
         layout: Entity,
         edit: LayoutEdit,
     },
-    Exit {
-        name: String,
-        /// Taken when it runs.
-        then: Option<ExitStep>,
-        /// The session goes on after `then`.
-        restart: bool,
-    },
+    /// The exit called this, waiting on these documents.
+    Exit { name: String },
 }
 
 enum Stage {
     /// Saves are running. Errors from saves that couldn't even start are kept here.
     Saving(Vec<(DocumentId, String)>),
     Asking(Vec<(DocumentId, String)>),
-    /// Exit only: waiting for in-flight saves, then for managed work to finish.
-    ShuttingDown,
 }
 
 /// Released documents marked this way are dropped even though they're unsaved.
@@ -85,25 +76,84 @@ struct Discarded;
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<PendingClose>()
         .init_resource::<DocumentAutosave>()
+        // Autosave, then a quit's request; what it asks is settled before
+        // the exit looks again.
         .add_systems(
             Update,
-            (crate::documents::autosave, request_quit, advance).chain(),
+            (
+                crate::documents::autosave.before(ExitSystems::Request),
+                advance
+                    .after(ExitSystems::Request)
+                    .before(ExitSystems::Advance),
+            ),
         )
-        .add_systems(Last, release_unviewed.before(SessionSystems::Close));
+        .add_systems(Last, release_unviewed.before(SessionSystems::Close))
+        .add_exit_gate(ExitGate {
+            may_start: exit_may_start,
+            begin: exit_begins,
+            poll: exit_gate,
+        });
+}
+
+/// An exit can't start while an editor has uncommitted input.
+fn exit_may_start(world: &World) -> Result<(), String> {
+    let drafting = world
+        .workbench()
+        .document_ids()
+        .into_iter()
+        .filter_map(|id| world.workbench().inspect_document(id).ok())
+        .find(|info| info.has_drafts);
+    match drafting {
+        Some(info) => Err(format!("Finish typing in {:?} first.", info.title)),
+        None => Ok(()),
+    }
+}
+
+/// An exit has started: save or ask about every unsaved document.
+fn exit_begins(world: &mut World, name: &str) {
+    // Exiting supersedes a pending panel close.
+    *world.resource_mut::<PendingClose>() = PendingClose::default();
+    let documents: Vec<_> = world
+        .workbench()
+        .document_ids()
+        .into_iter()
+        .filter(|&id| needs_decision(world, id))
+        .collect();
+    if !documents.is_empty() {
+        begin(world, Target::Exit { name: name.into() }, documents);
+    }
+}
+
+/// The exit waits while its question is up or a save is running, and is
+/// called off if the question was cancelled.
+fn exit_gate(world: &mut World) -> Gate {
+    let mut pending = world.resource_mut::<PendingClose>();
+    if std::mem::take(&mut pending.exit_cancelled) {
+        return Gate::Cancelled;
+    }
+    if matches!(
+        pending.close,
+        Some(Close {
+            target: Target::Exit { .. },
+            ..
+        })
+    ) {
+        return Gate::Waiting;
+    }
+    let saving = world.workbench().document_ids().into_iter().any(|id| {
+        world
+            .workbench()
+            .inspect_document(id)
+            .is_ok_and(|info| info.saving)
+    });
+    if saving { Gate::Waiting } else { Gate::Open }
 }
 
 impl WorkbenchRef {
-    /// Whether an exit (a quit, or `restart_session`) is under way: asking
-    /// about unsaved documents, saving them, or finishing work. False again
-    /// once it's cancelled or done.
-    pub fn is_exiting(&self) -> bool {
-        exiting(&self.world)
-    }
-
     /// The question waiting on the user, if any.
     pub fn close_prompt(&self) -> Option<ClosePrompt> {
         let world = &self.world;
-        let close = world.resource::<PendingClose>().0.as_ref()?;
+        let close = world.resource::<PendingClose>().close.as_ref()?;
         let Stage::Asking(errors) = &close.stage else {
             return None;
         };
@@ -137,7 +187,7 @@ impl Workbench {
         let world = &mut self.world;
         let mut pending = world.resource_mut::<PendingClose>();
         if !matches!(
-            pending.0,
+            pending.close,
             Some(Close {
                 stage: Stage::Asking(_),
                 ..
@@ -145,18 +195,18 @@ impl Workbench {
         ) {
             return Err("No close is waiting for a decision".into());
         }
-        let mut close = pending.0.take().unwrap();
+        let mut close = pending.close.take().unwrap();
         match choice {
-            CloseChoice::Cancel => {}
+            CloseChoice::Cancel => {
+                pending.exit_cancelled = matches!(close.target, Target::Exit { .. });
+            }
             CloseChoice::Save => {
                 close.stage = Stage::Saving(start_saves(world, &close.documents));
-                world.resource_mut::<PendingClose>().0 = Some(close);
+                world.resource_mut::<PendingClose>().close = Some(close);
             }
             CloseChoice::Discard => {
                 let documents = close.documents.clone();
-                if let Some(close) = finish(world, close) {
-                    world.resource_mut::<PendingClose>().0 = Some(close);
-                }
+                finish(world, close);
                 // Mark only after the close went through, so a refused close can't
                 // leave still-viewed documents silently discardable later.
                 for id in documents {
@@ -179,7 +229,7 @@ pub(crate) fn ask_before_closing(
     edit: &LayoutEdit,
     panels: &[Entity],
 ) -> Result<bool, String> {
-    if world.resource::<PendingClose>().0.is_some() {
+    if world.resource::<PendingClose>().close.is_some() {
         return Err("Another close is waiting for a decision".into());
     }
     let documents = released_unsaved(world, panels);
@@ -237,7 +287,7 @@ fn begin(world: &mut World, target: Target, documents: Vec<DocumentId>) {
     } else {
         Stage::Asking(Vec::new())
     };
-    world.resource_mut::<PendingClose>().0 = Some(Close {
+    world.resource_mut::<PendingClose>().close = Some(Close {
         target,
         documents,
         stage,
@@ -261,118 +311,23 @@ fn start_saves(world: &mut World, documents: &[DocumentId]) -> Vec<(DocumentId, 
     errors
 }
 
-/// The decision is made: close the panels, or start shutting down.
-/// Returns the close if it still has work to do.
-fn finish(world: &mut World, close: Close) -> Option<Close> {
-    match close.target {
-        Target::Panels { layout, edit } => {
-            if let Err(error) = world.layouts_mut().apply_edit(layout, &edit) {
-                report_error(
-                    world,
-                    "Close panel",
-                    "The layout changed before the close finished, so nothing was closed.",
-                    Some(error),
-                );
-            }
-            None
-        }
-        Target::Exit { .. } => Some(Close {
-            stage: Stage::ShuttingDown,
-            ..close
-        }),
-    }
-}
-
-fn request_quit(
-    world: &mut World,
-    mut cursor: Local<bevy::ecs::message::MessageCursor<CloseRequested>>,
-) {
-    let requested = cursor
-        .read(world.resource::<Messages<CloseRequested>>())
-        .count()
-        > 0;
-    if !requested || exiting(world) {
-        return;
-    }
-    if let Err(error) = world.workbench_mut().request_exit("Quit", |world| {
-        world.write_message(AppExit::Success);
-    }) {
-        report_error(world, "Quit", &error, None);
-    }
-}
-
-fn exiting(world: &World) -> bool {
-    world
-        .resource::<PendingClose>()
-        .0
-        .as_ref()
-        .is_some_and(|close| matches!(close.target, Target::Exit { .. }))
-}
-
-impl Workbench {
-    /// End the session, as quitting does: unsaved documents are saved or asked
-    /// about (`name` titles the prompt, "Quit" or "Switch workspace"), background
-    /// work finishes, then `then` runs. Quitting's `then` sends `AppExit`. If the
-    /// user cancels, nothing happens and the session goes on. Refused while
-    /// another exit is under way, or while an editor has uncommitted input.
-    pub fn request_exit(
-        &mut self,
-        name: impl Into<String>,
-        then: impl FnOnce(&mut World) + Send + Sync + 'static,
-    ) -> Result<(), String> {
-        self.end_session(name.into(), Box::new(then), false)
-    }
-
-    /// End the session as `request_exit` does, run `then`, and go on: a new
-    /// session in the same app (switching workspace). `then` replaces what
-    /// the session had; background work is accepted again after it.
-    pub fn restart_session(
-        &mut self,
-        name: impl Into<String>,
-        then: impl FnOnce(&mut World) + Send + Sync + 'static,
-    ) -> Result<(), String> {
-        self.end_session(name.into(), Box::new(then), true)
-    }
-
-    fn end_session(&mut self, name: String, then: ExitStep, restart: bool) -> Result<(), String> {
-        let world = &mut self.world;
-        if exiting(world) {
-            return Err("Already exiting".into());
-        }
-        let ids = world.workbench().document_ids();
-        if let Some(info) = ids
-            .iter()
-            .filter_map(|&id| world.workbench().inspect_document(id).ok())
-            .find(|info| info.has_drafts)
-        {
-            return Err(format!("Finish typing in {:?} first.", info.title));
-        }
-        // Exiting supersedes a pending panel close.
-        world.resource_mut::<PendingClose>().0 = None;
-        let documents: Vec<_> = ids
-            .into_iter()
-            .filter(|&id| needs_decision(world, id))
-            .collect();
-        let target = Target::Exit {
-            name,
-            then: Some(then),
-            restart,
-        };
-        if documents.is_empty() {
-            world.resource_mut::<PendingClose>().0 = Some(Close {
-                target,
-                documents,
-                stage: Stage::ShuttingDown,
-            });
-        } else {
-            begin(world, target, documents);
-        }
-        Ok(())
+/// The decision is made: close the panels. (An exit's question is settled
+/// by being gone: its gate opens.)
+fn finish(world: &mut World, close: Close) {
+    if let Target::Panels { layout, edit } = close.target
+        && let Err(error) = world.layouts_mut().apply_edit(layout, &edit)
+    {
+        report_error(
+            world,
+            "Close panel",
+            "The layout changed before the close finished, so nothing was closed.",
+            Some(error),
+        );
     }
 }
 
 fn advance(world: &mut World) {
-    let Some(mut close) = world.resource_mut::<PendingClose>().0.take() else {
+    let Some(mut close) = world.resource_mut::<PendingClose>().close.take() else {
         return;
     };
     let saving = |world: &World, ids: &[DocumentId]| {
@@ -383,66 +338,31 @@ fn advance(world: &mut World) {
                 .is_ok_and(|info| info.saving)
         })
     };
-    match &mut close.stage {
-        Stage::Asking(_) => {}
-        Stage::Saving(errors) => {
-            if !saving(world, &close.documents) {
-                let mut errors = std::mem::take(errors);
-                close.documents.retain(|&id| needs_decision(world, id));
-                for &id in &close.documents {
-                    let failed = world
-                        .workbench()
-                        .inspect_document(id)
-                        .ok()
-                        .and_then(|info| info.error);
-                    if let Some(error) = failed
-                        && !errors.iter().any(|(e, _)| *e == id)
-                    {
-                        errors.push((id, error));
-                    }
-                }
-                errors.retain(|(id, _)| close.documents.contains(id));
-                if close.documents.is_empty() {
-                    let Some(next) = finish(world, close) else {
-                        return;
-                    };
-                    close = next;
-                } else {
-                    close.stage = Stage::Asking(errors);
-                }
-            }
-        }
-        Stage::ShuttingDown => {
-            let ids = world.workbench().document_ids();
-            if !world.resource::<ManagedWork>().is_closing() && !saving(world, &ids) {
-                if matches!(close.target, Target::Exit { restart: true, .. }) {
-                    // The session goes on: stop only the workspace's work.
-                    world.run_schedule(crate::OnWorkspaceClosing);
-                    let in_workspace: Vec<Entity> = world
-                        .query_filtered::<Entity, With<crate::InWorkspace>>()
-                        .iter(world)
-                        .collect();
-                    world
-                        .resource_mut::<ManagedWork>()
-                        .shutdown_where(|owner| owner.is_none_or(|o| in_workspace.contains(&o)));
-                } else {
-                    world.resource_mut::<ManagedWork>().shutdown();
-                }
-            }
-            if world.resource::<ManagedWork>().is_closing()
-                && world.resource::<ManagedWork>().is_finished()
-                && let Target::Exit { then, restart, .. } = &mut close.target
-                && let Some(then) = then.take()
+    if let Stage::Saving(errors) = &mut close.stage
+        && !saving(world, &close.documents)
+    {
+        let mut errors = std::mem::take(errors);
+        close.documents.retain(|&id| needs_decision(world, id));
+        for &id in &close.documents {
+            let failed = world
+                .workbench()
+                .inspect_document(id)
+                .ok()
+                .and_then(|info| info.error);
+            if let Some(error) = failed
+                && !errors.iter().any(|(e, _)| *e == id)
             {
-                then(world);
-                if *restart {
-                    world.resource_mut::<ManagedWork>().reopen();
-                    return;
-                }
+                errors.push((id, error));
             }
         }
+        errors.retain(|(id, _)| close.documents.contains(id));
+        if close.documents.is_empty() {
+            finish(world, close);
+            return;
+        }
+        close.stage = Stage::Asking(errors);
     }
-    world.resource_mut::<PendingClose>().0 = Some(close);
+    world.resource_mut::<PendingClose>().close = Some(close);
 }
 
 /// Drop documents whose last reference went away this frame (or earlier). Running
@@ -467,14 +387,7 @@ fn release_unviewed(world: &mut World) {
     }
 }
 
-/// Explain a failure with an error dialog when there is UI, otherwise log it.
-pub(crate) fn report_error(world: &mut World, title: &str, message: &str, details: Option<String>) {
-    world.request_error_dialog(ErrorDialog {
-        title: title.into(),
-        message: message.into(),
-        details,
-    });
-}
+use crate::exit::report_error;
 
 #[cfg(test)]
 mod tests {

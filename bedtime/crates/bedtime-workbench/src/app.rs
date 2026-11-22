@@ -1,10 +1,11 @@
 //! An app, from its name: `AppPlugins::new("Hello")` is Bevy's plugins with
 //! the app's window, bedtime's UI, the workbench saved in the app's config
 //! folder, the settings panel, the command palette, and the window's panels
-//! with a status bar under them. An app adds it, then its own plugins.
+//! with a status bar under them. An app adds it, then `DocumentsPlugins` if
+//! its panels show documents, then its own plugins.
 use crate::{
-    CommandPalettePlugin, LayoutCamera, LayoutSurface, StandardMenusPlugin, SurfaceBody,
-    WorkbenchPlugins, persistence::PersistencePlugin, settings::SettingsPanelPlugin,
+    AppWindowPlugins, CommandPalettePlugin, LayoutCamera, LayoutSurface, StandardMenusPlugin,
+    SurfaceBody, persistence::PersistencePlugin, settings::SettingsPanelPlugin,
 };
 use bevy::{app::PluginGroupBuilder, prelude::*, window::PrimaryWindow};
 
@@ -56,7 +57,7 @@ impl AppPlugins {
 
     /// For an app that adds Bevy's plugins itself (with its own window, or
     /// some of them changed). Its `WindowPlugin` needs
-    /// `close_when_requested: false`: the workbench decides when a window
+    /// `close_when_requested: false`: the session decides when a window
     /// closes, after unsaved work is settled.
     pub fn without_bevy_plugins(mut self) -> Self {
         self.bevy_plugins = false;
@@ -80,7 +81,7 @@ impl PluginGroup for AppPlugins {
         }
         group
             .add(bedtime_ui::UiPlugin)
-            .add_group(WorkbenchPlugins)
+            .add_group(AppWindowPlugins)
             .set(StandardMenusPlugin { app_name: name })
             .set(PersistencePlugin::for_app(id))
             .add(SettingsPanelPlugin)

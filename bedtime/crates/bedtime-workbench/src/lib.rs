@@ -6,6 +6,7 @@ mod app;
 pub mod appearance;
 mod closing;
 mod document_actions;
+mod exit;
 mod documents;
 #[cfg(feature = "files")]
 mod formats;
@@ -45,6 +46,7 @@ pub mod ui {
 pub use closing::{CloseChoice, ClosePrompt, UnsavedDocument};
 pub use document_actions::*;
 pub use documents::*;
+pub use exit::{ExitAppExt, ExitGate, ExitSystems, Gate};
 #[cfg(feature = "files")]
 pub use formats::*;
 pub use lifecycle::*;
@@ -81,18 +83,20 @@ pub use ui_plugin::WorkbenchUiPlugin;
 pub struct Root(pub std::path::PathBuf);
 
 /// A request to quit, from the native window or an application command.
-/// Workbench handles it: unsaved documents are saved or asked about, background
-/// work finishes, then `AppExit` is sent.
+/// The session handles it (`exit`): what would be lost is settled (unsaved
+/// documents are saved or asked about), background work finishes, then
+/// `AppExit` is sent.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub struct CloseRequested {
     pub window: Option<Entity>,
 }
 
-/// Session resources, layout selection, requests and orderly shutdown in the main
-/// application world. Empty workbenches are valid; applications compose or restore
-/// their layout/panel graphs. Installs no window or renderer.
-pub struct DocumentsPlugin;
-impl Plugin for DocumentsPlugin {
+/// The session: notifications, quitting (`exit`), the workspace's lifetime
+/// (`OnWorkspaceOpen` and the rest), which panel actions are for, and saving
+/// the workbench (`persistence` feature). An empty workbench is valid: the
+/// app composes or restores its layouts and panels. No window or renderer.
+pub struct SessionPlugin;
+impl Plugin for SessionPlugin {
     fn build(&self, app: &mut App) {
         lifecycle::install(app);
         session::install(app);
@@ -106,7 +110,7 @@ impl Plugin for DocumentsPlugin {
         fn needs<P: Plugin>(app: &App, name: &str) {
             assert!(
                 app.is_plugin_added::<P>(),
-                "DocumentsPlugin needs {name}, part of WorkbenchCorePlugins"
+                "SessionPlugin needs {name}, part of AppCorePlugins"
             );
         }
         needs::<WorkPlugin>(app, "WorkPlugin");
@@ -120,11 +124,32 @@ impl Plugin for DocumentsPlugin {
     }
 }
 
-/// Workbench without windows: persistence and settings (`persistence`
-/// feature), work, actions, layouts and documents. Replace a part with
-/// `.set()` or drop one with `.disable()`, as with Bevy's `DefaultPlugins`.
-pub struct WorkbenchCorePlugins;
-impl PluginGroup for WorkbenchCorePlugins {
+/// Documents: their store, formats and viewers, opening by path, New, Save,
+/// Undo and Redo (in the menus, for the focused panel's document), and
+/// keeping unsaved ones through closing a panel or exiting (with the `ui`
+/// feature, the prompt that asks). For an app whose panels show documents;
+/// one without them leaves it out.
+pub struct DocumentsPlugin;
+impl Plugin for DocumentsPlugin {
+    fn build(&self, app: &mut App) {
+        lifecycle::install_documents(app);
+        #[cfg(feature = "ui")]
+        app.add_modal(crate::dialogs::draw_close_prompt);
+    }
+    fn finish(&self, app: &mut App) {
+        assert!(
+            app.is_plugin_added::<SessionPlugin>(),
+            "DocumentsPlugin needs SessionPlugin, part of AppCorePlugins"
+        );
+    }
+}
+
+/// An app's services without windows: persistence and settings
+/// (`persistence` feature), work, actions, layouts and the session. Replace
+/// a part with `.set()` or drop one with `.disable()`, as with Bevy's
+/// `DefaultPlugins`.
+pub struct AppCorePlugins;
+impl PluginGroup for AppCorePlugins {
     fn build(self) -> PluginGroupBuilder {
         let group = PluginGroupBuilder::start::<Self>();
         #[cfg(feature = "persistence")]
@@ -135,6 +160,16 @@ impl PluginGroup for WorkbenchCorePlugins {
             .add(WorkPlugin)
             .add(ActionsPlugin)
             .add(LayoutsPlugin)
+            .add(SessionPlugin)
+    }
+}
+
+/// Workbench without windows: `AppCorePlugins` and documents.
+pub struct WorkbenchCorePlugins;
+impl PluginGroup for WorkbenchCorePlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>()
+            .add_group(AppCorePlugins)
             .add(DocumentsPlugin)
     }
 }
@@ -154,13 +189,14 @@ fn report_settings_errors(
     }
 }
 
-/// The usual workbench: `WorkbenchCorePlugins`, plus the clipboard, native
-/// window and menus, and the UI (by feature). `UiPlugin` remains the app's and
-/// may be added in either order.
-pub struct WorkbenchPlugins;
-impl PluginGroup for WorkbenchPlugins {
+/// An app's services with its window: `AppCorePlugins`, plus the clipboard,
+/// native window and menus, the UI and appearance (by feature). `UiPlugin`
+/// remains the app's and may be added in either order. No documents: those
+/// are `DocumentsPlugins`.
+pub struct AppWindowPlugins;
+impl PluginGroup for AppWindowPlugins {
     fn build(self) -> PluginGroupBuilder {
-        let group = PluginGroupBuilder::start::<Self>().add_group(WorkbenchCorePlugins);
+        let group = PluginGroupBuilder::start::<Self>().add_group(AppCorePlugins);
         #[cfg(feature = "clipboard")]
         let group = group.add(ClipboardPlugin);
         #[cfg(feature = "native")]
@@ -168,12 +204,32 @@ impl PluginGroup for WorkbenchPlugins {
         #[cfg(feature = "ui")]
         let group = group.add(WorkbenchUiPlugin);
         let group = group.add(StandardMenusPlugin::default());
-        // Appearance first: its sections lead the settings panel.
         #[cfg(all(feature = "ui", feature = "persistence"))]
         let group = group.add(appearance::AppearancePlugin);
+        group
+    }
+}
+
+/// Documents, for an app that has them: `DocumentsPlugin`, and its settings
+/// (`persistence` feature). Add it after the app's services (`AppPlugins`,
+/// `AppWindowPlugins` or `AppCorePlugins`).
+pub struct DocumentsPlugins;
+impl PluginGroup for DocumentsPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        let group = PluginGroupBuilder::start::<Self>().add(DocumentsPlugin);
         #[cfg(feature = "persistence")]
         let group = group.add(DocumentSettingsPlugin);
         group
+    }
+}
+
+/// The usual workbench: `AppWindowPlugins` and `DocumentsPlugins`.
+pub struct WorkbenchPlugins;
+impl PluginGroup for WorkbenchPlugins {
+    fn build(self) -> PluginGroupBuilder {
+        PluginGroupBuilder::start::<Self>()
+            .add_group(AppWindowPlugins)
+            .add_group(DocumentsPlugins)
     }
 }
 

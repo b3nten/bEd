@@ -116,7 +116,7 @@ pub(crate) fn autosave(
         }
     }
     for error in errors {
-        crate::closing::report_error(
+        crate::exit::report_error(
             world,
             "Autosave failed",
             "A document couldn't be saved automatically.",

@@ -1,6 +1,7 @@
-//! Single-session scheduling and orderly managed-work shutdown.
+//! Single-session scheduling: what the session installs, with and without
+//! documents.
 use crate::*;
-use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
+use crate::WorkbenchWorldExt;
 use bevy::prelude::*;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -10,25 +11,11 @@ pub enum SessionSystems {
     Close,
 }
 
+/// The session without documents: notifications, quitting, which panel
+/// actions are for, and the order of a frame.
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<Notifications>()
-        .add_message::<CloseRequested>()
-        // Uncommitted input must be committed or cancelled before its panel
-        // closes; closes the user asks for check for unsaved work first.
-        .check_panel_close(|world, panels| {
-            if panels
-                .iter()
-                .any(|&panel| world.get::<DocumentDraft>(panel).is_some())
-            {
-                return Err("Commit or cancel document drafts before closing their viewers".into());
-            }
-            Ok(())
-        })
-        .on_panel_close(closing::ask_before_closing)
-        .insert_resource(PanelModified(|world, panel| {
-            world.workbench().holder_unsaved(panel)
-        }))
-        .add_layout_validation(documents::validate_documents);
+        .add_message::<CloseRequested>();
     // The native menu bar is installed and read while the session prepares,
     // before the frame's layout edits apply.
     #[cfg(feature = "native")]
@@ -51,17 +38,7 @@ pub(crate) fn install(app: &mut App) {
             PreUpdate,
             report_failed_actions.after(ActionSystems::Dispatch),
         );
-    documents::install(app);
-    #[cfg(feature = "files")]
-    app.init_resource::<Formats>();
-    app.init_resource::<Viewers>()
-        .add_observer(opening::check_viewer_model)
-        .add_systems(Update, opening::pin_edited_previews);
-    #[cfg(feature = "files")]
-    app.register_type::<ViewerFile>()
-        .add_systems(Update, opening::reopen_viewers);
-    closing::install(app);
-    document_actions::install(app);
+    exit::install(app);
     panel_actions::install(app);
     // A gesture's layout edit applies before shortcuts are read.
     app.configure_sets(
@@ -78,33 +55,37 @@ pub(crate) fn install(app: &mut App) {
         SessionSystems::Prepare.before(bedtime_ui::UiSystems::Draw),
     );
 }
-impl WorkbenchRef {
-    pub fn work_finished(&self) -> bool {
-        let world = &self.world;
-        world.resource::<ManagedWork>().is_finished()
-    }
-}
 
-impl Workbench {
-    pub fn shutdown_work(&mut self) -> Result<(), String> {
-        let world = &mut self.world;
-        // Saves in flight would be cancelled, and drafts lost. The quit flow waits
-        // for both; this is the direct path for headless hosts and tests.
-        for id in world.workbench().document_ids() {
-            let info = world
-                .workbench()
-                .inspect_document(id)
-                .map_err(|e| e.to_string())?;
-            if info.saving || info.has_drafts {
-                return Err(format!(
-                    "{:?} is still saving or being typed in",
-                    info.title
-                ));
-            }
+/// Documents in the session: their store and viewers, what closing a panel
+/// or exiting does about unsaved ones, and New, Save, Undo and Redo.
+pub(crate) fn install_documents(app: &mut App) {
+    // Uncommitted input must be committed or cancelled before its panel
+    // closes; closes the user asks for check for unsaved work first.
+    app.check_panel_close(|world, panels| {
+        if panels
+            .iter()
+            .any(|&panel| world.get::<DocumentDraft>(panel).is_some())
+        {
+            return Err("Commit or cancel document drafts before closing their viewers".into());
         }
-        world.resource_mut::<ManagedWork>().shutdown();
         Ok(())
-    }
+    })
+    .on_panel_close(closing::ask_before_closing)
+    .insert_resource(PanelModified(|world, panel| {
+        world.workbench().holder_unsaved(panel)
+    }))
+    .add_layout_validation(documents::validate_documents);
+    documents::install(app);
+    #[cfg(feature = "files")]
+    app.init_resource::<Formats>();
+    app.init_resource::<Viewers>()
+        .add_observer(opening::check_viewer_model)
+        .add_systems(Update, opening::pin_edited_previews);
+    #[cfg(feature = "files")]
+    app.register_type::<ViewerFile>()
+        .add_systems(Update, opening::reopen_viewers);
+    closing::install(app);
+    document_actions::install(app);
 }
 
 /// The selected panel in the focused area of the active layout.

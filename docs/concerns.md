@@ -12,7 +12,12 @@ and the decision to make.
   Done: `settings_panel!` and `set_settings_layout` are gone, bed only
   orders the sections.
 - Documents and workspaces are opt-in tiers. Foundations plus the app tier
-  (shell and services) is where a new app starts.
+  (shell and services) is where a new app starts. Done for documents, as
+  plugins: `AppCorePlugins` / `AppWindowPlugins` / `AppPlugins` are the app
+  tier, `DocumentsPlugins` adds documents, and `WorkbenchPlugins` is both.
+  Quitting is the app tier's (`exit`), and documents hold an exit through an
+  `ExitGate`. Still compiled in either way: a Cargo feature is the next
+  cut.
 - bedtime's operations sit on one wrapper over `World`, not on extension
   traits of `World` (nine today).
 - The cat and the frame-rate item become bedtime crates.
@@ -235,10 +240,11 @@ for the app to do by hand, about 40 lines, is the gaps still open:
 | Adds `AutomationPlugin` itself (automation depends on the workbench, so the group can't) | in the group | open |
 | Lists Bevy's features, and bedtime's `native` | a default set | open |
 
-What it gets and didn't ask for, until documents are opt-in: a Documents
-section in Settings (Autosave), and New, Save, Undo and Redo in its menus.
-On platforms without a native menu bar it has no menus at all: drawing them
-is `Titlebar`'s, which bed sets up itself.
+Documents are the app's choice: `AppPlugins` has none, and an app whose
+panels show documents adds `DocumentsPlugins` (as bed does). hello has no
+Documents section in Settings and no New, Save, Undo or Redo. On platforms
+without a native menu bar it has no menus at all: drawing them is
+`Titlebar`'s, which bed sets up itself.
 
 Closed while writing it: `#[panel]` and `#[derive(Persisted)]` named
 `bedtime_ui` and `bedtime_persistence`, so they failed in an app with only

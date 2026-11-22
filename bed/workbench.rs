@@ -13,6 +13,8 @@ impl Plugin for BedWorkbenchPlugin {
         app.add_plugins((
             // Bevy's plugins are the app's (`bed::default_plugins`).
             AppPlugins::new("bEd").without_bevy_plugins(),
+            // bEd's panels show documents.
+            bedtime_workbench::DocumentsPlugins,
             // Right after persistence: it reads the recent folders and
             // adds the settings layers the rest use.
             WorkspacesPlugin::default(),

@@ -80,7 +80,12 @@ pub(crate) fn install(app: &mut App) {
     app.register_action::<New>()
         .register_action::<SaveDocument>()
         .register_action::<UndoDocument>()
-        .register_action::<RedoDocument>();
+        .register_action::<RedoDocument>()
+        .add_menu_item::<New>(StandardMenu::File, "new")
+        .add_menu_item::<SaveDocument>(StandardMenu::File, "save")
+        .add_menu_item::<UndoDocument>(StandardMenu::Edit, "history")
+        .add_menu_item::<RedoDocument>(StandardMenu::Edit, "history");
+    app.world_mut().workbench_mut().register_document_handlers();
 }
 
 impl Workbench {
