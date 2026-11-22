@@ -1,8 +1,8 @@
 //! Screen effects (scanlines, vignette, bloom, noise, curvature, pixel grid,
 //! burn-in, pulse): a pass over the drawn window, set in Settings.
-use bedtime_ui::{UiSystems, egui};
-use bedtime_workbench::BedtimeWorldExt as _;
-use bedtime_workbench::{
+use bedtime::ui::{UiSystems, egui};
+use bedtime::workbench::BedtimeWorldExt as _;
+use bedtime::workbench::{
     ActiveLayout, LayoutCamera,
     persistence::StoreId,
     settings::{SettingsAppExt, settings},
@@ -43,7 +43,7 @@ macro_rules! effect_settings {
                     visible: effects_on,
                     apply: |world, value| {
                         world.resource_mut::<Effects>().$field =
-                            bedtime_workbench::settings::limit(*value, INTENSITY, $default)
+                            bedtime::workbench::settings::limit(*value, INTENSITY, $default)
                     },
                 }
             }
@@ -96,7 +96,7 @@ pub struct Effects {
 
 impl Default for Effects {
     fn default() -> Self {
-        use bedtime_workbench::settings::Setting;
+        use bedtime::workbench::settings::Setting;
         Self {
             enabled: EffectsEnabled::default(),
             scanlines: Scanlines::default(),
@@ -121,7 +121,7 @@ impl Plugin for EffectsPlugin {
         // tell web panels how it's bent, so it stays inside its panel.
         app.add_systems(
             Update,
-            |effects: Res<Effects>, warp: Option<ResMut<bedtime_web::ScreenWarp>>| {
+            |effects: Res<Effects>, warp: Option<ResMut<bedtime::web::ScreenWarp>>| {
                 let Some(mut warp) = warp else { return };
                 if !effects.is_changed() && !warp.is_added() {
                     return;
@@ -134,7 +134,7 @@ impl Plugin for EffectsPlugin {
                 warp.0 = (curvature != 0.0).then(|| {
                     std::sync::Arc::new(move |position, screen| {
                         source_position(position, screen, curvature)
-                    }) as std::sync::Arc<bedtime_web::WarpFn>
+                    }) as std::sync::Arc<bedtime::web::WarpFn>
                 });
             },
         );
@@ -177,7 +177,7 @@ impl Plugin for EffectsPlugin {
 /// frames and asks between inputs, so then too it updates every frame.
 fn pace_frames(effects: Res<Effects>, mut commands: Commands, mut scripted: Local<Option<bool>>) {
     let scripted =
-        *scripted.get_or_insert_with(|| bedtime_automation::AutomationPlugin::from_env().active());
+        *scripted.get_or_insert_with(|| bedtime::automation::AutomationPlugin::from_env().active());
     commands.insert_resource(if effects.enabled || scripted {
         WinitSettings::game()
     } else {
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn effects_follow_their_settings_and_stay_in_range() {
-        use bedtime_workbench::WorkbenchCorePlugins;
+        use bedtime::workbench::WorkbenchCorePlugins;
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugins, EffectsPlugin))
             .init_resource::<Time<Real>>();

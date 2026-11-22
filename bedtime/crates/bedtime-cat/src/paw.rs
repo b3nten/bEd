@@ -248,7 +248,7 @@ impl Paw {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::visuals::cat::rig::Model;
+    use crate::rig::Model;
     use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 
     const STEP: f32 = 1.0 / 60.0;
@@ -345,7 +345,7 @@ mod tests {
         assert!(far < 4.0, "holding it, the paw was {far} from the pointer");
     }
 
-    /// `cargo test -p bed paw::tests::trace -- --nocapture --ignored` prints
+    /// `cargo test -p bedtime-cat paw::tests::trace -- --nocapture --ignored` prints
     /// a swat frame by frame.
     #[test]
     #[ignore]

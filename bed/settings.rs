@@ -3,7 +3,7 @@
 //! crates whose behaviour they change (appearance and autosave to workbench,
 //! the editor's to bedtime-code, the file tree's to bedtime-file-explorer,
 //! the screen effects to `effects`), and show in the sections they declare.
-use bedtime_workbench::{
+use bedtime::workbench::{
     appearance::ThemeEditorPlugin,
     settings::{SettingsAppExt, ui::SettingsUiAppExt},
 };
@@ -14,7 +14,7 @@ pub struct BedSettingsPlugin;
 impl Plugin for BedSettingsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ThemeEditorPlugin)
-            .set_setting_default::<bedtime_workbench::Autosave>(true)
+            .set_setting_default::<bedtime::workbench::Autosave>(true)
             // Sections not named here follow, as their plugins were added.
             .settings_sections([
                 "Appearance",

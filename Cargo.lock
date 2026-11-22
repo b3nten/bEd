@@ -511,14 +511,26 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 name = "bed"
 version = "0.1.0"
 dependencies = [
+ "bedtime",
+ "bevy",
+ "bevy_egui",
+]
+
+[[package]]
+name = "bedtime"
+version = "0.1.0"
+dependencies = [
  "bedtime-audio",
  "bedtime-automation",
+ "bedtime-cat",
  "bedtime-code",
  "bedtime-datatree",
  "bedtime-diagram",
  "bedtime-document",
  "bedtime-file-explorer",
+ "bedtime-filesystem",
  "bedtime-font",
+ "bedtime-frame-rate",
  "bedtime-git",
  "bedtime-hex",
  "bedtime-http-client",
@@ -536,27 +548,6 @@ dependencies = [
  "bedtime-ui",
  "bedtime-video",
  "bedtime-web",
- "bedtime-workbench",
- "bevy",
- "bevy_egui",
- "gltf",
- "ron",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "bedtime"
-version = "0.1.0"
-dependencies = [
- "bedtime-automation",
- "bedtime-code",
- "bedtime-document",
- "bedtime-file-explorer",
- "bedtime-filesystem",
- "bedtime-persistence",
- "bedtime-terminal",
- "bedtime-ui",
  "bedtime-workbench",
 ]
 
@@ -583,6 +574,17 @@ dependencies = [
  "bevy_egui",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bedtime-cat"
+version = "0.1.0"
+dependencies = [
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
+ "bevy_egui",
+ "gltf",
 ]
 
 [[package]]
@@ -683,6 +685,15 @@ dependencies = [
  "bevy",
  "resvg",
  "skrifa 0.44.0",
+]
+
+[[package]]
+name = "bedtime-frame-rate"
+version = "0.1.0"
+dependencies = [
+ "bedtime-ui",
+ "bedtime-workbench",
+ "bevy",
 ]
 
 [[package]]

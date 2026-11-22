@@ -5,8 +5,8 @@
 //! `+open` is focused. The default workspace still saves its terminals
 //! (as panels), so it starts fresh shells there next time.
 use crate::workspace::Workspace;
-use bedtime_terminal::{TerminalPanel, TerminalSession};
-use bedtime_workbench::{
+use bedtime::terminal::{TerminalPanel, TerminalSession};
+use bedtime::workbench::{
     Area, BedtimeWorldExt, ErrorDialog, InArea, ManagedWork, Notification, OnWorkspaceClosing,
     OnWorkspaceOpen, Place,
 };
@@ -21,7 +21,7 @@ impl Plugin for CarryTerminalsPlugin {
             .add_systems(OnWorkspaceClosing, take)
             .add_systems(
                 OnWorkspaceOpen,
-                resume.after(bedtime_workbench::layout_slots::OpenFirstLayout),
+                resume.after(bedtime::workbench::layout_slots::OpenFirstLayout),
             );
     }
 }

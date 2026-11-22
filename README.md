@@ -62,11 +62,11 @@ cargo run --locked --release -p bed -- /path/to/project
 bEd is the reference app for **bedtime**, a set of crates for building desktop apps with Bevy and egui. they live in [`bedtime/crates`](bedtime/crates):
 
 - **`bedtime-ui`:** themes, fonts, widgets, and layouts of tabbed panels.
-- **`bedtime-workbench`:** documents and viewers, actions and keys, menus, settings, background work, and workspaces.
+- **`bedtime-workbench`:** an app's services (actions and keys, menus, settings, the status bar, background work), with documents and workspaces as opt-in parts. `AppPlugins::new("Name")` is an app from its name.
 - **plugins:** each feature above is its own crate (`bedtime-code`, `bedtime-git`, `bedtime-terminal`, `bedtime-image`, ...) that an app adds as a Bevy plugin.
-- **`bedtime`:** re-exports the core crates behind Cargo features.
+- **`bedtime`:** the one dependency: every crate above re-exported behind a Cargo feature. [`bedtime/examples/hello`](bedtime/examples/hello) is a whole app on it in about a hundred lines.
 
-bed is a library, [`bed/lib.rs`](bed/lib.rs), which composes those plugins as `BedPlugins` and adds bEd's own menus, keys, layouts, and settings; the app itself is the few lines of [`bed/src/bed.rs`](bed/src/bed.rs). another app can add `BedPlugins` and build on it.
+bed is a library, [`bed/lib.rs`](bed/lib.rs), which depends on `bedtime` alone, composes its plugins as `BedPlugins` and adds what's bEd's own (its titlebar, themes, look, and the glue between plugins); the app itself is the few lines of [`bed/src/bed.rs`](bed/src/bed.rs). another app can add `BedPlugins` and build on it.
 
 useful cargo features for the `bed` package:
 

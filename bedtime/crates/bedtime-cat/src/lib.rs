@@ -1,5 +1,6 @@
-//! A cat that lives in bEd's window: it wanders along the bottom edge, sits,
-//! washes, naps, and plays with the pointer when clicked.
+//! A cat that lives in the app's window (`CatPlugin`): it wanders along the
+//! bottom edge, sits, washes, naps, and plays with the pointer when clicked.
+//! It's on unless turned off in Settings (Window).
 //!
 //! It is a skinned model (`rig`) posed by code (`moves`) as its `mind`
 //! decides. A camera of its own draws it into a small transparent image, and
@@ -104,8 +105,7 @@ impl Plugin for CatPlugin {
             .add_systems(Update, (attach, update).chain());
         // Headless apps (tests) have no renderer.
         if app.get_sub_app(RenderApp).is_some() {
-            // bed's sources sit at the crate root, not under `src`.
-            embedded_asset!(app, "bed", "premultiply.wesl");
+            embedded_asset!(app, "premultiply.wesl");
             app.add_plugins(FullscreenMaterialPlugin::<Premultiply>::default());
         }
     }
@@ -122,7 +122,7 @@ struct Premultiply {
 
 impl FullscreenMaterial for Premultiply {
     fn fragment_shader() -> ShaderRef {
-        AssetPath::from_path_buf(embedded_path!("bed", "premultiply.wesl"))
+        AssetPath::from_path_buf(embedded_path!("premultiply.wesl"))
             .with_source("embedded")
             .into()
     }
@@ -169,7 +169,7 @@ struct Stage {
 
 impl Stage {
     fn spawn(world: &mut World, model: &Model, grid: UVec2) -> Self {
-        let layers = crate::visuals::backdrop::scene::free_layer(world);
+        let layers = bedtime_ui::free_layer(world);
         let image = world
             .resource_mut::<Assets<Image>>()
             .add(viewport_image(UVec2::new(8, 8)));

@@ -306,6 +306,9 @@ with `CounterPlugin` saying what a new window starts with.
 | `plugins/files.rs`: dropped files, document handlers | `DocumentFilesPlugin`, `DocumentsPlugin` |
 | `runtime.rs`: no pipelined rendering, the executor, frame pacing | `bedtime_ui::latency` (`low_latency`, `LowLatencyPlugin`), opted into by the binary |
 | the list of status items | each plugin adds its own |
+| `perf.rs`: the frame-rate item | `bedtime-frame-rate` |
+| `visuals/cat`: the cat | `bedtime-cat` |
+| 28 bedtime crates as dependencies | `bedtime`, by feature |
 | a file picker in each place that needed one | `world.bedtime_mut().pick_path(…)` (`native` feature) |
 
 Still bed's, by choice: its window's surface options and titlebar tools,
@@ -320,4 +323,11 @@ sets), and the Workspaces panel is `workspaces::WorkspacesPanelPlugin`. An
 app adds either. Their saved types are named `bedtime::LayoutSlot` and
 `bedtime::WorkspacesPanel`, pinned, with no migration from the names bed
 gave them: a workspace saved before this doesn't load until its
-`world.ron` is deleted. The frame-rate item and the cat are step 8.
+`world.ron` is deleted.
+
+Step 8: the cat is `bedtime-cat` (`CatPlugin`, with its model and Blender
+source in the crate) and the frame-rate item is `bedtime-frame-rate`
+(`FrameRatePlugin`). The render-layer helper they and bed's backdrops share
+is `bedtime_ui::free_layer`. `bedtime` has a feature and a re-export for
+every crate, and bed depends on it alone (plus Bevy and bevy_egui, for its
+backdrops and screen effects).

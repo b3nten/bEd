@@ -21,12 +21,12 @@ impl Plugin for BedtimePlugins {
             terminal::TerminalsPlugin,
             mascots::MascotsPlugin,
             git::BedGitPlugin,
-            bedtime_http_client::HttpClientPlugin,
-            bedtime_web::WebPlugin,
+            bedtime::http_client::HttpClientPlugin,
+            bedtime::web::WebPlugin,
             search::BedSearchPlugin,
             preview::BedPreviewPlugin,
-            bedtime_schedules::SchedulesPlugin,
-            bedtime_notes::NotesPlugin,
+            bedtime::schedules::SchedulesPlugin,
+            bedtime::notes::NotesPlugin,
         ));
     }
 }

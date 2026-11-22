@@ -1,6 +1,6 @@
 //! bEd's themes: the ones it ships, which `ThemesPlugin` (workbench) writes
 //! into the config folder's `themes` when missing, and its default.
-use bedtime_workbench::appearance::ThemesPlugin;
+use bedtime::workbench::appearance::ThemesPlugin;
 
 /// The shipped themes: each id and file.
 pub const BUILT_IN: &[(&str, &str)] = &[

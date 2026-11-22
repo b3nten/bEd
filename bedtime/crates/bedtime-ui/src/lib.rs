@@ -46,7 +46,7 @@ pub use links::{ExternalOpener, LinksWorldExt, open_with_system, request_open_ex
 pub use motion::{MotionPolicy, ease};
 use std::sync::Mutex;
 pub use theme::{Metrics, Theme};
-pub use viewport::{UiViewport, viewport_image};
+pub use viewport::{UiViewport, free_layer, viewport_image};
 
 /// While this resource exists, each frame's AccessKit tree (every widget's
 /// role, label and bounds in points) is recorded in it. egui builds the whole

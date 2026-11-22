@@ -502,3 +502,22 @@ mod tests {
         );
     }
 }
+
+/// A render layer nothing uses yet: a scene's camera sees only its scene, and
+/// no other camera sees it. For a plugin that draws a scene of its own into
+/// an image (a viewport, a backdrop, something walking over the window).
+pub fn free_layer(world: &mut World) -> bevy::camera::visibility::RenderLayers {
+    use bevy::camera::visibility::RenderLayers;
+    let used: Vec<_> = world
+        .query::<&RenderLayers>()
+        .iter(world)
+        .cloned()
+        .collect();
+    let layer = (1..)
+        .find(|&layer| {
+            used.iter()
+                .all(|layers| !layers.intersects(&RenderLayers::layer(layer)))
+        })
+        .unwrap();
+    RenderLayers::layer(layer)
+}

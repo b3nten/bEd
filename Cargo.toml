@@ -34,6 +34,8 @@ members = [
     "bedtime/crates/bedtime-schedules",
     "bedtime/crates/bedtime-notes",
     "bedtime/crates/bedtime-diagram",
+    "bedtime/crates/bedtime-cat",
+    "bedtime/crates/bedtime-frame-rate",
     "bedtime/examples/hello",
 ]
 default-members = ["bed"]
@@ -49,6 +51,7 @@ license = "GPL-3.0-only"
 opt-level = 1
 
 [workspace.dependencies]
+bedtime = { path = "bedtime/crates/bedtime" }
 bedtime-document = { path = "bedtime/crates/bedtime-document" }
 bedtime-code = { path = "bedtime/crates/bedtime-code" }
 bedtime-font = { path = "bedtime/crates/bedtime-font" }
@@ -80,6 +83,8 @@ bedtime-sqlite = { path = "bedtime/crates/bedtime-sqlite" }
 bedtime-schedules = { path = "bedtime/crates/bedtime-schedules" }
 bedtime-notes = { path = "bedtime/crates/bedtime-notes" }
 bedtime-diagram = { path = "bedtime/crates/bedtime-diagram" }
+bedtime-cat = { path = "bedtime/crates/bedtime-cat" }
+bedtime-frame-rate = { path = "bedtime/crates/bedtime-frame-rate" }
 wgpu = "=30.0.1"
 bevy = { version = "=0.20.0", default-features = false }
 egui = "=0.36.2"

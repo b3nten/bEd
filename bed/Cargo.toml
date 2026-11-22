@@ -16,41 +16,20 @@ path = "src/bed.rs"
 
 [features]
 # Let scripts drive the app (tools/bed.py).
-automation = ["bedtime-automation/enabled"]
+automation = ["bedtime/automation"]
 # Time every system, for the Schedules panel's timeline.
-profile = ["bedtime-schedules/profile"]
+profile = ["bedtime/profile"]
 
 [dependencies]
-bedtime-audio.workspace = true
-bedtime-automation.workspace = true
-bedtime-code.workspace = true
-bedtime-document.workspace = true
-bedtime-file-explorer.workspace = true
-bedtime-font.workspace = true
-bedtime-http-client.workspace = true
-bedtime-git.workspace = true
-bedtime-search.workspace = true
-bedtime-hex.workspace = true
-bedtime-image.workspace = true
-bedtime-model.workspace = true
-bedtime-mascots.workspace = true
-bedtime-table.workspace = true
-bedtime-terminal.workspace = true
-bedtime-persistence.workspace = true
-bedtime-datatree.workspace = true
-bedtime-markdown.workspace = true
-bedtime-video.workspace = true
-bedtime-web.workspace = true
-bedtime-sqlite.workspace = true
-bedtime-schedules.workspace = true
-bedtime-notes.workspace = true
-bedtime-diagram.workspace = true
-bedtime-ui = { workspace = true, features = ["system-fonts", "syntax", "image", "markdown", "data"] }
-bedtime-workbench = { workspace = true, features = ["persistence", "workspaces", "system-fonts"] }
+# bEd is bedtime's plugins, arranged: everything it's made of comes from here.
+bedtime = { workspace = true, features = [
+    "workspaces", "documents", "filesystem", "system-fonts",
+    "file_explorer", "code", "terminal", "git", "search",
+    "markdown", "datatree", "table", "sqlite", "diagram", "hex",
+    "image", "audio", "video", "model", "font",
+    "http_client", "web", "notes", "schedules", "mascots",
+    "cat", "frame_rate",
+] }
 bevy_egui.workspace = true
-gltf.workspace = true
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_winit", "bevy_log", "png", "keyboard", "mouse", "x11", "wayland"] }
-ron = "0.12.2"
-serde = { workspace = true, features = ["derive"] }
-serde_json.workspace = true
 

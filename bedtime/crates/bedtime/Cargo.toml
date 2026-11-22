@@ -27,6 +27,50 @@ file_explorer = ["dep:bedtime-file-explorer", "workbench", "filesystem"]
 code = ["dep:bedtime-code", "workbench", "filesystem"]
 # Terminal panels.
 terminal = ["dep:bedtime-terminal", "workbench"]
+# Audio files: a player with waveform and spectrum.
+audio = ["dep:bedtime-audio", "workbench", "filesystem"]
+# A cat that lives in the window.
+cat = ["dep:bedtime-cat", "workbench"]
+# JSON and TOML as trees.
+datatree = ["dep:bedtime-datatree", "code"]
+# Diagrams (`.diagram`).
+diagram = ["dep:bedtime-diagram", "workbench", "filesystem"]
+# Font files.
+font = ["dep:bedtime-font", "workbench", "filesystem"]
+# The frame rate, in the status bar.
+frame_rate = ["dep:bedtime-frame-rate", "workbench"]
+# The Git and History panels.
+git = ["dep:bedtime-git", "code", "file_explorer"]
+# Any file's bytes.
+hex = ["dep:bedtime-hex", "workbench", "filesystem"]
+# The HTTP client panel.
+http_client = ["dep:bedtime-http-client", "workbench"]
+# Image files.
+image = ["dep:bedtime-image", "workbench", "filesystem"]
+# Markdown, rendered.
+markdown = ["dep:bedtime-markdown", "code"]
+# Bed and Ducky.
+mascots = ["dep:bedtime-mascots", "workbench"]
+# 3D model files.
+model = ["dep:bedtime-model", "workbench", "filesystem"]
+# Notes kept with the workspace.
+notes = ["dep:bedtime-notes", "workbench"]
+# Bevy's schedules and systems, in a panel.
+schedules = ["dep:bedtime-schedules", "workbench"]
+# Find in files.
+search = ["dep:bedtime-search", "file_explorer"]
+# SQLite databases.
+sqlite = ["dep:bedtime-sqlite", "workbench", "filesystem"]
+# CSV and TSV as tables.
+table = ["dep:bedtime-table", "workbench", "documents"]
+# Video files.
+video = ["dep:bedtime-video", "workbench", "filesystem"]
+# Web pages, in a panel.
+web = ["dep:bedtime-web", "workbench"]
+# Time every system, for the Schedules panel's timeline.
+profile = ["schedules", "bedtime-schedules/profile"]
+# The Font setting lists installed fonts.
+system-fonts = ["bedtime-ui/system-fonts", "bedtime-workbench?/system-fonts"]
 # Let scripts drive the app (tools/bed.py); without it `automation`'s plugin
 # does nothing.
 automation = ["bedtime-automation/enabled"]
@@ -42,6 +86,26 @@ bedtime-document = { workspace = true, optional = true }
 bedtime-filesystem = { workspace = true, optional = true }
 bedtime-file-explorer = { workspace = true, optional = true }
 bedtime-persistence = { workspace = true, optional = true }
+bedtime-audio = { workspace = true, optional = true }
+bedtime-cat = { workspace = true, optional = true }
+bedtime-datatree = { workspace = true, optional = true }
+bedtime-diagram = { workspace = true, optional = true }
+bedtime-font = { workspace = true, optional = true }
+bedtime-frame-rate = { workspace = true, optional = true }
+bedtime-git = { workspace = true, optional = true }
+bedtime-hex = { workspace = true, optional = true }
+bedtime-http-client = { workspace = true, optional = true }
+bedtime-image = { workspace = true, optional = true }
+bedtime-markdown = { workspace = true, optional = true }
+bedtime-mascots = { workspace = true, optional = true }
+bedtime-model = { workspace = true, optional = true }
+bedtime-notes = { workspace = true, optional = true }
+bedtime-schedules = { workspace = true, optional = true }
+bedtime-search = { workspace = true, optional = true }
+bedtime-sqlite = { workspace = true, optional = true }
+bedtime-table = { workspace = true, optional = true }
+bedtime-video = { workspace = true, optional = true }
+bedtime-web = { workspace = true, optional = true }
 # Not the workspace's entry: that one has the workbench's defaults, which
 # include documents.
 bedtime-workbench = { path = "../bedtime-workbench", optional = true, default-features = false, features = ["ui", "clipboard", "persistence"] }

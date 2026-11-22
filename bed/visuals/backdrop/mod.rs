@@ -6,8 +6,8 @@ mod flyover;
 mod internals;
 pub mod scene;
 
-use bedtime_ui::{BackdropStatus, SurfaceBackdrop, layouts::LayoutSurface};
-use bedtime_workbench::{
+use bedtime::ui::{BackdropStatus, SurfaceBackdrop, layouts::LayoutSurface};
+use bedtime::workbench::{
     BedtimeWorldExt,
     persistence::PersistenceDirectory,
     settings::{
@@ -120,10 +120,10 @@ impl Plugin for BackdropPlugin {
 }
 
 fn backdrop_row(
-    ui: &mut bedtime_ui::egui::Ui,
+    ui: &mut bedtime::ui::egui::Ui,
     world: &mut World,
-    context: &bedtime_ui::UiContext<'_>,
-    layer: bedtime_workbench::persistence::StoreId,
+    context: &bedtime::ui::UiContext<'_>,
+    layer: bedtime::workbench::persistence::StoreId,
 ) {
     let names = world.resource::<Backdrops>().names();
     row::<Backdrop>(ui, world, context, layer, None, |ui, chosen| {

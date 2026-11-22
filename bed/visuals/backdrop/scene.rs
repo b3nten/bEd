@@ -2,9 +2,9 @@
 //! render layer no other camera sees, and the chosen one's image is the
 //! window's backdrop. The cat uses the same render layers.
 use super::{FRAME_RATE, flyover, internals};
-use bedtime_ui::{MotionPolicy, Theme, layouts::LayoutSurface, theme::Rgba};
-use bedtime_workbench::LayoutCamera;
-use bevy::{camera::visibility::RenderLayers, prelude::*};
+use bedtime::ui::{MotionPolicy, Theme, layouts::LayoutSurface, theme::Rgba};
+use bedtime::workbench::LayoutCamera;
+use bevy::prelude::*;
 use std::time::Duration;
 
 /// bEd's scenes: each one's `Backdrop` setting and name in Settings.
@@ -28,22 +28,7 @@ pub fn retire(world: &mut World, image: &Handle<Image>) {
     }
 }
 
-/// A render layer nothing uses yet: a scene's camera sees only its scene, and
-/// no other camera sees it.
-pub fn free_layer(world: &mut World) -> RenderLayers {
-    let used: Vec<_> = world
-        .query::<&RenderLayers>()
-        .iter(world)
-        .cloned()
-        .collect();
-    let layer = (1..)
-        .find(|&layer| {
-            used.iter()
-                .all(|layers| !layers.intersects(&RenderLayers::layer(layer)))
-        })
-        .unwrap();
-    RenderLayers::layer(layer)
-}
+pub use bedtime::ui::free_layer;
 
 /// Ask for the window's next frame, for a scene that moves.
 pub fn request_frame(world: &mut World) {

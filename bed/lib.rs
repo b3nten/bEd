@@ -8,8 +8,7 @@
 //! - `workspace`: switching folders, numbered layouts, the Workspaces panel
 //! - `plugins`: bedtime's panels and viewers, with bEd's answers to what
 //!   they leave to the app
-//! - `visuals`: backdrop, screen effects and the cat
-//! - `perf`: the frame-rate status item
+//! - `visuals`: backdrop, screen effects, and bedtime's cat
 //! - `window`: the main window's surface, titlebar and status bar, bEd's
 //!   keys and the dock menu
 //!
@@ -19,7 +18,6 @@
 //! - [`handle_shell_command`]: for `main`, before anything else
 use bevy::{app::PluginGroupBuilder, prelude::*};
 
-pub mod perf;
 pub mod plugins;
 pub mod runtime;
 pub mod settings;
@@ -33,7 +31,7 @@ pub mod workspace;
 /// Started as a terminal's shell command (`+open` and the like, which run
 /// this program again): does it and returns how to exit. Call it first in
 /// `main`.
-pub use bedtime_terminal::handle_shell_command;
+pub use bedtime::terminal::handle_shell_command;
 
 /// bEd, for an app with Bevy's plugins (see [`default_plugins`]): its
 /// workbench, workspaces, panels and viewers, and its look. Drop a part with
@@ -49,8 +47,8 @@ impl PluginGroup for BedPlugins {
             .add(workspace::BedWorkspacesPlugin)
             .add(visuals::VisualsPlugin)
             .add(plugins::BedtimePlugins)
-            .add(perf::PerfPlugin)
-            .add(bedtime_automation::AutomationPlugin::from_env())
+            .add(bedtime::frame_rate::FrameRatePlugin)
+            .add(bedtime::automation::AutomationPlugin::from_env())
             .add(window::BedWindowPlugin)
     }
 }

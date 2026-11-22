@@ -2,12 +2,12 @@
 //! panels with the status bar under them; and what bEd arranges of what the
 //! plugins share: its own keys and the dock menu.
 use crate::titlebar;
-use bedtime_workbench::{AreaBackground, LayoutSurface, TabBarVisibility, Titlebar};
+use bedtime::workbench::{AreaBackground, LayoutSurface, TabBarVisibility, Titlebar};
 use bevy::{prelude::*, window::PrimaryWindow};
 
 /// bEd's own keys for actions that have none (VS Code's, where it has them).
-const KEYS: &bedtime_workbench::Keymap = {
-    use bedtime_workbench::{KeyChord, Modifiers};
+const KEYS: &bedtime::workbench::Keymap = {
+    use bedtime::workbench::{KeyChord, Modifiers};
     &[(
         "workbench.command_palette",
         &[
@@ -23,7 +23,7 @@ pub struct BedWindowPlugin;
 impl Plugin for BedWindowPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, setup);
-        bedtime_workbench::ActionAppExt::add_keymap(app, KEYS);
+        bedtime::workbench::ActionAppExt::add_keymap(app, KEYS);
     }
 }
 
@@ -41,7 +41,7 @@ pub fn window_plugin() -> WindowPlugin {
 /// script drives the app it opens unfocused, behind what's being worked in.
 pub fn window() -> Window {
     Window {
-        focused: !bedtime_workbench::driven_by_script(),
+        focused: !bedtime::workbench::driven_by_script(),
         resolution: (960, 640).into(),
         titlebar_show_title: false,
         titlebar_transparent: true,

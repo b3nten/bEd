@@ -1,8 +1,8 @@
 //! bEd's workspaces: a window shows one folder's workspace (or the default
 //! one), with bedtime's numbered layouts and its Workspaces panel to switch
 //! between them. What's bEd's own is what a new layout 1 starts with.
-pub use bedtime_workbench::workspaces::*;
-use bedtime_workbench::{
+pub use bedtime::workbench::workspaces::*;
+use bedtime::workbench::{
     BedtimeWorldExt as _, PanelFactory, SplitAxis,
     layout_slots::{FirstLayout, LayoutSlot, LayoutSlotsPlugin},
 };
@@ -36,7 +36,7 @@ fn first_layout(world: &mut World, slot: LayoutSlot, layout: Entity) -> Result<(
             2500,
             [100, 100],
         )?;
-        (PanelFactory::of::<bedtime_file_explorer::FileExplorer>().create)(world, area);
+        (PanelFactory::of::<bedtime::file_explorer::FileExplorer>().create)(world, area);
     }
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! The cat's model (`assets/cat/cat.glb`, built into bEd): its skinned mesh,
+//! The cat's model (`assets/cat.glb`, built into the crate): its skinned mesh,
 //! its skeleton, and its moves.
 //!
 //! The model is made in Blender (`assets/cat/cat.blend`, exported by
@@ -24,7 +24,7 @@ use bevy::{
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
 
-const GLB: &[u8] = include_bytes!("../../assets/cat/cat.glb");
+const GLB: &[u8] = include_bytes!("../assets/cat.glb");
 
 /// The widest a texture is kept: the cat is drawn small.
 const TEXTURE_SIZE: u32 = 512;
@@ -113,7 +113,7 @@ macro_rules! named {
 }
 
 named! {
-    /// The joints bEd moves itself, as node indices.
+    /// The joints the code moves itself, as node indices.
     Bones of usize {
         body: "body",
         hips: "hips",
@@ -510,7 +510,11 @@ impl Model {
                         .add(StandardMaterial {
                             base_color: if whisker { WHISKER } else { Color::WHITE },
                             base_color_texture: Some(texture),
-                            alpha_mode: if whisker { AlphaMode::Blend } else { AlphaMode::Opaque },
+                            alpha_mode: if whisker {
+                                AlphaMode::Blend
+                            } else {
+                                AlphaMode::Opaque
+                            },
                             perceptual_roughness: roughness.unwrap_or(0.85),
                             reflectance: 0.2,
                             ..default()

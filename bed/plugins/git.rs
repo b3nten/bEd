@@ -1,8 +1,8 @@
 //! The Git panel, with bEd's answers to opening a folder or a terminal from
 //! it.
-use bedtime_git::{GitHost, GitPlugin};
-use bedtime_terminal::{TerminalOptions, TerminalPanel};
-use bedtime_workbench::Place;
+use bedtime::git::{GitHost, GitPlugin};
+use bedtime::terminal::{TerminalOptions, TerminalPanel};
+use bedtime::workbench::Place;
 use bevy::prelude::*;
 use std::path::PathBuf;
 

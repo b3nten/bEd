@@ -2,8 +2,8 @@
 //! workspace's terminals into the folder it opens) and `+web`.
 mod carry;
 
-use bedtime_terminal::{ShellCommandsAppExt, ShellInvocation, TerminalPlugin};
-use bedtime_workbench::{BedtimeWorldExt, PathOptions};
+use bedtime::terminal::{ShellCommandsAppExt, ShellInvocation, TerminalPlugin};
+use bedtime::workbench::{BedtimeWorldExt, PathOptions};
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -18,12 +18,12 @@ impl Plugin for TerminalsPlugin {
             .expect("bed's shell commands are unique")
             // Web pages open in bEd's own browser; other links (mail,
             // and pages where it has no browser) as the system does.
-            .insert_resource(bedtime_ui::ExternalOpener(|world, url, from| {
+            .insert_resource(bedtime::ui::ExternalOpener(|world, url, from| {
                 let page = url.starts_with("https://") || url.starts_with("http://");
-                if page && bedtime_web::open_url(world, url, from).is_ok() {
+                if page && bedtime::web::open_url(world, url, from).is_ok() {
                     return Ok(());
                 }
-                bedtime_ui::open_with_system(url)
+                bedtime::ui::open_with_system(url)
             }));
     }
 }
@@ -37,13 +37,13 @@ fn web_from_shell(world: &mut World, invocation: ShellInvocation) {
         result = world
             .bedtime_mut()
             .open_panel_at(
-                bedtime_web::WebPanel::default(),
-                bedtime_workbench::Placement::From(invocation.panel),
+                bedtime::web::WebPanel::default(),
+                bedtime::workbench::Placement::From(invocation.panel),
             )
             .map(|_| ());
     }
     for argument in &invocation.arguments {
-        let url = bedtime_web::with_scheme(&argument.to_string_lossy());
+        let url = bedtime::web::with_scheme(&argument.to_string_lossy());
         if let Err(error) = world
             .bedtime_mut()
             .open_externally_from(&url, invocation.panel)
@@ -84,7 +84,7 @@ fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
         }
         let text = argument.to_string_lossy();
         if !invocation.directory.join(argument).exists()
-            && let Some(url) = bedtime_web::web_address(&text)
+            && let Some(url) = bedtime::web::web_address(&text)
         {
             if let Err(error) = world
                 .bedtime_mut()
@@ -98,7 +98,7 @@ fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
         // Somewhere other than the terminal it was typed in.
         let options = PathOptions {
             line,
-            place: Some(bedtime_workbench::Placement::From(invocation.panel)),
+            place: Some(bedtime::workbench::Placement::From(invocation.panel)),
             ..default()
         };
         if let Err(error) = world.bedtime_mut().open_path(&path, options) {

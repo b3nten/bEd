@@ -1,0 +1,12 @@
+[package]
+name = "bedtime-frame-rate"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "The frame rate in a bedtime app's status bar"
+
+[dependencies]
+bedtime-ui.workspace = true
+bedtime-workbench = { workspace = true, features = ["persistence"] }
+bevy = { workspace = true, features = ["std", "bevy_render", "bevy_winit"] }

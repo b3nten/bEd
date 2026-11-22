@@ -1,9 +1,10 @@
-//! The frame rate in the status bar (`ShowFrameRate`, off
-//! by default), with how long frames take, the UI's share, and how bEd is
-//! updating.
+//! The frame rate in the status bar (`FrameRatePlugin`; `ShowFrameRate`,
+//! off by default), with how long frames take, the UI's share, and how the
+//! app is updating.
 //!
-//! bEd updates on input (and requested repaints) unless something animates,
-//! so the rate is what it actually draws, not what it could: idle, it's low.
+//! An app that updates on input (and requested repaints) unless something
+//! animates draws few frames idle: the rate is what it actually draws, not
+//! what it could.
 //! While shown, the counter repaints once a second to stay current.
 //!
 //! Update + render includes waiting for the display: without pipelined
@@ -41,9 +42,9 @@ settings! {
     }
 }
 
-pub struct PerfPlugin;
+pub struct FrameRatePlugin;
 
-impl Plugin for PerfPlugin {
+impl Plugin for FrameRatePlugin {
     fn build(&self, app: &mut App) {
         bedtime_workbench::status::StatusAppExt::add_global_status(app, status_item);
         app.init_resource::<FrameStats>()
@@ -330,12 +331,12 @@ mod tests {
     fn frames_are_recorded_only_while_shown() {
         use bedtime_workbench::{BedtimeWorldExt, WorkbenchCorePlugins, persistence::StoreId};
         let mut app = App::new();
-        app.add_plugins((WorkbenchCorePlugins, PerfPlugin));
+        app.add_plugins((WorkbenchCorePlugins, FrameRatePlugin));
         app.update();
         app.update();
         assert!(app.world().resource::<FrameStats>().frames.is_empty());
 
-        let global = StoreId::of::<crate::workspace::GlobalStore>();
+        let global = StoreId::of::<bedtime_workbench::persistence::GlobalStore>();
         app.world_mut()
             .bedtime_mut()
             .settings_mut()

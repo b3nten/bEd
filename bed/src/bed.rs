@@ -11,7 +11,7 @@ fn main() -> AppExit {
             bed::default_plugins(),
             bed::BedPlugins,
             // bEd's frames are light: a key shows sooner this way.
-            bedtime_ui::LowLatencyPlugin,
+            bedtime::ui::LowLatencyPlugin,
         ))
         .run()
 }

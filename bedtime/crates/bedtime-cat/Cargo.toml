@@ -1,0 +1,14 @@
+[package]
+name = "bedtime-cat"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "A cat that lives in a bedtime app's window"
+
+[dependencies]
+bedtime-ui.workspace = true
+bedtime-workbench = { workspace = true, features = ["persistence"] }
+bevy = { workspace = true, features = ["std", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_winit", "png"] }
+bevy_egui.workspace = true
+gltf.workspace = true

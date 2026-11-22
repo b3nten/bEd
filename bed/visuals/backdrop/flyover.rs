@@ -10,7 +10,7 @@ use super::{
     Backdrops,
     scene::{SceneImage, free_layer, hash, linear, request_frame, retire, surface_style},
 };
-use bedtime_ui::{theme::Rgba, viewport_image};
+use bedtime::ui::{theme::Rgba, viewport_image};
 use bevy::{
     asset::RenderAssetUsages,
     camera::{RenderTarget, visibility::NoFrustumCulling},

@@ -1,8 +1,8 @@
 //! The titlebar: the menu bar where the platform has no native one, and
 //! the tool buttons that open (or drag out) panels.
-use bedtime_file_explorer::FileExplorer;
-use bedtime_ui::{BuiltinIcon, UiContext, egui};
-use bedtime_workbench::{
+use bedtime::file_explorer::FileExplorer;
+use bedtime::ui::{BuiltinIcon, UiContext, egui};
+use bedtime::workbench::{
     Action, ActionId, BedtimeWorldExt as _, InvocationContext, LayoutSurface, PanelFactory, Show,
     ShowPanel, StandardMenus, draw_menu_bar, panel_drag_source,
 };
@@ -23,18 +23,18 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
         ui.add_space(4.0);
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.spacing_mut().button_padding = egui::vec2(5.0, 4.0);
-        tool::<bedtime_code::StructurePanel>(ui, world, context, BuiltinIcon::Structure);
-        tool::<bedtime_git::GitPanel>(ui, world, context, BuiltinIcon::GitBranch);
+        tool::<bedtime::code::StructurePanel>(ui, world, context, BuiltinIcon::Structure);
+        tool::<bedtime::git::GitPanel>(ui, world, context, BuiltinIcon::GitBranch);
         tool::<FileExplorer>(ui, world, context, BuiltinIcon::Folder);
         // Search is more than its panel: it's seeded with the selection.
-        tool_for::<bedtime_search::SearchWorkspace>(
+        tool_for::<bedtime::search::SearchWorkspace>(
             ui,
             world,
             context,
             BuiltinIcon::Search,
-            PanelFactory::of::<bedtime_search::SearchPanel>(),
+            PanelFactory::of::<bedtime::search::SearchPanel>(),
         );
-        tool::<bedtime_terminal::TerminalPanel>(ui, world, context, BuiltinIcon::Terminal);
+        tool::<bedtime::terminal::TerminalPanel>(ui, world, context, BuiltinIcon::Terminal);
     });
 }
 

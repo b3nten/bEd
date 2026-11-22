@@ -1,6 +1,6 @@
-"""Write the cat as bEd reads it: `bed/assets/cat/cat.glb`.
+"""Write the cat as bedtime-cat reads it: `bedtime/crates/bedtime-cat/assets/cat.glb`.
 
-    /Applications/Blender.app/Contents/MacOS/Blender -b bed/assets/cat/cat.blend --python tools/cat/export.py
+    /Applications/Blender.app/Contents/MacOS/Blender -b bedtime/crates/bedtime-cat/assets/cat.blend --python tools/cat/export.py
 
 Run this after changing `cat.blend`. Every action becomes an
 animation of the same name, sampled each frame on the bones that carry skin:
@@ -46,4 +46,4 @@ def export(path):
 
 if __name__ == "__main__":
     here = os.path.dirname(os.path.abspath(__file__))
-    export(os.path.normpath(os.path.join(here, "..", "..", "bed", "assets", "cat", "cat.glb")))
+    export(os.path.normpath(os.path.join(here, "..", "..", "bedtime", "crates", "bedtime-cat", "assets", "cat.glb")))
