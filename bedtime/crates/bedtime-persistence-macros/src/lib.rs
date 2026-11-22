@@ -36,10 +36,35 @@ pub fn derive_persisted(input: TokenStream) -> TokenStream {
     };
     let name = &input.ident;
     let (impl_generics, type_generics, where_clause) = input.generics.split_for_impl();
+    // An app that depends on `bedtime` alone has bedtime-persistence as
+    // `bedtime::persistence`.
+    let persistence = if names_crate("bedtime-persistence") {
+        quote!(::bedtime_persistence)
+    } else {
+        quote!(::bedtime::persistence)
+    };
     quote! {
-        impl #impl_generics ::bedtime_persistence::Persisted for #name #type_generics #where_clause {
+        impl #impl_generics #persistence::Persisted for #name #type_generics #where_clause {
             const KEY: &'static str = #key;
         }
     }
     .into()
+}
+
+/// Whether the crate being compiled names `name` in its manifest, as its own
+/// name or as a dependency. (When that can't be told, it does.)
+fn names_crate(name: &str) -> bool {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR")
+        .ok()
+        .and_then(|folder| std::fs::read_to_string(std::path::Path::new(&folder).join("Cargo.toml")).ok());
+    let Some(manifest) = manifest else {
+        return true;
+    };
+    manifest.lines().any(|line| {
+        let line = line.trim();
+        line.strip_prefix(name)
+            .is_some_and(|rest| rest.starts_with([' ', '=', '.']))
+            || line.replace(' ', "") == format!("name=\"{name}\"")
+            || (line.starts_with('[') && line.ends_with(&format!(".{name}]")))
+    })
 }

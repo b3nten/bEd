@@ -414,6 +414,7 @@ pub(crate) fn load_layers(world: &mut World) {
 /// the layer that was there for it is dropped (save it first, with
 /// `save_layer`), and with `label` a new one is read from the store's
 /// current backend. Settings that changed are applied.
+#[cfg(feature = "workspaces")]
 pub(crate) fn replace_layer(world: &mut World, store: StoreId, label: Option<String>) {
     let mut settings = world.resource_mut::<Settings>();
     settings.layers.retain(|layer| layer.store != store);
@@ -427,6 +428,7 @@ pub(crate) fn replace_layer(world: &mut World, store: StoreId, label: Option<Str
 }
 
 /// Write layer `store` now if it changed.
+#[cfg(feature = "workspaces")]
 pub(crate) fn save_layer(world: &mut World, store: StoreId) {
     let dirty = world
         .resource::<Settings>()

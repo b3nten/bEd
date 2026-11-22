@@ -34,6 +34,7 @@ members = [
     "bedtime/crates/bedtime-schedules",
     "bedtime/crates/bedtime-notes",
     "bedtime/crates/bedtime-diagram",
+    "bedtime/examples/hello",
 ]
 default-members = ["bed"]
 exclude = ["vendor/arboard", "vendor/egui", "vendor/rio-vt"]

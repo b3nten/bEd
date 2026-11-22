@@ -9,6 +9,8 @@
 //! - Building blocks below the workbench: [`persistence`], [`document`],
 //!   [`filesystem`].
 //! - Plugins: [`file_explorer`], [`code`], [`terminal`].
+//! - [`automation`]: scripts driving the app, with the `automation` feature.
+pub use bedtime_automation as automation;
 pub use bedtime_ui as ui;
 
 #[cfg(feature = "code")]

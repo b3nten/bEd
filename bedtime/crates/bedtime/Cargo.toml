@@ -23,11 +23,15 @@ file_explorer = ["dep:bedtime-file-explorer", "workbench", "filesystem"]
 code = ["dep:bedtime-code", "workbench", "filesystem"]
 # Terminal panels.
 terminal = ["dep:bedtime-terminal", "workbench"]
+# Let scripts drive the app (tools/bed.py); without it `automation`'s plugin
+# does nothing.
+automation = ["bedtime-automation/enabled"]
 # macOS window chrome and the native menu bar.
 native = ["bedtime-ui/native", "bedtime-workbench?/native"]
 
 [dependencies]
 bedtime-ui.workspace = true
+bedtime-automation.workspace = true
 bedtime-code = { workspace = true, optional = true }
 bedtime-terminal = { workspace = true, optional = true }
 bedtime-document = { workspace = true, optional = true }

@@ -30,6 +30,7 @@ pub use panel::{OpenSettings, SettingsLocation, SettingsPanel, SettingsPanelPlug
 pub use crate::settings;
 pub use layers::{SETTINGS_ENTRY, Settings, SettingsAppExt, SettingsMut, read_setting};
 #[cfg(feature = "workspaces")]
+#[cfg(feature = "workspaces")]
 pub(crate) use layers::{replace_layer, save_layer};
 pub use setting::Setting;
 

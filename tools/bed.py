@@ -38,7 +38,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "target" / "automation"
-BINARY = ROOT / "target" / "debug" / "bed"
 
 # Chord names, as in keybinding settings, to Bevy key codes.
 MODIFIERS = {
@@ -76,19 +75,19 @@ def key_code(name):
     return name
 
 
-_built = False
+_built = set()
 
 
-def build():
-    """Build bed with automation, once per process."""
-    global _built
-    if not _built:
+def build(app="bed"):
+    """Build `app` (a package of the workspace) with automation, once per
+    process."""
+    if app not in _built:
         subprocess.run(
-            ["cargo", "build", "--quiet", "-p", "bed", "--features", "automation"],
+            ["cargo", "build", "--quiet", "-p", app, "--features", "automation"],
             cwd=ROOT,
             check=True,
         )
-        _built = True
+        _built.add(app)
 
 
 def free_port():
@@ -104,22 +103,31 @@ class AutomationError(Exception):
 class Bed:
     """A running bEd. `folder` opens a workspace; `settings` maps setting keys
     to RON values written to the global layer before launch; `recent` lists
-    folders for the recent list."""
+    folders for the recent list.
 
-    def __init__(self, folder=None, *, settings=None, recent=None, name=None, timeout=30, build_first=True):
+    `app` runs another bedtime app instead (a package of the workspace with
+    an `automation` feature, such as `hello`): `settings` and `recent` are
+    bEd's. `config` is a config directory to use and keep, to start an app
+    again with what it saved; without it each run gets its own, removed when
+    it closes."""
+
+    def __init__(self, folder=None, *, settings=None, recent=None, name=None, timeout=30, build_first=True,
+                 app="bed", config=None):
         if build_first:
-            build()
-        self.name = name or Path(sys.argv[0]).stem or "bed"
+            build(app)
+        self.name = name or Path(sys.argv[0]).stem or app
         OUTPUT.mkdir(parents=True, exist_ok=True)
-        self.config = Path(tempfile.mkdtemp(prefix="bed-automation-"))
+        self.keep_config = config is not None
+        self.config = Path(config or tempfile.mkdtemp(prefix=f"{app}-automation-"))
         # No cat unless a script asks for it: it stands where it likes, in
         # front of what's there, and keeps the window drawing.
         values = {"appearance.cat": False, **(settings or {})}
         global_dir = self.config / "global"
-        global_dir.mkdir()
-        (global_dir / "settings.ron").write_text(
-            "{\n" + "".join(f"    {json.dumps(k)}: {ron(v)},\n" for k, v in values.items()) + "}\n"
-        )
+        if app == "bed" and not self.keep_config:
+            global_dir.mkdir()
+            (global_dir / "settings.ron").write_text(
+                "{\n" + "".join(f"    {json.dumps(k)}: {ron(v)},\n" for k, v in values.items()) + "}\n"
+            )
         if recent:
             folders = [str(Path(folder).resolve()) for folder in recent]
             (global_dir / "recent.ron").write_text(
@@ -131,10 +139,12 @@ class Bed:
         log = open(self.log_path, "w")
         env = {
             **os.environ,
-            "BED_CONFIG_DIR": str(self.config),
+            # `PersistencePlugin::for_app`'s variable for the app's name.
+            f"{app.upper().replace('-', '_')}_CONFIG_DIR": str(self.config),
             "BEDTIME_AUTOMATION_PORT": str(self.port),
         }
-        command = [str(BINARY)] + ([str(folder)] if folder else [])
+        binary = ROOT / "target" / "debug" / app
+        command = [str(binary)] + ([str(folder)] if folder else [])
         self.process = subprocess.Popen(command, env=env, stdout=log, stderr=subprocess.STDOUT)
         try:
             self._wait_ready(timeout)
@@ -348,7 +358,8 @@ class Bed:
             except (AutomationError, urllib.error.URLError, subprocess.TimeoutExpired, ConnectionError):
                 self.process.kill()
                 self.process.wait()
-        shutil.rmtree(self.config, ignore_errors=True)
+        if not self.keep_config:
+            shutil.rmtree(self.config, ignore_errors=True)
 
     def __enter__(self):
         return self

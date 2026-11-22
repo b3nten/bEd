@@ -1,0 +1,20 @@
+[package]
+name = "hello"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "The smallest bedtime app: what an app has to write"
+
+[[bin]]
+name = "hello"
+path = "main.rs"
+
+[features]
+# Let scripts drive the app.
+automation = ["bedtime/automation"]
+
+# All an app depends on: bedtime, and Bevy for its window and renderer.
+[dependencies]
+bedtime = { path = "../../crates/bedtime", features = ["native"] }
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "png", "keyboard", "mouse", "x11", "wayland"] }

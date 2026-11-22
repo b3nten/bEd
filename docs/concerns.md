@@ -209,6 +209,52 @@ Save, Undo and Redo to work.
 - One style for the rest. Single-slot fn pointers cannot be layered when the
   engine builds on bed.
 
+## The second app
+
+`bedtime/examples/hello` is an app that depends on `bedtime` and Bevy only:
+one panel of its own (a counter), a setting, a status item, an action and a
+menu item, with the settings panel, the command palette, menus, a status bar
+and saving between runs. `tests/automation/hello.py` drives it.
+
+Its own feature, `CounterPlugin`, is about 60 lines and needs nothing from
+the app. The rest, `ShellPlugin`, is about 75 lines that every app would
+repeat. Each part is a gap:
+
+| # | What the app does by hand today | Should be |
+|---|---|---|
+| 1 | Configures Bevy's window with `close_when_requested: false`, or the workbench panics | the shell's |
+| 2 | Gives its name twice (`StandardMenusPlugin`, `PersistencePlugin::for_app`), and again for the window title | once (`AppInfo`) |
+| 3 | Adds a store for `WorkbenchStore` and makes it a settings layer; without workspaces nothing is saved and Settings is empty | the app tier's: an app store that always exists |
+| 4 | Defines Quit: the action, its key, its handler, its menu item | the app tier's |
+| 5 | Puts `LayoutSurface`, `SurfaceBody(status::body)` and a camera on the window in `Startup` | the shell's |
+| 6 | Makes a first layout in `OnWorkspaceOpen` when nothing was saved | a default, with the app naming its first panel |
+| 7 | Adds `SettingsPanelPlugin` and `CommandPalettePlugin` beside `WorkbenchPlugins` | in the group |
+| 8 | Opens its window unfocused for scripts, and adds `AutomationPlugin` | the shell's |
+| 9 | Lists Bevy's features, and bedtime's `native` | a default set |
+
+What it gets and didn't ask for, until documents are opt-in: a Documents
+section in Settings (Autosave), and New, Save, Undo and Redo in its menus.
+On platforms without a native menu bar it has no menus at all: drawing them
+is `Titlebar`'s, which bed sets up itself.
+
+Closed while writing it: `#[panel]` and `#[derive(Persisted)]` named
+`bedtime_ui` and `bedtime_persistence`, so they failed in an app with only
+`bedtime` (they now use `bedtime::ui` and `bedtime::persistence` there);
+`bedtime::automation` is re-exported; the workbench built with warnings
+without `workspaces`.
+
+The target, for the same app:
+
+```rust
+fn main() -> AppExit {
+    App::new()
+        .add_plugins((bedtime::AppPlugins::new("Hello"), CounterPlugin))
+        .run()
+}
+```
+
+with `CounterPlugin` saying what a new window starts with.
+
 ## In bed today, by where it should end up
 
 | bed module | Lines | Goes to |
