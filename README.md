@@ -66,7 +66,7 @@ bEd is the reference app for **bedtime**, a set of crates for building desktop a
 - **plugins:** each feature above is its own crate (`bedtime-code`, `bedtime-git`, `bedtime-terminal`, `bedtime-image`, ...) that an app adds as a Bevy plugin.
 - **`bedtime`:** re-exports the core crates behind Cargo features.
 
-bed is simply [`bed/main.rs`](bed/main.rs), which composes those plugins and adds bEd's own menus, keys, layouts, and settings.
+bed is a library, [`bed/lib.rs`](bed/lib.rs), which composes those plugins as `BedPlugins` and adds bEd's own menus, keys, layouts, and settings; the app itself is the few lines of [`bed/src/bed.rs`](bed/src/bed.rs). another app can add `BedPlugins` and build on it.
 
 useful cargo features for the `bed` package:
 

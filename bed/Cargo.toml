@@ -6,9 +6,13 @@ publish = false
 license.workspace = true
 description = "Minimal Bevy application with a Bedtime workbench"
 
+# bEd as plugins, for the app below and for apps that build on it.
+[lib]
+path = "lib.rs"
+
 [[bin]]
 name = "bed"
-path = "main.rs"
+path = "src/bed.rs"
 
 [features]
 # Let scripts drive the app (tools/bed.py).
