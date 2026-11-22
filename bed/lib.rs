@@ -3,8 +3,8 @@
 //!
 //! bEd is policy and coordination; what's reusable lives in bedtime.
 //! [`BedPlugins`] is all of it but Bevy's own plugins and how the app runs:
-//! - `workbench`: workbench under bEd's name, with `themes`, `settings` and
-//!   `menus`; `titlebar` draws the menu bar and tool buttons
+//! - `workbench`: workbench under bEd's name, with `themes` and `settings`;
+//!   `titlebar` draws the menu bar and tool buttons
 //! - `workspace`: switching folders, numbered layouts, the Workspaces panel
 //! - `plugins`: bedtime's panels and viewers, with bEd's answers to what
 //!   they leave to the app
@@ -15,11 +15,10 @@
 //!
 //! And for the app that runs them:
 //! - [`default_plugins`]: Bevy's plugins with bEd's window
-//! - `runtime`: how Bevy runs (logging, frame drawing, the executor)
+//! - `runtime`: how Bevy runs (logging, and bedtime's low latency)
 //! - [`handle_shell_command`]: for `main`, before anything else
 use bevy::{app::PluginGroupBuilder, prelude::*};
 
-pub mod menus;
 pub mod perf;
 pub mod plugins;
 pub mod runtime;

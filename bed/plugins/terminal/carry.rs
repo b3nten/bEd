@@ -21,7 +21,7 @@ impl Plugin for CarryTerminalsPlugin {
             .add_systems(OnWorkspaceClosing, take)
             .add_systems(
                 OnWorkspaceOpen,
-                resume.after(crate::workspace::layouts::open_first),
+                resume.after(bedtime_workbench::layout_slots::OpenFirstLayout),
             );
     }
 }

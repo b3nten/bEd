@@ -53,6 +53,11 @@ impl Plugin for DiagramPlugin {
             .register_viewer::<Diagram, DiagramPanel>("Diagram")
             .formats([DIAGRAM]);
         app.add_action_handler::<NewDiagram>(Handler::new(new_diagram));
+        bedtime_workbench::MenusAppExt::add_menu_item::<NewDiagram>(
+            app,
+            bedtime_workbench::StandardMenu::File,
+            "new",
+        );
         app.register_action::<ExportSvg>()
             .register_action::<ExportPng>()
             .register_action::<CopyPng>()

@@ -1516,30 +1516,7 @@ pub(crate) fn open_factory(path: PathBuf) -> bedtime_workbench::PanelFactory {
     open_files_factory(vec![path])
 }
 
-/// A factory opening `paths` in the area it's given (the last one shows),
-/// for dropping files on a layout. Errors are notifications.
-pub fn open_files_factory(paths: Vec<PathBuf>) -> bedtime_workbench::PanelFactory {
-    bedtime_workbench::PanelFactory::new("File", move |world, area| {
-        let mut shown = Entity::PLACEHOLDER;
-        for path in &paths {
-            let options = PathOptions {
-                target: bedtime_workbench::Target::New,
-                place: Some(bedtime_workbench::Placement::In(area)),
-                ..default()
-            };
-            match world.bedtime_mut().open_path(path, options) {
-                Ok(panel) => shown = panel,
-                Err(error) => {
-                    let name = path.file_name().unwrap_or(path.as_os_str()).display();
-                    world.bedtime_mut().notify(Notification::error(format!(
-                        "Couldn't open {name}: {error}"
-                    )));
-                }
-            }
-        }
-        shown
-    })
-}
+pub use bedtime_workbench::open_files_factory;
 
 /// The icon for a file, by its extension. Does no I/O.
 pub fn file_icon(path: &Path) -> BuiltinIcon {

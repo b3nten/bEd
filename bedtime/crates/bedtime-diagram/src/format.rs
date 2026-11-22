@@ -572,4 +572,5 @@ impl ByteModel for Diagram {
 
 impl FileModel for Diagram {
     const MAX_LEN: u64 = 64 * 1024 * 1024;
+    const EXTENSION: &'static str = crate::EXTENSION;
 }

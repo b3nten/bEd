@@ -37,6 +37,8 @@ bevy = { workspace = true, features = ["std", "bevy_render", "bevy_core_pipeline
 egui.workspace = true
 fontdb = { workspace = true, optional = true }
 bevy_egui.workspace = true
+# Frame pacing, for `latency`.
+bevy_framepace = "0.23.0"
 resvg.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

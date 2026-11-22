@@ -1,16 +1,17 @@
-//! The Workspaces panel: the folders bEd has opened, to switch to or forget.
-use super::{RecentWorkspaces, Workspace, available, delete};
+//! The Workspaces panel (`WorkspacesPanelPlugin`): the folders the app has
+//! opened, to switch to or forget.
+use crate::BedtimeWorldExt as _;
+use crate::PanelsAppExt as _;
+use crate::workspaces::{RecentWorkspaces, Workspace, available, delete};
+use crate::{ErrorDialog, Panel, persistence::ReflectPersist};
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
-use bedtime_workbench::BedtimeWorldExt as _;
-use bedtime_workbench::PanelsAppExt as _;
-use bedtime_workbench::{ErrorDialog, Panel, persistence::ReflectPersist};
 use bevy::prelude::*;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
-impl bedtime_workbench::ShowPanel for WorkspacesPanel {
+impl crate::ShowPanel for WorkspacesPanel {
     const SHOW: &'static str = "workspaces.show";
 }
 
@@ -18,7 +19,7 @@ impl bedtime_workbench::ShowPanel for WorkspacesPanel {
 #[derive(Reflect, Default)]
 #[reflect(Component, Persist)]
 // Saved layouts name it by this path, wherever its module moves to.
-#[type_path = "bed::workspace"]
+#[type_path = "bedtime"]
 pub struct WorkspacesPanel;
 
 pub struct WorkspacesPanelPlugin;
@@ -162,7 +163,7 @@ impl Panel for WorkspacesPanel {
             None => data.remove::<PathBuf>(confirming_id),
         });
         match action {
-            Some(Choice::Open(folder)) => super::switch(world, Some(folder)),
+            Some(Choice::Open(folder)) => crate::workspaces::switch(world, Some(folder)),
             Some(Choice::Delete(folder)) => forget(world, &folder, config.as_deref()),
             None => {}
         }

@@ -291,20 +291,33 @@ fn main() -> AppExit {
 
 with `CounterPlugin` saying what a new window starts with.
 
-## In bed today, by where it should end up
+## What was bed's, and where it is now
 
-| bed module | Lines | Goes to |
-|---|---|---|
-| `lib.rs`, `window.rs`, `workbench.rs` | 190 | `BedPlugins` stays (done: bed is a library, `src/bed.rs` the app); the window setup goes to a shell plugin in the app tier |
-| `runtime.rs` | 80 | app tier, opt in, set by the binary |
-| `menus.rs` | 210 | app tier (Quit, New Window), workspaces (folders, recent) |
-| `plugins/documents.rs` | 85 | documents tier (save picker) |
-| `plugins/files.rs` | 65 | documents tier (drops, handlers); keymap stays |
-| `workspace/layouts.rs` | 205 | workspaces tier; bed keeps its default arrangement |
-| `workspace/panel.rs` | 340 | workspaces tier |
-| `titlebar.rs` | 120 | shell (tools become contributions) |
-| `perf.rs` | 360 | a small bedtime plugin, or stays |
-| `themes.rs` + 20 theme files | 75 | stays (bed's), or a shared theme pack |
-| `settings.rs` | 40 | mostly disappears with declared sections |
-| `plugins/{git,search,mascots,terminal}` | 440 | stays: glue between plugins |
-| `visuals/` | 6,400 | stays: bed's look (effects and shader backdrops could move later) |
+| Was in bed | Now |
+|---|---|
+| `main.rs` | `bed/src/bed.rs` (the app) and `bed/lib.rs` (`BedPlugins`) |
+| window, camera, status bar setup; the app's name | `AppPlugins`, `ShellPlugin`, `AppInfo` |
+| Quit | `Quit`, in `ShellPlugin` |
+| `settings.rs`' layout of every setting | gone: settings show in their declared sections |
+| `menus.rs`: New Window, Open Folder, Open Recent, Close Folder; a dropped folder | `WorkspacesPlugin` (`workspace_menus`) |
+| `workspace/layouts.rs`: five numbered layouts, their defaults, the Layout menu | `LayoutSlotsPlugin`; bed keeps what layout 1 starts with (`FirstLayout`) |
+| `workspace/panel.rs`: the Workspaces panel | `WorkspacesPanelPlugin` |
+| `plugins/documents.rs`: the save picker | `DocumentFilesPlugin`, with `FileModel::EXTENSION` for what it's saved as |
+| `plugins/files.rs`: dropped files, document handlers | `DocumentFilesPlugin`, `DocumentsPlugin` |
+| `runtime.rs`: no pipelined rendering, the executor, frame pacing | `bedtime_ui::latency` (`low_latency`, `LowLatencyPlugin`), opted into by the binary |
+| the list of status items | each plugin adds its own |
+| a file picker in each place that needed one | `world.bedtime_mut().pick_path(…)` (`native` feature) |
+
+Still bed's, by choice: its window's surface options and titlebar tools,
+its themes, the section order and Autosave default in `settings.rs`, the
+glue between plugins (`plugins/`: git with the terminal and workspaces,
+search seeded from the editor, the shell commands, carried terminals), and
+its look (`visuals/`).
+
+The numbered layout slots are `bedtime_workbench::layout_slots`
+(`LayoutSlotsPlugin`; `FirstLayout` is what a slot starts with, which bed
+sets), and the Workspaces panel is `workspaces::WorkspacesPanelPlugin`. An
+app adds either. Their saved types are named `bedtime::LayoutSlot` and
+`bedtime::WorkspacesPanel`, pinned, with no migration from the names bed
+gave them: a workspace saved before this doesn't load until its
+`world.ron` is deleted. The frame-rate item and the cat are step 8.

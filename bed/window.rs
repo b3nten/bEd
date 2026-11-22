@@ -1,10 +1,8 @@
 //! bEd's main window: transparent, its content under the titlebar; the
 //! panels with the status bar under them; and what bEd arranges of what the
 //! plugins share: its own keys and the dock menu.
-use crate::{menus, titlebar};
-use bedtime_workbench::{
-    AreaBackground, DockMenuAppExt, LayoutSurface, TabBarVisibility, Titlebar,
-};
+use crate::titlebar;
+use bedtime_workbench::{AreaBackground, LayoutSurface, TabBarVisibility, Titlebar};
 use bevy::{prelude::*, window::PrimaryWindow};
 
 /// bEd's own keys for actions that have none (VS Code's, where it has them).
@@ -24,8 +22,7 @@ pub struct BedWindowPlugin;
 
 impl Plugin for BedWindowPlugin {
     fn build(&self, app: &mut App) {
-        app.add_dock_menu_item::<menus::NewWindow>()
-            .add_systems(Startup, setup);
+        app.add_systems(Startup, setup);
         bedtime_workbench::ActionAppExt::add_keymap(app, KEYS);
     }
 }

@@ -1,8 +1,8 @@
 //! The workbench as bEd sets it up: bedtime's UI and workbench under bEd's
-//! name and config folder, the folder it opens at startup, its themes and
-//! Settings layout, its menus and the command palette (and the Language
-//! Servers panel, which must come before the editor).
-use crate::{menus, settings, themes};
+//! name and config folder, documents, the folder it opens at startup, its
+//! themes and its settings (and the Language Servers panel, which must come
+//! before the editor).
+use crate::{settings, themes};
 use bedtime_workbench::{AppPlugins, workspaces::WorkspacesPlugin};
 use bevy::prelude::*;
 
@@ -23,7 +23,6 @@ impl Plugin for BedWorkbenchPlugin {
             // it, files no longer open (cause not yet found).
             bedtime_code::lsp::LanguageServersPanelPlugin,
             settings::BedSettingsPlugin,
-            menus::MenusPlugin,
         ));
     }
 }

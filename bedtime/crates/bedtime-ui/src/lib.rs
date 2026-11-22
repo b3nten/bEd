@@ -19,6 +19,7 @@ mod icon_cache;
 pub mod icons;
 #[cfg(feature = "image")]
 pub mod image;
+pub mod latency;
 pub mod layouts;
 mod links;
 #[cfg(target_os = "macos")]
@@ -31,8 +32,8 @@ mod runtime;
 pub mod theme;
 pub mod tree;
 mod viewport;
-use bevy::prelude::*;
 pub use backdrop::{BackdropStatus, SurfaceBackdrop, window_fill};
+use bevy::prelude::*;
 pub use code::CodeView;
 pub use combo_box::ComboBox;
 pub use component::{UiComponent, UiContext, UiDraw};
@@ -40,6 +41,7 @@ pub use egui;
 pub use embedded::{EmbeddedRenderPlugin, ViewportHostPlugin, ViewportOutput};
 pub use floating::Floating;
 pub use icons::{BuiltinIcon, Icon, IconSet, IconSource, UiIconStatus, UiIcons};
+pub use latency::{LowLatencyPlugin, low_latency};
 pub use links::{ExternalOpener, LinksWorldExt, open_with_system, request_open_externally};
 pub use motion::{MotionPolicy, ease};
 use std::sync::Mutex;

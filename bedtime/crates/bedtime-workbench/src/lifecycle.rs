@@ -39,6 +39,8 @@ pub(crate) fn install(app: &mut App) {
             report_failed_actions.after(ActionSystems::Dispatch),
         );
     exit::install(app);
+    #[cfg(feature = "native")]
+    crate::pickers::install(app);
     panel_actions::install(app);
     // A gesture's layout edit applies before shortcuts are read.
     app.configure_sets(

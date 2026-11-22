@@ -144,6 +144,9 @@ pub trait FileModel: ByteModel {
     /// The viewer reads the file itself (a video, played from disk): loading
     /// only checks it's there, and `decode` is given no bytes.
     const UNREAD: bool = false;
+    /// What a new file of it is saved as, unless it's given another name:
+    /// its usual extension, without the dot.
+    const EXTENSION: &'static str = "txt";
 }
 
 /// Re-exported: `FileModel`'s byte form.

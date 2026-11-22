@@ -30,6 +30,11 @@ use std::{
 };
 
 pub use crate::persistence::GlobalStore;
+pub use crate::workspace_menus::{
+    CloseFolder, NewWindow, OpenFolder, OpenRecent, spawn_window, switch,
+};
+#[cfg(feature = "ui")]
+pub use crate::workspaces_panel::{WorkspacesPanel, WorkspacesPanelPlugin};
 
 settings! {
     "Startup" {
@@ -306,6 +311,7 @@ impl Plugin for WorkspacesPlugin {
                 workspace_settings: self.workspace_settings,
             })
             .add_systems(Update, report_unclaimed);
+        crate::workspace_menus::install(app);
         // The workspace's name, in the status bar.
         #[cfg(feature = "ui")]
         crate::status::StatusAppExt::add_global_status(app, status_item);

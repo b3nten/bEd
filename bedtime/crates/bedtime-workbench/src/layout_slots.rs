@@ -1,27 +1,40 @@
-//! Five numbered layouts per workspace, each with a default every workspace
-//! shares.
-use super::{GlobalStore, Workspace, WorkspacesPanel};
-use bedtime_file_explorer::FileExplorer;
-use bedtime_workbench::BedtimeWorldExt as _;
-use bedtime_workbench::{
+//! Numbered layouts (`LayoutSlotsPlugin`): five to switch between with
+//! Cmd/Ctrl+1 to 5 and a Layout menu, each with a default that's saved for
+//! the whole app (the global store) and that Reset Layout goes back to.
+//! With workspaces, each workspace has its own five.
+//!
+//! A slot with no saved default starts empty, but for what the app says
+//! with [`FirstLayout`] (its file tree beside an empty area, say).
+use crate::BedtimeWorldExt as _;
+use crate::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout,
-    LayoutFallback, MenusAppExt, PanelFactory, StandardMenu,
-    persistence::{LayoutTemplate, Persisted, PersistenceAppExt, ReflectPersist},
+    LayoutFallback, MenusAppExt, OnWorkspaceOpen, StandardMenu,
+    persistence::{GlobalStore, LayoutTemplate, Persisted, PersistenceAppExt, ReflectPersist},
 };
-use bedtime_workbench::{OnWorkspaceOpen, SplitAxis};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 pub const SLOTS: usize = 5;
 
-/// bEd's Layout menu: the slots, then saving and resetting defaults.
+/// What a slot's layout starts with when it has no saved default: given the
+/// new, empty layout (one area), it adds panels and splits. Without it,
+/// every slot starts empty.
+#[derive(Resource, Clone, Copy)]
+pub struct FirstLayout(pub fn(&mut World, LayoutSlot, Entity) -> Result<(), String>);
+
+/// When the first layout is opened as a workspace opens: after it, a
+/// workspace has an active layout.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct OpenFirstLayout;
+
+/// The Layout menu: the slots, then saving and resetting defaults.
 const LAYOUT: StandardMenu = StandardMenu::Custom("Layout");
 
 /// Which numbered layout this is, from 0.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[reflect(Component, Persist, Default)]
 // Saved layouts name it by this path, wherever its module moves to.
-#[type_path = "bed::layouts"]
+#[type_path = "bedtime"]
 pub struct LayoutSlot(pub usize);
 
 impl LayoutSlot {
@@ -93,7 +106,7 @@ impl Plugin for LayoutSlotsPlugin {
             .add_menu_item::<UseLayout<4>>(LAYOUT, "slots")
             .add_menu_item::<SaveLayoutAsDefault>(LAYOUT, "defaults")
             .add_menu_item::<ResetLayout>(LAYOUT, "defaults")
-            .add_systems(OnWorkspaceOpen, open_first);
+            .add_systems(OnWorkspaceOpen, open_first.in_set(OpenFirstLayout));
     }
 }
 
@@ -137,21 +150,9 @@ fn create(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
             .map_err(|error| format!("{}'s default can't be used: {error}", slot.name()))?,
         None => {
             let layout = world.bedtime_mut().layouts_mut().create(slot.name())?;
-            let default_workspace = world.get_resource::<Workspace>().is_some_and(|w| w.default);
-            if slot == LayoutSlot(0) {
-                let area = world.bedtime_mut().layouts_mut().destination_area(layout)?;
-                if default_workspace {
-                    (PanelFactory::of::<WorkspacesPanel>().create)(world, area);
-                } else {
-                    // Files in the left quarter; files open on the right.
-                    world.bedtime_mut().layouts_mut().split_area(
-                        area,
-                        SplitAxis::Horizontal,
-                        2500,
-                        [100, 100],
-                    )?;
-                    (PanelFactory::of::<FileExplorer>().create)(world, area);
-                }
+            let first = world.get_resource::<FirstLayout>().map(|first| first.0);
+            if let Some(first) = first {
+                first(world, slot, layout)?;
             }
             layout
         }
@@ -163,7 +164,7 @@ fn create(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
 
 /// When a workspace opens: its saved active layout, or layout 1. A workbench
 /// saved before slots existed gets its active layout as layout 1.
-pub(crate) fn open_first(world: &mut World) {
+fn open_first(world: &mut World) {
     if world
         .bedtime()
         .layouts()
@@ -216,4 +217,21 @@ fn reset(world: &mut World, _: ActionInvocation) -> ActionResult {
         return Err(error);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::reflect::TypePath;
+
+    /// Saved layouts name these types by path: moving their modules must
+    /// not rename them, or what was saved no longer opens.
+    #[test]
+    fn saved_types_keep_the_names_they_were_saved_under() {
+        assert_eq!(super::LayoutSlot::type_path(), "bedtime::LayoutSlot");
+        #[cfg(all(feature = "workspaces", feature = "ui"))]
+        assert_eq!(
+            crate::workspaces::WorkspacesPanel::type_path(),
+            "bedtime::WorkspacesPanel"
+        );
+    }
 }

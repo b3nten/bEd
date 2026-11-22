@@ -13,6 +13,8 @@ mod documents;
 mod exit;
 #[cfg(feature = "files")]
 mod formats;
+#[cfg(feature = "persistence")]
+pub mod layout_slots;
 mod lifecycle;
 pub mod menus;
 mod notifications;
@@ -32,7 +34,11 @@ pub mod status;
 mod untitled;
 pub mod work;
 #[cfg(feature = "workspaces")]
+mod workspace_menus;
+#[cfg(feature = "workspaces")]
 pub mod workspaces;
+#[cfg(all(feature = "workspaces", feature = "ui"))]
+mod workspaces_panel;
 pub use actions::*;
 #[cfg(all(feature = "ui", feature = "persistence"))]
 pub use app::{AppInfo, AppPlugins, Quit, ShellPlugin, driven_by_script};
@@ -70,6 +76,8 @@ pub use session::{InWorkspace, OnWorkspaceClose, OnWorkspaceClosing, OnWorkspace
 pub use untitled::{SaveAs, Untitled};
 #[cfg(feature = "native")]
 mod native;
+#[cfg(feature = "native")]
+mod pickers;
 #[cfg(feature = "clipboard")]
 pub use bedtime_clipboard::{Clipboard, ClipboardPlugin};
 #[cfg(feature = "native")]
@@ -77,6 +85,8 @@ pub use native::{
     DockMenu, DockMenuAppExt, DockMenuPlugin, NativeError, NativeSystems, WorkbenchNativePlugin,
     WorkbenchNativeWindowPlugin,
 };
+#[cfg(feature = "native")]
+pub use pickers::{PathPicker, Pick};
 #[cfg(all(feature = "ui", feature = "documents"))]
 mod dialogs;
 #[cfg(feature = "ui")]
@@ -228,9 +238,10 @@ impl PluginGroup for AppWindowPlugins {
     }
 }
 
-/// Documents, for an app that has them: `DocumentsPlugin`, and its settings
-/// (`persistence` feature). Add it after the app's services (`AppPlugins`,
-/// `AppWindowPlugins` or `AppCorePlugins`).
+/// Documents, for an app that has them: `DocumentsPlugin`, its settings
+/// (`persistence` feature), and what files do in the app's window
+/// (`DocumentFilesPlugin`, `files` feature). Add it after the app's
+/// services (`AppPlugins`, `AppWindowPlugins` or `AppCorePlugins`).
 #[cfg(feature = "documents")]
 pub struct DocumentsPlugins;
 #[cfg(feature = "documents")]
@@ -239,7 +250,29 @@ impl PluginGroup for DocumentsPlugins {
         let group = PluginGroupBuilder::start::<Self>().add(DocumentsPlugin);
         #[cfg(feature = "persistence")]
         let group = group.add(DocumentSettingsPlugin);
+        #[cfg(feature = "files")]
+        let group = group.add(DocumentFilesPlugin);
         group
+    }
+}
+
+/// Files in an app's window: dropped on it, they open where they're dropped;
+/// and with the `native` feature, saving an untitled document asks where
+/// with the system's picker. Each unless the app has set its own way
+/// (`FileDrops`, `SaveAs`). Not part of `DocumentsPlugin`, so an app (or a
+/// test) without a window has neither.
+#[cfg(feature = "files")]
+pub struct DocumentFilesPlugin;
+#[cfg(feature = "files")]
+impl Plugin for DocumentFilesPlugin {
+    fn build(&self, app: &mut App) {
+        if !app.world().contains_resource::<FileDrops>() {
+            app.insert_resource(FileDrops(opening::dropped_files));
+        }
+        #[cfg(feature = "native")]
+        if !app.world().contains_resource::<SaveAs>() {
+            app.insert_resource(SaveAs(untitled::ask_with_the_systems_picker));
+        }
     }
 }
 

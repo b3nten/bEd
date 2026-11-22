@@ -1,8 +1,10 @@
 //! Untitled documents: new contents that aren't in a file yet ("Untitled",
-//! "Untitled 2", …). Saving one asks the app where (`set_save_as`, a file
-//! picker) and keeps it there (`save_untitled_to`): the same document, with
-//! its history, now a file's. While the picker is open it counts as saving,
-//! so closing waits for it. Without a picker, saving one is an error.
+//! "Untitled 2", …). Saving one asks where (`SaveAs`: the system's picker,
+//! with the `native` feature, unless the app sets its own with
+//! `set_save_as`) and keeps it there (`save_untitled_to`): the same
+//! document, with its history, now a file's. While the picker is open it
+//! counts as saving, so closing waits for it. Without a picker, saving one
+//! is an error.
 use crate::*;
 use bedtime_document::MemorySource;
 use bevy::prelude::*;
@@ -11,7 +13,9 @@ use bevy::prelude::*;
 #[derive(Component)]
 pub struct Untitled {
     pub name: String,
-    /// The app's picker is open for it.
+    /// What a file of it is saved as (`FileModel::EXTENSION`).
+    pub extension: &'static str,
+    /// The picker is open for it.
     pub(crate) choosing: bool,
     #[cfg(feature = "files")]
     save_to: fn(&mut World, DocumentId, &std::path::Path) -> Result<(), String>,
@@ -52,6 +56,7 @@ impl Bedtime {
             .map_err(|e| e.to_string())?;
         world.entity_mut(document.id().0).insert(Untitled {
             name,
+            extension: M::EXTENSION,
             choosing: false,
             save_to: save_to::<M>,
         });
@@ -90,6 +95,31 @@ impl Bedtime {
     pub fn set_save_as(&mut self, save_as: fn(&mut World, DocumentId)) {
         self.world.insert_resource(SaveAs(save_as));
     }
+}
+
+/// Ask where with the system's picker, in the app's folder (`Root`): the
+/// way to ask unless the app sets another.
+#[cfg(all(feature = "native", feature = "files"))]
+pub(crate) fn ask_with_the_systems_picker(world: &mut World, id: DocumentId) {
+    let Some(untitled) = world.get::<Untitled>(id.0) else {
+        return;
+    };
+    let name = format!("{}.{}", untitled.name, untitled.extension);
+    let mut picker = crate::PathPicker::new("Save", crate::Pick::SaveAs { name });
+    if let Some(root) = world.get_resource::<crate::Root>() {
+        picker = picker.in_directory(&root.0);
+    }
+    world.bedtime_mut().pick_path(picker, move |world, chosen| {
+        let Some(path) = chosen else {
+            world.bedtime_mut().cancel_save_as(id);
+            return;
+        };
+        if let Err(error) = world.bedtime_mut().save_untitled_to(id, &path) {
+            world
+                .bedtime_mut()
+                .notify(Notification::error(format!("Couldn't save: {error}")));
+        }
+    });
 }
 
 /// Saving an untitled document: ask where (once at a time).

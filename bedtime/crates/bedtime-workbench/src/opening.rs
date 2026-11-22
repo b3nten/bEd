@@ -853,8 +853,54 @@ pub(crate) fn pin_edited_previews(world: &mut World) {
     }
 }
 
+/// A factory opening `paths` in the area it's given (the last one shows),
+/// for dropping files on a layout. Errors are notifications.
+#[cfg(feature = "files")]
+pub fn open_files_factory(paths: Vec<std::path::PathBuf>) -> PanelFactory {
+    PanelFactory::new("File", move |world, area| {
+        let mut shown = Entity::PLACEHOLDER;
+        for path in &paths {
+            let options = PathOptions {
+                target: Target::New,
+                place: Some(Placement::In(area)),
+                ..default()
+            };
+            match world.bedtime_mut().open_path(path, options) {
+                Ok(panel) => shown = panel,
+                Err(error) => {
+                    let name = path.file_name().unwrap_or(path.as_os_str()).display();
+                    world.bedtime_mut().notify(Notification::error(format!(
+                        "Couldn't open {name}: {error}"
+                    )));
+                }
+            }
+        }
+        shown
+    })
+}
+
+/// What files dropped on a layout do (`FileDrops`): open where they're
+/// dropped. Folders among them are left out.
+#[cfg(feature = "files")]
+pub(crate) fn dropped_files(_: &mut World, paths: Vec<std::path::PathBuf>) -> Option<PanelFactory> {
+    let files: Vec<_> = paths.into_iter().filter(|path| !path.is_dir()).collect();
+    (!files.is_empty()).then(|| open_files_factory(files))
+}
+
 #[cfg(test)]
 mod tests {
+    /// Files dropped on a window open; folders among them don't.
+    #[cfg(feature = "files")]
+    #[test]
+    fn dropped_files_open_and_folders_are_left_out() {
+        let mut world = World::new();
+        let folder = std::env::temp_dir();
+        assert!(super::dropped_files(&mut world, vec![folder.clone()]).is_none());
+        let file = folder.join("bedtime-dropped-file.txt");
+        let factory = super::dropped_files(&mut world, vec![folder, file]);
+        assert_eq!(factory.map(|factory| factory.label), Some("File"));
+    }
+
     use super::*;
     use crate::tests::layout;
     use bedtime_document::{MemorySource, TextBuffer, TextOpenState, TextPosition};
@@ -1196,6 +1242,8 @@ mod tests {
         let other = world.get::<DocumentReference>(second).unwrap().document();
         assert_eq!(world.get::<Untitled>(document.0).unwrap().name, "Untitled");
         assert_eq!(world.get::<Untitled>(other.0).unwrap().name, "Untitled 2");
+        // It's saved as its model's kind of file, unless given another name.
+        assert_eq!(world.get::<Untitled>(document.0).unwrap().extension, "txt");
         update_until(&mut app, |world| {
             world
                 .bedtime()

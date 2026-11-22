@@ -23,7 +23,7 @@ persistence = ["dep:bedtime-persistence", "dep:ron", "bedtime-ui/persistence", "
 # Workspaces: folders with their own store and settings, switched in place.
 workspaces = ["persistence"]
 # The native menu bar, system clipboard and window chrome.
-native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "dep:muda", "bedtime-ui/native", "dep:objc2", "dep:objc2-foundation", "dep:objc2-app-kit"]
+native = ["clipboard", "bedtime-clipboard/system_clipboard", "bevy/bevy_window", "bevy/mouse", "dep:muda", "dep:rfd", "bedtime-ui/native", "dep:objc2", "dep:objc2-foundation", "dep:objc2-app-kit"]
 
 [dependencies]
 bedtime-document = { workspace = true, optional = true }
@@ -35,6 +35,8 @@ bedtime-clipboard = { workspace = true, optional = true }
 bedtime-ui.workspace = true
 bevy_egui = { workspace = true, optional = true }
 ron = { version = "0.12.2", optional = true }
+# The system's file pickers.
+rfd = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
