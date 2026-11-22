@@ -3,7 +3,7 @@
 //! it, but for the font, which is whichever of the viewer's it finds, and
 //! labels, which break only where they were written to.
 use crate::edit;
-use crate::model::{Color, Dash, Element, Head, Point, Rect, Shape, TEXT_SIZE};
+use crate::model::{Color, Dash, Element, GROUP_LABEL_SIZE, Head, Point, Rect, Shape, TEXT_SIZE};
 use std::fmt::Write;
 
 /// The room left around the picture, on the canvas.
@@ -227,6 +227,31 @@ fn draw(out: &mut String, element: &Element, inks: &Inks) {
                 "start",
                 &inks.of(element.stroke),
             );
+        }
+        // Drawn only with a label: a frame, and the label at its top left.
+        Shape::Group { around, .. } => {
+            if element.label.is_empty() {
+                return;
+            }
+            let _ = writeln!(
+                out,
+                r#"<rect x="{}" y="{}" width="{}" height="{}" {} {stroke}/>"#,
+                number(around.x),
+                number(around.y),
+                number(around.w),
+                number(around.h),
+                fill(element, inks),
+            );
+            lines(
+                out,
+                &element.label,
+                around.x + 8.0,
+                around.y + 6.0,
+                GROUP_LABEL_SIZE,
+                "start",
+                &inks.of(element.stroke),
+            );
+            return;
         }
     }
     if element.label.is_empty() {

@@ -35,7 +35,7 @@ fn sample() -> Diagram {
             ElementId(3),
             Shape::Text {
                 at: Point::new(5.0, 5.0),
-                text: "two\nlines, \"quoted\"".into(),
+                text: "two\nlines, \"quoted\", it's \\' \\\\".into(),
                 size: TEXT_SIZE,
             },
         ),
@@ -70,12 +70,14 @@ fn encoded(diagram: &Diagram) -> String {
 #[test]
 fn changes_return_their_inverse() {
     let original = sample();
-    let mut moved = rectangle(1);
+    let mut moved = original.get(ElementId(1)).unwrap().clone();
     moved.stroke = Color::Green;
+    let mut added = rectangle(9);
+    added.name = "added".into();
     for change in [
         Change::Insert {
             index: 2,
-            element: rectangle(9),
+            element: added,
         },
         Change::Remove { id: ElementId(2) },
         Change::Replace { element: moved },
@@ -154,10 +156,10 @@ fn files_keep_one_element_per_line() {
     assert_eq!(lines.len(), 11, "{text}");
     assert_eq!(
         lines[3],
-        "        (id: 1, shape: Rectangle(x: 10.0, y: 0.0, w: 100.0, h: 50.0), fill: Some(Blue)),"
+        r#"        (id: "rect-1", shape: Rectangle(x: 10, y: 0, w: 100, h: 50), fill: Blue),"#
     );
     assert!(
-        lines[5].contains(r#"text: "two\nlines, \"quoted\"""#),
+        lines[5].contains(r#"text: "two\nlines, \"quoted\", it's \\' \\\\""#),
         "{text}"
     );
 }
@@ -168,9 +170,9 @@ fn files_written_by_hand_are_read() {
         br#"(
             version: 1,
             elements: [
-                (id: 1, shape: Rectangle(x: 0, y: 0, w: 10, h: 10)),
-                (id: 2, shape: Line(points: [(0, 0), (5, 5)], end: Arrow), stroke: Red),
-                (id: 3, shape: Text(at: (1, 2), text: "hi")),
+                (id: "a", shape: Rectangle(x: 0, y: 0, w: 10, h: 10)),
+                (shape: Line(from: (0, 0), to: (5, 5), end: Arrow), stroke: Red),
+                (shape: Text(at: (1, 2), text: "hi")),
             ],
         )"#,
     )
@@ -200,12 +202,12 @@ fn files_that_are_not_diagrams_are_refused() {
     assert!(later.contains("version 2"), "{later}");
     let twice = Diagram::decode(
         b"(version: 1, elements: [
-            (id: 1, shape: Ellipse(x: 0, y: 0, w: 1, h: 1)),
-            (id: 1, shape: Ellipse(x: 0, y: 0, w: 1, h: 1)),
+            (id: \"x\", shape: Ellipse(x: 0, y: 0, w: 1, h: 1)),
+            (id: \"x\", shape: Ellipse(x: 0, y: 0, w: 1, h: 1)),
         ])",
     )
     .unwrap_err();
-    assert!(twice.contains("id 1"), "{twice}");
+    assert!(twice.contains("\"x\""), "{twice}");
 }
 
 #[test]
@@ -832,7 +834,7 @@ fn labels_are_kept_in_the_file() {
     let diagram = Diagram::new(vec![labelled, rectangle(2)]).unwrap();
     let written = encoded(&diagram);
     assert!(
-        written.contains(r#"h: 50.0), label: "Open\nfile"),"#),
+        written.contains(r#"h: 50), label: "Open\nfile"),"#),
         "{written}"
     );
     assert_eq!(
@@ -1291,15 +1293,14 @@ fn bindings_are_kept_in_the_file() {
     let diagram = joined();
     let written = encoded(&diagram);
     assert!(
-        written.contains("end: Arrow, from: Some(1), to: Some(2))"),
+        written.contains(r#"Arrow(from: "rect-1", to: "rect-2")"#),
         "{written}"
     );
     assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), diagram);
-    // A line bound to something that isn't there is read, and let go when settled.
-    let loose = Diagram::decode(
-        b"(version: 1, elements: [(id: 1, shape: Line(points: [(0, 0), (9, 9)], to: Some(7)))])",
-    )
-    .unwrap();
+    // A line bound to something that isn't there is let go when settled.
+    let mut loose = line(1, (0.0, 0.0), (9.0, 9.0));
+    edit::bind_end(&mut loose, 1, Some((ElementId(7), Side::Left)));
+    let loose = Diagram::new(vec![loose]).unwrap();
     let settled = edit::settle(&loose.elements()[0], &loose, &Element::bounds);
     assert_eq!(ends(&Diagram::new(vec![settled]).unwrap(), 1).2, None);
 }
@@ -1460,7 +1461,7 @@ fn dragging_an_end_pins_it_anew_and_letting_go_forgets_the_side() {
     assert_eq!(sides(&after, 3), (Side::Auto, Side::Bottom));
     let written = encoded(&after);
     assert!(
-        written.contains("from: Some(1), to: Some(2), to_side: Bottom)"),
+        written.contains(r#"Arrow(from: "rect-1", to: "rect-2", to_side: Bottom)"#),
         "{written}"
     );
     assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), after);
@@ -1626,7 +1627,7 @@ fn styles_are_kept_in_the_file() {
     let diagram = Diagram::new(vec![boxed, rectangle(2)]).unwrap();
     let written = encoded(&diagram);
     assert!(
-        written.contains("h: 50.0), dash: Dashed, rounded: true),"),
+        written.contains("h: 50), dash: Dashed, rounded: true),"),
         "{written}"
     );
     assert_eq!(
@@ -1964,15 +1965,20 @@ fn grouped_elements_are_selected_and_moved_together() {
     let diagram = two_boxes();
     let mut state = State::default();
     state.selection = vec![ElementId(1), ElementId(2)];
-    let edit = state.group(&diagram, true).unwrap();
+    let edit = state
+        .group(&diagram, true)
+        .unwrap()
+        .bound(&diagram, &Element::bounds);
     assert_eq!(edit.label, "Group");
     let grouped = made_and_undone(&diagram, &edit.changes);
-    assert_eq!(grouped.get(ElementId(1)).unwrap().group, Some(1));
-    assert_eq!(grouped.get(ElementId(2)).unwrap().group, Some(1));
+    assert_eq!(order(&grouped), vec![3, 1, 2]);
+    assert!(grouped.get(ElementId(3)).unwrap().is_group());
+    assert_eq!(grouped.get(ElementId(1)).unwrap().group, Some(ElementId(3)));
+    assert_eq!(grouped.get(ElementId(2)).unwrap().group, Some(ElementId(3)));
     assert_eq!(
-        state.group(&grouped, true).map(|edit| edit.changes.len()),
-        Some(2),
-        "a new group"
+        state.group(&grouped, true),
+        None,
+        "one group is one thing: nothing to group it with"
     );
 
     // Dragging one moves both, and both are selected.
@@ -1987,16 +1993,30 @@ fn grouped_elements_are_selected_and_moved_together() {
             false,
         )
         .unwrap();
-    assert_eq!(state.selection, vec![ElementId(1), ElementId(2)]);
+    assert_eq!(
+        state.selection,
+        vec![ElementId(1), ElementId(3), ElementId(2)]
+    );
     assert_eq!(
         applied(&grouped, &edit).bounds(),
-        Some(Rect::new(100.0, 200.0, 300.0, 60.0))
+        Some(Rect::new(100.0, 200.0, 300.0, 60.0).expand(GROUP_PADDING))
     );
 
-    // In the file, and out of the group again.
+    // In the file, its own under it, and out of the group again.
     let written = encoded(&grouped);
-    assert_eq!(written.matches("group: Some(1)").count(), 2, "{written}");
-    assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), grouped);
+    assert!(
+        written.contains(r#"(id: "group-1", shape: Group, children: ["#),
+        "{written}"
+    );
+    assert_eq!(
+        written.matches("            (id: \"rect").count(),
+        2,
+        "{written}"
+    );
+    assert_eq!(
+        encoded(&Diagram::decode(written.as_bytes()).unwrap()),
+        written
+    );
     let edit = state.group(&grouped, false).unwrap();
     assert_eq!(edit.label, "Ungroup");
     assert_eq!(applied(&grouped, &edit), diagram);
@@ -2006,17 +2026,9 @@ fn grouped_elements_are_selected_and_moved_together() {
     assert_eq!(state.group(&diagram, true), None);
 }
 
-/// Two boxes in a group, and a third box in none.
+/// Two boxes in a group (9), and a third box in none.
 fn a_group_and_another() -> Diagram {
-    let mut elements = two_boxes().elements().to_vec();
-    for element in &mut elements {
-        element.group = Some(1);
-    }
-    elements.push(filled(
-        3,
-        Shape::Rectangle(Rect::new(100.0, 300.0, 100.0, 60.0)),
-    ));
-    Diagram::new(elements).unwrap()
+    grouped()
 }
 
 #[test]
@@ -2035,11 +2047,14 @@ fn a_double_click_goes_into_a_group_to_move_one_thing() {
 
     // Once selects the group; twice, the one thing, without writing in it.
     click(&mut state, first, false, false);
-    assert_eq!(state.selection, vec![ElementId(1), ElementId(2)]);
+    assert_eq!(
+        state.selection,
+        vec![ElementId(1), ElementId(9), ElementId(2)]
+    );
     click(&mut state, first, false, true);
     assert_eq!(
         (state.selection.clone(), state.within),
-        (vec![ElementId(1)], Some(1))
+        (vec![ElementId(1)], Some(ElementId(9)))
     );
     assert!(!state.is_writing());
 
@@ -2065,7 +2080,7 @@ fn a_double_click_goes_into_a_group_to_move_one_thing() {
     assert_eq!(moved.get(ElementId(2)), diagram.get(ElementId(2)));
     assert_eq!(
         moved.get(ElementId(1)).unwrap().group,
-        Some(1),
+        Some(ElementId(9)),
         "still in the group"
     );
 
@@ -2074,13 +2089,16 @@ fn a_double_click_goes_into_a_group_to_move_one_thing() {
     assert!(state.is_writing());
     state.writing = None;
 
-    // Ungrouping what's picked inside takes that one out.
+    // Ungrouping what's picked inside takes that one out, to just in front
+    // of the rest of it.
     let edit = state.group(&diagram, false).unwrap();
-    assert_eq!(edit.changes.len(), 1);
+    let out = applied(&diagram, &edit);
+    assert_eq!(out.get(ElementId(1)).unwrap().group, None);
+    assert_eq!(order(&out), vec![9, 2, 1, 3]);
     assert_eq!(state.within, None);
 
     // A click outside the group leaves it: the group is one thing again.
-    state.within = Some(1);
+    state.within = Some(ElementId(9));
     state.selection = vec![ElementId(1)];
     click(&mut state, third, false, false);
     assert_eq!(
@@ -2088,7 +2106,10 @@ fn a_double_click_goes_into_a_group_to_move_one_thing() {
         (vec![ElementId(3)], None)
     );
     click(&mut state, second, false, false);
-    assert_eq!(state.selection, vec![ElementId(2), ElementId(1)]);
+    assert_eq!(
+        state.selection,
+        vec![ElementId(2), ElementId(9), ElementId(1)]
+    );
 }
 
 #[test]
@@ -2104,7 +2125,7 @@ fn shift_adds_a_whole_group_and_takes_it_away() {
     state.click(&diagram, first, 6.0, true, false, &Element::bounds);
     assert_eq!(
         state.selection,
-        vec![ElementId(3), ElementId(1), ElementId(2)]
+        vec![ElementId(3), ElementId(1), ElementId(9), ElementId(2)]
     );
     state.click(&diagram, second, 6.0, true, false, &Element::bounds);
     assert_eq!(state.selection, vec![ElementId(3)]);
@@ -2144,12 +2165,12 @@ fn the_menu_is_for_what_it_is_asked_on() {
     state.point_at(&diagram, first, 6.0, &Element::bounds);
     assert_eq!(
         (state.selection.clone(), state.tool),
-        (vec![ElementId(1), ElementId(2)], Tool::Select)
+        (vec![ElementId(1), ElementId(9), ElementId(2)], Tool::Select)
     );
     // On something selected, the selection stays as it is.
-    state.selection = vec![ElementId(1), ElementId(2), ElementId(3)];
+    state.selection = vec![ElementId(1), ElementId(9), ElementId(2), ElementId(3)];
     state.point_at(&diagram, third, 6.0, &Element::bounds);
-    assert_eq!(state.selection.len(), 3);
+    assert_eq!(state.selection.len(), 4);
     // On nothing: the canvas's menu, whose Paste is asked of the panel, there.
     state.point_at(&diagram, nothing, 6.0, &Element::bounds);
     assert!(state.selection.is_empty());
@@ -2174,7 +2195,9 @@ fn the_menu_is_for_what_it_is_asked_on() {
     );
     let edit = state
         .pick_of(&ctx, &diagram, Pick::Delete, &Element::bounds)
-        .unwrap();
+        .unwrap()
+        .bound(&diagram, &Element::bounds);
+    // (The group, with nothing left in it, goes too.)
     assert_eq!(applied(&diagram, &edit).elements().len(), 1);
     assert!(state.selection.is_empty());
 }
@@ -2284,7 +2307,7 @@ fn copies_of_a_group_are_a_group_of_their_own() {
     let copies = edit::copies(&all, &grouped, 0.0, 100.0);
     assert_eq!(
         copies.iter().map(|copy| copy.group).collect::<Vec<_>>(),
-        vec![Some(2), Some(2)]
+        vec![None, Some(ElementId(4)), Some(ElementId(4))]
     );
 }
 
@@ -2298,7 +2321,12 @@ fn aligning_lines_things_up_and_a_group_moves_as_one() {
     .unwrap();
     let all = [ElementId(1), ElementId(2), ElementId(3)];
     let lefts = |diagram: &Diagram| -> Vec<f32> {
-        diagram.elements().iter().map(|e| e.bounds().x).collect()
+        diagram
+            .elements()
+            .iter()
+            .filter(|e| !e.is_group())
+            .map(|e| e.bounds().x)
+            .collect()
     };
     let aligned = |to: Align| {
         made_and_undone(
@@ -2343,10 +2371,11 @@ fn aligning_lines_things_up_and_a_group_moves_as_one() {
     assert!(edit::align(&grouped, &all[..2], Align::Left, None, &Element::bounds).is_empty());
     assert_eq!(edit::unit_count(&grouped, &all, None), 2);
     // Gone into, its elements line up with each other.
-    assert_eq!(edit::unit_count(&grouped, &all[..2], Some(1)), 2);
+    let group = Some(ElementId(4));
+    assert_eq!(edit::unit_count(&grouped, &all[..2], group), 2);
     let inside = made_and_undone(
         &grouped,
-        &edit::align(&grouped, &all[..2], Align::Left, Some(1), &Element::bounds),
+        &edit::align(&grouped, &all[..2], Align::Left, group, &Element::bounds),
     );
     assert_eq!(lefts(&inside), vec![0.0, 0.0, 300.0]);
 }
@@ -2609,4 +2638,380 @@ fn a_png_is_the_svg_rendered() {
         "{height}"
     );
     assert_eq!(crate::svg(&Diagram::default(), &[], &theme, 1.0), None);
+}
+
+// ── Names, the file's shorthands, and groups as elements ─────────────────────
+
+#[test]
+fn elements_are_named_by_kind_unless_named() {
+    let diagram = sample();
+    let names: Vec<&str> = diagram
+        .elements()
+        .iter()
+        .map(|element| element.name.as_str())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "rect-1",
+            "arrow-1",
+            "text-1",
+            "freehand-1",
+            "ellipse-1",
+            "diamond-1"
+        ]
+    );
+    // One added with no name is named above any of its kind; a name taken
+    // is refused.
+    let mut after = diagram.clone();
+    let mut named = rectangle(8);
+    named.name = "rect-7".into();
+    after
+        .apply(&Change::Insert {
+            index: 0,
+            element: named,
+        })
+        .unwrap();
+    after
+        .apply(&Change::Insert {
+            index: 0,
+            element: rectangle(9),
+        })
+        .unwrap();
+    assert_eq!(after.get(ElementId(9)).unwrap().name, "rect-8");
+    let mut twice = rectangle(10);
+    twice.name = "rect-1".into();
+    assert!(
+        after
+            .apply(&Change::Insert {
+                index: 0,
+                element: twice
+            })
+            .is_err()
+    );
+    assert!(is_made_name("arrow-12") && !is_made_name("api-2"));
+}
+
+#[test]
+fn files_name_what_lines_are_bound_to_and_leave_out_where_they_meet() {
+    let diagram = joined();
+    let written = encoded(&diagram);
+    assert!(
+        written.contains(r#"(id: "arrow-1", shape: Arrow(from: "rect-1", to: "rect-2")),"#),
+        "{written}"
+    );
+    assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), diagram);
+}
+
+#[test]
+fn files_written_by_people_and_models_are_read() {
+    let diagram = Diagram::decode(
+        br#"(
+            version: 1,
+            elements: [
+                (id: "api", shape: Rectangle(x: 0, y: 0, w: 100, h: 50), fill: Some(Blue)),
+                (id: "backend", shape: Group, label: "Backend", padding: 10, children: [
+                    (id: "db", shape: Ellipse(x: 0, y: 200, w: 100, h: 50)),
+                    (shape: Text(at: (0, 260), text: "Postgres", size: 16)),
+                ]),
+                (shape: Arrow(from: "api", to: "db", via: [(50.5, 120)]), label: "SQL"),
+                (shape: Line(from: (0, -40), to: "backend", start: Arrow)),
+            ],
+        )"#,
+    )
+    .unwrap();
+    let names: Vec<&str> = diagram
+        .elements()
+        .iter()
+        .map(|element| element.name.as_str())
+        .collect();
+    // (A line with a head at either end is an arrow.)
+    assert_eq!(
+        names,
+        ["api", "backend", "db", "text-1", "arrow-1", "arrow-2"]
+    );
+    let group = diagram.named("backend").unwrap().id;
+    assert_eq!(diagram.named("db").unwrap().group, Some(group));
+    assert_eq!(diagram.named("text-1").unwrap().group, Some(group));
+    assert_eq!(diagram.named("api").unwrap().fill, Some(Color::Blue));
+    // The group's box is around its own, its padding out, with room above
+    // for its label.
+    let around = diagram.named("backend").unwrap().bounds();
+    assert_eq!(around.x, -10.0);
+    assert_eq!(around.y, 200.0 - 10.0 - GROUP_LABEL_ROOM);
+    // The arrow's ends are on what it's bound to, through its bend.
+    let (points, from, to) = ends(&diagram, 5);
+    assert_eq!((from, to), (Some(ElementId(1)), Some(ElementId(3))));
+    assert_eq!(points.len(), 3);
+    assert_eq!(points[1], Point::new(50.5, 120.0));
+    assert!(points[0].y > 50.0 && points[2].y < 200.0, "{points:?}");
+    // The line goes from a point to the group's box.
+    let (points, from, to) = ends(&diagram, 6);
+    assert_eq!((from, to), (None, Some(group)));
+    assert_eq!(points[0], Point::new(0.0, -40.0));
+    assert!(
+        (points[1].y - (around.y - edit::BIND_GAP - 1.0)).abs() < 1.0,
+        "{points:?}"
+    );
+    let Shape::Line { start, end, .. } = &diagram.elements()[5].shape else {
+        panic!()
+    };
+    assert_eq!((*start, *end), (Head::Arrow, Head::None));
+
+    // Written back as it would be written: names for what's bound, whole
+    // numbers as whole, `Some` left out, the group's own indented under it.
+    let written = encoded(&diagram);
+    for part in [
+        r#"(id: "api", shape: Rectangle(x: 0, y: 0, w: 100, h: 50), fill: Blue),"#,
+        r#"        (id: "backend", shape: Group, label: "Backend", padding: 10, children: ["#,
+        r#"            (id: "db", shape: Ellipse(x: 0, y: 200, w: 100, h: 50)),"#,
+        "        ]),",
+        r#"(id: "arrow-1", shape: Arrow(from: "api", to: "db", via: [(50.5, 120)]), label: "SQL"),"#,
+        r#"(id: "arrow-2", shape: Line(from: (0, -40), to: "backend", start: Arrow)),"#,
+    ] {
+        assert!(written.contains(part), "no {part} in:\n{written}");
+    }
+    assert_eq!(Diagram::decode(written.as_bytes()).unwrap(), diagram);
+}
+
+#[test]
+fn numbers_are_written_to_a_hundredth() {
+    let diagram = Diagram::new(vec![outline(
+        1,
+        Shape::Rectangle(Rect::new(37.037086, -601.5562, 0.5, 168.0)),
+    )])
+    .unwrap();
+    assert!(
+        encoded(&diagram).contains("Rectangle(x: 37.04, y: -601.56, w: 0.5, h: 168)"),
+        "{}",
+        encoded(&diagram)
+    );
+}
+
+#[test]
+fn files_that_cannot_be_joined_up_are_refused() {
+    let refused = |text: &str| Diagram::decode(text.as_bytes()).unwrap_err();
+    let error = refused(r#"(version: 1, elements: [(shape: Arrow(from: (0, 0), to: "nowhere"))])"#);
+    assert!(error.contains("\"nowhere\""), "{error}");
+    let error = refused(
+        r#"(version: 1, elements: [(id: "a", shape: Rectangle(x: 0, y: 0, w: 1, h: 1), children: [
+            (shape: Rectangle(x: 0, y: 0, w: 1, h: 1)),
+        ])])"#,
+    );
+    assert!(error.contains("isn't a group"), "{error}");
+    let error = refused(
+        r#"(version: 1, elements: [(id: "a", shape: Group, children: [
+            (id: "b", shape: Group, children: [(shape: Rectangle(x: 0, y: 0, w: 1, h: 1))]),
+        ])])"#,
+    );
+    assert!(error.contains("group in a group"), "{error}");
+    let error =
+        refused(r#"(version: 1, elements: [(id: "a", shape: Arrow(from: "a", to: (1, 1)))])"#);
+    assert!(error.contains("itself"), "{error}");
+}
+
+/// Two boxes in a group (9), and a box beside it, on its own.
+fn grouped() -> Diagram {
+    let group = outline(
+        9,
+        Shape::Group {
+            padding: GROUP_PADDING,
+            around: Rect::default(),
+        },
+    );
+    let mut first = filled(1, Shape::Rectangle(Rect::new(100.0, 100.0, 100.0, 60.0)));
+    let mut second = filled(2, Shape::Rectangle(Rect::new(300.0, 100.0, 100.0, 60.0)));
+    first.group = Some(ElementId(9));
+    second.group = Some(ElementId(9));
+    let third = filled(3, Shape::Rectangle(Rect::new(100.0, 300.0, 100.0, 60.0)));
+    edit::settled(
+        &Diagram::new(vec![group, first, second, third]).unwrap(),
+        &Element::bounds,
+    )
+}
+
+#[test]
+fn a_group_s_box_follows_what_is_in_it() {
+    let diagram = grouped();
+    let padded = Rect::new(100.0, 100.0, 300.0, 60.0).expand(GROUP_PADDING);
+    assert_eq!(diagram.get(ElementId(9)).unwrap().bounds(), padded);
+    // Moving one of it moves its box, in the same edit.
+    let moved = edit::translate(diagram.get(ElementId(2)).unwrap(), 0.0, 100.0);
+    let changes = edit::with_bindings(
+        &diagram,
+        vec![Change::Replace { element: moved }],
+        &Element::bounds,
+    );
+    let after = made_and_undone(&diagram, &changes);
+    assert_eq!(
+        after.get(ElementId(9)).unwrap().bounds(),
+        Rect::new(100.0, 100.0, 300.0, 160.0).expand(GROUP_PADDING)
+    );
+    // With nothing left in it, it's gone.
+    let changes = edit::with_bindings(
+        &diagram,
+        vec![
+            Change::Remove { id: ElementId(1) },
+            Change::Remove { id: ElementId(2) },
+        ],
+        &Element::bounds,
+    );
+    assert!(
+        made_and_undone(&diagram, &changes)
+            .get(ElementId(9))
+            .is_none()
+    );
+}
+
+#[test]
+fn a_line_binds_to_a_group_between_or_around_what_is_in_it() {
+    let diagram = grouped();
+    let at = |x, y| edit::bindable_at(&diagram, Point::new(x, y), &Element::bounds, None);
+    // On one of it: that one. Between them, or in the padding: the group.
+    assert_eq!(at(150.0, 130.0), Some(ElementId(1)));
+    assert_eq!(at(250.0, 130.0), Some(ElementId(9)));
+    assert_eq!(at(150.0, 86.0), Some(ElementId(9)));
+    assert_eq!(at(150.0, 70.0), None);
+
+    // An arrow drawn to it meets its box.
+    let (view, mut camera) = plain();
+    let mut state = State::default();
+    state.tool = Tool::Arrow;
+    let edit = state
+        .drag(
+            &diagram,
+            view,
+            &mut camera,
+            egui::pos2(150.0, 330.0),
+            egui::pos2(250.0, 130.0),
+            false,
+        )
+        .unwrap();
+    let after = applied(&diagram, &edit);
+    let (points, from, to) = ends(&after, 10);
+    assert_eq!((from, to), (Some(ElementId(3)), Some(ElementId(9))));
+    let around = after.get(ElementId(9)).unwrap().bounds();
+    // (A little off it, on the way from its middle.)
+    assert!(
+        points[1].y > around.bottom() && points[1].y < around.bottom() + 6.0,
+        "{points:?} {around:?}"
+    );
+
+    // A line in the group doesn't bind to it.
+    let mut inside = line(11, (0.0, 0.0), (1.0, 1.0));
+    inside.group = Some(ElementId(9));
+    let mut all = diagram.elements().to_vec();
+    all.push(inside);
+    let with_line = Diagram::new(all).unwrap();
+    assert_eq!(
+        edit::bindable_at(
+            &with_line,
+            Point::new(250.0, 130.0),
+            &Element::bounds,
+            Some(ElementId(11))
+        ),
+        None
+    );
+}
+
+#[test]
+fn a_labelled_group_is_picked_by_its_frame_and_its_label() {
+    let mut diagram = grouped();
+    let mut group = diagram.get(ElementId(9)).unwrap().clone();
+    let reach = 6.0;
+    let hit = |group: &Element, x, y| edit::hit(group, Point::new(x, y), reach, &Element::bounds);
+    // Without a label it isn't drawn, and isn't picked.
+    assert!(!hit(&group, 84.0, 130.0));
+    group.label = "Backend".into();
+    diagram.apply(&Change::Replace { element: group }).unwrap();
+    let diagram = edit::settled(&diagram, &Element::bounds);
+    let group = diagram.get(ElementId(9)).unwrap();
+    let around = group.bounds();
+    assert_eq!(around.y, 100.0 - GROUP_PADDING - GROUP_LABEL_ROOM);
+    assert!(hit(group, around.x, 130.0), "its frame");
+    assert!(hit(group, 250.0, around.y + 10.0), "its label");
+    assert!(!hit(group, 250.0, 130.0), "not inside");
+    // A double click there writes its label.
+    let mut state = State::default();
+    state.click(
+        &diagram,
+        Point::new(250.0, around.y + 10.0),
+        reach,
+        false,
+        true,
+        &Element::bounds,
+    );
+    assert!(state.is_writing());
+    assert_eq!(state.selection, vec![ElementId(9)]);
+}
+
+#[test]
+fn grouping_makes_a_group_element_before_its_own() {
+    let diagram =
+        Diagram::new(vec![rectangle(1), rectangle(2), rectangle(3), rectangle(4)]).unwrap();
+    let changes = edit::group(&diagram, &[ElementId(4), ElementId(2)]);
+    let after = made_and_undone(&diagram, &changes);
+    assert_eq!(order(&after), vec![1, 5, 2, 4, 3]);
+    let group = after.get(ElementId(5)).unwrap();
+    assert!(group.is_group());
+    assert_eq!(group.name, "group-1");
+    assert_eq!(after.get(ElementId(4)).unwrap().group, Some(ElementId(5)));
+    assert_eq!(after.get(ElementId(4)).unwrap().name, "rect-4", "kept");
+
+    // Grouped again with another, the group is undone into the new one.
+    let changes = edit::group(&after, &[ElementId(5), ElementId(3)]);
+    let again = made_and_undone(&after, &changes);
+    assert!(again.get(ElementId(5)).is_none());
+    assert_eq!(order(&again), vec![1, 6, 2, 4, 3]);
+    assert!(
+        again.elements()[2..]
+            .iter()
+            .all(|element| element.group == Some(ElementId(6)))
+    );
+
+    // Taken out alone, one goes in front of the rest of it; a group undone
+    // leaves its own where they are.
+    let changes = edit::ungroup(&again, &[ElementId(2)]);
+    let out = made_and_undone(&again, &changes);
+    assert_eq!(order(&out), vec![1, 6, 4, 3, 2]);
+    assert_eq!(out.get(ElementId(2)).unwrap().group, None);
+    let changes = edit::ungroup(&again, &[ElementId(6)]);
+    let undone = made_and_undone(&again, &changes);
+    assert_eq!(order(&undone), vec![1, 2, 4, 3]);
+    assert!(
+        undone
+            .elements()
+            .iter()
+            .all(|element| element.group.is_none())
+    );
+}
+
+#[test]
+fn a_group_moves_among_the_rest_as_one() {
+    let diagram = grouped();
+    let moved = |diagram: &Diagram, ids: &[u64], to: Order| {
+        let ids: Vec<ElementId> = ids.iter().map(|id| ElementId(*id)).collect();
+        order(&made_and_undone(diagram, &edit::reorder(diagram, &ids, to)))
+    };
+    assert_eq!(moved(&diagram, &[3], Order::Backward), vec![3, 9, 1, 2]);
+    assert_eq!(
+        moved(&diagram, &[9, 1, 2], Order::Forward),
+        vec![3, 9, 1, 2]
+    );
+    // One of it, gone into, moves only among the rest of it.
+    assert_eq!(moved(&diagram, &[1], Order::Front), vec![9, 2, 1, 3]);
+    assert!(edit::reorder(&diagram, &[ElementId(2)], Order::Forward).is_empty());
+}
+
+#[test]
+fn copies_of_written_names_take_a_number() {
+    let mut named = rectangle(1);
+    named.name = "api".into();
+    let diagram = Diagram::new(vec![named, rectangle(2)]).unwrap();
+    let all: Vec<&Element> = diagram.elements().iter().collect();
+    let copies = edit::copies(&all, &diagram, 0.0, 0.0);
+    assert_eq!(copies[0].name, "api-2");
+    assert_eq!(copies[1].name, "", "made again when it's added");
+    let after = made_and_undone(&diagram, &edit::insertions(&diagram, copies));
+    assert_eq!(after.get(ElementId(4)).unwrap().name, "rect-2");
 }

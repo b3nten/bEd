@@ -1,9 +1,9 @@
 use super::*;
 use crate::view::{Intent, apply};
 use bedtime_document::TextBuffer;
+use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::{
-    InArea, LayoutsWorldExt, Notifications, Panel, PanelInstance, SplitAxis, ViewersAppExt,
-    WorkbenchCorePlugins,
+    InArea, Notifications, Panel, PanelInstance, SplitAxis, ViewersAppExt, WorkbenchCorePlugins,
 };
 
 /// A temporary folder, removed when dropped.
@@ -46,21 +46,22 @@ fn app(project: &Project) -> (App, Entity) {
         .register_viewer::<TextBuffer, TextView>("Text")
         .formats([bedtime_workbench::TEXT]);
     let world = app.world_mut();
-    let layout = world.layouts_mut().create("Main").unwrap();
-    world.layouts_mut().activate(layout).unwrap();
-    let main = world.layouts().destination_area(layout).unwrap();
+    let layout = world.bedtime_mut().layouts_mut().create("Main").unwrap();
+    world.bedtime_mut().layouts_mut().activate(layout).unwrap();
+    let main = world.bedtime().layouts().destination_area(layout).unwrap();
     let side = world
+        .bedtime_mut()
         .layouts_mut()
         .split_area(main, SplitAxis::Horizontal, 2500, [100, 100])
         .unwrap();
-    let small = if world.layouts().destination_area(layout).unwrap() == main {
+    let small = if world.bedtime().layouts().destination_area(layout).unwrap() == main {
         side
     } else {
         main
     };
     let tree = world.spawn((FileExplorer::default(), InArea(small))).id();
     world.flush();
-    world.layouts_mut().focus_panel(tree).unwrap();
+    world.bedtime_mut().layouts_mut().focus_panel(tree).unwrap();
     (app, tree)
 }
 
@@ -260,8 +261,8 @@ fn a_preview_opens_beside_the_tree_and_leaves_it_focused() {
         world.get::<InArea>(tree).unwrap().0
     );
     assert!(world.get::<PanelInstance>(viewer).unwrap().preview);
-    let layout = world.layouts().active().unwrap();
-    assert_eq!(world.layouts().focused_panel(layout), Some(tree));
+    let layout = world.bedtime().layouts().active().unwrap();
+    assert_eq!(world.bedtime().layouts().focused_panel(layout), Some(tree));
 
     // Opening it for good pins it and moves focus to it.
     apply(
@@ -271,7 +272,10 @@ fn a_preview_opens_beside_the_tree_and_leaves_it_focused() {
         open(project.0.join("A.txt"), false),
     );
     assert!(!world.get::<PanelInstance>(viewer).unwrap().preview);
-    assert_eq!(world.layouts().focused_panel(layout), Some(viewer));
+    assert_eq!(
+        world.bedtime().layouts().focused_panel(layout),
+        Some(viewer)
+    );
 
     // Nothing opens a binary file here (only text): the user is told.
     std::fs::write(project.0.join("blob.bin"), [0u8, 1]).unwrap();

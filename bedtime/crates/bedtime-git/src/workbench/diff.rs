@@ -14,6 +14,7 @@ use bedtime_document::{
     DocumentSource, MemorySource, SourceError, SourceId, SourceLoad, SourceVersion, TextBuffer,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
+use bedtime_workbench::BedtimeWorldExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 
@@ -152,8 +153,12 @@ pub(super) fn open(
     descriptor: Descriptor,
     pin: bool,
 ) -> Result<Entity, String> {
-    let layout = world.layouts().active().ok_or("No layout is open")?;
-    let panels = world.layouts().panels(layout);
+    let layout = world
+        .bedtime()
+        .layouts()
+        .active()
+        .ok_or("No layout is open")?;
+    let panels = world.bedtime().layouts().panels(layout);
     if let Some(&panel) = panels.iter().find(|&&panel| {
         world
             .get::<DiffPanel>(panel)
@@ -162,7 +167,7 @@ pub(super) fn open(
         if pin && let Some(mut instance) = world.get_mut::<PanelInstance>(panel) {
             instance.preview = false;
         }
-        world.layouts_mut().focus_panel(panel)?;
+        world.bedtime_mut().layouts_mut().focus_panel(panel)?;
         return Ok(panel);
     }
     let preview = panels.iter().copied().find(|&panel| {
@@ -172,14 +177,14 @@ pub(super) fn open(
                 .get::<DocumentReference>(panel)
                 .is_none_or(|reference| {
                     world
-                        .workbench()
+                        .bedtime()
                         .inspect_document(reference.document())
                         .is_ok_and(|info| !info.dirty)
                 })
     });
     let area = preview.and_then(|panel| world.get::<InArea>(panel).map(|area| area.0));
     if let Some(old) = preview {
-        world.layouts_mut().close_panel(old)?;
+        world.bedtime_mut().layouts_mut().close_panel(old)?;
     }
     let area = match area {
         Some(area) => area,
@@ -204,7 +209,7 @@ pub(super) fn open(
 /// from (`Placement::From`): the largest other area, else a split of the
 /// Git panel's.
 fn diff_area(world: &mut World, origin: Entity) -> Result<Entity, String> {
-    world.layouts_mut().area_from(origin)
+    world.bedtime_mut().layouts_mut().area_from(origin)
 }
 
 /// Read a diff, as a comparison over what's compared (the working file, or
@@ -383,7 +388,7 @@ fn hand_off(world: &mut World, panel: Entity) -> bool {
         preview,
         ..default()
     };
-    match world.workbench_mut().open_path(&file, options) {
+    match world.bedtime_mut().open_path(&file, options) {
         Ok(_) => {}
         Err(error) => {
             world.get_mut::<DiffPanel>(panel).unwrap().error = Some(error);
@@ -392,7 +397,7 @@ fn hand_off(world: &mut World, panel: Entity) -> bool {
     }
     // A preview viewer already replaced a preview diff.
     if world.get::<DiffPanel>(panel).is_some() {
-        let _ = world.layouts_mut().close_panel(panel);
+        let _ = world.bedtime_mut().layouts_mut().close_panel(panel);
     }
     true
 }
@@ -423,7 +428,7 @@ fn attach(world: &mut World, panel: Entity) {
                     if let Some(document) =
                         world.get::<DocumentReference>(panel).map(|r| r.document())
                     {
-                        let _ = world.workbench_mut().refresh_document(document);
+                        let _ = world.bedtime_mut().refresh_document(document);
                     }
                 }
                 Ok(())
@@ -431,7 +436,7 @@ fn attach(world: &mut World, panel: Entity) {
             _ => {
                 let source = MemorySource::new(name, text);
                 world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .load_document::<TextBuffer>(Staged(source.clone()))
                     .map_err(|e| e.to_string())
                     .map(|document| {
@@ -456,7 +461,7 @@ fn open_file(world: &mut World, panel: Entity, file: &Path) -> Result<(), String
         .map_err(|e| e.to_string())?;
     let canonical = source.path();
     let document = world
-        .workbench_mut()
+        .bedtime_mut()
         .load_document::<TextBuffer>(source)
         .map_err(|e| e.to_string())?;
     world
@@ -481,12 +486,7 @@ fn show(world: &mut World, session: &GitSession, panel: Entity) {
     };
     let clean = world
         .get::<DocumentReference>(panel)
-        .and_then(|reference| {
-            world
-                .workbench()
-                .inspect_document(reference.document())
-                .ok()
-        })
+        .and_then(|reference| world.bedtime().inspect_document(reference.document()).ok())
         .is_some_and(|info| !info.dirty && !info.saving);
     let actions = actions(&loaded, session.writable(), clean);
     let key = (loaded.identity, actions.iter().map(|a| a.enabled).collect());
@@ -527,7 +527,7 @@ fn request(
         .map(DocumentReference::document)
         .ok_or("The diff has no text yet")?;
     let info = world
-        .workbench()
+        .bedtime()
         .inspect_document(document)
         .map_err(|e| e.to_string())?;
     if info.revision != request.revision || info.has_drafts || info.conflict || info.missing {
@@ -537,11 +537,11 @@ fn request(
         return Err("Save the file before discarding a change".into());
     }
     let handle = world
-        .workbench()
+        .bedtime()
         .cast_document::<TextBuffer>(document)
         .map_err(|e| e.to_string())?;
     let current = world
-        .workbench()
+        .bedtime()
         .read_document(handle)
         .map_err(|e| e.to_string())?
         .clone();
@@ -738,7 +738,7 @@ impl Panel for DiffPanel {
             }
             Some(Asked::Open) => {
                 if let Err(error) = world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .open_path(&root.join(&path), PathOptions::default())
                 {
                     world.get_mut::<DiffPanel>(panel).unwrap().error = Some(error);

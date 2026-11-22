@@ -3,8 +3,7 @@ use bedtime_code::EditorPanel;
 use bedtime_document::TextBuffer;
 use bedtime_search::{SearchPanel, SearchPlugin, SearchWorkspace};
 use bedtime_workbench::{
-    ActionAppExt, ActionInvocation, ActionResult, DocumentReference, Handler, PanelsWorldExt,
-    WorkbenchWorldExt,
+    ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentReference, Handler,
 };
 use bevy::prelude::*;
 
@@ -19,7 +18,7 @@ impl Plugin for BedSearchPlugin {
 
 fn search_workspace(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let selected = invocation.entity.and_then(|panel| selection(world, panel));
-    let panel = world.open_panel_at(
+    let panel = world.bedtime_mut().open_panel_at(
         SearchPanel::default(),
         bedtime_workbench::Placement::Focused,
     )?;
@@ -34,7 +33,7 @@ fn selection(world: &World, panel: Entity) -> Option<String> {
         return None;
     }
     let document = world.get::<DocumentReference>(panel)?.document();
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let text = workbench
         .read_document(workbench.cast_document::<TextBuffer>(document).ok()?)
         .ok()?;

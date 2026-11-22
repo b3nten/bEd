@@ -13,7 +13,7 @@ use bedtime_document::TextBuffer;
 use bedtime_ui::{UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{DocumentReference, LayoutsWorldExt, Panel, WorkbenchWorldExt};
+use bedtime_workbench::{BedtimeWorldExt, DocumentReference, Panel};
 use bevy::prelude::*;
 use std::{collections::HashSet, sync::Arc};
 
@@ -31,9 +31,10 @@ pub struct StructureSource(pub Option<Entity>);
 /// Follow the focused editor, in `Update`.
 pub(crate) fn update_source(world: &mut World) {
     let focused = world
+        .bedtime()
         .layouts()
         .active()
-        .and_then(|layout| world.layouts().focused_panel(layout))
+        .and_then(|layout| world.bedtime().layouts().focused_panel(layout))
         .filter(|&panel| has_outline(world, panel));
     let remembered = world
         .resource::<StructureSource>()
@@ -50,12 +51,7 @@ pub(crate) fn has_outline(world: &World, panel: Entity) -> bool {
     world.get::<EditorPanel>(panel).is_some()
         && world
             .get::<DocumentReference>(panel)
-            .and_then(|reference| {
-                world
-                    .workbench()
-                    .inspect_document(reference.document())
-                    .ok()
-            })
+            .and_then(|reference| world.bedtime().inspect_document(reference.document()).ok())
             .is_some_and(|info| {
                 crate::syntax::document_language(world, info.id, &info.title).is_some()
             })
@@ -65,7 +61,7 @@ pub(crate) fn has_outline(world: &World, panel: Entity) -> bool {
 pub fn current_outline(world: &World, panel: Entity) -> Option<Arc<Observation>> {
     world.get::<EditorPanel>(panel)?;
     let document = world.get::<DocumentReference>(panel)?.document();
-    let revision = world.workbench().inspect_document(document).ok()?.revision;
+    let revision = world.bedtime().inspect_document(document).ok()?.revision;
     world
         .get::<DocumentSyntax>(document.entity())?
         .at(revision)
@@ -120,7 +116,7 @@ pub fn reveal_entry_as(
     let Some(document) = world.get::<DocumentReference>(editor).map(|r| r.document()) else {
         return false;
     };
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let Some(text) = workbench
         .cast_document::<TextBuffer>(document)
         .and_then(|handle| workbench.read_document(handle).cloned())
@@ -159,7 +155,12 @@ pub fn reveal_entry_as(
     match how {
         Reveal::Preview | Reveal::Fold => accepted,
         Reveal::Focus | Reveal::SelectAll => {
-            accepted && world.layouts_mut().focus_panel(editor).is_ok()
+            accepted
+                && world
+                    .bedtime_mut()
+                    .layouts_mut()
+                    .focus_panel(editor)
+                    .is_ok()
         }
     }
 }

@@ -22,7 +22,7 @@ world.spawn((MenuItem::action::<Quit>(), InMenu(file)));
 - **Context.** Menus use the focused entity (`ActionFocus`), captured when the
   menu is read, so a menu opened for one panel still acts on it. An
   `InvocationContext` component on a root or entry overrides it.
-- **Snapshots.** `world.menus().snapshot(root, context)` reads a tree with
+- **Snapshots.** `world.bedtime().menus().snapshot(root, context)` reads a tree with
   that state filled in, and checks its shape. Both renderers draw snapshots,
   and `MenuSnapshot::request` turns a chosen item back into an action request,
   refusing items that were removed, disabled, detached or retargeted since.

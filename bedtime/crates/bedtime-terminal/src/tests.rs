@@ -1,7 +1,5 @@
 use super::*;
-use bedtime_workbench::{
-    InArea, LayoutsWorldExt, ManagedWork, WorkbenchCorePlugins, WorkbenchWorldExt,
-};
+use bedtime_workbench::{BedtimeWorldExt, InArea, ManagedWork, WorkbenchCorePlugins};
 use std::time::{Duration, Instant};
 
 fn host() -> (App, Entity) {
@@ -13,7 +11,12 @@ fn host() -> (App, Entity) {
 }
 
 fn panel(app: &mut App, workspace: Entity, options: TerminalOptions) -> Entity {
-    let area = app.world().layouts().destination_area(workspace).unwrap();
+    let area = app
+        .world()
+        .bedtime()
+        .layouts()
+        .destination_area(workspace)
+        .unwrap();
     app.world_mut()
         .spawn((TerminalPanel::new(options), InArea(area)))
         .id()
@@ -66,8 +69,8 @@ fn eventually(app: &mut App, mut condition: impl FnMut(&mut App) -> bool) {
 }
 
 fn finish(app: &mut App) {
-    app.world_mut().workbench_mut().shutdown_work().unwrap();
-    eventually(app, |app| app.world().workbench().work_finished());
+    app.world_mut().bedtime_mut().shutdown_work().unwrap();
+    eventually(app, |app| app.world().bedtime().work_finished());
     app.update();
 }
 
@@ -462,7 +465,11 @@ fn hidden_inactive_terminals_keep_parsing_and_raw_despawn_reaps_the_child() {
         .process_id()
         .unwrap();
     let other = crate::test_layout(app.world_mut());
-    app.world_mut().layouts_mut().activate(other).unwrap();
+    app.world_mut()
+        .bedtime_mut()
+        .layouts_mut()
+        .activate(other)
+        .unwrap();
     input(
         &mut app,
         panel,
@@ -474,7 +481,11 @@ fn hidden_inactive_terminals_keep_parsing_and_raw_despawn_reaps_the_child() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(alive(pid));
-    app.world_mut().layouts_mut().activate(workspace).unwrap();
+    app.world_mut()
+        .bedtime_mut()
+        .layouts_mut()
+        .activate(workspace)
+        .unwrap();
     eventually(&mut app, |app| {
         observe(app, panel);
         text(app, panel).contains("HIDDEN:kept running")
@@ -506,8 +517,8 @@ fn workspace_close_finishes_terminal_cleanup_before_retiring_its_entities() {
         .unwrap()
         .process_id()
         .unwrap();
-    app.world_mut().workbench_mut().shutdown_work().unwrap();
-    eventually(&mut app, |app| app.world().workbench().work_finished());
+    app.world_mut().bedtime_mut().shutdown_work().unwrap();
+    eventually(&mut app, |app| app.world().bedtime().work_finished());
     assert!(app.world().get_entity(panel).is_ok());
     assert!(!alive(pid));
 }
@@ -566,14 +577,14 @@ fn shutdown_refuses_new_terminals_without_starting_a_child() {
     let (mut app, workspace) = host();
     let panel = panel(&mut app, workspace, script("sleep 30"));
     observe(&mut app, panel);
-    app.world_mut().workbench_mut().shutdown_work().unwrap();
+    app.world_mut().bedtime_mut().shutdown_work().unwrap();
     app.update();
     let terminal = app.world().get::<TerminalPanel>(panel).unwrap();
     assert!(
         matches!(terminal.status(), TerminalStatus::Failed(error) if error.contains("closing"))
     );
     assert!(terminal.process_id().is_none());
-    assert!(app.world().workbench().work_finished());
+    assert!(app.world().bedtime().work_finished());
 }
 
 #[cfg(unix)]
@@ -934,7 +945,12 @@ fn a_taken_session_keeps_its_shell_running_in_another_panel() {
     }
     assert!(alive(pid));
 
-    let area = app.world().layouts().destination_area(workspace).unwrap();
+    let area = app
+        .world()
+        .bedtime()
+        .layouts()
+        .destination_area(workspace)
+        .unwrap();
     let new = app
         .world_mut()
         .spawn((TerminalPanel::resume(session), InArea(area)))
@@ -1049,7 +1065,11 @@ fn shell_commands_preserve_bytes_origin_and_defer_acknowledgement() {
         "Bridge environment is applied to the child launch, not saved options"
     );
     let other = crate::test_layout(app.world_mut());
-    app.world_mut().layouts_mut().activate(other).unwrap();
+    app.world_mut()
+        .bedtime_mut()
+        .layouts_mut()
+        .activate(other)
+        .unwrap();
     let mut client = shell_client(&app, "+alias", &token);
     eventually(&mut app, |app| {
         !app.world().resource::<ShellObservations>().0.is_empty()

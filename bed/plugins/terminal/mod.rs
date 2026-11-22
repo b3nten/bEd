@@ -3,7 +3,7 @@
 mod carry;
 
 use bedtime_terminal::{ShellCommandsAppExt, ShellInvocation, TerminalPlugin};
-use bedtime_workbench::{PathOptions, WorkbenchWorldExt};
+use bedtime_workbench::{BedtimeWorldExt, PathOptions};
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -32,11 +32,10 @@ impl Plugin for TerminalsPlugin {
 /// links open, `open_externally_from` the terminal); `+web` alone opens
 /// a blank one. Unlike `+open`, whatever it's given is an address.
 fn web_from_shell(world: &mut World, invocation: ShellInvocation) {
-    use bedtime_ui::LinksWorldExt;
-    use bedtime_workbench::PanelsWorldExt;
     let mut result = Ok(());
     if invocation.arguments.is_empty() {
         result = world
+            .bedtime_mut()
             .open_panel_at(
                 bedtime_web::WebPanel::default(),
                 bedtime_workbench::Placement::From(invocation.panel),
@@ -45,7 +44,10 @@ fn web_from_shell(world: &mut World, invocation: ShellInvocation) {
     }
     for argument in &invocation.arguments {
         let url = bedtime_web::with_scheme(&argument.to_string_lossy());
-        if let Err(error) = world.open_externally_from(&url, invocation.panel) {
+        if let Err(error) = world
+            .bedtime_mut()
+            .open_externally_from(&url, invocation.panel)
+        {
             result = Err(error);
         }
     }
@@ -84,8 +86,9 @@ fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
         if !invocation.directory.join(argument).exists()
             && let Some(url) = bedtime_web::web_address(&text)
         {
-            if let Err(error) =
-                bedtime_ui::LinksWorldExt::open_externally_from(world, &url, invocation.panel)
+            if let Err(error) = world
+                .bedtime_mut()
+                .open_externally_from(&url, invocation.panel)
             {
                 result = Err(error);
             }
@@ -98,7 +101,7 @@ fn open_from_shell(world: &mut World, invocation: ShellInvocation) {
             place: Some(bedtime_workbench::Placement::From(invocation.panel)),
             ..default()
         };
-        if let Err(error) = world.workbench_mut().open_path(&path, options) {
+        if let Err(error) = world.bedtime_mut().open_path(&path, options) {
             result = Err(format!("{}: {error}", path.display()));
         }
     }

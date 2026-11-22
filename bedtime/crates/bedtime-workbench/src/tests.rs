@@ -17,7 +17,7 @@ fn app() -> App {
 #[test]
 fn user_closure_without_unsaved_documents_closes_immediately() {
     let mut app = app();
-    let w = app.world_mut().layouts_mut();
+    let w = app.world_mut().bedtime_mut().layouts_mut();
     let layout = w.active().unwrap();
     let panel = w.create_panel(layout, "Nothing to save").unwrap();
     w.user_edit(layout, &LayoutEdit::ClosePanels(vec![panel]))
@@ -39,12 +39,12 @@ fn user_closure_without_unsaved_documents_closes_immediately() {
 #[test]
 fn moving_between_layouts_preserves_shared_document_and_local_state() {
     let mut app = app();
-    let w = app.world_mut().layouts_mut();
+    let w = app.world_mut().bedtime_mut().layouts_mut();
     let first = w.active().unwrap();
     let panel = w.create_panel(first, "Viewer").unwrap();
     let document = w
         .world_mut()
-        .workbench_mut()
+        .bedtime_mut()
         .load_document(MemorySource::new("File", TextBuffer::from("text")))
         .unwrap();
     w.world_mut()
@@ -94,9 +94,9 @@ impl TestPanels for Layouts {
 
 /// A layout fixture; installing the plugin deliberately creates no layout.
 pub(crate) fn layout(world: &mut World) -> Entity {
-    let layout = world.layouts_mut().create("Test").unwrap();
-    if world.layouts().active().is_none() {
-        world.layouts_mut().activate(layout).unwrap();
+    let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+    if world.bedtime().layouts().active().is_none() {
+        world.bedtime_mut().layouts_mut().activate(layout).unwrap();
     }
     layout
 }

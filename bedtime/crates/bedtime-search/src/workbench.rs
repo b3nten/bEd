@@ -12,10 +12,10 @@ use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, DocumentId, DocumentReference,
-    EditOptions, Handler, KeyChord, ManagedTask, ManagedWork, MenusAppExt, Modifiers, Notification,
-    Panel, PanelFactory, PanelFactoryPayload, PanelPresentation, PathOptions, Root, StandardMenu,
-    Target, ViewerFile, WorkbenchWorldExt,
+    Action, ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentId,
+    DocumentReference, EditOptions, Handler, KeyChord, ManagedTask, ManagedWork, MenusAppExt,
+    Modifiers, Notification, Panel, PanelFactory, PanelFactoryPayload, PanelPresentation,
+    PathOptions, Root, StandardMenu, Target, ViewerFile,
 };
 use bevy::prelude::*;
 use std::{
@@ -564,7 +564,7 @@ fn open_files(world: &mut World, texts: bool) -> (OpenFiles, Vec<(PathBuf, u64)>
         .iter(world)
         .map(|(file, reference)| (file.0.clone(), reference.document()))
         .collect();
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let mut open = OpenFiles::new();
     let mut unsaved = Vec::new();
     for (path, id) in documents {
@@ -660,9 +660,9 @@ fn open_match(world: &mut World, panel: Entity, path: &Path, found: &Match, keep
         place: Some(bedtime_workbench::Placement::From(panel)),
         ..default()
     };
-    if let Err(error) = world.workbench_mut().open_path(path, options) {
+    if let Err(error) = world.bedtime_mut().open_path(path, options) {
         let name = path.file_name().unwrap_or(path.as_os_str()).display();
-        world.workbench_mut().notify(Notification::error(format!(
+        world.bedtime_mut().notify(Notification::error(format!(
             "Couldn't open {name}: {error}"
         )));
     }
@@ -709,11 +709,11 @@ fn open_factory(path: PathBuf, found: Option<Match>) -> PanelFactory {
             place: Some(bedtime_workbench::Placement::In(area)),
             ..default()
         };
-        match world.workbench_mut().open_path(&path, options) {
+        match world.bedtime_mut().open_path(&path, options) {
             Ok(panel) => panel,
             Err(error) => {
                 let name = path.file_name().unwrap_or(path.as_os_str()).display();
-                world.workbench_mut().notify(Notification::error(format!(
+                world.bedtime_mut().notify(Notification::error(format!(
                     "Couldn't open {name}: {error}"
                 )));
                 Entity::PLACEHOLDER
@@ -782,7 +782,7 @@ fn replace_in_document(
     ranges: Vec<Range<usize>>,
     replacement: &str,
 ) -> Result<usize, String> {
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let handle = workbench
         .cast_document::<TextBuffer>(document)
         .map_err(|e| format!("{}: {e}", name(path)))?;
@@ -798,7 +798,7 @@ fn replace_in_document(
     let count = edits.len();
     if count > 0 {
         world
-            .workbench_mut()
+            .bedtime_mut()
             .edit_document_transaction(
                 handle,
                 revision,
@@ -978,11 +978,11 @@ fn finish_replacing(world: &mut World, panel: Entity, done: Replaced, all: bool)
             text += &format!("; and {} more", done.problems.len() - 3);
         }
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify(Notification::warning(format!("Replace: {text}")));
     }
     if all && done.matches > 0 {
-        world.workbench_mut().notify(Notification::info(format!(
+        world.bedtime_mut().notify(Notification::info(format!(
             "Replaced {} in {}",
             count(done.matches, "match", "matches"),
             count(done.files, "file", "files"),

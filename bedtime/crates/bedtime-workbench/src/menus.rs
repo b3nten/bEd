@@ -22,9 +22,8 @@ pub use standard::{
     MenuContributions, MenusAppExt, StandardMenu, StandardMenus, StandardMenusPlugin,
 };
 
-use crate::actions::{
-    Action, ActionId, ActionRequest, ActionsWorldExt, InvocationContext, Invokes, KeyChord,
-};
+use crate::BedtimeWorldExt as _;
+use crate::actions::{Action, ActionId, ActionRequest, InvocationContext, Invokes, KeyChord};
 use bevy::prelude::*;
 use std::collections::HashSet;
 
@@ -102,21 +101,23 @@ pub struct PanelMenuEntries(Vec<Entity>);
 
 /// Whether `entry` belongs in menus now: always, unless it's a panel's.
 fn shown(world: &World, entry: Entity) -> bool {
-    use bedtime_ui::layouts::{LayoutsWorldExt, PanelInstance};
-    let active = world.layouts().active();
+    use bedtime_ui::layouts::PanelInstance;
+    let active = world.bedtime().layouts().active();
     if let Some(ForPanel(kind)) = world.get::<ForPanel>(entry) {
-        let open =
-            active.is_some_and(|layout| {
-                world.layouts().panels(layout).into_iter().any(|panel| {
-                    world.get::<PanelInstance>(panel).and_then(|p| p.kind) == Some(*kind)
-                })
-            });
+        let open = active.is_some_and(|layout| {
+            world
+                .bedtime()
+                .layouts()
+                .panels(layout)
+                .into_iter()
+                .any(|panel| world.get::<PanelInstance>(panel).and_then(|p| p.kind) == Some(*kind))
+        });
         if !open {
             return false;
         }
     }
     if let Some(ForPanelInstance(panel)) = world.get::<ForPanelInstance>(entry) {
-        let focused = active.and_then(|layout| world.layouts().focused_panel(layout));
+        let focused = active.and_then(|layout| world.bedtime().layouts().focused_panel(layout));
         if focused != Some(*panel) {
             return false;
         }
@@ -175,14 +176,14 @@ impl MenuSnapshot {
     }
 }
 
-/// Reading menus: `world.menus()`.
+/// Reading menus: `world.bedtime().menus()`.
 #[repr(transparent)]
 pub struct Menus {
     world: World,
 }
 
-/// `world.menus()`.
-pub trait MenusWorldExt {
+/// `world.bedtime().menus()`.
+pub(crate) trait MenusWorldExt {
     fn menus(&self) -> &Menus;
 }
 
@@ -228,6 +229,7 @@ impl Menus {
 fn capture_context(world: &World, context: InvocationContext) -> InvocationContext {
     match context {
         InvocationContext::Focused => world
+            .bedtime()
             .actions()
             .entity(context)
             .map_or(InvocationContext::Global, InvocationContext::Entity),
@@ -284,10 +286,10 @@ fn read_entries(
                 let target = world.get::<Invokes>(entity).map(|a| a.0.clone());
                 let enabled = target
                     .as_ref()
-                    .is_some_and(|t| world.actions().available(t, context));
+                    .is_some_and(|t| world.bedtime().actions().available(t, context));
                 let shortcut = target
                     .as_ref()
-                    .and_then(|t| world.actions().shortcut_for(t, context));
+                    .and_then(|t| world.bedtime().actions().shortcut_for(t, context));
                 entries.push(MenuNode::Item {
                     entity,
                     label: item.label,

@@ -9,7 +9,7 @@ use bedtime_filesystem::operations::{
     Change, Operation, OperationRequest, OperationResult, execute,
 };
 use bedtime_workbench::{
-    ManagedTask, ManagedWork, Notification, PathOptions, ViewerFile, WorkbenchWorldExt,
+    BedtimeWorldExt, ManagedTask, ManagedWork, Notification, PathOptions, ViewerFile,
 };
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
@@ -161,7 +161,7 @@ pub(crate) fn finish_operations(world: &mut World) {
                 1 => String::new(),
                 n => format!(" (and {} more)", n - 1),
             };
-            world.workbench_mut().notify(Notification::error(format!(
+            world.bedtime_mut().notify(Notification::error(format!(
                 "{name}: {}{more}",
                 error.message
             )));
@@ -187,7 +187,7 @@ pub(crate) fn finish_operations(world: &mut World) {
                 place: panel.map(bedtime_workbench::Placement::From),
                 ..default()
             };
-            let _ = world.workbench_mut().open_path(&path, options);
+            let _ = world.bedtime_mut().open_path(&path, options);
         }
     }
 }

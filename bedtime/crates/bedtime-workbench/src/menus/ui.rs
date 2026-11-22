@@ -1,4 +1,5 @@
 //! Drawing menus with egui: a menu bar, or a context menu.
+use crate::BedtimeWorldExt as _;
 use crate::actions::ActionRequests;
 use crate::menus::*;
 use bedtime_ui::{UiFrame, egui};
@@ -35,7 +36,10 @@ pub fn draw_menu_bar(
     if world.get::<NativeMenuBar>(root).is_some() && native::installed(world, root) {
         return Ok(());
     }
-    let menu = world.menus().snapshot(root, InvocationContext::Focused)?;
+    let menu = world
+        .bedtime()
+        .menus()
+        .snapshot(root, InvocationContext::Focused)?;
     let available = frame.ui.available_rect_before_wrap();
     let padding = inset.min(available.width() * 0.5);
     let inner = available.shrink2(egui::vec2(padding, 0.0));
@@ -70,7 +74,7 @@ pub fn draw_popup_menu(
     root: Entity,
     context: InvocationContext,
 ) -> Result<(), String> {
-    let menu = world.menus().snapshot(root, context)?;
+    let menu = world.bedtime().menus().snapshot(root, context)?;
     response.context_menu(|ui| {
         draw_entries(ui, world, &menu.entries);
     });

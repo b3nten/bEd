@@ -1,5 +1,6 @@
 //! Settings layers: what each holds, loading, saving and reloading them.
-use crate::settings::{Setting, SettingsError, SettingsWorldExt};
+use crate::BedtimeWorldExt as _;
+use crate::settings::{Setting, SettingsError};
 use bedtime_persistence::{Store, StoreBackend, StoreError, StoreErrorKind, StoreId, Stores};
 use bevy::prelude::*;
 use ron::value::RawValue;
@@ -14,8 +15,8 @@ use std::{
 pub const SETTINGS_ENTRY: &str = "settings";
 pub(crate) const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Changing settings: `world.settings_mut()`. Reading is the [`Settings`]
-/// resource (`world.settings()`).
+/// Changing settings: `world.bedtime_mut().settings_mut()`. Reading is the [`Settings`]
+/// resource (`world.bedtime().settings()`).
 #[repr(transparent)]
 pub struct SettingsMut {
     world: World,
@@ -232,7 +233,7 @@ impl SettingsMut {
         // following the layers below (a workspace set back to the global value
         // follows later global changes).
         if value == world.resource::<Settings>().inherited::<S>(store) {
-            return world.settings_mut().clear::<S>(store);
+            return world.bedtime_mut().settings_mut().clear::<S>(store);
         }
         let encoded = encode(&value)?;
         let mut settings = world.resource_mut::<Settings>();

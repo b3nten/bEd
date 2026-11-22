@@ -11,7 +11,7 @@
 //! The flow is driven headlessly through `close_prompt` and `resolve_close`;
 //! the `ui` feature draws the prompt.
 use crate::*;
-use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
+use crate::{Bedtime, BedtimeRef, BedtimeWorldExt};
 use bevy::prelude::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,7 +60,9 @@ enum Target {
         edit: LayoutEdit,
     },
     /// The exit called this, waiting on these documents.
-    Exit { name: String },
+    Exit {
+        name: String,
+    },
 }
 
 enum Stage {
@@ -98,10 +100,10 @@ pub(crate) fn install(app: &mut App) {
 /// An exit can't start while an editor has uncommitted input.
 fn exit_may_start(world: &World) -> Result<(), String> {
     let drafting = world
-        .workbench()
+        .bedtime()
         .document_ids()
         .into_iter()
-        .filter_map(|id| world.workbench().inspect_document(id).ok())
+        .filter_map(|id| world.bedtime().inspect_document(id).ok())
         .find(|info| info.has_drafts);
     match drafting {
         Some(info) => Err(format!("Finish typing in {:?} first.", info.title)),
@@ -114,7 +116,7 @@ fn exit_begins(world: &mut World, name: &str) {
     // Exiting supersedes a pending panel close.
     *world.resource_mut::<PendingClose>() = PendingClose::default();
     let documents: Vec<_> = world
-        .workbench()
+        .bedtime()
         .document_ids()
         .into_iter()
         .filter(|&id| needs_decision(world, id))
@@ -140,16 +142,16 @@ fn exit_gate(world: &mut World) -> Gate {
     ) {
         return Gate::Waiting;
     }
-    let saving = world.workbench().document_ids().into_iter().any(|id| {
+    let saving = world.bedtime().document_ids().into_iter().any(|id| {
         world
-            .workbench()
+            .bedtime()
             .inspect_document(id)
             .is_ok_and(|info| info.saving)
     });
     if saving { Gate::Waiting } else { Gate::Open }
 }
 
-impl WorkbenchRef {
+impl BedtimeRef {
     /// The question waiting on the user, if any.
     pub fn close_prompt(&self) -> Option<ClosePrompt> {
         let world = &self.world;
@@ -163,7 +165,7 @@ impl WorkbenchRef {
             .filter_map(|&id| {
                 Some(UnsavedDocument {
                     id,
-                    title: world.workbench().inspect_document(id).ok()?.title,
+                    title: world.bedtime().inspect_document(id).ok()?.title,
                     error: errors
                         .iter()
                         .find(|(e, _)| *e == id)
@@ -181,7 +183,7 @@ impl WorkbenchRef {
     }
 }
 
-impl Workbench {
+impl Bedtime {
     /// Answer the current prompt.
     pub fn resolve_close(&mut self, choice: CloseChoice) -> Result<(), String> {
         let world = &mut self.world;
@@ -276,7 +278,7 @@ fn released_unsaved(world: &World, panels: &[Entity]) -> Vec<DocumentId> {
 
 fn needs_decision(world: &World, id: DocumentId) -> bool {
     world
-        .workbench()
+        .bedtime()
         .inspect_document(id)
         .is_ok_and(|info| info.dirty || info.conflict)
 }
@@ -298,13 +300,13 @@ fn start_saves(world: &mut World, documents: &[DocumentId]) -> Vec<(DocumentId, 
     let mut errors = Vec::new();
     for &id in documents {
         if world
-            .workbench()
+            .bedtime()
             .inspect_document(id)
             .is_ok_and(|info| info.saving)
         {
             continue;
         }
-        if let Err(error) = world.workbench_mut().save_document(id) {
+        if let Err(error) = world.bedtime_mut().save_document(id) {
             errors.push((id, error.to_string()));
         }
     }
@@ -315,7 +317,7 @@ fn start_saves(world: &mut World, documents: &[DocumentId]) -> Vec<(DocumentId, 
 /// by being gone: its gate opens.)
 fn finish(world: &mut World, close: Close) {
     if let Target::Panels { layout, edit } = close.target
-        && let Err(error) = world.layouts_mut().apply_edit(layout, &edit)
+        && let Err(error) = world.bedtime_mut().layouts_mut().apply_edit(layout, &edit)
     {
         report_error(
             world,
@@ -333,7 +335,7 @@ fn advance(world: &mut World) {
     let saving = |world: &World, ids: &[DocumentId]| {
         ids.iter().any(|&id| {
             world
-                .workbench()
+                .bedtime()
                 .inspect_document(id)
                 .is_ok_and(|info| info.saving)
         })
@@ -345,7 +347,7 @@ fn advance(world: &mut World) {
         close.documents.retain(|&id| needs_decision(world, id));
         for &id in &close.documents {
             let failed = world
-                .workbench()
+                .bedtime()
                 .inspect_document(id)
                 .ok()
                 .and_then(|info| info.error);
@@ -377,7 +379,7 @@ fn release_unviewed(world: &mut World) {
         .map(|(entity, _)| DocumentId(entity))
         .collect();
     for id in candidates {
-        let Ok(info) = world.workbench().inspect_document(id) else {
+        let Ok(info) = world.bedtime().inspect_document(id) else {
             continue;
         };
         let discarded = world.get::<Discarded>(id.0).is_some();
@@ -416,7 +418,7 @@ mod tests {
     }
 
     fn close(app: &mut App, panel: Entity) {
-        let layouts = app.world_mut().layouts_mut();
+        let layouts = app.world_mut().bedtime_mut().layouts_mut();
         let layout = layouts.active().unwrap();
         layouts
             .user_edit(layout, &LayoutEdit::ClosePanels(vec![panel]))
@@ -447,7 +449,7 @@ mod tests {
             .insert(DocumentReference::new(document.id()));
         close(&mut app, first);
         assert!(!exists(&app, first));
-        assert!(app.world().workbench().close_prompt().is_none());
+        assert!(app.world().bedtime().close_prompt().is_none());
         assert!(exists(&app, document.id().entity()));
     }
 
@@ -456,18 +458,18 @@ mod tests {
         let mut app = app();
         let (document, viewer) = unsaved(&mut app, true);
         close(&mut app, viewer);
-        let prompt = app.world().workbench().close_prompt().unwrap();
+        let prompt = app.world().bedtime().close_prompt().unwrap();
         assert_eq!(prompt.exit, None);
         assert_eq!(prompt.documents[0].title, "notes.txt");
         app.world_mut()
-            .workbench_mut()
+            .bedtime_mut()
             .resolve_close(CloseChoice::Cancel)
             .unwrap();
         app.update();
         assert!(exists(&app, viewer));
         assert!(
             app.world()
-                .workbench()
+                .bedtime()
                 .inspect_document(document.id())
                 .unwrap()
                 .dirty
@@ -480,7 +482,7 @@ mod tests {
         let (document, viewer) = unsaved(&mut app, true);
         close(&mut app, viewer);
         app.world_mut()
-            .workbench_mut()
+            .bedtime_mut()
             .resolve_close(CloseChoice::Discard)
             .unwrap();
         app.update();
@@ -494,7 +496,7 @@ mod tests {
         let (document, viewer) = unsaved(&mut app, true);
         close(&mut app, viewer);
         app.world_mut()
-            .workbench_mut()
+            .bedtime_mut()
             .resolve_close(CloseChoice::Save)
             .unwrap();
         update_until(&mut app, |app| !exists(app, viewer));
@@ -508,7 +510,7 @@ mod tests {
         app.insert_resource(DocumentAutosave(DocumentAutosavePolicy::OnFocusChange));
         let (document, viewer) = unsaved(&mut app, true);
         close(&mut app, viewer);
-        assert!(app.world().workbench().close_prompt().is_none());
+        assert!(app.world().bedtime().close_prompt().is_none());
         update_until(&mut app, |app| !exists(app, viewer));
         app.update();
         assert!(!exists(&app, document.id().entity()));
@@ -521,9 +523,9 @@ mod tests {
         let (_, viewer) = unsaved(&mut app, false);
         close(&mut app, viewer);
         update_until(&mut app, |app| {
-            app.world().workbench().close_prompt().is_some()
+            app.world().bedtime().close_prompt().is_some()
         });
-        let prompt = app.world().workbench().close_prompt().unwrap();
+        let prompt = app.world().bedtime().close_prompt().unwrap();
         assert!(
             prompt.documents[0]
                 .error
@@ -591,7 +593,7 @@ mod tests {
         world.spawn((DocumentReference::new(document.id()), ChildOf(host)));
         close(&mut app, host);
         assert_eq!(
-            app.world().workbench().close_prompt().unwrap().documents[0].id,
+            app.world().bedtime().close_prompt().unwrap().documents[0].id,
             document.id()
         );
     }
@@ -605,7 +607,7 @@ mod tests {
         app.update();
         assert_eq!(
             app.world()
-                .workbench()
+                .bedtime()
                 .close_prompt()
                 .unwrap()
                 .exit
@@ -614,7 +616,7 @@ mod tests {
         );
         assert!(app.should_exit().is_none());
         app.world_mut()
-            .workbench_mut()
+            .bedtime_mut()
             .resolve_close(CloseChoice::Discard)
             .unwrap();
         update_until(&mut app, |app| app.should_exit().is_some());
@@ -628,14 +630,14 @@ mod tests {
         unsaved(&mut app, true);
         let switch = |world: &mut World| {
             world
-                .workbench_mut()
+                .bedtime_mut()
                 .request_exit("Switch workspace", |world| world.insert_resource(Switched))
         };
         switch(app.world_mut()).unwrap();
         app.update();
         assert_eq!(
             app.world()
-                .workbench()
+                .bedtime()
                 .close_prompt()
                 .unwrap()
                 .exit
@@ -643,20 +645,20 @@ mod tests {
             Some("Switch workspace")
         );
         assert!(switch(app.world_mut()).is_err(), "one exit at a time");
-        assert!(app.world().workbench().is_exiting());
+        assert!(app.world().bedtime().is_exiting());
         // Cancelling leaves the session as it was, and a later exit can go ahead.
         app.world_mut()
-            .workbench_mut()
+            .bedtime_mut()
             .resolve_close(CloseChoice::Cancel)
             .unwrap();
         app.update();
-        assert!(app.world().workbench().close_prompt().is_none());
-        assert!(!app.world().workbench().is_exiting());
+        assert!(app.world().bedtime().close_prompt().is_none());
+        assert!(!app.world().bedtime().is_exiting());
         assert!(!app.world().resource::<ManagedWork>().is_closing());
         switch(app.world_mut()).unwrap();
         app.update();
         app.world_mut()
-            .workbench_mut()
+            .bedtime_mut()
             .resolve_close(CloseChoice::Save)
             .unwrap();
         update_until(&mut app, |app| app.world().contains_resource::<Switched>());

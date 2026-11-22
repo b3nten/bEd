@@ -10,9 +10,9 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    ActionHandler, ActionInvocation, ActionResult, DocumentReference, DocumentStatus, Handler,
-    ManagedTask, ManagedWork, Panel, PanelInstance, ResetZoom, ViewerFile, ViewersAppExt,
-    WorkbenchWorldExt, ZoomIn, ZoomOut, viewer_document,
+    ActionHandler, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentReference,
+    DocumentStatus, Handler, ManagedTask, ManagedWork, Panel, PanelInstance, ResetZoom, ViewerFile,
+    ViewersAppExt, ZoomIn, ZoomOut, viewer_document,
 };
 use bevy::prelude::*;
 use std::{path::Path, sync::Arc};
@@ -136,7 +136,7 @@ fn prepare_models(world: &mut World) {
         let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document()) else {
             continue;
         };
-        let Ok(info) = world.workbench().inspect_document(document) else {
+        let Ok(info) = world.bedtime().inspect_document(document) else {
             continue;
         };
         let model = world.get::<ModelPanel>(panel).unwrap();
@@ -153,10 +153,10 @@ fn prepare_models(world: &mut World) {
             continue;
         };
         let Some(bytes) = world
-            .workbench()
+            .bedtime()
             .cast_document::<ModelFile>(document)
             .ok()
-            .and_then(|handle| world.workbench().read_document(handle).ok().cloned())
+            .and_then(|handle| world.bedtime().read_document(handle).ok().cloned())
         else {
             continue;
         };

@@ -22,7 +22,12 @@ and the decision to make.
   and a session store (`<config>/session`); workspaces gives the session
   store a place per folder and adds the workspace's layer.
 - bedtime's operations sit on one wrapper over `World`, not on extension
-  traits of `World` (nine today).
+  traits of `World`. Done: `world.bedtime()` and `world.bedtime_mut()`
+  (`BedtimeWorldExt`), with the parts on it by name (`layouts()`,
+  `actions()`, `menus()`, `settings()`, `persistence()`) and opening panels,
+  links and error dialogs. `&mut World` stays in every signature. bedtime-ui
+  and bedtime-persistence used on their own keep their own traits: the
+  wrapper is the workbench's, where nearly all the operations are.
 - The cat and the frame-rate item become bedtime crates.
 - bed becomes a library with a thin `src/bed.rs` binary, so an engine can
   build on it. Done: `bed::BedPlugins`, `bed::default_plugins()`,

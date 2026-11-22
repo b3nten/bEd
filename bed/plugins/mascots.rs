@@ -1,7 +1,7 @@
 //! Bed and Ducky (`+ducky` in a terminal).
 use bedtime_mascots::{DuckPanel, MascotPlugin};
 use bedtime_terminal::{ShellCommandsAppExt, ShellInvocation};
-use bedtime_workbench::PanelsWorldExt;
+use bedtime_workbench::BedtimeWorldExt as _;
 use bevy::prelude::*;
 
 pub struct MascotsPlugin;
@@ -17,6 +17,7 @@ impl Plugin for MascotsPlugin {
 fn ducky(world: &mut World, invocation: ShellInvocation) {
     let result = if invocation.arguments.is_empty() {
         world
+            .bedtime_mut()
             .open_panel_at(
                 DuckPanel,
                 bedtime_workbench::Placement::From(invocation.panel),

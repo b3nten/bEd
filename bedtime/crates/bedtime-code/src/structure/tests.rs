@@ -17,12 +17,12 @@ fn host() -> Host {
     let mut app = App::new();
     app.add_plugins((WorkbenchCorePlugins, CodePlugin));
     let world = app.world_mut();
-    let layout = world.layouts_mut().create("Test").unwrap();
-    world.layouts_mut().activate(layout).unwrap();
+    let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+    world.bedtime_mut().layouts_mut().activate(layout).unwrap();
     let source = MemorySource::new("cats.rs", TextBuffer::from(CODE));
     let open = |world: &mut World, target| {
         world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(
                 source.clone(),
                 OpenOptions {
@@ -34,7 +34,7 @@ fn host() -> Host {
     };
     let a = open(world, Target::Existing);
     let b = open(world, Target::New);
-    let area = world.layouts().destination_area(layout).unwrap();
+    let area = world.bedtime().layouts().destination_area(layout).unwrap();
     let structure = world
         .spawn((StructurePanel::default(), bedtime_workbench::InArea(area)))
         .id();
@@ -64,6 +64,7 @@ fn until(host: &mut Host, done: impl Fn(&World) -> bool) {
 fn focus(host: &mut Host, panel: Entity) {
     host.app
         .world_mut()
+        .bedtime_mut()
         .layouts_mut()
         .focus_panel(panel)
         .unwrap();
@@ -85,7 +86,12 @@ fn structure_follows_the_focused_editor_and_remembers_it() {
     focus(&mut host, structure);
     assert_eq!(source(&host), Some(host.b));
     // A closed editor is forgotten.
-    host.app.world_mut().layouts_mut().close_panel(b).unwrap();
+    host.app
+        .world_mut()
+        .bedtime_mut()
+        .layouts_mut()
+        .close_panel(b)
+        .unwrap();
     host.app.update();
     assert_eq!(source(&host), None);
 }
@@ -105,17 +111,20 @@ fn an_entry_selects_its_name_in_the_editor_and_focuses_it() {
         .find(|n| n.label.contains("dog"))
         .unwrap();
     assert!(reveal_entry(world, host.a, outline.key, dog.id));
-    let layout = world.layouts().active().unwrap();
-    assert_eq!(world.layouts().focused_panel(layout), Some(host.a));
+    let layout = world.bedtime().layouts().active().unwrap();
+    assert_eq!(
+        world.bedtime().layouts().focused_panel(layout),
+        Some(host.a)
+    );
 
     // An entry from an older analysis does nothing.
     let document = world.get::<DocumentReference>(host.a).unwrap().document();
     let handle = world
-        .workbench()
+        .bedtime()
         .cast_document::<TextBuffer>(document)
         .unwrap();
     world
-        .workbench_mut()
+        .bedtime_mut()
         .edit_document(
             handle,
             0,
@@ -135,11 +144,11 @@ fn the_outline_stays_while_an_edit_is_reanalysed() {
     let before = panel.shown.as_ref().unwrap().1.key;
     let document = world.get::<DocumentReference>(host.a).unwrap().document();
     let handle = world
-        .workbench()
+        .bedtime()
         .cast_document::<TextBuffer>(document)
         .unwrap();
     world
-        .workbench_mut()
+        .bedtime_mut()
         .edit_document(
             handle,
             0,

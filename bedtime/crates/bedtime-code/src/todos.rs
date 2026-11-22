@@ -9,8 +9,8 @@ use bedtime_ui::{UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentSaveFinished, ManagedTask, ManagedWork, Notification, Panel, PathOptions, Placement,
-    Root, WorkbenchWorldExt,
+    BedtimeWorldExt, DocumentSaveFinished, ManagedTask, ManagedWork, Notification, Panel,
+    PathOptions, Placement, Root,
 };
 use bevy::{ecs::message::MessageCursor, prelude::*};
 use std::{
@@ -411,8 +411,8 @@ pub(crate) fn open(world: &mut World, panel: Entity, item: &TodoItem, keep_focus
         place: Some(Placement::From(panel)),
         ..default()
     };
-    if let Err(error) = world.workbench_mut().open_path(&item.path, options) {
-        world.workbench_mut().notify(Notification::error(format!(
+    if let Err(error) = world.bedtime_mut().open_path(&item.path, options) {
+        world.bedtime_mut().notify(Notification::error(format!(
             "Couldn't open {}: {error}",
             item.relative
         )));

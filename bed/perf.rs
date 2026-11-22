@@ -327,9 +327,7 @@ mod tests {
 
     #[test]
     fn frames_are_recorded_only_while_shown() {
-        use bedtime_workbench::{
-            WorkbenchCorePlugins, persistence::StoreId, settings::SettingsWorldExt,
-        };
+        use bedtime_workbench::{BedtimeWorldExt, WorkbenchCorePlugins, persistence::StoreId};
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugins, PerfPlugin));
         app.update();
@@ -338,6 +336,7 @@ mod tests {
 
         let global = StoreId::of::<crate::workspace::GlobalStore>();
         app.world_mut()
+            .bedtime_mut()
             .settings_mut()
             .set::<ShowFrameRate>(global, true)
             .unwrap();

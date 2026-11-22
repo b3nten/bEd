@@ -2,7 +2,7 @@
 //! the caret is, or how much is selected, and the text's language.
 use super::{EditorPanel, TextSelection};
 use bedtime_document::TextBuffer;
-use bedtime_workbench::{DocumentReference, WorkbenchWorldExt, status::PanelStatus};
+use bedtime_workbench::{BedtimeWorldExt, DocumentReference, status::PanelStatus};
 use bevy::prelude::*;
 
 /// Selections longer than this (in bytes) are counted in lines, not
@@ -17,7 +17,7 @@ pub fn item(world: &World, panel: Entity, status: &mut PanelStatus) {
     let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document()) else {
         return;
     };
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let Some(text) = workbench
         .cast_document::<TextBuffer>(document)
         .and_then(|handle| workbench.read_document(handle))

@@ -4,8 +4,7 @@
 //! dock menu.
 use crate::{menus, perf, titlebar};
 use bedtime_workbench::{
-    AreaBackground, DockMenuAppExt, LayoutSurface, TabBarVisibility, Titlebar,
-    status::StatusAppExt,
+    AreaBackground, DockMenuAppExt, LayoutSurface, TabBarVisibility, Titlebar, status::StatusAppExt,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 
@@ -47,9 +46,11 @@ pub fn window_plugin() -> WindowPlugin {
     }
 }
 
-/// The main window: transparent, its content under the titlebar.
+/// The main window: transparent, its content under the titlebar. While a
+/// script drives the app it opens unfocused, behind what's being worked in.
 pub fn window() -> Window {
     Window {
+        focused: !bedtime_workbench::driven_by_script(),
         resolution: (960, 640).into(),
         titlebar_show_title: false,
         titlebar_transparent: true,

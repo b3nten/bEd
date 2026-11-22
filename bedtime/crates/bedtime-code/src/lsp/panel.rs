@@ -6,10 +6,11 @@ use super::{
     restart, server_states,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, egui, theme};
+use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::{
     Action, ActionAppExt, Handler, MenusAppExt, Panel, open_new,
     persistence::{ReflectPersist, StoreId},
-    settings::{Settings, SettingsAppExt, SettingsWorldExt, settings, ui::layer_tabs},
+    settings::{Settings, SettingsAppExt, settings, ui::layer_tabs},
 };
 use bevy::{platform::collections::HashMap, prelude::*};
 use std::collections::BTreeMap;
@@ -44,7 +45,7 @@ impl Plugin for LanguageServersPanelPlugin {
 
 /// Each layer's changes, lowest first, up to `top` (every layer without one).
 fn layers(world: &World, top: Option<StoreId>) -> Vec<BTreeMap<String, ServerSettings>> {
-    let settings = world.settings();
+    let settings = world.bedtime().settings();
     let mut layers = Vec::new();
     for layer in settings.layers() {
         if let Some(map) = settings.get_in::<LanguageServerConfig>(layer) {
@@ -68,6 +69,7 @@ fn refresh_catalog(world: &mut World) {
 /// Change server `name` in `layer`; an entry left with no changes goes.
 fn change(world: &mut World, layer: StoreId, name: &str, f: impl FnOnce(&mut ServerSettings)) {
     let mut map = world
+        .bedtime()
         .settings()
         .get_in::<LanguageServerConfig>(layer)
         .unwrap_or_default();
@@ -77,9 +79,15 @@ fn change(world: &mut World, layer: StoreId, name: &str, f: impl FnOnce(&mut Ser
         map.remove(name);
     }
     let result = if map.is_empty() {
-        world.settings_mut().clear::<LanguageServerConfig>(layer)
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .clear::<LanguageServerConfig>(layer)
     } else {
-        world.settings_mut().set::<LanguageServerConfig>(layer, map)
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .set::<LanguageServerConfig>(layer, map)
     };
     if let Err(error) = result {
         warn!("Couldn't change {name}: {error}");
@@ -133,7 +141,7 @@ impl Panel for LanguageServersPanel {
                 return;
             };
             // The first layer is everywhere's (global); later ones override it.
-            let note = if world.settings().layers().next() == Some(layer) {
+            let note = if world.bedtime().settings().layers().next() == Some(layer) {
                 "Changes here apply to every workspace."
             } else {
                 "Changes here apply to this workspace, over the global ones."

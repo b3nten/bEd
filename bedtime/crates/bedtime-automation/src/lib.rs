@@ -11,9 +11,11 @@
 //! | `bedtime.invoke` | `{"command": "settings.open"}` | runs the command as if from its key |
 //! | `bedtime.exit` | | exits the app normally |
 //!
-//! Scripts start the app with `BEDTIME_AUTOMATION_PORT` set. Its window
-//! then opens unfocused and takes no input but the script's, so scripts run
-//! without taking over the computer. See `tools/bed.py`.
+//! Scripts start the app with `BEDTIME_AUTOMATION_PORT` set. The app then
+//! opens its window unfocused (`AppPlugins` does; an app with its own window
+//! asks `bedtime_workbench::driven_by_script`), and it takes no input but
+//! the script's, so scripts run without taking over the computer. See
+//! `tools/bed.py`.
 //!
 //! Nothing here is specific to one app or plugin. When a script can't see
 //! something, reflect it or label its widget rather than adding a method.
@@ -61,20 +63,5 @@ impl Plugin for AutomationPlugin {
         }
         #[cfg(not(feature = "enabled"))]
         let _ = app;
-    }
-
-    /// A script's window opens unfocused, behind what's being worked in, so
-    /// the script takes neither the keyboard nor the front. (A window can't
-    /// be made unfocused once it's open; this is after every plugin has
-    /// built, and before any window opens.)
-    fn finish(&self, app: &mut App) {
-        if !self.active() {
-            return;
-        }
-        let world = app.world_mut();
-        let mut windows = world.query::<&mut bevy::window::Window>();
-        for mut window in windows.iter_mut(world) {
-            window.focused = false;
-        }
     }
 }

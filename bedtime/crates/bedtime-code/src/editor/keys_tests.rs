@@ -2,10 +2,7 @@
 //! panels draw), with the keymap an app chose.
 use super::*;
 use bedtime_ui::{UiCamera, UiCapture};
-use bedtime_workbench::{
-    ActionAppExt, ActionsWorldExt, LayoutsWorldExt, PathOptions, Root, WorkbenchCorePlugins,
-    WorkbenchWorldExt,
-};
+use bedtime_workbench::{ActionAppExt, BedtimeWorldExt, PathOptions, Root, WorkbenchCorePlugins};
 use bevy::prelude::*;
 use bevy_egui::EguiInput;
 
@@ -21,10 +18,10 @@ fn app() -> (App, Entity, Entity) {
         .add_keymap(crate::keymap::VSCODE)
         .insert_resource(Root(root.clone()));
     let world = app.world_mut();
-    let layout = world.layouts_mut().create("Test").unwrap();
-    world.layouts_mut().activate(layout).unwrap();
+    let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+    world.bedtime_mut().layouts_mut().activate(layout).unwrap();
     let panel = world
-        .workbench_mut()
+        .bedtime_mut()
         .open_path(&root.join("main.rs"), PathOptions::default())
         .unwrap();
     let surface = world
@@ -71,6 +68,7 @@ fn keys_reach_the_focused_editors_commands_but_not_from_its_find_field() {
     let (mut app, panel, camera) = app();
     assert_eq!(
         app.world()
+            .bedtime()
             .actions()
             .entity(bedtime_workbench::InvocationContext::Focused),
         Some(panel)

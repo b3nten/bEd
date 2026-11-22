@@ -1,7 +1,8 @@
 //! The native menu bar (`native` feature): macOS's, through muda. Elsewhere
 //! nothing is installed and apps draw their egui menu bar instead.
+use crate::BedtimeWorldExt as _;
 use crate::actions::{ActionRequests, InvocationContext};
-use crate::menus::{MenuBar, MenuSnapshot, MenusWorldExt};
+use crate::menus::{MenuBar, MenuSnapshot};
 use bevy::{
     prelude::*,
     window::{PrimaryWindow, RawHandleWrapper},
@@ -95,9 +96,10 @@ fn requested_menu(world: &mut World) -> Result<MenuSnapshot, String> {
         .collect();
     match roots.as_slice() {
         [] => Ok(MenuSnapshot::default()),
-        [root] if world.get::<MenuBar>(*root).is_some() => {
-            world.menus().snapshot(*root, InvocationContext::Focused)
-        }
+        [root] if world.get::<MenuBar>(*root).is_some() => world
+            .bedtime()
+            .menus()
+            .snapshot(*root, InvocationContext::Focused),
         [_] => Err("NativeMenuBar must select an abstract MenuBar".into()),
         _ => Err("Only one native menu bar can be selected".into()),
     }
@@ -117,7 +119,7 @@ fn poll_menus(world: &mut World) {
                 .as_ref()
                 .ok()
                 .and_then(|snapshot| snapshot.root)
-                .and_then(|root| world.menus().snapshot(root, context).ok())
+                .and_then(|root| world.bedtime().menus().snapshot(root, context).ok())
                 .and_then(|snapshot| snapshot.request(source, target))
                 .filter(|request| request.context == context)
             {

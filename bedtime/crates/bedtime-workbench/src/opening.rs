@@ -12,7 +12,7 @@
 //! panel rather than making one: the same document in the same viewer. The
 //! state goes to the panel as `Reveal`, which the viewer reads and removes.
 use crate::*;
-use crate::{Workbench, WorkbenchRef, WorkbenchWorldExt};
+use crate::{Bedtime, BedtimeRef, BedtimeWorldExt};
 use bedtime_document::{DocumentModel, DocumentSource};
 use bevy::prelude::*;
 use std::any::TypeId;
@@ -113,7 +113,7 @@ impl ErasedViewer {
             },
             create: |world, document, place| {
                 world
-                    .workbench()
+                    .bedtime()
                     .cast_document::<M>(document)
                     .map_err(|e| e.to_string())?;
                 Ok(world
@@ -157,17 +157,17 @@ impl FileViewer {
                     (None, _) => M::OpenState::default(),
                 };
                 let handle = world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .load_document::<M>(source)
                     .map_err(|e| e.to_string())?;
                 // In step with any other model's document of this file.
                 if !M::UNREAD {
                     world
-                        .workbench_mut()
+                        .bedtime_mut()
                         .set_byte_codec(handle)
                         .map_err(|e| e.to_string())?;
                 }
-                let panel = world.workbench_mut().open_document_handle(
+                let panel = world.bedtime_mut().open_document_handle(
                     handle,
                     OpenOptions {
                         state,
@@ -192,12 +192,12 @@ impl FileViewer {
                     .document_source(path)
                     .map_err(|e| e.to_string())?;
                 let document = world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .load_document::<M>(source)
                     .map_err(|e| e.to_string())?;
                 if !M::UNREAD {
                     world
-                        .workbench_mut()
+                        .bedtime_mut()
                         .set_byte_codec(document)
                         .map_err(|e| e.to_string())?;
                 }
@@ -242,9 +242,9 @@ pub(crate) fn reopen_viewers(world: &mut World) {
         };
         if let Err(error) = result {
             world.entity_mut(panel).remove::<ViewerFile>();
-            let _ = world.layouts_mut().close_panel(panel);
+            let _ = world.bedtime_mut().layouts_mut().close_panel(panel);
             let name = path.file_name().unwrap_or(path.as_os_str()).display();
-            world.workbench_mut().notify(Notification::warning(format!(
+            world.bedtime_mut().notify(Notification::warning(format!(
                 "Couldn't reopen {name}: {error}"
             )));
         }
@@ -411,7 +411,7 @@ pub(crate) fn check_viewer_model(insert: On<Insert<DocumentReference>>, world: &
     }
 }
 
-impl WorkbenchRef {
+impl BedtimeRef {
     /// The viewers for an open document's model ("Open With").
     pub fn viewers_for_document(&self, document: DocumentId) -> Vec<(ViewerId, &'static str)> {
         let Some(model) = self
@@ -435,7 +435,7 @@ impl WorkbenchRef {
     }
 }
 
-impl Workbench {
+impl Bedtime {
     /// Show `source`'s document in a viewer, with `options.state` applied.
     /// Returns the panel: the existing one it focused, or the new one.
     pub fn open_document<M: DocumentModel>(
@@ -553,9 +553,9 @@ impl DocumentsCommandsExt for Commands<'_, '_> {
         options: OpenOptions<M>,
     ) {
         self.queue(move |world: &mut World| {
-            if let Err(error) = world.workbench_mut().open_document_handle(handle, options) {
+            if let Err(error) = world.bedtime_mut().open_document_handle(handle, options) {
                 world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .notify(Notification::error(format!("Couldn't open it: {error}")));
             }
         });
@@ -563,7 +563,7 @@ impl DocumentsCommandsExt for Commands<'_, '_> {
 }
 
 #[cfg(feature = "files")]
-impl WorkbenchRef {
+impl BedtimeRef {
     /// The viewers that can open the file at `path`, the one it opens with
     /// first, then the closest ("Open With").
     pub fn viewers_for(&self, path: &std::path::Path) -> Vec<(ViewerId, &'static str)> {
@@ -722,9 +722,10 @@ fn viewer_of(
 /// A viewer in the current layout showing `document` (with `viewer`, if one
 /// was asked for): the one in the focused area, else the first.
 fn existing_panel(world: &World, document: DocumentId, viewer: Option<ViewerId>) -> Option<Entity> {
-    let layout = world.layouts().active()?;
+    let layout = world.bedtime().layouts().active()?;
     let viewers = world.get_resource::<Viewers>()?;
     let candidates: Vec<_> = world
+        .bedtime()
         .layouts()
         .panels(layout)
         .into_iter()
@@ -764,6 +765,7 @@ fn new_panel<M: DocumentModel>(
         .0;
     if options.preview {
         let replaced = world
+            .bedtime()
             .layouts()
             .panels_in_area(area)
             .iter()
@@ -773,7 +775,7 @@ fn new_panel<M: DocumentModel>(
             });
         world.get_mut::<PanelInstance>(panel).unwrap().preview = true;
         if let Some(old) = replaced {
-            world.layouts_mut().close_panel(old)?;
+            world.bedtime_mut().layouts_mut().close_panel(old)?;
         }
     }
     // Closing the replaced preview may have selected another tab.
@@ -784,9 +786,9 @@ fn new_panel<M: DocumentModel>(
 /// Select `panel`'s tab, and focus it unless `keep_focus`.
 fn show(world: &mut World, panel: Entity, keep_focus: bool) -> Result<(), String> {
     if keep_focus {
-        world.layouts_mut().select_panel(panel)
+        world.bedtime_mut().layouts_mut().select_panel(panel)
     } else {
-        world.layouts_mut().focus_panel(panel)
+        world.bedtime_mut().layouts_mut().focus_panel(panel)
     }
 }
 
@@ -807,7 +809,7 @@ pub fn viewer_document<M: DocumentModel>(
 ) -> Option<ViewerDocument<M>> {
     use bedtime_ui::egui;
     let document = world.get::<DocumentReference>(panel)?.document();
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let info = workbench.inspect_document(document).ok()?;
     match info.status {
         DocumentStatus::Loading => {
@@ -840,7 +842,7 @@ pub(crate) fn pin_edited_previews(world: &mut World) {
         .filter(|(_, instance, _)| instance.preview)
         .filter(|(_, _, reference)| {
             world
-                .workbench()
+                .bedtime()
                 .inspect_document(reference.document())
                 .is_ok_and(|info| info.dirty)
         })
@@ -919,23 +921,23 @@ mod tests {
         let world = app.world_mut();
         let source = MemorySource::new("notes", TextBuffer::from("a\nb\nc"));
         let first = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(source.clone(), line(1))
             .unwrap();
         assert_eq!(revealed(world, first), Some(1));
         // Opened again: the same panel, moved.
         let again = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(source.clone(), line(2))
             .unwrap();
         assert_eq!(first, again);
         assert_eq!(revealed(world, first), Some(2));
         let document = world.get::<DocumentReference>(first).unwrap().document();
-        assert_eq!(world.workbench().document_ids(), [document]);
+        assert_eq!(world.bedtime().document_ids(), [document]);
 
         // A named panel; one showing something else is refused.
         let other = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(
                 MemorySource::new("other", TextBuffer::from("x")),
                 OpenOptions {
@@ -947,7 +949,7 @@ mod tests {
         assert_ne!(other, first);
         assert!(
             world
-                .workbench_mut()
+                .bedtime_mut()
                 .open_document(
                     source.clone(),
                     OpenOptions {
@@ -958,7 +960,7 @@ mod tests {
                 .is_err()
         );
         world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(
                 source.clone(),
                 OpenOptions {
@@ -971,7 +973,7 @@ mod tests {
 
         // Another viewer for the same document is a new panel.
         let hex = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(
                 source,
                 OpenOptions {
@@ -981,7 +983,7 @@ mod tests {
             )
             .unwrap();
         assert!(world.get::<HexView>(hex).is_some());
-        assert_eq!(world.workbench().viewers_for_document(document).len(), 2);
+        assert_eq!(world.bedtime().viewers_for_document(document).len(), 2);
     }
 
     /// A panel built from a viewer's parts (a diff panel with an editor in
@@ -1006,7 +1008,7 @@ mod tests {
         let mut app = app();
         let world = app.world_mut();
         let handle = world
-            .workbench_mut()
+            .bedtime_mut()
             .load_document(MemorySource::new("notes", TextBuffer::from("a")))
             .unwrap();
         let wrapper = world
@@ -1014,7 +1016,7 @@ mod tests {
             .id();
         world.flush();
         let viewer = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document_handle(handle, line(0))
             .unwrap();
         assert_ne!(viewer, wrapper);
@@ -1026,16 +1028,16 @@ mod tests {
         let mut app = app();
         let handle = app
             .world_mut()
-            .workbench_mut()
+            .bedtime_mut()
             .load_document(MemorySource::new("notes", TextBuffer::from("a\nb")))
             .unwrap();
         app.world_mut().commands().open_document(handle, line(1));
         app.world_mut().flush();
         let world = app.world_mut();
-        let layout = world.layouts().active().unwrap();
-        let panel = world.layouts().find::<TextView>(layout).unwrap();
+        let layout = world.bedtime().layouts().active().unwrap();
+        let panel = world.bedtime().layouts().find::<TextView>(layout).unwrap();
         assert_eq!(revealed(world, panel), Some(1));
-        assert_eq!(world.layouts().focused_panel(layout), Some(panel));
+        assert_eq!(world.bedtime().layouts().focused_panel(layout), Some(panel));
     }
 
     #[test]
@@ -1051,16 +1053,10 @@ mod tests {
             .with_source(name)
         };
         let (source, options) = preview("one");
-        let first = world
-            .workbench_mut()
-            .open_document(source, options)
-            .unwrap();
+        let first = world.bedtime_mut().open_document(source, options).unwrap();
         assert!(world.get::<PanelInstance>(first).unwrap().preview);
         let (source, options) = preview("two");
-        let second = world
-            .workbench_mut()
-            .open_document(source, options)
-            .unwrap();
+        let second = world.bedtime_mut().open_document(source, options).unwrap();
         assert!(
             world.get_entity(first).is_err(),
             "the old preview is replaced"
@@ -1070,13 +1066,13 @@ mod tests {
         world.get_mut::<PanelInstance>(second).unwrap().preview = false;
         let (source, options) = preview("three");
         let third = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(source.clone(), options)
             .unwrap();
         assert!(world.get_entity(second).is_ok());
         // Opening it for good pins it.
         world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(source, default())
             .unwrap();
         assert!(!world.get::<PanelInstance>(third).unwrap().preview);
@@ -1100,20 +1096,25 @@ mod tests {
     fn new_viewers_open_where_the_focus_is_or_away_from_the_panel_that_asked() {
         let mut app = app();
         let world = app.world_mut();
-        let layout = world.layouts().active().unwrap();
-        let main = world.layouts().destination_area(layout).unwrap();
+        let layout = world.bedtime().layouts().active().unwrap();
+        let main = world.bedtime().layouts().destination_area(layout).unwrap();
         let side = world
+            .bedtime_mut()
             .layouts_mut()
             .split_area(main, SplitAxis::Horizontal, 2500, [100, 100])
             .unwrap();
-        let (big, small) = if world.layouts().destination_area(layout).unwrap() == main {
+        let (big, small) = if world.bedtime().layouts().destination_area(layout).unwrap() == main {
             (main, side)
         } else {
             (side, main)
         };
         let sidebar = world.spawn((Sidebar, Place::in_area(small))).id();
         world.flush();
-        world.layouts_mut().focus_panel(sidebar).unwrap();
+        world
+            .bedtime_mut()
+            .layouts_mut()
+            .focus_panel(sidebar)
+            .unwrap();
         // Opened from the sidebar: the largest other area, not on top of it.
         let (source, options) = OpenOptions::<TextBuffer> {
             place: Some(Placement::From(sidebar)),
@@ -1121,16 +1122,13 @@ mod tests {
             ..default()
         }
         .with_source("one");
-        let panel = world
-            .workbench_mut()
-            .open_document(source, options)
-            .unwrap();
+        let panel = world.bedtime_mut().open_document(source, options).unwrap();
         assert_eq!(world.get::<InArea>(panel).unwrap().0, big);
         // With no place given: the focused area, whatever is where (a
         // viewer is open in the big one).
         let (source, options) = OpenOptions::<TextBuffer>::default().with_source("two");
         let panel = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(source.clone(), options)
             .unwrap();
         assert_eq!(world.get::<InArea>(panel).unwrap().0, small);
@@ -1140,10 +1138,7 @@ mod tests {
             place: Some(Placement::In(big)),
             ..default()
         };
-        let again = world
-            .workbench_mut()
-            .open_document(source, options)
-            .unwrap();
+        let again = world.bedtime_mut().open_document(source, options).unwrap();
         assert_eq!(again, panel);
         assert_eq!(world.get::<InArea>(again).unwrap().0, small);
     }
@@ -1152,12 +1147,9 @@ mod tests {
     fn keep_focus_opens_elsewhere_without_moving_focus() {
         let mut app = app();
         let world = app.world_mut();
-        let layout = world.layouts().active().unwrap();
+        let layout = world.bedtime().layouts().active().unwrap();
         let (source, options) = OpenOptions::<TextBuffer>::default().with_source("one");
-        let editor = world
-            .workbench_mut()
-            .open_document(source, options)
-            .unwrap();
+        let editor = world.bedtime_mut().open_document(source, options).unwrap();
         let options = OpenOptions::<TextBuffer> {
             place: Some(Placement::From(editor)),
             keep_focus: true,
@@ -1165,16 +1157,16 @@ mod tests {
             ..default()
         };
         let (source, options) = options.with_source("two");
-        let hex = world
-            .workbench_mut()
-            .open_document(source, options)
-            .unwrap();
+        let hex = world.bedtime_mut().open_document(source, options).unwrap();
         assert_ne!(
             world.get::<InArea>(hex).unwrap().0,
             world.get::<InArea>(editor).unwrap().0,
             "the editor's area is split"
         );
-        assert_eq!(world.layouts().focused_panel(layout), Some(editor));
+        assert_eq!(
+            world.bedtime().layouts().focused_panel(layout),
+            Some(editor)
+        );
     }
 
     #[cfg(feature = "files")]
@@ -1187,14 +1179,14 @@ mod tests {
         app.init_resource::<Asked>();
         let world = app.world_mut();
         world
-            .workbench_mut()
+            .bedtime_mut()
             .set_save_as(|world, id| world.resource_mut::<Asked>().0.push(id));
         let panel = world
-            .workbench_mut()
+            .bedtime_mut()
             .new_untitled::<TextBuffer>(OpenOptions::default())
             .unwrap();
         let second = world
-            .workbench_mut()
+            .bedtime_mut()
             .new_untitled::<TextBuffer>(OpenOptions {
                 target: Target::New,
                 ..default()
@@ -1206,19 +1198,19 @@ mod tests {
         assert_eq!(world.get::<Untitled>(other.0).unwrap().name, "Untitled 2");
         update_until(&mut app, |world| {
             world
-                .workbench()
+                .bedtime()
                 .inspect_document(document)
                 .is_ok_and(|info| info.status == DocumentStatus::Ready)
         });
         let world = app.world_mut();
-        let info = world.workbench().inspect_document(document).unwrap();
+        let info = world.bedtime().inspect_document(document).unwrap();
         assert!(info.untitled && !info.dirty, "nothing to lose yet");
         let handle = world
-            .workbench()
+            .bedtime()
             .cast_document::<TextBuffer>(document)
             .unwrap();
         type_text(world, handle, 0, "hello");
-        assert!(world.workbench().inspect_document(document).unwrap().dirty);
+        assert!(world.bedtime().inspect_document(document).unwrap().dirty);
         // Autosave leaves it alone (it would have to ask where).
         world.insert_resource(DocumentAutosave(DocumentAutosavePolicy::AfterIdle(
             std::time::Duration::ZERO,
@@ -1229,29 +1221,29 @@ mod tests {
         assert!(world.resource::<Asked>().0.is_empty());
         world.insert_resource(DocumentAutosave::default());
         // Saving asks where, once; meanwhile it counts as saving.
-        world.workbench_mut().save_document(document).unwrap();
-        world.workbench_mut().save_document(document).unwrap();
+        world.bedtime_mut().save_document(document).unwrap();
+        world.bedtime_mut().save_document(document).unwrap();
         assert_eq!(world.resource::<Asked>().0, [document]);
-        assert!(world.workbench().inspect_document(document).unwrap().saving);
+        assert!(world.bedtime().inspect_document(document).unwrap().saving);
         let folder = std::env::temp_dir().join(format!("bedtime-untitled-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
         let path = folder.join("notes.md");
         let _ = std::fs::remove_file(&path);
         world
-            .workbench_mut()
+            .bedtime_mut()
             .save_untitled_to(document, &path)
             .unwrap();
         assert!(world.get::<Untitled>(document.0).is_none());
         update_until(&mut app, |world| {
             world
-                .workbench()
+                .bedtime()
                 .inspect_document(document)
                 .is_ok_and(|info| !info.dirty && !info.saving)
         });
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
         let world = app.world();
         assert_eq!(
-            world.workbench().inspect_document(document).unwrap().title,
+            world.bedtime().inspect_document(document).unwrap().title,
             "notes.md"
         );
         assert!(world.get::<ViewerFile>(panel).is_some());
@@ -1280,10 +1272,10 @@ mod tests {
         std::fs::write(&plain, "hello").unwrap();
         let world = app.world_mut();
 
-        let text = world.workbench_mut().open_path(&notes, default()).unwrap();
+        let text = world.bedtime_mut().open_path(&notes, default()).unwrap();
         assert!(world.get::<TextView>(text).is_some());
         assert_eq!(
-            world.workbench().other_viewer(text),
+            world.bedtime().other_viewer(text),
             Some(ViewerId::of::<HexView>())
         );
         let options = PathOptions {
@@ -1292,15 +1284,15 @@ mod tests {
             keep_focus: true,
             ..default()
         };
-        let hex = world.workbench_mut().open_path(&notes, options).unwrap();
+        let hex = world.bedtime_mut().open_path(&notes, options).unwrap();
         // And back.
         assert_eq!(
-            world.workbench().other_viewer(hex),
+            world.bedtime().other_viewer(hex),
             Some(ViewerId::of::<TextView>())
         );
         // Plain text has only the one.
-        let plain = world.workbench_mut().open_path(&plain, default()).unwrap();
-        assert_eq!(world.workbench().other_viewer(plain), None);
+        let plain = world.bedtime_mut().open_path(&plain, default()).unwrap();
+        assert_eq!(world.bedtime().other_viewer(plain), None);
         std::fs::remove_dir_all(folder).unwrap();
     }
 
@@ -1328,14 +1320,14 @@ mod tests {
         std::fs::write(&notes, "a\nb\nc").unwrap();
         let world = app.world_mut();
         let labels: Vec<_> = world
-            .workbench()
+            .bedtime()
             .viewers_for(&notes)
             .into_iter()
             .map(|(_, label)| label)
             .collect();
         assert_eq!(labels, ["Text", "Hex"]);
         let panel = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_path(
                 &notes,
                 PathOptions {
@@ -1347,10 +1339,10 @@ mod tests {
         assert_eq!(revealed(world, panel), Some(2));
         let data = directory.join("data.bin");
         std::fs::write(&data, [0u8, 1]).unwrap();
-        let hex = world.workbench_mut().open_path(&data, default()).unwrap();
+        let hex = world.bedtime_mut().open_path(&data, default()).unwrap();
         assert!(world.get::<HexView>(hex).is_some());
         // The text viewer doesn't show data: an error.
-        let unopened = world.workbench_mut().open_path(
+        let unopened = world.bedtime_mut().open_path(
             &data,
             PathOptions {
                 viewer: Some(ViewerId::of::<TextView>()),
@@ -1360,22 +1352,22 @@ mod tests {
         assert!(unopened.is_err());
         // The document knows its format.
         let document = world.get::<DocumentReference>(panel).unwrap().document();
-        assert_eq!(world.workbench().document_format(document), Some(TEXT));
+        assert_eq!(world.bedtime().document_format(document), Some(TEXT));
 
         // A format's default viewer wins over a closer one, and "Open As"
         // asks for another format.
         let notes_file = directory.join("todo.notes");
         std::fs::write(&notes_file, "x").unwrap();
-        assert_eq!(world.workbench().format_of(&notes_file), NOTES);
+        assert_eq!(world.bedtime().format_of(&notes_file), NOTES);
         app.set_default_viewer::<HexView>(NOTES);
         let world = app.world_mut();
         let opened = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_path(&notes_file, default())
             .unwrap();
         assert!(world.get::<HexView>(opened).is_some());
         let as_text = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_path(
                 &notes_file,
                 PathOptions {
@@ -1386,7 +1378,7 @@ mod tests {
             .unwrap();
         assert!(world.get::<TextView>(as_text).is_some());
         let document = world.get::<DocumentReference>(as_text).unwrap().document();
-        assert_eq!(world.workbench().document_format(document), Some(TEXT));
+        assert_eq!(world.bedtime().document_format(document), Some(TEXT));
 
         // A restored viewer has its file but not its document: it gets it back.
         assert_eq!(

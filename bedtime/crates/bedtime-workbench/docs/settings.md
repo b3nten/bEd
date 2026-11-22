@@ -27,8 +27,8 @@ app.add_plugins(SettingsPlugin)
    .register_setting::<FileTreeIndent>()
    .register_setting::<ReopenLast>();
 
-let indent = world.settings().get::<FileTreeIndent>();
-world.settings_mut().set::<FileTreeIndent>(StoreId::of::<GlobalStore>(), 18.0)?;
+let indent = world.bedtime().settings().get::<FileTreeIndent>();
+world.bedtime_mut().settings_mut().set::<FileTreeIndent>(StoreId::of::<GlobalStore>(), 18.0)?;
 ```
 
 ## Settings and layers
@@ -40,12 +40,12 @@ world.settings_mut().set::<FileTreeIndent>(StoreId::of::<GlobalStore>(), 18.0)?;
   `clear`, once for every registered setting when layers load at startup, and
   when a layer's file changes on disk. Plugins don't need to know about
   settings: they expose config resources, and the app's settings write to them.
-- **Reading.** `world.settings()` is the `Settings` resource: `get` (resolved),
+- **Reading.** `world.bedtime().settings()` is the `Settings` resource: `get` (resolved),
   `source` (which layer it comes from), `get_in` (one layer's own value),
   `get_at` (a layer and those below: what an editor for that layer shows),
   `inherited` (what a layer would have without its own), and
   `overridden_above` (the higher layer whose different value is used instead).
-- **Changing.** `world.settings_mut().set::<S>(layer, value)` and
+- **Changing.** `world.bedtime_mut().settings_mut().set::<S>(layer, value)` and
   `.clear::<S>(layer)`. Setting the value a layer would inherit anyway clears
   the layer instead, so it keeps following the layers below. `only_in` limits
   which layers may hold a setting.

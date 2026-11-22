@@ -24,8 +24,8 @@ pub fn document_language(
     document: bedtime_workbench::DocumentId,
     title: &str,
 ) -> Option<&'static str> {
-    use bedtime_workbench::{FormatId, Formats, WorkbenchWorldExt};
-    let Some(format) = world.workbench().document_format(document) else {
+    use bedtime_workbench::{BedtimeWorldExt, FormatId, Formats};
+    let Some(format) = world.bedtime().document_format(document) else {
         return language_name(title);
     };
     let formats = world.get_resource::<Formats>()?;

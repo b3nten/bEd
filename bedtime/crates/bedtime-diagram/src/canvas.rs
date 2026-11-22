@@ -5,7 +5,8 @@
 //! a preview over the diagram as it is.
 use crate::edit::{self, Align, Extent, Handle, Order, Restyle, Snap, Style, Tool};
 use crate::model::{
-    Change, Color, Dash, Diagram, Element, ElementId, Head, Point, Rect, Shape, Side, TEXT_SIZE,
+    Change, Color, Dash, Diagram, Element, ElementId, GROUP_LABEL_SIZE, Head, Point, Rect, Shape,
+    Side, TEXT_SIZE,
 };
 use bedtime_ui::{
     Floating, UiContext, UiFrame,
@@ -125,7 +126,7 @@ pub struct State {
     pub(crate) writing: Option<Writing>,
     /// The group gone into (by a double click on it): its elements are
     /// picked one by one, until none of them is selected.
-    pub(crate) within: Option<u64>,
+    pub(crate) within: Option<ElementId>,
     /// Where the menu was asked for, on the canvas: what's pasted from it
     /// goes there.
     menu_at: Point,
@@ -136,6 +137,8 @@ pub struct State {
     pub(crate) asked: Option<Request>,
     /// Text to paste, and where: the answer to `Request::Paste`.
     pasting: Option<(String, Point)>,
+    /// The diagram last shown, and it settled (see `State::settled`).
+    settled: Option<(Diagram, Diagram)>,
 }
 
 /// What the canvas can't do itself, asked of whoever shows it.
@@ -304,6 +307,38 @@ impl State {
         self.selection.contains(&id)
     }
 
+    /// The diagram as it's shown and edited: with its groups' boxes and its
+    /// lines' bound ends where they belong, the text in it measured with the
+    /// fonts. (They aren't in the file, and what reads it can only guess at
+    /// text's size.) Worked out again only when the diagram changes.
+    pub fn settled(&mut self, fonts: &egui::Context, diagram: &Diagram) -> Diagram {
+        if let Some((seen, settled)) = &self.settled
+            && seen.same(diagram)
+        {
+            return settled.clone();
+        }
+        let extent = |element: &Element| measured(fonts, element);
+        let settled = edit::settled(diagram, &extent);
+        self.settled = Some((diagram.clone(), settled.clone()));
+        settled
+    }
+
+    /// The one thing selected, to write in: an element alone, or a group
+    /// with all that's in it (its label).
+    fn one(&self, diagram: &Diagram) -> Option<ElementId> {
+        if let [only] = self.selection[..] {
+            return Some(only);
+        }
+        let group = *self
+            .selection
+            .iter()
+            .find(|id| diagram.get(**id).is_some_and(Element::is_group))?;
+        self.selection
+            .iter()
+            .all(|id| *id == group || diagram.get(*id).is_some_and(|e| e.group == Some(group)))
+            .then_some(group)
+    }
+
     /// Take a tool in hand. A tool that makes things lets go of the
     /// selection: the styles shown are then the ones it will make them in.
     pub fn pick(&mut self, tool: Tool) {
@@ -370,7 +405,7 @@ impl State {
             size: selected.iter().any(is_text),
             order: true,
             align: edit::unit_count(diagram, &self.selection, self.within) >= 2,
-            grouped: selected.iter().any(|element| element.group.is_some()),
+            grouped: selected.iter().any(|element| element.unit().is_some()),
             heads: selected
                 .iter()
                 .rev()
@@ -739,8 +774,8 @@ impl State {
             Pick::Align(to) => self.align(diagram, to, extent),
             Pick::Group(together) => self.group(diagram, together),
             Pick::Write => {
-                if let [only] = self.selection[..] {
-                    self.write(diagram, Subject::Of(only));
+                if let Some(one) = self.one(diagram) {
+                    self.write(diagram, Subject::Of(one));
                 }
                 None
             }
@@ -1205,6 +1240,7 @@ impl State {
             Order(Order),
         }
         let (mut delete, mut nudge, mut write, mut ask) = (false, Vec2::ZERO, None, None);
+        let one = self.one(diagram);
         ui.input_mut(|i| {
             for event in &i.events {
                 match event {
@@ -1259,7 +1295,7 @@ impl State {
             }
             delete = i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace);
             // Enter writes in what's selected.
-            if let [only] = self.selection[..]
+            if let Some(only) = one
                 && self.gesture.is_none()
                 && i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
             {
@@ -1447,6 +1483,10 @@ pub fn show(
         ui.available_size().max(Vec2::splat(1.0)),
         egui::Sense::click_and_drag(),
     );
+    // Text is measured with the fonts, for picking it and framing it.
+    let fonts = ui.ctx().clone();
+    let settled = state.settled(&fonts, diagram);
+    let diagram = &settled;
     if camera.zoom <= 0.0 {
         *camera = Camera::fitting(diagram.bounds(), view.size());
     }
@@ -1454,8 +1494,6 @@ pub fn show(
     // what's grouped with it comes with it.
     state.settle_selection(diagram);
 
-    // Text is measured with the fonts, for picking it and framing it.
-    let fonts = ui.ctx().clone();
     let extent = |element: &Element| measured(&fonts, element);
     let extent: Extent<'_> = &extent;
 
@@ -1708,22 +1746,18 @@ pub fn show(
     }
 
     // The group gone into: a dashed frame around all of it.
-    if let Some(group) = state.within {
-        let members: Vec<&Element> = shown
-            .iter()
-            .filter(|element| element.group == Some(group))
-            .collect();
-        if let Some(around) = bounds(&members, extent) {
-            let around = on_screen(view, camera, around).expand(FRAME_GAP + 4.0);
-            let corners = vec![
-                around.left_top(),
-                around.right_top(),
-                around.right_bottom(),
-                around.left_bottom(),
-            ];
-            let stroke = Stroke::new(1.0, accent.gamma_multiply(0.6));
-            path(&painter, corners, true, stroke, Some((4.0, 4.0)));
-        }
+    if let Some(group) = state.within
+        && let Some(group) = shown.iter().find(|element| element.id == group)
+    {
+        let around = on_screen(view, camera, group.bounds());
+        let corners = vec![
+            around.left_top(),
+            around.right_top(),
+            around.right_bottom(),
+            around.left_bottom(),
+        ];
+        let stroke = Stroke::new(1.0, accent.gamma_multiply(0.6));
+        path(&painter, corners, true, stroke, Some((4.0, 4.0)));
     }
 
     // The selection: each element outlined when there are several, a frame
@@ -1866,12 +1900,11 @@ pub fn show(
         let mut picked = None;
         let styles = state.styles(diagram).map(|(styles, _)| styles);
         let selected = state.selection.len();
-        let writable = match state.selection[..] {
-            [only] => diagram.get(only).is_some_and(|element| {
+        let writable = state.one(diagram).is_some_and(|one| {
+            diagram.get(one).is_some_and(|element| {
                 element.takes_label() || matches!(element.shape, Shape::Text { .. })
-            }),
-            _ => false,
-        };
+            })
+        });
         // On the line selected: a point can be added there; on one of the
         // points it bends at: that can be removed.
         let on_line = state
@@ -2711,6 +2744,22 @@ fn paint(
                 painter.galley(place(at), galley, ink);
             }
         }
+        // Drawn only with a label: a frame, and the label at its top left.
+        Shape::Group { around, .. } => {
+            if element.label.is_empty() {
+                return;
+            }
+            let rect = on_screen(view, camera, *around);
+            painter.rect(rect, 0, fill, edge, egui::StrokeKind::Middle);
+            if dashes.is_some() {
+                path(painter, rounded_corners(rect, 0.0), true, stroke, dashes);
+            }
+            if let Some(font) = font(GROUP_LABEL_SIZE, camera).filter(|_| text) {
+                let galley = painter.layout_no_wrap(element.label.clone(), font, ink);
+                painter.galley(place(&group_label_at(around)), galley, ink);
+            }
+            return;
+        }
     }
     // A box's label, in its middle.
     if text
@@ -2755,6 +2804,11 @@ fn paint(
             ink,
         );
     }
+}
+
+/// Where a group's label is: its top left corner.
+fn group_label_at(around: &Rect) -> Point {
+    Point::new(around.x + 8.0, around.y + 6.0)
 }
 
 /// The lengths of a stroke's dashes and of the gaps between them, on screen;
@@ -2891,6 +2945,11 @@ fn writer(
                 stroke,
                 ..
             }) => (*at, *size, *stroke, None),
+            Some(Element {
+                shape: Shape::Group { around, .. },
+                stroke,
+                ..
+            }) => (group_label_at(around), GROUP_LABEL_SIZE, *stroke, None),
             Some(Element {
                 shape: Shape::Line { points, .. },
                 stroke,

@@ -2,11 +2,11 @@
 //! box encloses, elements moved, resized and made by dragging, and lines
 //! kept on the outlines of the elements they're bound to.
 use crate::model::{
-    Change, Color, Dash, Diagram, Element, ElementId, Head, Point, Rect, STROKE_WIDTH, Shape, Side,
-    TEXT_SIZE,
+    Change, Color, Dash, Diagram, Element, ElementId, GROUP_LABEL_ROOM, GROUP_PADDING, Head, Point,
+    Rect, STROKE_WIDTH, Shape, Side, TEXT_SIZE, is_made_name,
 };
 use bedtime_document::{ByteModel, DocumentModel};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// What dragging on the canvas does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -137,6 +137,10 @@ pub fn translate(element: &Element, dx: f32, dy: f32) -> Element {
             points.iter_mut().for_each(|point| *point = shift(point));
         }
         Shape::Text { at, .. } => *at = shift(at),
+        Shape::Group { around, .. } => {
+            around.x += dx;
+            around.y += dy;
+        }
     }
     moved
 }
@@ -157,7 +161,10 @@ pub fn remap(element: &Element, from: Rect, to: Rect) -> Element {
     };
     let mut resized = element.clone();
     match &mut resized.shape {
-        Shape::Rectangle(rect) | Shape::Ellipse(rect) | Shape::Diamond(rect) => {
+        Shape::Rectangle(rect)
+        | Shape::Ellipse(rect)
+        | Shape::Diamond(rect)
+        | Shape::Group { around: rect, .. } => {
             let corner = place(&Point::new(rect.x, rect.y));
             let opposite = place(&Point::new(rect.right(), rect.bottom()));
             *rect = Rect::new(
@@ -301,6 +308,13 @@ pub fn hit(element: &Element, at: Point, reach: f32, extent: Extent<'_>) -> bool
                 .any(|pair| distance_to_segment(at, pair[0], pair[1]) <= reach),
         },
         Shape::Text { .. } => extent(element).expand(reach).contains(at),
+        // Only a group with a label is drawn: by its frame, or its label.
+        Shape::Group { around, .. } => {
+            let title = Rect::new(around.x, around.y, around.w, GROUP_LABEL_ROOM);
+            !element.label.is_empty()
+                && ((around.expand(reach).contains(at) && !around.expand(-reach).contains(at))
+                    || title.contains(at))
+        }
     }
 }
 
@@ -339,7 +353,7 @@ pub fn writable_at(
                 solid.fill.get_or_insert_default();
                 hit(&solid, at, 0.0, extent)
             }
-            Shape::Line { .. } => hit(element, at, reach, extent),
+            Shape::Line { .. } | Shape::Group { .. } => hit(element, at, reach, extent),
             _ => false,
         })
         .map(|element| element.id)
@@ -415,20 +429,27 @@ pub const BIND_REACH: f32 = 8.0;
 /// The gap between a bound end and the outline it's on.
 pub const BIND_GAP: f32 = 4.0;
 
-/// The frontmost element a line's end at this point would bind to: a box, or
-/// text, whose box the point is in or near. `not` is the line itself.
+/// The frontmost element a line's end at this point would bind to: a box,
+/// text or a group, whose box the point is in or near. (What's in a group is
+/// in front of it: the group is what's in its padding, or between its own.)
+/// `not` is the line itself, which doesn't bind to the group it's in.
 pub fn bindable_at(
     diagram: &Diagram,
     at: Point,
     extent: Extent<'_>,
     not: Option<ElementId>,
 ) -> Option<ElementId> {
+    let own = not
+        .and_then(|id| diagram.get(id))
+        .and_then(|line| line.group);
     diagram
         .elements()
         .iter()
         .rev()
-        .filter(|element| Some(element.id) != not)
-        .filter(|element| element.is_box() || matches!(element.shape, Shape::Text { .. }))
+        .filter(|element| Some(element.id) != not && Some(element.id) != own)
+        .filter(|element| {
+            element.is_box() || element.is_group() || matches!(element.shape, Shape::Text { .. })
+        })
         .find(|element| extent(element).expand(BIND_REACH).contains(at))
         .map(|element| element.id)
 }
@@ -608,14 +629,68 @@ pub fn settle(line: &Element, diagram: &Diagram, extent: Extent<'_>) -> Element 
     settled
 }
 
-/// The changes, and what follows from them for bound lines: a line that was
-/// changed, or is bound to something that was, is settled again, and lets go
-/// of what was removed.
+/// The box a group is drawn in and bound to: around its elements, its
+/// padding out from them, with room above for its label if it has one.
+/// `None` for anything else, or a group with nothing in it.
+pub fn group_box(diagram: &Diagram, group: &Element, extent: Extent<'_>) -> Option<Rect> {
+    let Shape::Group { padding, .. } = group.shape else {
+        return None;
+    };
+    let mut around = diagram
+        .members(group.id)
+        .map(extent)
+        .reduce(|all, bounds| all.union(&bounds))?
+        .expand(padding);
+    if !group.label.is_empty() {
+        around.y -= GROUP_LABEL_ROOM;
+        around.h += GROUP_LABEL_ROOM;
+    }
+    Some(around)
+}
+
+/// The changes, and what follows from them: a group's box is around its
+/// elements again (a group left with none is gone, and what's in a group
+/// that's gone is in none); a line that was changed, or is bound to
+/// something that was, is settled again, and lets go of what was removed.
 pub fn with_bindings(diagram: &Diagram, changes: Vec<Change>, extent: Extent<'_>) -> Vec<Change> {
+    follow(diagram, changes, extent, false)
+}
+
+/// The diagram with every group's box and every line's bound ends where they
+/// belong: what's worked out rather than kept in the file.
+pub fn settled(diagram: &Diagram, extent: Extent<'_>) -> Diagram {
+    let changes = follow(diagram, Vec::new(), extent, true);
     let mut after = diagram.clone();
-    let mut touched = Vec::new();
     for change in &changes {
-        touched.push(match change {
+        let _ = after.apply(change);
+    }
+    after
+}
+
+fn follow(
+    diagram: &Diagram,
+    changes: Vec<Change>,
+    extent: Extent<'_>,
+    everything: bool,
+) -> Vec<Change> {
+    fn make(
+        after: &mut Diagram,
+        all: &mut Vec<Change>,
+        touched: &mut HashSet<ElementId>,
+        change: Change,
+    ) {
+        touched.insert(match &change {
+            Change::Insert { element, .. } | Change::Replace { element } => element.id,
+            Change::Remove { id } => *id,
+        });
+        if after.apply(&change).is_ok() {
+            all.push(change);
+        }
+    }
+    let mut after = diagram.clone();
+    let mut touched = HashSet::new();
+    for change in &changes {
+        touched.insert(match change {
             Change::Insert { element, .. } | Change::Replace { element } => element.id,
             Change::Remove { id } => *id,
         });
@@ -625,19 +700,91 @@ pub fn with_bindings(diagram: &Diagram, changes: Vec<Change>, extent: Extent<'_>
         }
     }
     let mut all = changes;
-    for element in after.elements() {
-        let Shape::Line { from, to, .. } = &element.shape else {
-            continue;
-        };
-        let concerned = [Some(element.id), *from, *to]
-            .into_iter()
-            .flatten()
-            .any(|id| touched.contains(&id));
-        if concerned {
-            let settled = settle(element, &after, extent);
-            if settled != *element {
-                all.push(Change::Replace { element: settled });
-            }
+    // Out of groups that are gone; and groups with nothing in them, gone.
+    let strays: Vec<Element> = after
+        .elements()
+        .iter()
+        .filter(|element| {
+            element
+                .group
+                .is_some_and(|group| !after.get(group).is_some_and(Element::is_group))
+        })
+        .map(|element| Element {
+            group: None,
+            ..element.clone()
+        })
+        .collect();
+    for element in strays {
+        make(
+            &mut after,
+            &mut all,
+            &mut touched,
+            Change::Replace { element },
+        );
+    }
+    let empty: Vec<ElementId> = after
+        .elements()
+        .iter()
+        .filter(|element| element.is_group() && after.members(element.id).next().is_none())
+        .map(|element| element.id)
+        .collect();
+    for id in empty {
+        make(&mut after, &mut all, &mut touched, Change::Remove { id });
+    }
+    // A line in a group moves its box, which moves the lines bound to the
+    // group: until nothing moves (it soon stops: groups aren't in groups).
+    for round in 0..4 {
+        let mut moved = false;
+        let boxes: Vec<Element> = after
+            .elements()
+            .iter()
+            .filter_map(|group| {
+                let around = group_box(&after, group, extent)?;
+                let mut boxed = group.clone();
+                if let Shape::Group { around: old, .. } = &mut boxed.shape {
+                    *old = around;
+                }
+                (boxed != *group).then_some(boxed)
+            })
+            .collect();
+        for element in boxes {
+            moved = true;
+            make(
+                &mut after,
+                &mut all,
+                &mut touched,
+                Change::Replace { element },
+            );
+        }
+        let lines: Vec<Element> = after
+            .elements()
+            .iter()
+            .filter(|element| {
+                let Shape::Line { from, to, .. } = &element.shape else {
+                    return false;
+                };
+                (everything && round == 0)
+                    || [Some(element.id), *from, *to]
+                        .into_iter()
+                        .flatten()
+                        .any(|id| touched.contains(&id))
+            })
+            .filter_map(|line| {
+                let settled = settle(line, &after, extent);
+                (settled != *line).then_some(settled)
+            })
+            .collect();
+        for element in lines {
+            moved = true;
+            make(
+                &mut after,
+                &mut all,
+                &mut touched,
+                Change::Replace { element },
+            );
+        }
+        if !moved {
+            break;
         }
     }
     all
@@ -899,8 +1046,11 @@ pub fn smooth(points: &[Point], spacing: f32) -> Vec<Point> {
 // ── Copies ───────────────────────────────────────────────────────────────────
 
 /// Copies of some elements for `diagram`, moved by a distance: with new ids,
-/// their groups new groups, and their lines bound to the copies of what the
-/// originals were bound to (and to nothing, where that wasn't copied).
+/// in copies of their groups (in none, where the group wasn't copied), and
+/// their lines bound to the copies of what the originals were bound to (and
+/// to nothing, where that wasn't copied). A name made by the editor is made
+/// again; one written keeps its name if it's free, and is otherwise `-2`,
+/// `-3`… after it.
 pub fn copies(elements: &[&Element], diagram: &Diagram, dx: f32, dy: f32) -> Vec<Element> {
     let first = diagram.next_id().0;
     let ids: HashMap<ElementId, ElementId> = elements
@@ -908,19 +1058,30 @@ pub fn copies(elements: &[&Element], diagram: &Diagram, dx: f32, dy: f32) -> Vec
         .zip(first..)
         .map(|(element, id)| (element.id, ElementId(id)))
         .collect();
-    let mut next_group = diagram.next_group();
-    let mut groups = HashMap::new();
+    let mut taken: HashSet<String> = diagram
+        .elements()
+        .iter()
+        .map(|element| element.name.clone())
+        .collect();
     elements
         .iter()
         .map(|element| {
             let mut copy = translate(element, dx, dy);
             copy.id = ids[&element.id];
-            copy.group = element.group.map(|group| {
-                *groups.entry(group).or_insert_with(|| {
-                    next_group += 1;
-                    next_group - 1
-                })
-            });
+            copy.group = element.group.and_then(|group| ids.get(&group).copied());
+            copy.name = if element.name.is_empty() || is_made_name(&element.name) {
+                String::new()
+            } else {
+                let name = (1..)
+                    .map(|count| match count {
+                        1 => element.name.clone(),
+                        _ => format!("{}-{count}", element.name),
+                    })
+                    .find(|name| !taken.contains(name))
+                    .unwrap_or_default();
+                taken.insert(name.clone());
+                name
+            };
             if let Shape::Line { from, to, .. } = &mut copy.shape {
                 *from = from.and_then(|id| ids.get(&id).copied());
                 *to = to.and_then(|id| ids.get(&id).copied());
@@ -978,59 +1139,136 @@ pub enum Order {
 }
 
 /// The changes that move some elements in the diagram's order, keeping their
-/// own order; none if they're already there.
+/// own order; none if they're already there. A group moves with all that's
+/// in it, past whole groups. Elements of one group (gone into), and not the
+/// group, move among the rest of it, and stay in it.
 pub fn reorder(diagram: &Diagram, ids: &[ElementId], order: Order) -> Vec<Change> {
-    let before: Vec<&Element> = diagram.elements().iter().collect();
-    let moving = |element: &&Element| ids.contains(&element.id);
-    let mut after = before.clone();
+    let elements = diagram.elements();
+    let inside = ids
+        .first()
+        .and_then(|id| diagram.get(*id)?.group)
+        .filter(|group| {
+            ids.iter().all(|id| {
+                diagram
+                    .get(*id)
+                    .is_some_and(|element| element.group == Some(*group))
+            })
+        });
+    // What moves as one, back to front, and where among all the elements.
+    let mut units: Vec<Vec<usize>> = Vec::new();
+    match inside {
+        Some(group) => {
+            for (index, element) in elements.iter().enumerate() {
+                if element.group == Some(group) {
+                    units.push(vec![index]);
+                }
+            }
+        }
+        None => {
+            let mut at: HashMap<ElementId, usize> = HashMap::new();
+            for (index, element) in elements.iter().enumerate() {
+                match element.unit().and_then(|unit| at.get(&unit)) {
+                    Some(unit) => units[*unit].push(index),
+                    None => {
+                        if let Some(unit) = element.unit() {
+                            at.insert(unit, units.len());
+                        }
+                        units.push(vec![index]);
+                    }
+                }
+            }
+        }
+    }
+    let moving = |unit: &Vec<usize>| unit.iter().any(|index| ids.contains(&elements[*index].id));
+    let before = units.clone();
     match order {
         Order::Front | Order::Back => {
-            let (moved, mut rest): (Vec<_>, Vec<_>) = before.iter().partition(|e| moving(e));
-            after = if order == Order::Front {
-                rest.extend(moved);
-                rest
+            let (moved, rest): (Vec<_>, Vec<_>) = units.into_iter().partition(|u| moving(u));
+            units = if order == Order::Front {
+                rest.into_iter().chain(moved).collect()
             } else {
                 moved.into_iter().chain(rest).collect()
             };
         }
         // Each steps past the one ahead of it, unless that's moving too.
         Order::Forward => {
-            for index in (0..after.len().saturating_sub(1)).rev() {
-                if moving(&after[index]) && !moving(&after[index + 1]) {
-                    after.swap(index, index + 1);
+            for index in (0..units.len().saturating_sub(1)).rev() {
+                if moving(&units[index]) && !moving(&units[index + 1]) {
+                    units.swap(index, index + 1);
                 }
             }
         }
         Order::Backward => {
-            for index in 1..after.len() {
-                if moving(&after[index]) && !moving(&after[index - 1]) {
-                    after.swap(index, index - 1);
+            for index in 1..units.len() {
+                if moving(&units[index]) && !moving(&units[index - 1]) {
+                    units.swap(index, index - 1);
                 }
             }
         }
     }
-    if after.iter().map(|e| e.id).eq(before.iter().map(|e| e.id)) {
+    if units == before {
         return Vec::new();
     }
-    // Taken out, then put back where they go, from the back forwards.
-    let out = before
+    let moved: HashSet<ElementId> = units
         .iter()
-        .filter(|e| moving(e))
-        .map(|element| Change::Remove { id: element.id });
-    let back = after
+        .filter(|unit| moving(unit))
+        .flatten()
+        .map(|index| elements[*index].id)
+        .collect();
+    let mut after: Vec<Element> = elements.to_vec();
+    match inside {
+        // Into the places the group's elements had.
+        Some(_) => {
+            let places: Vec<usize> = before.iter().flatten().copied().collect();
+            for (place, unit) in places.into_iter().zip(&units) {
+                after[place] = elements[unit[0]].clone();
+            }
+        }
+        None => {
+            after = units
+                .iter()
+                .flatten()
+                .map(|index| elements[*index].clone())
+                .collect();
+        }
+    }
+    rearranged(diagram, &after, &moved)
+}
+
+/// The changes that make `diagram` into `after`: the same elements, some
+/// changed, some gone, some new. Those `moving` (and new ones) are taken out
+/// and put back where `after` has them; the rest must keep their order.
+fn rearranged(diagram: &Diagram, after: &[Element], moving: &HashSet<ElementId>) -> Vec<Change> {
+    let kept: HashSet<ElementId> = after.iter().map(|element| element.id).collect();
+    let mut changes: Vec<Change> = diagram
+        .elements()
         .iter()
-        .enumerate()
-        .filter(|(_, e)| moving(e))
-        .map(|(index, element)| Change::Insert {
-            index,
-            element: (*element).clone(),
-        });
-    out.chain(back).collect()
+        .filter(|element| !kept.contains(&element.id) || moving.contains(&element.id))
+        .map(|element| Change::Remove { id: element.id })
+        .collect();
+    for (index, element) in after.iter().enumerate() {
+        match diagram.get(element.id) {
+            Some(_) if moving.contains(&element.id) => changes.push(Change::Insert {
+                index,
+                element: element.clone(),
+            }),
+            Some(before) if before != element => changes.push(Change::Replace {
+                element: element.clone(),
+            }),
+            Some(_) => {}
+            None => changes.push(Change::Insert {
+                index,
+                element: element.clone(),
+            }),
+        }
+    }
+    changes
 }
 
 // ── Groups ───────────────────────────────────────────────────────────────────
 
-/// The ids, and those of everything grouped with any of them.
+/// The ids, and those of everything grouped with any of them (a group's own
+/// among them).
 pub fn with_groups(diagram: &Diagram, ids: &[ElementId]) -> Vec<ElementId> {
     with_groups_but(diagram, ids, None)
 }
@@ -1040,17 +1278,17 @@ pub fn with_groups(diagram: &Diagram, ids: &[ElementId]) -> Vec<ElementId> {
 pub fn with_groups_but(
     diagram: &Diagram,
     ids: &[ElementId],
-    within: Option<u64>,
+    within: Option<ElementId>,
 ) -> Vec<ElementId> {
-    let groups: Vec<u64> = ids
+    let groups: Vec<ElementId> = ids
         .iter()
-        .filter_map(|id| diagram.get(*id)?.group)
+        .filter_map(|id| diagram.get(*id)?.unit())
         .filter(|group| Some(*group) != within)
         .collect();
     let mut all = ids.to_vec();
     if !groups.is_empty() {
         for element in diagram.elements() {
-            if element.group.is_some_and(|group| groups.contains(&group))
+            if element.unit().is_some_and(|group| groups.contains(&group))
                 && !all.contains(&element.id)
             {
                 all.push(element.id);
@@ -1060,32 +1298,98 @@ pub fn with_groups_but(
     all
 }
 
-/// The changes that make one new group of some elements (two or more),
-/// whatever groups they were in.
+/// The changes that make one new group of some elements, and of all that's
+/// grouped with them: two things or more. A group among them is undone, and
+/// what was in it is in the new one. They're put together, a new group's
+/// elements being one after another, where the backmost was.
 pub fn group(diagram: &Diagram, ids: &[ElementId]) -> Vec<Change> {
-    if ids.len() < 2 {
-        return Vec::new();
-    }
-    regroup(diagram, ids, Some(diagram.next_group()))
-}
-
-/// The changes that take some elements out of their groups.
-pub fn ungroup(diagram: &Diagram, ids: &[ElementId]) -> Vec<Change> {
-    regroup(diagram, ids, None)
-}
-
-fn regroup(diagram: &Diagram, ids: &[ElementId], group: Option<u64>) -> Vec<Change> {
-    diagram
+    let all = with_groups(diagram, ids);
+    let things: HashSet<ElementId> = diagram
         .elements()
         .iter()
-        .filter(|element| ids.contains(&element.id) && element.group != group)
-        .map(|element| Change::Replace {
-            element: Element {
-                group,
+        .filter(|element| all.contains(&element.id))
+        .map(|element| element.unit().unwrap_or(element.id))
+        .collect();
+    if things.len() < 2 {
+        return Vec::new();
+    }
+    let group = Element::new(
+        diagram.next_id(),
+        Shape::Group {
+            padding: GROUP_PADDING,
+            around: Rect::default(),
+        },
+    );
+    let mut moving: HashSet<ElementId> = all.iter().copied().collect();
+    moving.insert(group.id);
+    let mut after = Vec::new();
+    let mut members = Vec::new();
+    let mut place = None;
+    for element in diagram.elements() {
+        if !all.contains(&element.id) {
+            after.push(element.clone());
+        } else if !element.is_group() {
+            place.get_or_insert(after.len());
+            members.push(Element {
+                group: Some(group.id),
                 ..element.clone()
-            },
+            });
+        }
+    }
+    let rest = after.split_off(place.unwrap_or(after.len()));
+    after.push(group);
+    after.extend(members);
+    after.extend(rest);
+    rearranged(diagram, &after, &moving)
+}
+
+/// The changes that take some elements out of their groups: a group, of all
+/// that's in it, which it leaves where it is; something in one, alone, which
+/// goes just in front of the rest of it.
+pub fn ungroup(diagram: &Diagram, ids: &[ElementId]) -> Vec<Change> {
+    let undone: HashSet<ElementId> = ids
+        .iter()
+        .filter(|id| diagram.get(**id).is_some_and(Element::is_group))
+        .copied()
+        .collect();
+    let leaving: HashSet<ElementId> = ids
+        .iter()
+        .filter(|id| {
+            diagram
+                .get(**id)
+                .and_then(|element| element.group)
+                .is_some_and(|group| !undone.contains(&group))
         })
-        .collect()
+        .copied()
+        .collect();
+    if undone.is_empty() && leaving.is_empty() {
+        return Vec::new();
+    }
+    let mut after: Vec<Element> = Vec::new();
+    let mut left: Vec<(ElementId, Element)> = Vec::new();
+    for element in diagram.elements() {
+        let alone = Element {
+            group: None,
+            ..element.clone()
+        };
+        if undone.contains(&element.id) {
+            continue;
+        } else if element.group.is_some_and(|group| undone.contains(&group)) {
+            after.push(alone);
+        } else if leaving.contains(&element.id) {
+            left.push((element.group.unwrap_or(element.id), alone));
+        } else {
+            after.push(element.clone());
+        }
+    }
+    for (group, element) in left {
+        let place = after
+            .iter()
+            .rposition(|other| other.unit() == Some(group))
+            .map_or(after.len(), |index| index + 1);
+        after.insert(place, element);
+    }
+    rearranged(diagram, &after, &leaving)
 }
 
 // ── Aligning ─────────────────────────────────────────────────────────────────
@@ -1102,23 +1406,27 @@ pub enum Align {
 }
 
 /// The selection as what moves together: each group, and each element in no
-/// group (or in the group `within`, gone into), with the box around it.
+/// group (or in the group `within`, gone into), with the box around it (a
+/// group's around what's in it, not its padding).
 fn units<'a>(
     diagram: &'a Diagram,
     ids: &[ElementId],
-    within: Option<u64>,
+    within: Option<ElementId>,
     extent: Extent<'_>,
 ) -> Vec<(Rect, Vec<&'a Element>)> {
-    let mut units: Vec<(Option<u64>, Rect, Vec<&Element>)> = Vec::new();
+    let mut units: Vec<(Option<ElementId>, Option<Rect>, Vec<&Element>)> = Vec::new();
     for element in diagram.elements().iter().filter(|e| ids.contains(&e.id)) {
-        let bounds = extent(element);
-        let group = element.group.filter(|group| Some(*group) != within);
+        let bounds = (!element.is_group()).then(|| extent(element));
+        let group = element.unit().filter(|group| Some(*group) != within);
         match units
             .iter_mut()
             .find(|(other, ..)| other.is_some() && *other == group)
         {
             Some((_, all, members)) => {
-                *all = all.union(&bounds);
+                *all = match (*all, bounds) {
+                    (Some(all), Some(bounds)) => Some(all.union(&bounds)),
+                    (all, bounds) => all.or(bounds),
+                };
                 members.push(element);
             }
             None => units.push((group, bounds, vec![element])),
@@ -1126,12 +1434,12 @@ fn units<'a>(
     }
     units
         .into_iter()
-        .map(|(_, bounds, members)| (bounds, members))
+        .filter_map(|(_, bounds, members)| Some((bounds?, members)))
         .collect()
 }
 
 /// How many things of a selection move on their own (see `align`).
-pub fn unit_count(diagram: &Diagram, ids: &[ElementId], within: Option<u64>) -> usize {
+pub fn unit_count(diagram: &Diagram, ids: &[ElementId], within: Option<ElementId>) -> usize {
     units(diagram, ids, within, &Element::bounds).len()
 }
 
@@ -1143,7 +1451,7 @@ pub fn align(
     diagram: &Diagram,
     ids: &[ElementId],
     to: Align,
-    within: Option<u64>,
+    within: Option<ElementId>,
     extent: Extent<'_>,
 ) -> Vec<Change> {
     let units = units(diagram, ids, within, extent);

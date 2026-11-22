@@ -2,13 +2,13 @@
 use bedtime_ui::{AccessibilityTree, egui::accesskit};
 use bedtime_workbench::{ActionRegistry, ActionRequest, ActionRequests, InvocationContext};
 use bevy::{
+    ecs::message::MessageCursor,
     input::{
         ButtonState,
-        keyboard::{Key, KeyboardInput, NativeKey, NativeKeyCode},
+        keyboard::{Key, KeyboardFocusLost, KeyboardInput, NativeKey, NativeKeyCode},
         mouse::{MouseButtonInput, MouseMotion, MouseScrollUnit, MouseWheel},
         touch::TouchPhase,
     },
-    ecs::message::MessageCursor,
     prelude::*,
     remote::{BrpError, BrpResult, RemotePlugin, error_codes, http::RemoteHttpPlugin},
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
@@ -74,7 +74,10 @@ pub(crate) fn install(app: &mut App, port: u16) {
         )
         .init_resource::<Automation>()
         .init_resource::<AccessibilityTree>()
-        .add_systems(First, (pretend_focus, clicks_take_as_long_as_they_take, run_step))
+        .add_systems(
+            First,
+            (pretend_focus, clicks_take_as_long_as_they_take, run_step),
+        )
         .add_systems(PostUpdate, stop_pretending)
         .add_systems(Last, |mut automation: ResMut<Automation>| {
             automation.frame += 1
@@ -168,38 +171,43 @@ fn stop_pretending(mut automation: ResMut<Automation>, mut windows: Query<&mut W
 
 /// Run the next input step, before the input systems read this frame's input.
 fn run_step(world: &mut World, mut seen: Local<MessageCursor<WindowEvent>>) {
-    drop_the_real_pointer(world, &mut seen);
+    drop_real_input(world, &mut seen);
     step(world);
     // What the step wrote is the script's: next frame, what's new is the
     // window's own.
     seen.clear(world.resource::<Messages<WindowEvent>>());
 }
 
-/// The pointer is the script's. The window is on screen, so the real pointer
-/// crosses it while someone works beside a running script, and a real move
-/// between a script's press and release would put the release somewhere
-/// else. What the real pointer did since the last frame is dropped, before
-/// this frame's step is written. (Passing the pointer through the window,
+/// The pointer and the keyboard are the script's. The window is on screen,
+/// beside whatever someone is working in: the real pointer crosses it, and a
+/// real move between a script's press and release would put the release
+/// somewhere else; the window is covered or uncovered as they work, which
+/// tells it the keyboard's focus is lost, and that releases every held key,
+/// a script's modifier before its letter among them. What the real pointer,
+/// keyboard and focus did since the last frame is dropped, before this
+/// frame's step is written. (Passing the pointer through the window,
 /// `CursorOptions::hit_test`, doesn't stop its moves arriving on macOS.)
 ///
 /// `seen` is at the end of what the last step wrote, so what it hasn't read
 /// came from the window.
-fn drop_the_real_pointer(world: &mut World, seen: &mut MessageCursor<WindowEvent>) {
+fn drop_real_input(world: &mut World, seen: &mut MessageCursor<WindowEvent>) {
     fn clear<M: Message>(world: &mut World) {
         if let Some(mut messages) = world.get_resource_mut::<Messages<M>>() {
             messages.clear();
         }
     }
-    // Only the pointer writes these. Last frame's are the script's, and
-    // every system has read them.
+    // Only input writes these. Last frame's are the script's, and every
+    // system has read them.
     clear::<CursorMoved>(world);
     clear::<CursorEntered>(world);
     clear::<CursorLeft>(world);
     clear::<MouseButtonInput>(world);
     clear::<MouseWheel>(world);
     clear::<MouseMotion>(world);
+    clear::<KeyboardInput>(world);
+    clear::<KeyboardFocusLost>(world);
 
-    let pointer = |event: &WindowEvent| {
+    let input = |event: &WindowEvent| {
         matches!(
             event,
             WindowEvent::CursorMoved(_)
@@ -207,15 +215,19 @@ fn drop_the_real_pointer(world: &mut World, seen: &mut MessageCursor<WindowEvent
                 | WindowEvent::CursorLeft(_)
                 | WindowEvent::MouseButtonInput(_)
                 | WindowEvent::MouseMotion(_)
+                | WindowEvent::MouseWheel(_)
+                | WindowEvent::KeyboardInput(_)
+                | WindowEvent::KeyboardFocusLost(_)
+                | WindowEvent::WindowFocused(_)
         )
     };
     let mut messages = world.resource_mut::<Messages<WindowEvent>>();
     let new: Vec<WindowEvent> = seen.read(&messages).cloned().collect();
-    if new.iter().any(pointer) {
-        // Window events hold more than the pointer's: keep the rest of the
-        // new ones. (The older ones have been read, like the pointer's.)
+    if new.iter().any(input) {
+        // Window events hold more than input: keep the rest of the new ones.
+        // (The older ones have been read, like the input's own.)
         messages.clear();
-        for event in new.into_iter().filter(|event| !pointer(event)) {
+        for event in new.into_iter().filter(|event| !input(event)) {
             messages.write(event);
         }
     }
@@ -447,7 +459,7 @@ mod tests {
     /// release: its moves are dropped, the script's input and the window's
     /// other events are kept.
     #[test]
-    fn the_real_pointer_is_dropped_and_the_rest_kept() {
+    fn real_input_is_dropped_and_the_rest_kept() {
         let mut world = World::new();
         world.init_resource::<Messages<WindowEvent>>();
         world.init_resource::<Messages<CursorMoved>>();
@@ -461,7 +473,7 @@ mod tests {
         let mut seen = MessageCursor::<WindowEvent>::default();
 
         // A frame: nothing from the window, then the script's press.
-        drop_the_real_pointer(&mut world, &mut seen);
+        drop_real_input(&mut world, &mut seen);
         let press = MouseButtonInput {
             button: MouseButton::Left,
             state: ButtonState::Pressed,
@@ -476,14 +488,20 @@ mod tests {
         // window is resized.
         world.write_message(WindowEvent::CursorMoved(moved(700.0)));
         world.write_message(moved(700.0));
+        // And it's covered: the keyboard's focus is lost, which would
+        // release a script's held modifier.
+        world.init_resource::<Messages<KeyboardFocusLost>>();
+        world.write_message(WindowEvent::KeyboardFocusLost(KeyboardFocusLost));
+        world.write_message(KeyboardFocusLost);
         world.write_message(WindowEvent::WindowResized(bevy::window::WindowResized {
             window,
             width: 800.0,
             height: 600.0,
         }));
-        drop_the_real_pointer(&mut world, &mut seen);
+        drop_real_input(&mut world, &mut seen);
 
         assert!(world.resource::<Messages<CursorMoved>>().is_empty());
+        assert!(world.resource::<Messages<KeyboardFocusLost>>().is_empty());
         let mut all = MessageCursor::<WindowEvent>::default();
         let left: Vec<_> = all
             .read(world.resource::<Messages<WindowEvent>>())

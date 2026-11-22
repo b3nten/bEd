@@ -1,7 +1,7 @@
 //! Single-session scheduling: what the session installs, with and without
 //! documents.
+use crate::BedtimeWorldExt;
 use crate::*;
-use crate::WorkbenchWorldExt;
 use bevy::prelude::*;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -73,7 +73,7 @@ pub(crate) fn install_documents(app: &mut App) {
     })
     .on_panel_close(closing::ask_before_closing)
     .insert_resource(PanelModified(|world, panel| {
-        world.workbench().holder_unsaved(panel)
+        world.bedtime().holder_unsaved(panel)
     }))
     .add_layout_validation(documents::validate_documents);
     documents::install(app);
@@ -91,7 +91,7 @@ pub(crate) fn install_documents(app: &mut App) {
 
 /// The selected panel in the focused area of the active layout.
 pub(crate) fn focused_panel(world: &World) -> Option<Entity> {
-    let layout = world.layouts().active()?;
+    let layout = world.bedtime().layouts().active()?;
     let area = world.get::<Layout>(layout)?.focused_area()?;
     world.get::<Area>(area)?.selected_panel()
 }
@@ -115,6 +115,6 @@ fn report_failed_actions(
         })
         .collect();
     for failure in failed {
-        world.workbench_mut().notify(Notification::error(failure));
+        world.bedtime_mut().notify(Notification::error(failure));
     }
 }

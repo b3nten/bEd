@@ -1,7 +1,7 @@
 //! The Workspaces panel: the folders bEd has opened, to switch to or forget.
 use super::{RecentWorkspaces, Workspace, available, delete};
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
-use bedtime_workbench::ErrorDialogWorldExt;
+use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::{
     Action, ActionAppExt, ErrorDialog, Handler, MenusAppExt, Panel, StandardMenu,
     persistence::ReflectPersist,
@@ -319,7 +319,7 @@ fn forget(world: &mut World, folder: &Path, config: Option<&Path>) {
     })();
     world.resource_mut::<KnownWorkspaces>().checked = None;
     if let Err(error) = result {
-        world.request_error_dialog(ErrorDialog {
+        world.bedtime_mut().request_error_dialog(ErrorDialog {
             title: "Delete Workspace".into(),
             message: format!("Couldn't delete the workspace for {}.", folder.display()),
             details: Some(error),

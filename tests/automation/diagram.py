@@ -55,10 +55,12 @@ def zoom(bed):
 
 
 def arrow(text):
-    """The saved arrow's points, and whether it's bound to the first two elements."""
-    line = next(line for line in text.splitlines() if "end: Arrow" in line)
-    points = [(float(x), float(y)) for x, y in re.findall(r"\((-?[\d.]+), (-?[\d.]+)\)", line)]
-    return points, "from: Some(1), to: Some(2)" in line
+    """The saved arrow's bends (its bound ends aren't saved: they're worked
+    out), and whether it's bound to the rectangle and the ellipse."""
+    line = next(line for line in text.splitlines() if "shape: Arrow(" in line)
+    via = re.search(r"via: \[(.*?)\]", line)
+    points = [(float(x), float(y)) for x, y in re.findall(r"\((-?[\d.]+), (-?[\d.]+)\)", via.group(1))] if via else []
+    return points, 'from: "rect-1", to: "ellipse-1"' in line
 
 
 def about(point, x, y):
@@ -147,21 +149,20 @@ with tempfile.TemporaryDirectory() as folder:
         # both and pinned to those sides: in the middle of each, a little off.
         points, bound = arrow(drawing.read_text())
         assert bound and "from_side: Right, to_side: Left" in drawing.read_text(), drawing.read_text()
-        assert about(points[0], -45, -20) and about(points[1], 45, -20), points
+        assert points == [], points
 
         # An outline is picked up by its edge: the rectangle goes down 80.
         bed.drag((cx - 150, cy - 20), (cx - 150, cy + 60))
         until(bed, lambda: shows(bed, "1 selected"), "the rectangle selected")
         bed.screenshot("diagram_drawn")
         bed.invoke("document.save")
-        until(bed, lambda: "Rectangle(x: -150.0, y: 30.0, w: 100.0, h: 60.0)" in drawing.read_text(), "the moved rectangle saved")
+        until(bed, lambda: "Rectangle(x: -150, y: 30, w: 100, h: 60)" in drawing.read_text(), "the moved rectangle saved")
         saved = drawing.read_text()
-        assert "Ellipse(x: 50.0, y: -50.0, w: 100.0, h: 60.0)" in saved, saved
-        # The arrow went with the rectangle's right side, and still ends at
-        # the ellipse's left.
+        assert "Ellipse(x: 50, y: -50, w: 100, h: 60)" in saved, saved
+        # The arrow went with the rectangle (where it meets it is worked out,
+        # not saved), still bound to both.
         points, bound = arrow(saved)
-        assert bound, saved
-        assert about(points[0], -45, 60) and about(points[1], 45, -20), points
+        assert bound and points == [], saved
 
         # The rectangle is selected: the style bar's picks are its style.
         # A button of the bar opens its choices; the corners' turns them round.
@@ -179,7 +180,7 @@ with tempfile.TemporaryDirectory() as folder:
         bed.invoke("document.save")
         until(
             bed,
-            lambda: "fill: Some(Blue), width: 4.0, dash: Dashed, rounded: true" in drawing.read_text(),
+            lambda: "fill: Blue, width: 4, dash: Dashed, rounded: true" in drawing.read_text(),
             "the rectangle's style saved",
         )
 
@@ -193,13 +194,13 @@ with tempfile.TemporaryDirectory() as folder:
         bed.drag((cx - 22.5, cy + 40), (cx, cy + 90))
         bed.screenshot("diagram_bent")
         bed.invoke("document.save")
-        until(bed, lambda: "start: Arrow, end: Arrow" in drawing.read_text(), "both heads saved")
+        until(bed, lambda: "start: Arrow" in drawing.read_text(), "both heads saved")
         points, bound = arrow(drawing.read_text())
-        assert bound and len(points) == 3 and about(points[1], 0, 90), points
+        assert bound and len(points) == 1 and about(points[0], 0, 90), points
         at = {"move": {"x": cx, "y": cy + 90}}
         bed.input(at, {"press": "Left"}, {"release": "Left"}, {"press": "Left"}, {"release": "Left"})
         bed.invoke("document.save")
-        until(bed, lambda: len(arrow(drawing.read_text())[0]) == 2, "the bend taken out")
+        until(bed, lambda: len(arrow(drawing.read_text())[0]) == 0, "the bend taken out")
         for _ in range(3):
             bed.invoke("document.undo")
         bed.invoke("document.save")
@@ -268,15 +269,16 @@ with tempfile.TemporaryDirectory() as folder:
         bed.key("Primary+g")
         bed.key("Escape")
         until(bed, lambda: shows(bed, "0 selected"), "nothing selected")
-        # Grouped, they're one thing: a click on any selects all, and there's
-        # nothing to line up.
+        # Grouped, they're one thing: a click on any selects all (and the
+        # group, an element itself), and there's nothing to line up.
         bed.click((cx - 100, cy + 150))
-        until(bed, lambda: shows(bed, "6 selected"), "the whole group, by a click on the text")
+        until(bed, lambda: shows(bed, "7 elements", "7 selected"), "the whole group, by a click on the text")
         assert not bed.exists("Align left")
         bed.invoke("document.save")
-        until(bed, lambda: drawing.read_text().count("group: Some(1)") == 6, "the group saved")
+        until(bed, lambda: 'shape: Group, children: [' in drawing.read_text(), "the group saved")
+        assert drawing.read_text().count("\n            (id: ") == 6, drawing.read_text()
         lefts = set(re.findall(r"(?:Rectangle|Ellipse)\(x: (-?[\d.]+)", drawing.read_text()))
-        assert lefts == {"-150.0"}, f"not lined up on the left: {lefts}"
+        assert lefts == {"-150"}, f"not lined up on the left: {lefts}"
         # Twice on one of a group goes into it: that one alone, to move on its
         # own. Escape leaves the group (or first, if a third click came,
         # the writing), then lets go.
@@ -292,13 +294,13 @@ with tempfile.TemporaryDirectory() as folder:
         # The other button's menu is for what it's on: the group, to ungroup.
         bed.click((cx - 100, cy + 60), button="Right")
         menu = lambda name: bed.find_all(contains=name, role="Button")
-        until(bed, lambda: shows(bed, "6 selected") and menu("Duplicate"), "the group's menu")
+        until(bed, lambda: shows(bed, "7 selected") and menu("Duplicate"), "the group's menu")
         assert menu("Ungroup") and menu("Order") and menu("Export Selection")
         bed.screenshot("diagram_menu")
         bed.click(menu("Ungroup")[0])
         until(bed, lambda: not menu("Duplicate"), "the menu closed")
         bed.invoke("document.save")
-        until(bed, lambda: "group" not in drawing.read_text(), "the group taken apart")
+        until(bed, lambda: "Group" not in drawing.read_text(), "the group taken apart")
         bed.key("Escape")
         # On nothing, it's the canvas's menu.
         bed.click((cx + 250, cy - 150), button="Right")
@@ -333,9 +335,9 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: "fill" not in drawing.read_text(), "the styles undone")
         bed.invoke("document.undo")
         bed.invoke("document.save")
-        until(bed, lambda: "Rectangle(x: -150.0, y: -50.0, w: 100.0, h: 60.0)" in drawing.read_text(), "the move undone")
+        until(bed, lambda: "Rectangle(x: -150, y: -50, w: 100, h: 60)" in drawing.read_text(), "the move undone")
         points, bound = arrow(drawing.read_text())
-        assert bound and about(points[0], -45, -20) and about(points[1], 45, -20), points
+        assert bound and points == [], points
         bed.key("Escape")
 
         # A file that isn't a diagram says so, rather than showing a canvas.

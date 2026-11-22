@@ -11,9 +11,9 @@ use crate::editor::{EditorOutput, EditorPanel, Indentation, editor_id, word_at};
 use bedtime_document::{BufferEdit, TextBuffer};
 use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, DocumentId, DocumentReference,
-    EditOptions, Handler, LayoutsWorldExt, Notification, Panel, PathOptions, Place, Root,
-    ViewerFile, WorkbenchWorldExt,
+    Action, ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentId,
+    DocumentReference, EditOptions, Handler, Notification, Panel, PathOptions, Place, Root,
+    ViewerFile,
 };
 use bevy::prelude::*;
 use std::{
@@ -108,7 +108,7 @@ fn editor(world: &World, invocation: &ActionInvocation) -> Result<(Entity, TextB
         .get::<DocumentReference>(panel)
         .ok_or("No document is shown")?
         .document();
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let text = workbench
         .cast_document::<TextBuffer>(document)
         .and_then(|handle| workbench.read_document(handle).cloned())
@@ -251,7 +251,7 @@ fn label(kind: AskKind) -> &'static str {
 }
 
 fn tell(world: &mut World, notification: Notification) {
-    world.workbench_mut().notify(notification);
+    world.bedtime_mut().notify(notification);
 }
 
 /// Format `panel`'s document before saving it: the request's ticket.
@@ -332,7 +332,7 @@ fn respond(
             if kind == AskKind::Format
                 && world
                     .get::<DocumentReference>(panel)
-                    .and_then(|r| world.workbench().inspect_document(r.document()).ok())
+                    .and_then(|r| world.bedtime().inspect_document(r.document()).ok())
                     .is_some_and(|info| info.revision != origin.revision) =>
         {
             tell(
@@ -469,7 +469,7 @@ fn edit_document(
     encoding: Encoding,
     label: &str,
 ) -> Result<(), String> {
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let handle = workbench
         .cast_document::<TextBuffer>(document)
         .map_err(|e| e.to_string())?;
@@ -485,7 +485,7 @@ fn edit_document(
         .into_iter()
         .map(|(range, replacement)| BufferEdit::new(range, replacement));
     world
-        .workbench_mut()
+        .bedtime_mut()
         .edit_document_transaction(handle, revision, edits, EditOptions::new(label))
         .map(|_| ())
         .map_err(|e| e.to_string())
@@ -695,7 +695,7 @@ fn show_references(world: &mut World, locations: Vec<Location>) {
     for (path, references) in &mut files {
         let text = match document_for(world, path) {
             Some(document) => {
-                let workbench = world.workbench();
+                let workbench = world.bedtime();
                 workbench
                     .cast_document::<TextBuffer>(document)
                     .and_then(|handle| workbench.read_document(handle).map(|t| t.to_string()))
@@ -718,13 +718,13 @@ fn show_references(world: &mut World, locations: Vec<Location>) {
         of,
         files: files.into_iter().collect(),
     };
-    let Some(layout) = world.layouts().active() else {
+    let Some(layout) = world.bedtime().layouts().active() else {
         return;
     };
-    match world.layouts().find::<ReferencesPanel>(layout) {
+    match world.bedtime().layouts().find::<ReferencesPanel>(layout) {
         Some(panel) => {
             world.entity_mut(panel).insert(content);
-            let _ = world.layouts_mut().focus_panel(panel);
+            let _ = world.bedtime_mut().layouts_mut().focus_panel(panel);
         }
         None => {
             world.spawn((content, Place::largest()));
@@ -790,7 +790,7 @@ fn open_references(world: &mut World) {
             place: Some(bedtime_workbench::Placement::From(panel)),
             ..default()
         };
-        if let Err(error) = world.workbench_mut().open_path(&path, options) {
+        if let Err(error) = world.bedtime_mut().open_path(&path, options) {
             tell(world, Notification::warning(error));
         }
     }

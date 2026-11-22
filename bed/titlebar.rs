@@ -6,8 +6,8 @@ use bedtime_git::ShowGit;
 use bedtime_terminal::NewTerminal;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::{
-    Action, ActionId, ActionsWorldExt, InvocationContext, LayoutSurface, PanelFactory,
-    StandardMenus, WorkbenchWorldExt as _, draw_menu_bar, panel_drag_source,
+    Action, ActionId, BedtimeWorldExt as _, InvocationContext, LayoutSurface, PanelFactory,
+    StandardMenus, draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 
@@ -19,7 +19,7 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
             .get::<LayoutSurface>(context.surface)
             .map_or(0.0, |surface| surface.panel_gap);
         let result = draw_menu_bar(&mut context.frame(ui), world, root, inset);
-        world.workbench_mut().notify_failure("Menu", result);
+        world.bedtime_mut().notify_failure("Menu", result);
     }
     // Right to left: terminal, search, files, git, structure, settings.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -67,15 +67,14 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
 /// A new panel from `factory` in the active layout's largest area,
 /// focused (`Placement::Largest`).
 fn open_in_largest(world: &mut World, factory: &PanelFactory) -> Result<(), String> {
-    use bedtime_workbench::LayoutsWorldExt;
-    let layout = world.layouts_mut().ensure_active()?;
-    let area = world.layouts().destination_area(layout)?;
+    let layout = world.bedtime_mut().layouts_mut().ensure_active()?;
+    let area = world.bedtime().layouts().destination_area(layout)?;
     let panel = (factory.create)(world, area);
     world.flush();
     if world.get_entity(panel).is_err() {
         return Err("It couldn't be placed".into());
     }
-    world.layouts_mut().focus_panel(panel)
+    world.bedtime_mut().layouts_mut().focus_panel(panel)
 }
 
 /// A titlebar button for command `C`. Clicking it opens a new panel from
@@ -89,9 +88,11 @@ fn tool<C: Action>(
 ) {
     let command = ActionId::of::<C>();
     let enabled = world
+        .bedtime()
         .actions()
         .available(&command, InvocationContext::Focused);
     let tooltip = match world
+        .bedtime()
         .actions()
         .shortcut_for(&command, InvocationContext::Focused)
     {
@@ -110,7 +111,7 @@ fn tool<C: Action>(
             world.commands().queue(move |world: &mut World| {
                 let result = open_in_largest(world, &factory);
                 world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .notify_failure("Couldn't open the panel", result);
             });
         }

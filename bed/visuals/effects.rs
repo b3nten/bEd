@@ -1,10 +1,11 @@
 //! Screen effects (scanlines, vignette, bloom, noise, curvature, pixel grid,
 //! burn-in, pulse): a pass over the drawn window, set in Settings.
 use bedtime_ui::{UiSystems, egui};
+use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::{
     ActiveLayout, LayoutCamera,
     persistence::StoreId,
-    settings::{SettingsAppExt, SettingsWorldExt, settings},
+    settings::{SettingsAppExt, settings},
 };
 use bevy::{
     asset::{AssetPath, embedded_asset, embedded_path},
@@ -65,7 +66,7 @@ settings! {
 }
 
 fn effects_on(world: &World, layer: StoreId) -> bool {
-    world.settings().get_at::<EffectsEnabled>(layer)
+    world.bedtime().settings().get_at::<EffectsEnabled>(layer)
 }
 
 effect_settings! {
@@ -709,7 +710,7 @@ mod tests {
 
     #[test]
     fn effects_follow_their_settings_and_stay_in_range() {
-        use bedtime_workbench::{WorkbenchCorePlugins, settings::SettingsAppExt};
+        use bedtime_workbench::WorkbenchCorePlugins;
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugins, EffectsPlugin))
             .init_resource::<Time<Real>>();
@@ -723,10 +724,15 @@ mod tests {
         assert!(!world.resource::<Effects>().enabled);
         let global = StoreId::of::<crate::workspace::GlobalStore>();
         world
+            .bedtime_mut()
             .settings_mut()
             .set::<EffectsEnabled>(global, true)
             .unwrap();
-        world.settings_mut().set::<Curvature>(global, 3.0).unwrap();
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .set::<Curvature>(global, 3.0)
+            .unwrap();
         let effects = world.resource::<Effects>();
         assert!(effects.enabled);
         assert_eq!(effects.curvature, 1.0);

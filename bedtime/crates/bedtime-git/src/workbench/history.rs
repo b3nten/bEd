@@ -11,6 +11,7 @@ use bedtime_document::{
     DocumentSource, MemorySource, SourceError, SourceId, SourceLoad, SourceVersion, TextBuffer,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
+use bedtime_workbench::BedtimeWorldExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use std::{hash::Hasher, ops::Range};
@@ -1025,7 +1026,7 @@ impl Panel for HistoryPanel {
         if let Some((diff, pin)) = open {
             let result = open_diff(world, panel, diff, pin);
             world
-                .workbench_mut()
+                .bedtime_mut()
                 .notify_failure("Git History", result.map(|_| ()));
         }
     }
@@ -1116,8 +1117,12 @@ fn open_diff(
     diff: CommitDiffPanel,
     pin: bool,
 ) -> Result<Entity, String> {
-    let layout = world.layouts().active().ok_or("No layout is open")?;
-    let panels = world.layouts().panels(layout);
+    let layout = world
+        .bedtime()
+        .layouts()
+        .active()
+        .ok_or("No layout is open")?;
+    let panels = world.bedtime().layouts().panels(layout);
     let is_preview = |world: &World, panel: Entity| {
         world
             .get::<PanelInstance>(panel)
@@ -1132,9 +1137,9 @@ fn open_diff(
             if let Some(mut instance) = world.get_mut::<PanelInstance>(panel) {
                 instance.preview = false;
             }
-            world.layouts_mut().focus_panel(panel)?;
+            world.bedtime_mut().layouts_mut().focus_panel(panel)?;
         } else if !is_preview(world, panel) {
-            world.layouts_mut().focus_panel(panel)?;
+            world.bedtime_mut().layouts_mut().focus_panel(panel)?;
         }
         return Ok(panel);
     }
@@ -1144,11 +1149,11 @@ fn open_diff(
         .find(|&panel| world.get::<CommitDiffPanel>(panel).is_some() && is_preview(world, panel));
     let area = preview.and_then(|panel| world.get::<InArea>(panel).map(|area| area.0));
     if let Some(old) = preview {
-        world.layouts_mut().close_panel(old)?;
+        world.bedtime_mut().layouts_mut().close_panel(old)?;
     }
     let area = match area {
         Some(area) => area,
-        None => world.layouts_mut().area_from(origin)?,
+        None => world.bedtime_mut().layouts_mut().area_from(origin)?,
     };
     let title = diff.title();
     // A preview leaves the History panel focused, for the next commit.
@@ -1256,7 +1261,7 @@ pub(super) fn update_diffs(world: &mut World) {
         };
         let shown = match sides {
             Ok(Some((old, new))) => world
-                .workbench_mut()
+                .bedtime_mut()
                 .load_document::<TextBuffer>(Committed(MemorySource::new(name, new)))
                 .map_err(|error| error.to_string())
                 .map(|document| {

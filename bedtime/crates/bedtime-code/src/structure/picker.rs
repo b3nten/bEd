@@ -15,9 +15,7 @@ use bedtime_ui::{
     UiContext, egui,
     picker::{self, PickerEvent, PickerRows, PickerState},
 };
-use bedtime_workbench::{
-    ActionInvocation, ActionResult, DocumentReference, LayoutsWorldExt, WorkbenchWorldExt,
-};
+use bedtime_workbench::{ActionInvocation, ActionResult, BedtimeWorldExt, DocumentReference};
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -194,7 +192,7 @@ pub(crate) fn draw(
             if event == PickerEvent::Escaped {
                 go_back(world, panel, before);
             }
-            let _ = world.layouts_mut().focus_panel(panel);
+            let _ = world.bedtime_mut().layouts_mut().focus_panel(panel);
             return false;
         }
         Some(PickerEvent::Moved(row)) => {
@@ -291,7 +289,7 @@ pub(super) fn go_back(
     let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document()) else {
         return;
     };
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let Some(text) = workbench
         .cast_document::<TextBuffer>(document)
         .and_then(|handle| workbench.read_document(handle).cloned())
@@ -301,7 +299,7 @@ pub(super) fn go_back(
     };
     let snapshot = TextSnapshot { revision, text };
     if world
-        .workbench()
+        .bedtime()
         .inspect_document(document)
         .is_ok_and(|info| info.revision != revision)
     {

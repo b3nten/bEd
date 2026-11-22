@@ -6,7 +6,7 @@ use super::{
 };
 use crate::syntax::{AnalysisStatus, DocumentSyntax, Observation, ObservationKey};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, tree};
-use bedtime_workbench::{DocumentReference, LayoutsWorldExt, PanelPresentation, WorkbenchWorldExt};
+use bedtime_workbench::{BedtimeWorldExt, DocumentReference, PanelPresentation};
 use bevy::prelude::*;
 use std::ops::Range;
 
@@ -31,7 +31,7 @@ pub(super) fn apply(world: &mut World, state: &mut StructurePanel, intents: Inte
             Intent::Pin(editor) => state.pinned = editor,
             Intent::FocusEditor => {
                 if let Some((editor, _)) = intents.editor {
-                    let _ = world.layouts_mut().focus_panel(editor);
+                    let _ = world.bedtime_mut().layouts_mut().focus_panel(editor);
                 }
             }
             Intent::Reveal(item, how) => {
@@ -378,9 +378,10 @@ fn empty_message(world: &World, state: &StructurePanel) -> String {
         };
     }
     let focused_editor = world
+        .bedtime()
         .layouts()
         .active()
-        .and_then(|layout| world.layouts().focused_panel(layout))
+        .and_then(|layout| world.bedtime().layouts().focused_panel(layout))
         .filter(|&panel| world.get::<crate::editor::EditorPanel>(panel).is_some());
     match focused_editor {
         Some(panel) if !has_outline(world, panel) => "No structure for this kind of file".into(),
@@ -390,7 +391,7 @@ fn empty_message(world: &World, state: &StructurePanel) -> String {
 
 fn title_of(world: &World, editor: Entity) -> Option<String> {
     let document = world.get::<DocumentReference>(editor)?.document();
-    Some(world.workbench().inspect_document(document).ok()?.title)
+    Some(world.bedtime().inspect_document(document).ok()?.title)
 }
 
 /// The rows the keyboard moves through: shown, under open parents.

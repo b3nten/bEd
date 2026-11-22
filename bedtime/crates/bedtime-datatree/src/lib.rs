@@ -11,8 +11,8 @@ use bedtime_ui::{UiContext, data::DataTree, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentReference, FormatId, FormatsAppExt, ManagedTask, ManagedWork, Panel, TEXT,
-    ViewersAppExt, WorkbenchWorldExt, viewer_document,
+    BedtimeWorldExt, DocumentReference, FormatId, FormatsAppExt, ManagedTask, ManagedWork, Panel,
+    TEXT, ViewersAppExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{collections::HashSet, sync::Arc, time::Duration};
@@ -79,12 +79,7 @@ impl Panel for TreePanel {
         };
         let title = world
             .get::<DocumentReference>(panel)
-            .and_then(|reference| {
-                world
-                    .workbench()
-                    .inspect_document(reference.document())
-                    .ok()
-            })
+            .and_then(|reference| world.bedtime().inspect_document(reference.document()).ok())
             .map(|info| info.title)
             .unwrap_or_default();
         let Some(format) = Format::of(&title) else {

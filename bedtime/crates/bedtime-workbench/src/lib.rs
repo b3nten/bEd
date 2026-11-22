@@ -8,9 +8,9 @@ pub mod appearance;
 mod closing;
 #[cfg(feature = "documents")]
 mod document_actions;
-mod exit;
 #[cfg(feature = "documents")]
 mod documents;
+mod exit;
 #[cfg(feature = "files")]
 mod formats;
 mod lifecycle;
@@ -35,7 +35,7 @@ pub mod work;
 pub mod workspaces;
 pub use actions::*;
 #[cfg(all(feature = "ui", feature = "persistence"))]
-pub use app::{AppInfo, AppPlugins, Quit, ShellPlugin};
+pub use app::{AppInfo, AppPlugins, Quit, ShellPlugin, driven_by_script};
 pub use bedtime_ui::layouts::*;
 pub use menus::*;
 pub use work::*;
@@ -200,7 +200,7 @@ fn report_settings_errors(
         .map(|error| error.0.clone())
         .collect();
     for error in errors {
-        world.workbench_mut().notify(Notification::warning(error));
+        world.bedtime_mut().notify(Notification::warning(error));
     }
 }
 
@@ -252,61 +252,147 @@ impl PluginGroup for WorkbenchPlugins {
     }
 }
 
-/// The workbench's read operations: a view of the `World`, from
-/// `world.workbench()`. Reads that need no workbench rules are methods on the
-/// resources and components themselves (`Settings::get`, `Layout`).
+/// bedtime's read operations: a view of the `World`, from `world.bedtime()`.
+/// One name for all of them: its own (documents, notifications, the session)
+/// and each part's, by name: `layouts()`, `actions()`, `menus()`,
+/// `settings()`, `persistence()`. Reads that need no rules are methods on
+/// the resources and components themselves (`Layout`, `Area`).
 #[repr(transparent)]
-pub struct WorkbenchRef {
+pub struct BedtimeRef {
     world: World,
 }
 
-/// The workbench's operations: a mutable view of the `World`, from
-/// `world.workbench_mut()`. Every change that has to keep the workbench's
-/// rules (membership, persistence, unsaved work, shutdown) goes through it.
-/// It reads like a `WorkbenchRef` too. From a system, queue a closure:
-/// `commands.queue(move |world: &mut World| world.workbench_mut().save_document(id))`.
+/// bedtime's operations: a mutable view of the `World`, from
+/// `world.bedtime_mut()`. Every change that has to keep bedtime's rules
+/// (membership, persistence, unsaved work, shutdown) goes through it, or
+/// through one of its parts (`layouts_mut()`, `settings_mut()`,
+/// `actions_mut()`, `persistence_mut()`). It reads like a `BedtimeRef` too.
+/// From a system, queue a closure:
+/// `commands.queue(move |world: &mut World| world.bedtime_mut().save_document(id))`.
 #[repr(transparent)]
-pub struct Workbench {
+pub struct Bedtime {
     world: World,
 }
 
-impl WorkbenchRef {
+impl BedtimeRef {
     pub fn world(&self) -> &World {
         &self.world
     }
-}
 
-impl Workbench {
-    pub fn world_mut(&mut self) -> &mut World {
-        &mut self.world
+    /// Layouts, their areas and panels.
+    pub fn layouts(&self) -> &LayoutsRef {
+        LayoutsWorldExt::layouts(&self.world)
+    }
+
+    /// Actions: what's available, and its keys.
+    pub fn actions(&self) -> &ActionsRef {
+        actions::ActionsWorldExt::actions(&self.world)
+    }
+
+    /// Menus, as they'd show.
+    pub fn menus(&self) -> &Menus {
+        menus::MenusWorldExt::menus(&self.world)
+    }
+
+    /// Settings, as they resolve through their layers.
+    #[cfg(feature = "persistence")]
+    pub fn settings(&self) -> &settings::Settings {
+        settings::SettingsWorldExt::settings(&self.world)
+    }
+
+    /// What's saved, and where.
+    #[cfg(feature = "persistence")]
+    pub fn persistence(&self) -> &persistence::PersistenceRef {
+        persistence::PersistenceWorldExt::persistence(&self.world)
     }
 }
 
-impl std::ops::Deref for Workbench {
-    type Target = WorkbenchRef;
-    fn deref(&self) -> &WorkbenchRef {
+impl Bedtime {
+    pub fn world_mut(&mut self) -> &mut World {
+        &mut self.world
+    }
+
+    /// Changing layouts: creating, activating, splitting, closing.
+    pub fn layouts_mut(&mut self) -> &mut Layouts {
+        LayoutsWorldExt::layouts_mut(&mut self.world)
+    }
+
+    /// Running actions, and changing what handles them.
+    pub fn actions_mut(&mut self) -> &mut Actions {
+        actions::ActionsWorldExt::actions_mut(&mut self.world)
+    }
+
+    /// Changing settings, in a layer.
+    #[cfg(feature = "persistence")]
+    pub fn settings_mut(&mut self) -> &mut settings::SettingsMut {
+        settings::SettingsWorldExt::settings_mut(&mut self.world)
+    }
+
+    /// Capturing and restoring what's saved.
+    #[cfg(feature = "persistence")]
+    pub fn persistence_mut(&mut self) -> &mut persistence::Persistence {
+        persistence::PersistenceWorldExt::persistence_mut(&mut self.world)
+    }
+
+    /// Spawn `bundle` (a panel and its state) in the focused area, placed
+    /// and focused when this returns.
+    pub fn open_panel(&mut self, bundle: impl Bundle) -> Entity {
+        PanelsWorldExt::open_panel(&mut self.world, bundle)
+    }
+
+    /// Spawn `bundle` at `placement`, placed and focused when this returns;
+    /// an error if it couldn't be placed.
+    pub fn open_panel_at(
+        &mut self,
+        bundle: impl Bundle,
+        placement: Placement,
+    ) -> Result<Entity, String> {
+        PanelsWorldExt::open_panel_at(&mut self.world, bundle, placement)
+    }
+
+    /// Show an error in a dialog, whatever panel it came from.
+    pub fn request_error_dialog(&mut self, dialog: ErrorDialog) {
+        ErrorDialogWorldExt::request_error_dialog(&mut self.world, dialog);
+    }
+
+    /// Open a link that leaves the app, as the app's `ExternalOpener` does.
+    pub fn open_externally(&mut self, url: &str) -> Result<(), String> {
+        bedtime_ui::LinksWorldExt::open_externally(&mut self.world, url)
+    }
+
+    /// Open a link clicked (or asked for) in `panel`, so an opener showing
+    /// it in the app can put it somewhere else than on that panel.
+    pub fn open_externally_from(&mut self, url: &str, panel: Entity) -> Result<(), String> {
+        bedtime_ui::LinksWorldExt::open_externally_from(&mut self.world, url, panel)
+    }
+}
+
+impl std::ops::Deref for Bedtime {
+    type Target = BedtimeRef;
+    fn deref(&self) -> &BedtimeRef {
         view(&self.world)
     }
 }
 
-fn view(world: &World) -> &WorkbenchRef {
-    // SAFETY: WorkbenchRef is a repr(transparent) wrapper of World.
-    unsafe { &*(world as *const World).cast::<WorkbenchRef>() }
+fn view(world: &World) -> &BedtimeRef {
+    // SAFETY: BedtimeRef is a repr(transparent) wrapper of World.
+    unsafe { &*(world as *const World).cast::<BedtimeRef>() }
 }
 
-/// `world.workbench()` and `world.workbench_mut()`.
-pub trait WorkbenchWorldExt {
-    fn workbench(&self) -> &WorkbenchRef;
-    fn workbench_mut(&mut self) -> &mut Workbench;
+/// `world.bedtime()` and `world.bedtime_mut()`: the one name for bedtime's
+/// operations on a `World`.
+pub trait BedtimeWorldExt {
+    fn bedtime(&self) -> &BedtimeRef;
+    fn bedtime_mut(&mut self) -> &mut Bedtime;
 }
 
-impl WorkbenchWorldExt for World {
-    fn workbench(&self) -> &WorkbenchRef {
+impl BedtimeWorldExt for World {
+    fn bedtime(&self) -> &BedtimeRef {
         view(self)
     }
-    fn workbench_mut(&mut self) -> &mut Workbench {
-        // SAFETY: Workbench is a repr(transparent) wrapper of World.
-        unsafe { &mut *(self as *mut World).cast::<Workbench>() }
+    fn bedtime_mut(&mut self) -> &mut Bedtime {
+        // SAFETY: Bedtime is a repr(transparent) wrapper of World.
+        unsafe { &mut *(self as *mut World).cast::<Bedtime>() }
     }
 }
 

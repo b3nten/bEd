@@ -9,7 +9,7 @@ use crate::view::{
 use crate::{COLUMN_WIDTH, Column, ExplorerView, Folders, Row, file_icon};
 use bedtime_filesystem::EntryKind;
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
-use bedtime_workbench::WorkbenchWorldExt;
+use bedtime_workbench::BedtimeWorldExt;
 use bevy::prelude::*;
 use std::path::Path;
 
@@ -210,8 +210,8 @@ fn interact(
     intents: &mut Vec<Intent>,
 ) {
     if response.drag_started() {
-        let opens = row.kind != EntryKind::Directory
-            && !world.workbench().viewers_for(&row.path).is_empty();
+        let opens =
+            row.kind != EntryKind::Directory && !world.bedtime().viewers_for(&row.path).is_empty();
         let factory = if opens {
             open_factory(row.path.clone())
         } else {
@@ -259,7 +259,7 @@ fn interact(
         let viewers = if row.kind == EntryKind::Directory {
             Vec::new()
         } else {
-            world.workbench().viewers_for(&row.path)
+            world.bedtime().viewers_for(&row.path)
         };
         view.menu = Some((row.path.clone(), viewers));
     }

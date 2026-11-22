@@ -12,8 +12,8 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    EditOptions, ManagedTask, ManagedWork, Notification, Panel, PanelPresentation, ViewersAppExt,
-    WorkbenchWorldExt, viewer_document,
+    BedtimeWorldExt, EditOptions, ManagedTask, ManagedWork, Notification, Panel, PanelPresentation,
+    ViewersAppExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::time::Duration;
@@ -128,7 +128,7 @@ impl Panel for TablePanel {
         // revision is being read, they'd land in the wrong places.
         if read != document.revision {
             table_panel.state.table = Some((read, table));
-            world.workbench_mut().notify(Notification::warning(
+            world.bedtime_mut().notify(Notification::warning(
                 "The table is still reading the latest text; try again",
             ));
             return;
@@ -142,7 +142,7 @@ impl Panel for TablePanel {
             };
             let made = table.edit(&text, &change).and_then(|edit| {
                 let next = world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .edit_document(document.handle, revision, edit.clone(), options)
                     .map_err(|error| error.to_string())?;
                 edit.apply(&mut text)?;
@@ -151,7 +151,7 @@ impl Panel for TablePanel {
             match made {
                 Ok(next) => revision = next,
                 Err(error) => {
-                    world.workbench_mut().notify(Notification::warning(error));
+                    world.bedtime_mut().notify(Notification::warning(error));
                     // Read the text again, as it is.
                     revision = u64::MAX;
                     break;

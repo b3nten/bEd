@@ -1,7 +1,7 @@
 //! Short messages that need no answer: a setting that couldn't be saved, an
 //! action that failed. The application shows them (in a status bar, say) and
 //! each is logged. Anything that could lose work asks with a dialog instead.
-use crate::Workbench;
+use crate::Bedtime;
 use bevy::prelude::*;
 use std::{collections::VecDeque, time::Instant};
 
@@ -72,7 +72,7 @@ impl Notifications {
     }
 }
 
-impl Workbench {
+impl Bedtime {
     /// Tell the user something that needs no answer.
     /// Report `result`'s error, if it is one, prefixed with what was being
     /// done ("Couldn't open the theme: …").
@@ -101,13 +101,13 @@ impl Workbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{AppCorePlugins, WorkbenchWorldExt};
+    use crate::{AppCorePlugins, BedtimeWorldExt};
 
     #[test]
     fn repeats_refresh_the_latest_and_old_ones_fall_off() {
         let mut app = App::new();
         app.add_plugins(AppCorePlugins);
-        let workbench = app.world_mut().workbench_mut();
+        let workbench = app.world_mut().bedtime_mut();
         workbench.notify(Notification::error("disk full"));
         let first = workbench
             .world()

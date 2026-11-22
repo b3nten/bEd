@@ -4,8 +4,9 @@
 //! with the tools, and selected, moved, resized, styled and deleted; each is a
 //! step of the document's undo.
 //!
-//! `model` is the document (elements, changes, the file format), `edit` the
-//! arithmetic of editing one, `canvas` draws one through a camera and turns
+//! `model` is the document (elements, groups, changes), `format` its file
+//! (RON, written to be read and written by hand and by models too: see
+//! there), `edit` the arithmetic of editing one, `canvas` draws one through a camera and turns
 //! gestures into edits, and the panel here ties them to the workbench: the
 //! file format, New Diagram, Zoom In/Out/Reset Zoom, making the canvas's
 //! edits, and keeping where it's looked at from with the layout. `export`
@@ -15,16 +16,17 @@ use bedtime_ui::{UiContext, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionHandler, ActionInvocation, ActionResult, DocumentReference,
-    EditOptions, Format, FormatId, FormatsAppExt, Handler, InArea, OpenOptions, Panel,
-    PanelInstance, PanelPresentation, Placement, ResetZoom, Target, ViewersAppExt,
-    WorkbenchWorldExt, ZoomIn, ZoomOut, viewer_document,
+    Action, ActionAppExt, ActionHandler, ActionInvocation, ActionResult, BedtimeWorldExt,
+    DocumentReference, EditOptions, Format, FormatId, FormatsAppExt, Handler, InArea, OpenOptions,
+    Panel, PanelInstance, PanelPresentation, Placement, ResetZoom, Target, ViewersAppExt, ZoomIn,
+    ZoomOut, viewer_document,
 };
 use bevy::prelude::*;
 
 pub mod canvas;
 pub mod edit;
 pub mod export;
+pub mod format;
 pub mod model;
 #[cfg(test)]
 mod tests;
@@ -156,7 +158,7 @@ fn poll_saving(world: &mut World) {
     if let Some(file) = chosen {
         let written = std::fs::write(file.path(), bytes);
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify_failure("Couldn't export", written);
     }
 }
@@ -217,7 +219,7 @@ fn new_diagram(world: &mut World, invocation: ActionInvocation) -> ActionResult 
         .filter(|&panel| world.get::<DocumentReference>(panel).is_some())
         .and_then(|panel| world.get::<InArea>(panel).map(|area| area.0));
     world
-        .workbench_mut()
+        .bedtime_mut()
         .new_untitled::<Diagram>(OpenOptions {
             target: Target::New,
             place: area.map(Placement::In),
@@ -335,23 +337,28 @@ impl Panel for DiagramPanel {
         }
         let asked = diagram.bypass_change_detection().picture.take();
         let selection = diagram.canvas.selection.clone();
+        // As it's shown: its lines' ends and groups' boxes worked out.
+        let shown = asked.map(|_| {
+            diagram
+                .bypass_change_detection()
+                .canvas
+                .settled(ui.ctx(), &document.model)
+        });
         if let Some(asked) = asked {
             let title = world
-                .workbench()
+                .bedtime()
                 .inspect_document(document.handle.id())
                 .map(|info| info.title)
                 .unwrap_or_default();
             let made = make_picture(
                 world,
                 asked,
-                &document.model,
+                shown.as_ref().unwrap_or(&document.model),
                 &selection,
                 context.theme,
                 &title,
             );
-            world
-                .workbench_mut()
-                .notify_failure("Couldn't export", made);
+            world.bedtime_mut().notify_failure("Couldn't export", made);
         }
         if let Some(at) = pasting {
             let text = world
@@ -368,13 +375,13 @@ impl Panel for DiagramPanel {
             }
         }
         if let Some(edit) = edit {
-            let made = world.workbench_mut().edit_document_transaction(
+            let made = world.bedtime_mut().edit_document_transaction(
                 document.handle,
                 document.revision,
                 edit.changes,
                 EditOptions::new(edit.label.clone()),
             );
-            world.workbench_mut().notify_failure(&edit.label, made);
+            world.bedtime_mut().notify_failure(&edit.label, made);
         }
     }
 }

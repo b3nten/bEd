@@ -10,7 +10,7 @@ use super::{
 };
 use crate::editor::{EditorOutput, EditorPanel, SymbolHit};
 use bedtime_ui::egui;
-use bedtime_workbench::{DocumentReference, Notification, WorkbenchWorldExt};
+use bedtime_workbench::{BedtimeWorldExt, DocumentReference, Notification};
 use bevy::prelude::*;
 use std::time::Duration;
 
@@ -186,7 +186,7 @@ pub(crate) fn draw(
         clear_completion(world, panel, &mut state);
         if let Err(error) = go_to_definition(world, panel, byte) {
             world
-                .workbench_mut()
+                .bedtime_mut()
                 .notify(Notification::warning(format!("Go to Definition: {error}")));
         }
     }
@@ -242,7 +242,7 @@ pub(crate) fn draw(
                     // just don't.
                     if output.completion_requested {
                         world
-                            .workbench_mut()
+                            .bedtime_mut()
                             .notify(Notification::warning(format!("Completions: {error}")));
                     }
                     state.error = Some(error);

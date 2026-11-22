@@ -1,3 +1,4 @@
+use crate::BedtimeWorldExt as _;
 use crate::actions::*;
 use crate::menus::*;
 
@@ -44,6 +45,7 @@ fn world_menu_snapshots_remain_enabled_without_workspaces() {
         .spawn((MenuItem::new("Copy"), InMenu(root), Invokes::of::<Copy>()))
         .id();
     let snapshot = world
+        .bedtime()
         .menus()
         .snapshot(root, InvocationContext::Focused)
         .unwrap();
@@ -96,6 +98,7 @@ fn menus_can_be_edited_reordered_and_reparented_without_native_services() {
     let chord = KeyChord::new(Modifiers::PRIMARY, KeyCode::KeyC);
     bind::<Copy>(world, chord);
     let snapshot = world
+        .bedtime()
         .menus()
         .snapshot(root, InvocationContext::Global)
         .unwrap();
@@ -124,6 +127,7 @@ fn removing_menu_ownership_keeps_action_definitions_and_handlers() {
     assert!(world.get_entity(item).is_err());
     assert!(
         world
+            .bedtime()
             .actions()
             .available(&ActionId::of::<Copy>(), InvocationContext::Global)
     );
@@ -148,6 +152,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
         .id();
     assert!(
         world
+            .bedtime()
             .menus()
             .snapshot(root, InvocationContext::Global)
             .unwrap()
@@ -160,6 +165,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
         .set_global_handler::<Copy>(Some(unavailable));
     assert!(
         world
+            .bedtime()
             .menus()
             .snapshot(root, InvocationContext::Global)
             .unwrap()
@@ -172,6 +178,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
     world.entity_mut(item).remove::<InMenu>();
     assert!(
         world
+            .bedtime()
             .menus()
             .snapshot(root, InvocationContext::Global)
             .unwrap()
@@ -182,6 +189,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
         .entity_mut(item)
         .insert((InMenu(root), Invokes::of::<Paste>()));
     let snapshot = world
+        .bedtime()
         .menus()
         .snapshot(root, InvocationContext::Global)
         .unwrap();
@@ -190,6 +198,7 @@ fn captured_bindings_expire_when_unavailable_detached_retarget_and_removal() {
     world.despawn(item);
     assert!(
         world
+            .bedtime()
             .menus()
             .snapshot(root, InvocationContext::Global)
             .unwrap()
@@ -213,6 +222,7 @@ fn malformed_trees_fail_at_the_snapshot_boundary() {
         .id();
     assert!(
         world
+            .bedtime()
             .menus()
             .snapshot(root, InvocationContext::Global)
             .is_err()
@@ -221,6 +231,7 @@ fn malformed_trees_fail_at_the_snapshot_boundary() {
     world.spawn((MenuItem::new("Not a group"), InMenu(root)));
     assert!(
         world
+            .bedtime()
             .menus()
             .snapshot(root, InvocationContext::Global)
             .is_err()
@@ -247,7 +258,6 @@ impl crate::Panel for Other {
 
 #[test]
 fn entries_of_a_panel_show_while_it_is_open_or_focused() {
-    use crate::{LayoutsWorldExt, PanelsWorldExt};
     let mut app = app();
     app.add_plugins(bedtime_ui::layouts::LayoutsPlugin);
     let world = app.world_mut();
@@ -264,6 +274,7 @@ fn entries_of_a_panel_show_while_it_is_open_or_focused() {
     ));
     let labels = |world: &World| -> Vec<String> {
         world
+            .bedtime()
             .menus()
             .snapshot(menu, InvocationContext::Global)
             .unwrap()
@@ -276,7 +287,7 @@ fn entries_of_a_panel_show_while_it_is_open_or_focused() {
             .collect()
     };
     assert_eq!(labels(world), ["Copy"], "no Notes panel is open");
-    let notes = world.open_panel(Notes);
+    let notes = world.bedtime_mut().open_panel(Notes);
     assert_eq!(labels(world), ["Copy", "Paste"]);
 
     // One panel's own entry: while it's focused, and gone with it.
@@ -288,9 +299,13 @@ fn entries_of_a_panel_show_while_it_is_open_or_focused() {
         ))
         .id();
     assert_eq!(labels(world), ["Copy", "Paste", "Notes Only"]);
-    world.open_panel(Other);
+    world.bedtime_mut().open_panel(Other);
     assert_eq!(labels(world), ["Copy", "Paste"]);
-    world.layouts_mut().close_panel(notes).unwrap();
+    world
+        .bedtime_mut()
+        .layouts_mut()
+        .close_panel(notes)
+        .unwrap();
     assert!(world.get_entity(own).is_err());
     assert_eq!(labels(world), ["Copy"]);
 }
@@ -321,6 +336,7 @@ fn the_standard_bar_puts_items_in_their_groups_and_leaves_out_empty_menus() {
     let world = app.world_mut();
     let bar = world.resource::<StandardMenus>().bar;
     let snapshot = world
+        .bedtime()
         .menus()
         .snapshot(bar, InvocationContext::Global)
         .unwrap();
@@ -354,7 +370,7 @@ fn the_standard_bar_puts_items_in_their_groups_and_leaves_out_empty_menus() {
 
 #[test]
 fn a_plugins_own_menu_can_show_only_while_its_panel_is_open() {
-    use crate::{PanelsWorldExt, StandardMenu, StandardMenus, StandardMenusPlugin};
+    use crate::{StandardMenu, StandardMenus, StandardMenusPlugin};
     let mut app = app();
     app.add_plugins((
         bedtime_ui::layouts::LayoutsPlugin,
@@ -366,6 +382,7 @@ fn a_plugins_own_menu_can_show_only_while_its_panel_is_open() {
     let menus = |world: &World| -> Vec<String> {
         let bar = world.resource::<StandardMenus>().bar;
         world
+            .bedtime()
             .menus()
             .snapshot(bar, InvocationContext::Global)
             .unwrap()
@@ -378,6 +395,6 @@ fn a_plugins_own_menu_can_show_only_while_its_panel_is_open() {
             .collect()
     };
     assert!(!menus(app.world()).contains(&"Selection".to_owned()));
-    app.world_mut().open_panel(Notes);
+    app.world_mut().bedtime_mut().open_panel(Notes);
     assert!(menus(app.world()).contains(&"Selection".to_owned()));
 }

@@ -7,9 +7,9 @@
 use super::*;
 use crate::editor::EditorPanel;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, DocumentId, DocumentReference,
-    DocumentSaveFinished, Handler, ManagedTask, ManagedWork, Notification, PathOptions, Root,
-    ViewerFile, WorkStatus, WorkbenchWorldExt,
+    Action, ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentId,
+    DocumentReference, DocumentSaveFinished, Handler, ManagedTask, ManagedWork, Notification,
+    PathOptions, Root, ViewerFile, WorkStatus,
 };
 use bevy::{ecs::message::MessageCursor, prelude::*};
 use std::{
@@ -180,7 +180,7 @@ pub(super) fn answering_server(
         .ok_or("No document is shown")?
         .document();
     let info = world
-        .workbench()
+        .bedtime()
         .inspect_document(document)
         .map_err(|e| e.to_string())?;
     if info.has_drafts {
@@ -316,7 +316,7 @@ fn document_is_at(world: &World, panel: Entity, origin: &RequestOrigin) -> bool 
         .get::<DocumentServer>(document.entity())
         .is_some_and(|connection| connection.key == origin.document)
         && world
-            .workbench()
+            .bedtime()
             .inspect_document(document)
             .is_ok_and(|info| info.revision == origin.revision && !info.has_drafts)
 }
@@ -402,7 +402,7 @@ fn update(world: &mut World, mut saves: Local<MessageCursor<DocumentSaveFinished
         let Some(connection) = world.get::<DocumentServer>(document.entity()) else {
             continue;
         };
-        let workbench = world.workbench();
+        let workbench = world.bedtime();
         let Some(text) = workbench
             .inspect_document(document)
             .ok()
@@ -504,7 +504,7 @@ fn receive(world: &mut World) {
                 super::Event::ApplyEdit(edit) => {
                     if let Err(error) = super::actions::apply_workspace_edit(world, &edit, "Edit") {
                         world
-                            .workbench_mut()
+                            .bedtime_mut()
                             .notify(Notification::warning(format!("Edit: {error}")));
                     }
                 }
@@ -549,7 +549,7 @@ fn open_definition(world: &mut World, result: Result<Vec<Location>, String>) {
         let location = locations.first().ok_or("No definition found")?;
         let start = location.range.start;
         world
-            .workbench_mut()
+            .bedtime_mut()
             .open_path(
                 &location.uri.path(),
                 PathOptions {
@@ -562,7 +562,7 @@ fn open_definition(world: &mut World, result: Result<Vec<Location>, String>) {
     });
     if let Err(error) = opened {
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify(Notification::warning(format!("Go to Definition: {error}")));
     }
 }
@@ -577,7 +577,7 @@ fn disconnect(world: &mut World, shown: &HashMap<Entity, (PathBuf, &'static str)
     for document in connected {
         let connection = world.get::<DocumentServer>(document).unwrap();
         let dirty = world
-            .workbench()
+            .bedtime()
             .inspect_document(DocumentId(document))
             .is_ok_and(|info| info.dirty);
         let same_file = shown.get(&document).is_some_and(|(file, language)| {
@@ -612,7 +612,7 @@ fn connect_and_sync(world: &mut World, shown: &HashMap<Entity, (PathBuf, &'stati
     };
     for (&document, (file, language)) in shown {
         let id = DocumentId(document);
-        let workbench = world.workbench();
+        let workbench = world.bedtime();
         let ready = workbench.cast_document::<TextBuffer>(id).is_ok()
             && workbench
                 .inspect_document(id)
@@ -651,7 +651,7 @@ fn connect_and_sync(world: &mut World, shown: &HashMap<Entity, (PathBuf, &'stati
 /// are kept on the connection (`error`).
 fn send_revision(world: &mut World, document: Entity) {
     let id = DocumentId(document);
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let (Ok(handle), Ok(info)) = (
         workbench.cast_document::<TextBuffer>(id),
         workbench.inspect_document(id),

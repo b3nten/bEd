@@ -241,7 +241,7 @@ fn open(world: &mut World, invocation: ActionInvocation) -> ActionResult {
         .collect();
     let menus = menu_names(world, context);
     let recent = world.resource::<CommandPalette>().recent.clone();
-    let actions = world.actions();
+    let actions = world.bedtime().actions();
     let mut all: Vec<(usize, usize, Command)> = ids
         .into_iter()
         .enumerate()
@@ -325,7 +325,7 @@ fn menu_names(
     else {
         return Vec::new();
     };
-    let Ok(snapshot) = world.menus().snapshot(bar, context) else {
+    let Ok(snapshot) = world.bedtime().menus().snapshot(bar, context) else {
         return Vec::new();
     };
     let mut found = Vec::new();
@@ -413,7 +413,11 @@ fn run_chosen(world: &mut World) {
         return;
     };
     let frames = closing.frames + 1;
-    let ready = closing.restored && world.actions().available(&request.action, request.context);
+    let ready = closing.restored
+        && world
+            .bedtime()
+            .actions()
+            .available(&request.action, request.context);
     if ready || frames > PATIENCE {
         world.resource_mut::<ActionRequests>().submit(request);
     } else {

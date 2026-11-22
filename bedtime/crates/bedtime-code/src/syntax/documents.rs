@@ -4,7 +4,7 @@
 use super::*;
 use crate::editor::EditorPanel;
 use bedtime_document::TextBuffer;
-use bedtime_workbench::{DocumentReference, DocumentStatus, ManagedWork, WorkbenchWorldExt};
+use bedtime_workbench::{BedtimeWorldExt, DocumentReference, DocumentStatus, ManagedWork};
 use bevy::prelude::*;
 use std::{collections::HashSet, sync::Arc};
 
@@ -48,7 +48,7 @@ pub(crate) fn update_syntax(world: &mut World) {
     }
     for document in shown {
         let id = bedtime_workbench::DocumentId(document);
-        let workbench = world.workbench();
+        let workbench = world.bedtime();
         let (Ok(handle), Ok(info)) = (
             workbench.cast_document::<TextBuffer>(id),
             workbench.inspect_document(id),
@@ -75,7 +75,7 @@ pub(crate) fn update_syntax(world: &mut World) {
                 .entity_mut(document)
                 .insert(DocumentSyntax { session });
         }
-        let workbench = world.workbench();
+        let workbench = world.bedtime();
         let text = workbench.read_document(handle).unwrap().clone();
         // Reparse incrementally from the last analysis only while every change
         // since is known; otherwise from scratch.
@@ -105,7 +105,7 @@ mod tests {
     use super::*;
     use crate::CodePlugin;
     use bedtime_document::{BufferEdit, MemorySource};
-    use bedtime_workbench::{EditOptions, LayoutsWorldExt, OpenOptions, WorkbenchCorePlugins};
+    use bedtime_workbench::{EditOptions, OpenOptions, WorkbenchCorePlugins};
 
     fn until(app: &mut App, done: impl Fn(&World) -> bool) {
         for _ in 0..1000 {
@@ -123,11 +123,11 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugins, CodePlugin));
         let world = app.world_mut();
-        let layout = world.layouts_mut().create("Test").unwrap();
-        world.layouts_mut().activate(layout).unwrap();
+        let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+        world.bedtime_mut().layouts_mut().activate(layout).unwrap();
         let open = |world: &mut World, name: &str| {
             world
-                .workbench_mut()
+                .bedtime_mut()
                 .open_document(
                     MemorySource::new(name, TextBuffer::from("fn main() {}\n")),
                     OpenOptions::default(),
@@ -159,11 +159,11 @@ mod tests {
 
         let world = app.world_mut();
         let handle = world
-            .workbench()
+            .bedtime()
             .cast_document::<TextBuffer>(document)
             .unwrap();
         world
-            .workbench_mut()
+            .bedtime_mut()
             .edit_document(
                 handle,
                 0,
@@ -177,7 +177,11 @@ mod tests {
         assert!(syntax.highlights.iter().any(|h| &*h.capture == "comment"));
 
         // No editor shows it: analysis stops.
-        app.world_mut().layouts_mut().close_panel(panel).unwrap();
+        app.world_mut()
+            .bedtime_mut()
+            .layouts_mut()
+            .close_panel(panel)
+            .unwrap();
         until(&mut app, |world| {
             world.get::<DocumentSyntax>(entity).is_none()
         });

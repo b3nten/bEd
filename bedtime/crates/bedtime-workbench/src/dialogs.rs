@@ -12,7 +12,7 @@ pub(crate) fn draw_close_prompt(
 ) -> bool {
     let ctx = &ui.ctx().clone();
     let surface = context.surface;
-    let Some(prompt) = world.workbench().close_prompt() else {
+    let Some(prompt) = world.bedtime().close_prompt() else {
         return false;
     };
     let owner = world
@@ -90,7 +90,7 @@ pub(crate) fn draw_close_prompt(
         .or(escape.then_some(crate::CloseChoice::Cancel))
     {
         world
-            .workbench_mut()
+            .bedtime_mut()
             .resolve_close(choice)
             .expect("A prompt was showing");
     }

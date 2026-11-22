@@ -2,8 +2,8 @@
 //! (Quit is the app plugins'.)
 use crate::workspace::{RecentWorkspaces, Workspace, switch};
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, InMenu, Invokes,
-    KeyChord, Menu, MenuEntries, MenuItem, MenusAppExt, StandardMenu,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, InMenu, Invokes, KeyChord, Menu,
+    MenuEntries, MenuItem, MenusAppExt, StandardMenu,
 };
 use bevy::prelude::*;
 use std::{future::Future, path::PathBuf, pin::Pin};

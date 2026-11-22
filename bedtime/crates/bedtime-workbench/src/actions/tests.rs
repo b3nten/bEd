@@ -1,3 +1,4 @@
+use crate::BedtimeWorldExt as _;
 use crate::actions::*;
 use bevy::prelude::*;
 
@@ -204,8 +205,18 @@ fn a_panel_handler_wins_and_a_disabled_one_blocks_the_global_handler() {
         .handler = Handler::new(find_in_panel).available_when(|_, _| false);
     let world = app.world();
     let find = ActionId::of::<Find>();
-    assert!(!world.actions().available(&find, InvocationContext::Focused));
-    assert!(world.actions().available(&find, InvocationContext::Global));
+    assert!(
+        !world
+            .bedtime()
+            .actions()
+            .available(&find, InvocationContext::Focused)
+    );
+    assert!(
+        world
+            .bedtime()
+            .actions()
+            .available(&find, InvocationContext::Global)
+    );
     invoke(&mut app, InvocationContext::Focused);
     assert!(calls(&mut app).is_empty());
     assert!(results(&mut app).last().unwrap().is_err());
@@ -277,12 +288,14 @@ fn menu_hints_show_the_chord_that_would_run_the_command() {
     // Ctrl+F toggles backfaces in this panel, so Find shows no shortcut here.
     assert_eq!(
         world
+            .bedtime()
             .actions()
             .shortcut_for(&find, InvocationContext::Focused),
         None
     );
     assert_eq!(
         world
+            .bedtime()
             .actions()
             .shortcut_for(&find, InvocationContext::Global),
         Some(CTRL_F)
@@ -328,7 +341,7 @@ fn chords_read_and_write_as_portable_text() {
 #[cfg(feature = "persistence")]
 mod keybinding_settings {
     use super::*;
-    use crate::settings::{SettingsAppExt, SettingsPlugin, SettingsWorldExt};
+    use crate::settings::{SettingsAppExt, SettingsPlugin};
     use bedtime_persistence::{Store, StoreId};
 
     struct GlobalStore;
@@ -356,10 +369,12 @@ mod keybinding_settings {
 
         let world = app.world_mut();
         world
+            .bedtime_mut()
             .settings_mut()
             .set::<Keybinding<Find>>(global, vec![ctrl(KeyCode::KeyB)])
             .unwrap();
         world
+            .bedtime_mut()
             .settings_mut()
             .set::<Keybinding<Find>>(workspace, vec![ctrl(KeyCode::KeyD)])
             .unwrap();
@@ -367,32 +382,39 @@ mod keybinding_settings {
 
         let world = app.world_mut();
         world
+            .bedtime_mut()
             .settings_mut()
             .set::<Keybinding<Find>>(workspace, vec![])
             .unwrap();
         assert!(keys(&app).is_empty());
         app.world_mut()
+            .bedtime_mut()
             .settings_mut()
             .clear::<Keybinding<Find>>(workspace)
             .unwrap();
         assert_eq!(keys(&app), [ctrl(KeyCode::KeyB)]);
 
         // The same, for UIs that only have the command's id.
-        assert_eq!(app.world().actions().keys_in(&find, workspace), None);
+        assert_eq!(
+            app.world().bedtime().actions().keys_in(&find, workspace),
+            None
+        );
         app.world_mut()
+            .bedtime_mut()
             .actions_mut()
             .set_keys_in(&find, workspace, Some(vec![CTRL_F]))
             .unwrap();
         assert_eq!(
-            app.world().actions().keys_in(&find, workspace),
+            app.world().bedtime().actions().keys_in(&find, workspace),
             Some(vec![CTRL_F])
         );
         assert_eq!(keys(&app), [CTRL_F]);
         app.world_mut()
+            .bedtime_mut()
             .actions_mut()
             .set_keys_in(&find, global, None)
             .unwrap();
-        assert_eq!(app.world().actions().keys_in(&find, global), None);
+        assert_eq!(app.world().bedtime().actions().keys_in(&find, global), None);
     }
 
     #[test]
@@ -410,11 +432,13 @@ mod keybinding_settings {
         assert_eq!(keys(&app), ALT_F, "not its own Ctrl+F");
         let global = StoreId::of::<GlobalStore>();
         app.world_mut()
+            .bedtime_mut()
             .settings_mut()
             .set::<Keybinding<Find>>(global, vec![CTRL_F])
             .unwrap();
         assert_eq!(keys(&app), [CTRL_F]);
         app.world_mut()
+            .bedtime_mut()
             .settings_mut()
             .clear::<Keybinding<Find>>(global)
             .unwrap();

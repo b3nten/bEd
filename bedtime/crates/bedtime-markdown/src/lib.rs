@@ -16,15 +16,15 @@ use bedtime_code::{
 };
 use bedtime_document::TextBuffer;
 use bedtime_ui::{
-    LinksWorldExt, UiContext, egui,
+    UiContext, egui,
     markdown::{MarkdownView, percent_decode},
     theme::SyntaxRole,
 };
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentReference, Format, FormatId, FormatsAppExt, Notification, Panel, PathOptions, TEXT,
-    ViewerFile, ViewersAppExt, WorkbenchWorldExt, viewer_document,
+    BedtimeWorldExt, DocumentReference, Format, FormatId, FormatsAppExt, Notification, Panel,
+    PathOptions, TEXT, ViewerFile, ViewersAppExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{path::PathBuf, time::Duration};
@@ -171,7 +171,7 @@ fn follow(world: &mut World, panel: Entity, link: &str) {
     }
     let external = link.contains("://") || link.starts_with("mailto:");
     let result = if external {
-        world.open_externally_from(link, panel)
+        world.bedtime_mut().open_externally_from(link, panel)
     } else {
         let file = link.split('#').next().unwrap_or(link);
         let file = percent_decode(file);
@@ -180,7 +180,7 @@ fn follow(world: &mut World, panel: Entity, link: &str) {
                 let base = viewer.0.parent().unwrap_or(std::path::Path::new(""));
                 let path = base.join(&file);
                 world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .open_path(
                         &path,
                         PathOptions {
@@ -195,6 +195,6 @@ fn follow(world: &mut World, panel: Entity, link: &str) {
         }
     };
     if let Err(error) = result {
-        world.workbench_mut().notify(Notification::warning(error));
+        world.bedtime_mut().notify(Notification::warning(error));
     }
 }

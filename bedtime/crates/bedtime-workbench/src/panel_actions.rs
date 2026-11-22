@@ -11,6 +11,7 @@ use bevy::prelude::*;
 /// `Handler::new(open_new::<GitPanel>)`.
 pub fn open_new<P: Component + Default>(world: &mut World, _: ActionInvocation) -> ActionResult {
     world
+        .bedtime_mut()
         .open_panel_at(P::default(), Placement::Focused)
         .map(|_| ())
 }
@@ -70,13 +71,21 @@ impl Action for ToggleMaximizePanel {
 pub(crate) fn install(app: &mut App) {
     app.add_action_handler::<ToggleMaximizePanel>(
         Handler::new(|world, _| {
-            let layout = world.layouts().active().ok_or("No layout is open")?;
-            world.layouts_mut().toggle_maximized(layout).map(|_| ())
+            let layout = world
+                .bedtime()
+                .layouts()
+                .active()
+                .ok_or("No layout is open")?;
+            world
+                .bedtime_mut()
+                .layouts_mut()
+                .toggle_maximized(layout)
+                .map(|_| ())
         })
         // With one area there's nothing to hide.
         .available_when(|world, _| {
-            world.layouts().active().is_some_and(|layout| {
-                world.layouts().maximized(layout).is_some()
+            world.bedtime().layouts().active().is_some_and(|layout| {
+                world.bedtime().layouts().maximized(layout).is_some()
                     || world
                         .get::<LayoutAreas>(layout)
                         .is_some_and(|areas| areas.entities().len() > 1)
@@ -116,7 +125,7 @@ fn close_panel(world: &mut World, invocation: ActionInvocation) -> ActionResult 
         .entity
         .filter(|&panel| world.get::<PanelInstance>(panel).is_some())
         .ok_or("No panel is focused")?;
-    let layouts = world.layouts_mut();
+    let layouts = world.bedtime_mut().layouts_mut();
     let layout = layouts.panel_layout(panel)?;
     layouts.user_edit(layout, &LayoutEdit::ClosePanels(vec![panel]))
 }
@@ -155,8 +164,9 @@ mod tests {
         app.add_plugins(AppCorePlugins);
         let world = app.world_mut();
         let layout = crate::tests::layout(world);
-        let area = world.layouts().destination_area(layout).unwrap();
+        let area = world.bedtime().layouts().destination_area(layout).unwrap();
         let panel = world
+            .bedtime_mut()
             .layouts_mut()
             .create_panel_in_area(area, "Plain")
             .unwrap();
@@ -202,8 +212,9 @@ mod tests {
         app.add_plugins(AppCorePlugins);
         let world = app.world_mut();
         let layout = crate::tests::layout(world);
-        let area = world.layouts().destination_area(layout).unwrap();
+        let area = world.bedtime().layouts().destination_area(layout).unwrap();
         let other = world
+            .bedtime_mut()
             .layouts_mut()
             .split_area(area, SplitAxis::Horizontal, LAYOUT_EXTENT / 2, [100, 100])
             .unwrap();
@@ -216,12 +227,16 @@ mod tests {
                     source: None,
                 });
             app.update();
-            let layouts = app.world().layouts();
+            let layouts = app.world().bedtime().layouts();
             layouts
                 .maximized(layout)
                 .map(|_| [area, other].map(|area| layouts.area_shown(area)))
         };
-        app.world_mut().layouts_mut().focus_area(other).unwrap();
+        app.world_mut()
+            .bedtime_mut()
+            .layouts_mut()
+            .focus_area(other)
+            .unwrap();
         assert_eq!(toggle(&mut app), Some([false, true]));
         assert_eq!(toggle(&mut app), None);
     }
@@ -232,12 +247,14 @@ mod tests {
         app.add_plugins(AppCorePlugins);
         let world = app.world_mut();
         let layout = crate::tests::layout(world);
-        let area = world.layouts().destination_area(layout).unwrap();
+        let area = world.bedtime().layouts().destination_area(layout).unwrap();
         let first = world
+            .bedtime_mut()
             .layouts_mut()
             .create_panel_in_area(area, "First")
             .unwrap();
         let second = world
+            .bedtime_mut()
             .layouts_mut()
             .create_panel_in_area(area, "Second")
             .unwrap();
@@ -252,7 +269,7 @@ mod tests {
         app.update();
         let world = app.world();
         assert!(world.get_entity(second).is_err(), "the panel closes");
-        assert_eq!(world.layouts().panels_in_area(area), [first]);
+        assert_eq!(world.bedtime().layouts().panels_in_area(area), [first]);
     }
 
     #[test]

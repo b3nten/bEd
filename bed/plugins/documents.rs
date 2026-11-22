@@ -2,7 +2,7 @@
 //! where.
 use bedtime_document::TextBuffer;
 use bedtime_workbench::{
-    DocumentId, NewAppExt, Notification, WorkbenchWorldExt, workspaces::Workspace,
+    BedtimeWorldExt, DocumentId, NewAppExt, Notification, workspaces::Workspace,
 };
 use bevy::prelude::*;
 use std::{future::Future, pin::Pin};
@@ -16,7 +16,7 @@ impl Plugin for DocumentsPlugin {
         app.init_non_send::<SaveDialog>()
             .set_new_document::<TextBuffer>()
             .add_systems(Update, poll_save_dialog);
-        app.world_mut().workbench_mut().set_save_as(ask_where);
+        app.world_mut().bedtime_mut().set_save_as(ask_where);
     }
 }
 
@@ -35,7 +35,7 @@ fn ask_where(world: &mut World, document: DocumentId) {
         .unwrap_or_default();
     // A diagram is saved as one; anything else is text.
     let diagram = world
-        .workbench()
+        .bedtime()
         .cast_document::<bedtime_diagram::Diagram>(document)
         .is_ok();
     let extension = if diagram {
@@ -55,7 +55,7 @@ fn ask_where(world: &mut World, document: DocumentId) {
         .replace((document, Box::pin(dialog.save_file())));
     // One picker at a time: the one it replaced is given up.
     if let Some((other, _)) = previous {
-        world.workbench_mut().cancel_save_as(other);
+        world.bedtime_mut().cancel_save_as(other);
     }
 }
 
@@ -72,15 +72,12 @@ fn poll_save_dialog(world: &mut World) {
     dialog.0 = None;
     match chosen {
         Some(file) => {
-            if let Err(error) = world
-                .workbench_mut()
-                .save_untitled_to(document, file.path())
-            {
+            if let Err(error) = world.bedtime_mut().save_untitled_to(document, file.path()) {
                 world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .notify(Notification::error(format!("Couldn't save: {error}")));
             }
         }
-        None => world.workbench_mut().cancel_save_as(document),
+        None => world.bedtime_mut().cancel_save_as(document),
     }
 }

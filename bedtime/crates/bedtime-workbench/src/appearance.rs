@@ -9,7 +9,7 @@
 //! folder and sets the default. `ThemeEditorPlugin` (opt-in) adds the Theme
 //! Editor panel.
 use crate::settings::{
-    Setting, SettingsAppExt, SettingsWorldExt, settings,
+    Setting, SettingsAppExt, settings,
     ui::{CONTROL_WIDTH, Marks, columns, combo, row},
 };
 use crate::*;
@@ -187,7 +187,7 @@ impl Plugin for ThemesPlugin {
             return;
         };
         let result = install(&folder, self.shipped);
-        app.world_mut().workbench_mut().notify_failure(
+        app.world_mut().bedtime_mut().notify_failure(
             &format!("Couldn't write themes to {}", folder.display()),
             result,
         );
@@ -235,7 +235,7 @@ fn theme_choices(folder: Option<&ThemeFolder>) -> Vec<(String, String)> {
 /// The Theme row of the settings panel: the themes, a button to edit one in
 /// the Theme Editor (when it's installed), and one to open the folder.
 fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
-    let settings = world.settings();
+    let settings = world.bedtime().settings();
     let chosen = settings.get_at::<ColorTheme>(layer);
     let set_here = settings.get_in::<ColorTheme>(layer).is_some();
     let marks = Marks::new(
@@ -311,27 +311,34 @@ fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, laye
         },
     );
     if value != chosen {
-        let result = world.settings_mut().set::<ColorTheme>(layer, value);
+        let result = world
+            .bedtime_mut()
+            .settings_mut()
+            .set::<ColorTheme>(layer, value);
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify_failure("Couldn't change the theme", result);
     }
     if reset {
-        let result = world.settings_mut().clear::<ColorTheme>(layer);
+        let result = world
+            .bedtime_mut()
+            .settings_mut()
+            .clear::<ColorTheme>(layer);
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify_failure("Couldn't reset the theme", result);
     }
     if edit {
         // From the panel this row is in (the focused one: it was clicked).
         let from = world
+            .bedtime()
             .layouts()
             .active()
-            .and_then(|layout| world.layouts().focused_panel(layout))
+            .and_then(|layout| world.bedtime().layouts().focused_panel(layout))
             .map_or(Placement::Focused, Placement::From);
         let result = theme_editor::open(world, Some(chosen.clone()), from);
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify_failure("Couldn't open the Theme Editor", result);
     }
     if open_folder && let Some(folder) = folder {
@@ -345,7 +352,7 @@ fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, laye
         let result = std::fs::create_dir_all(&folder)
             .and_then(|()| std::process::Command::new(opener).arg(&folder).spawn());
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify_failure(&format!("Couldn't open {}", folder.display()), result);
     }
 }
@@ -419,7 +426,7 @@ fn font_choices(_: &World, chosen: &Option<String>) -> (Vec<String>, Option<Stri
 
 /// Bedfont and the installed monospaced families.
 fn font_family_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
-    let chosen = world.settings().get_at::<FontFamily>(layer);
+    let chosen = world.bedtime().settings().get_at::<FontFamily>(layer);
     let (families, note) = font_choices(world, &chosen);
     row::<FontFamily>(ui, world, context, layer, note, |ui, family| {
         let before = family.clone();
@@ -455,16 +462,28 @@ mod tests {
         app.update();
         let global = StoreId::of::<Global>();
         let world = app.world_mut();
-        world.settings_mut().set::<FontSize>(global, 20.0).unwrap();
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .set::<FontSize>(global, 20.0)
+            .unwrap();
         assert_eq!(world.resource::<AppearanceSettings>().font_size, 20.0);
         // As if hand-edited: the value is kept, but what's applied is in range.
-        world.settings_mut().set::<FontSize>(global, 500.0).unwrap();
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .set::<FontSize>(global, 500.0)
+            .unwrap();
         assert_eq!(world.resource::<AppearanceSettings>().font_size, 72.0);
-        world.settings_mut().clear::<FontSize>(global).unwrap();
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .clear::<FontSize>(global)
+            .unwrap();
         assert_eq!(world.resource::<AppearanceSettings>().font_size, 15.5);
         // A workspace can choose its own font.
         let workspace = StoreId::of::<Workspace>();
-        let settings = world.settings_mut();
+        let settings = world.bedtime_mut().settings_mut();
         settings
             .set::<FontFamily>(global, Some("Menlo".into()))
             .unwrap();
@@ -473,7 +492,11 @@ mod tests {
             .unwrap();
         let family = |world: &World| world.resource::<AppearanceSettings>().font_family.clone();
         assert_eq!(family(world).as_deref(), Some("PT Mono"));
-        world.settings_mut().clear::<FontFamily>(workspace).unwrap();
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .clear::<FontFamily>(workspace)
+            .unwrap();
         assert_eq!(family(world).as_deref(), Some("Menlo"));
     }
 
@@ -487,8 +510,16 @@ mod tests {
         let world = app.world_mut();
         assert_eq!(world.resource::<AppearanceSettings>().font_size, 13.0);
         let global = StoreId::of::<Global>();
-        world.settings_mut().set::<FontSize>(global, 18.0).unwrap();
-        world.settings_mut().clear::<FontSize>(global).unwrap();
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .set::<FontSize>(global, 18.0)
+            .unwrap();
+        world
+            .bedtime_mut()
+            .settings_mut()
+            .clear::<FontSize>(global)
+            .unwrap();
         assert_eq!(world.resource::<AppearanceSettings>().font_size, 13.0);
     }
 }

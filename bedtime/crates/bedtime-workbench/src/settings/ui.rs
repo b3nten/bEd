@@ -6,7 +6,8 @@
 //! app that wants something else (search, its own arrangement) reads
 //! [`SettingsUi`] (`rows`) and draws the rows itself; [`row`], [`columns`]
 //! and the markers are the parts.
-use crate::settings::{Setting, Settings, SettingsError, SettingsWorldExt};
+use crate::BedtimeWorldExt as _;
+use crate::settings::{Setting, Settings, SettingsError};
 use bedtime_persistence::StoreId;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bevy::prelude::*;
@@ -335,7 +336,7 @@ pub fn layer_tabs(
     world: &World,
     text: impl Fn(StoreId, &str) -> String,
 ) -> Option<StoreId> {
-    let settings = world.settings();
+    let settings = world.bedtime().settings();
     let layers: Vec<_> = settings.layers().collect();
     let first = *layers.first()?;
     let id = ui.id().with("settings-layer");
@@ -437,7 +438,7 @@ pub fn row<S: Setting>(
     note: Option<String>,
     edit: impl FnOnce(&mut egui::Ui, &mut S::Value) -> bool,
 ) {
-    let settings = world.settings();
+    let settings = world.bedtime().settings();
     let mut value = settings.get_at::<S>(layer);
     let set_here = settings.get_in::<S>(layer).is_some();
     let marks = Marks::new(settings, layer, settings.overridden_above::<S>(layer));
@@ -456,10 +457,10 @@ pub fn row<S: Setting>(
             }
         },
     );
-    if changed && let Err(error) = world.settings_mut().set::<S>(layer, value) {
+    if changed && let Err(error) = world.bedtime_mut().settings_mut().set::<S>(layer, value) {
         world.write_message(SettingsError(format!("Couldn't change {label}: {error}")));
     }
-    if reset && let Err(error) = world.settings_mut().clear::<S>(layer) {
+    if reset && let Err(error) = world.bedtime_mut().settings_mut().clear::<S>(layer) {
         world.write_message(SettingsError(format!("Couldn't reset {label}: {error}")));
     }
 }

@@ -1,3 +1,4 @@
+use crate::BedtimeWorldExt as _;
 use crate::settings::*;
 use bedtime_persistence::{
     MemoryStore, PersistenceAppExt, PersistencePlugin, Store, StoreBackend, StoreId,
@@ -71,19 +72,32 @@ fn later_layers_override_earlier_ones_and_clearing_inherits() {
     assert_eq!(applied(&app), [16.0], "apply runs once at startup");
     let world = app.world_mut();
 
-    world.settings_mut().set::<Indent>(global(), 18.0).unwrap();
     world
+        .bedtime_mut()
+        .settings_mut()
+        .set::<Indent>(global(), 18.0)
+        .unwrap();
+    world
+        .bedtime_mut()
         .settings_mut()
         .set::<Indent>(workspace(), 12.0)
         .unwrap();
     // The workspace still overrides it, so nothing changes.
-    world.settings_mut().set::<Indent>(global(), 20.0).unwrap();
+    world
+        .bedtime_mut()
+        .settings_mut()
+        .set::<Indent>(global(), 20.0)
+        .unwrap();
     let settings = world.resource::<Settings>();
     assert_eq!(settings.get::<Indent>(), 12.0);
     assert_eq!(settings.source::<Indent>(), Some(workspace()));
     assert_eq!(settings.get_in::<Indent>(global()), Some(20.0));
 
-    world.settings_mut().clear::<Indent>(workspace()).unwrap();
+    world
+        .bedtime_mut()
+        .settings_mut()
+        .clear::<Indent>(workspace())
+        .unwrap();
     assert_eq!(world.resource::<Settings>().get::<Indent>(), 20.0);
     assert_eq!(applied(&app), [16.0, 18.0, 12.0, 20.0]);
 }
@@ -96,12 +110,17 @@ fn each_layer_has_its_own_view_and_knows_what_overrides_it() {
     assert_eq!(settings.get_at::<Indent>(global()), 16.0);
     assert_eq!(settings.overridden_above::<Indent>(global()), None);
 
-    world.settings_mut().set::<Indent>(global(), 18.0).unwrap();
+    world
+        .bedtime_mut()
+        .settings_mut()
+        .set::<Indent>(global(), 18.0)
+        .unwrap();
     let settings = world.resource::<Settings>();
     // The workspace inherits the global value.
     assert_eq!(settings.get_at::<Indent>(workspace()), 18.0);
 
     world
+        .bedtime_mut()
         .settings_mut()
         .set::<Indent>(workspace(), 12.0)
         .unwrap();
@@ -120,14 +139,20 @@ fn each_layer_has_its_own_view_and_knows_what_overrides_it() {
 fn setting_the_inherited_value_clears_the_layer() {
     let mut app = app(&MemoryStore::default(), &MemoryStore::default());
     let world = app.world_mut();
-    world.settings_mut().set::<Indent>(global(), 18.0).unwrap();
     world
+        .bedtime_mut()
+        .settings_mut()
+        .set::<Indent>(global(), 18.0)
+        .unwrap();
+    world
+        .bedtime_mut()
         .settings_mut()
         .set::<Indent>(workspace(), 12.0)
         .unwrap();
     // Set back to what the global layer gives: the workspace stops holding a
     // value, so it follows later global changes.
     world
+        .bedtime_mut()
         .settings_mut()
         .set::<Indent>(workspace(), 18.0)
         .unwrap();
@@ -135,10 +160,18 @@ fn setting_the_inherited_value_clears_the_layer() {
         world.resource::<Settings>().get_in::<Indent>(workspace()),
         None
     );
-    world.settings_mut().set::<Indent>(global(), 20.0).unwrap();
+    world
+        .bedtime_mut()
+        .settings_mut()
+        .set::<Indent>(global(), 20.0)
+        .unwrap();
     assert_eq!(world.resource::<Settings>().get::<Indent>(), 20.0);
     // The global layer at the default holds nothing either.
-    world.settings_mut().set::<Indent>(global(), 16.0).unwrap();
+    world
+        .bedtime_mut()
+        .settings_mut()
+        .set::<Indent>(global(), 16.0)
+        .unwrap();
     assert_eq!(
         world.resource::<Settings>().get_in::<Indent>(global()),
         None
@@ -151,11 +184,13 @@ fn settings_can_be_limited_to_some_layers() {
     let world = app.world_mut();
     assert!(
         world
+            .bedtime_mut()
             .settings_mut()
             .set::<RestoreLast>(workspace(), false)
             .is_err()
     );
     world
+        .bedtime_mut()
         .settings_mut()
         .set::<RestoreLast>(global(), false)
         .unwrap();
@@ -184,6 +219,7 @@ fn layers_load_at_startup_save_changes_and_keep_unknown_keys() {
     );
 
     app.world_mut()
+        .bedtime_mut()
         .settings_mut()
         .set::<Indent>(global(), 19.0)
         .unwrap();
@@ -240,6 +276,7 @@ fn an_unreadable_layer_is_never_saved_over() {
     assert_eq!(reported.len(), 1);
     assert_eq!(reported[0].entry, SETTINGS_ENTRY);
     app.world_mut()
+        .bedtime_mut()
         .settings_mut()
         .set::<Indent>(global(), 30.0)
         .unwrap();
@@ -266,6 +303,7 @@ fn enum_values_round_trip_through_a_saved_layer() {
     let mut first = app(&global_backend, &MemoryStore::default());
     first
         .world_mut()
+        .bedtime_mut()
         .settings_mut()
         .set::<ShadeSetting>(global(), Shade::Light)
         .unwrap();
@@ -308,7 +346,7 @@ mod ui {
     }
 
     fn effects_on(world: &World, layer: StoreId) -> bool {
-        world.settings().get_at::<Effects>(layer)
+        world.bedtime().settings().get_at::<Effects>(layer)
     }
 
     crate::settings! {
@@ -392,6 +430,7 @@ mod ui {
         );
         // Only allowed layers show a setting; visibility can follow another.
         app.world_mut()
+            .bedtime_mut()
             .settings_mut()
             .set::<Effects>(workspace(), true)
             .unwrap();
@@ -415,7 +454,7 @@ mod ui {
                 .iter()
                 .all(|(_, rows)| rows.iter().all(|row| row.key != "ui.hidden"))
         );
-        let settings = app.world().settings();
+        let settings = app.world().bedtime().settings();
         assert_eq!(settings.label(global()), Some("Global"));
         assert_eq!(settings.label(workspace()), Some("Workspace"));
         assert_eq!(settings.below(workspace()), Some(global()));

@@ -8,7 +8,7 @@ use crate::{
 use bedtime_filesystem::{EntryKind, operations::Operation};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 use bedtime_workbench::{
-    Notification, Panel, PanelPresentation, PathOptions, ViewerId, WorkbenchWorldExt,
+    BedtimeWorldExt, Notification, Panel, PanelPresentation, PathOptions, ViewerId,
 };
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
@@ -479,7 +479,7 @@ fn draw_tree(
             // to open a file there (an area, beside a tab, a new split).
             if response.drag_started() && row.depth > 0 {
                 let opens = row.kind != EntryKind::Directory
-                    && !world.workbench().viewers_for(&row.path).is_empty();
+                    && !world.bedtime().viewers_for(&row.path).is_empty();
                 let factory = if opens {
                     open_factory(row.path.clone())
                 } else {
@@ -539,7 +539,7 @@ fn draw_tree(
                 let viewers = if row.kind == EntryKind::Directory {
                     Vec::new()
                 } else {
-                    world.workbench().viewers_for(&row.path)
+                    world.bedtime().viewers_for(&row.path)
                 };
                 view.menu = Some((row.path.clone(), viewers));
             }
@@ -1464,11 +1464,11 @@ pub(crate) fn apply(world: &mut World, panel: Entity, root: &Path, intent: Inten
                 place: Some(bedtime_workbench::Placement::From(panel)),
                 ..default()
             };
-            match world.workbench_mut().open_path(&path, options) {
+            match world.bedtime_mut().open_path(&path, options) {
                 Ok(_) => {}
                 Err(error) => {
                     let name = path.file_name().unwrap_or(path.as_os_str()).display();
-                    world.workbench_mut().notify(Notification::error(format!(
+                    world.bedtime_mut().notify(Notification::error(format!(
                         "Couldn't open {name}: {error}"
                     )));
                 }
@@ -1491,13 +1491,13 @@ pub(crate) fn apply(world: &mut World, panel: Entity, root: &Path, intent: Inten
         }
         Intent::Operation(operation) => {
             if let Err(error) = crate::ops::run_file_operation(world, operation, Some(panel)) {
-                world.workbench_mut().notify(Notification::error(error));
+                world.bedtime_mut().notify(Notification::error(error));
             }
         }
         Intent::Copy { paths, cut } => crate::ops::copy_files(world, paths, cut),
         Intent::Paste(folder) => {
             if let Err(error) = crate::ops::paste_files(world, folder, Some(panel)) {
-                world.workbench_mut().notify(Notification::warning(error));
+                world.bedtime_mut().notify(Notification::warning(error));
             }
         }
         Intent::Reveal(path) => crate::ops::reveal(world, panel, &path),
@@ -1527,11 +1527,11 @@ pub fn open_files_factory(paths: Vec<PathBuf>) -> bedtime_workbench::PanelFactor
                 place: Some(bedtime_workbench::Placement::In(area)),
                 ..default()
             };
-            match world.workbench_mut().open_path(path, options) {
+            match world.bedtime_mut().open_path(path, options) {
                 Ok(panel) => shown = panel,
                 Err(error) => {
                     let name = path.file_name().unwrap_or(path.as_os_str()).display();
-                    world.workbench_mut().notify(Notification::error(format!(
+                    world.bedtime_mut().notify(Notification::error(format!(
                         "Couldn't open {name}: {error}"
                     )));
                 }

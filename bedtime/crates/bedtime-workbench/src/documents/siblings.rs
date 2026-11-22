@@ -44,9 +44,10 @@ pub(super) fn sync_siblings(
 ) {
     let now = Instant::now();
     let focused = world
+        .bedtime()
         .layouts()
         .active()
-        .and_then(|layout| world.layouts().focused_panel(layout));
+        .and_then(|layout| world.bedtime().layouts().focused_panel(layout));
     let focus_moved = focused != state.focused;
     state.focused = focused;
     let saved: Vec<DocumentId> = saves
@@ -105,7 +106,7 @@ pub(super) fn sync_siblings(
             _ => {
                 if state.warned.insert(source) {
                     let title = store(world, changed[0]).title();
-                    world.workbench_mut().notify(Notification::warning(format!(
+                    world.bedtime_mut().notify(Notification::warning(format!(
                         "{title} was changed in two views. Save one to bring the other up to date."
                     )));
                 }
@@ -162,7 +163,7 @@ fn pass(world: &mut World, from: Entity, group: &[Entity]) {
         Some(Ok(bytes)) => bytes,
         Some(Err(error)) => {
             let title = world.get::<Document>(from).unwrap().store.title();
-            world.workbench_mut().notify(Notification::warning(format!(
+            world.bedtime_mut().notify(Notification::warning(format!(
                 "{title} couldn't be passed to its other views: {error}"
             )));
             return;
@@ -245,7 +246,7 @@ mod tests {
     }
 
     fn info(world: &World, id: DocumentId) -> DocumentInfo {
-        world.workbench().inspect_document(id).unwrap()
+        world.bedtime().inspect_document(id).unwrap()
     }
 
     /// A text file open as text and as raw bytes, both loaded.
@@ -270,9 +271,9 @@ mod tests {
         let path = directory.join("notes.txt");
         std::fs::write(&path, "one").unwrap();
         let world = app.world_mut();
-        let text = world.workbench_mut().open_path(&path, default()).unwrap();
+        let text = world.bedtime_mut().open_path(&path, default()).unwrap();
         let raw = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_path(
                 &path,
                 PathOptions {
@@ -288,24 +289,24 @@ mod tests {
                 .iter()
                 .all(|&id| info(world, id).status == DocumentStatus::Ready)
         });
-        let workbench = app.world().workbench();
+        let workbench = app.world().bedtime();
         let text = workbench.cast_document::<TextBuffer>(text).unwrap();
         let raw = workbench.cast_document::<Raw>(raw).unwrap();
         (app, directory, text, raw)
     }
 
     fn raw(world: &World, handle: DocumentHandle<Raw>) -> Vec<u8> {
-        world.workbench().read_document(handle).unwrap().0.clone()
+        world.bedtime().read_document(handle).unwrap().0.clone()
     }
 
     fn text(world: &World, handle: DocumentHandle<TextBuffer>) -> String {
-        world.workbench().read_document(handle).unwrap().to_string()
+        world.bedtime().read_document(handle).unwrap().to_string()
     }
 
     fn set_raw(world: &mut World, handle: DocumentHandle<Raw>, bytes: &[u8]) {
         let revision = info(world, handle.id()).revision;
         world
-            .workbench_mut()
+            .bedtime_mut()
             .edit_document(handle, revision, bytes.to_vec(), EditOptions::new("Set"))
             .unwrap();
     }
@@ -316,7 +317,7 @@ mod tests {
         // Opening the same file as text again is the same document.
         let world = app.world_mut();
         let path = directory.join("notes.txt");
-        let again = world.workbench_mut().open_path(&path, default()).unwrap();
+        let again = world.bedtime_mut().open_path(&path, default()).unwrap();
         assert_eq!(document(world, again), text_doc.id());
 
         type_text(world, text_doc, 3, " two");
@@ -340,16 +341,21 @@ mod tests {
         // Close the raw view: its document goes once nothing references it.
         let world = app.world_mut();
         let raw_panel = world
+            .bedtime()
             .layouts()
-            .find::<RawView>(world.layouts().active().unwrap())
+            .find::<RawView>(world.bedtime().layouts().active().unwrap())
             .unwrap();
-        world.layouts_mut().close_panel(raw_panel).unwrap();
+        world
+            .bedtime_mut()
+            .layouts_mut()
+            .close_panel(raw_panel)
+            .unwrap();
         update_until(&mut app, |world| world.get_entity(raw_doc.id().0).is_err());
         let world = app.world_mut();
         type_text(world, text_doc, 3, " more");
         let path = directory.join("notes.txt");
         let panel = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_path(
                 &path,
                 PathOptions {
@@ -359,12 +365,12 @@ mod tests {
             )
             .unwrap();
         let reopened = world
-            .workbench()
+            .bedtime()
             .cast_document::<Raw>(document(world, panel))
             .unwrap();
         update_until(&mut app, |world| {
             world
-                .workbench()
+                .bedtime()
                 .read_document(reopened)
                 .is_ok_and(|raw| raw.0 == b"one more")
         });
@@ -412,7 +418,7 @@ mod tests {
         type_text(world, text_doc, 3, "!");
         update_until(&mut app, |world| raw(world, raw_doc) == b"one!");
         app.world_mut()
-            .workbench_mut()
+            .bedtime_mut()
             .save_document(text_doc.id())
             .unwrap();
         update_until(&mut app, |world| {
@@ -422,7 +428,7 @@ mod tests {
         // The raw document saves on from there without a conflict.
         let world = app.world_mut();
         set_raw(world, raw_doc, b"done");
-        world.workbench_mut().save_document(raw_doc.id()).unwrap();
+        world.bedtime_mut().save_document(raw_doc.id()).unwrap();
         update_until(&mut app, |world| !info(world, raw_doc.id()).saving);
         let world = app.world();
         assert!(!info(world, raw_doc.id()).conflict);

@@ -19,11 +19,11 @@ fn host() -> Host {
     let mut app = App::new();
     app.add_plugins((WorkbenchCorePlugins, CodePlugin));
     let world = app.world_mut();
-    let layout = world.layouts_mut().create("Test").unwrap();
-    world.layouts_mut().activate(layout).unwrap();
+    let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+    world.bedtime_mut().layouts_mut().activate(layout).unwrap();
     let source = MemorySource::new("cats.rs", TextBuffer::from(CODE));
     let editor = world
-        .workbench_mut()
+        .bedtime_mut()
         .open_document(
             source,
             OpenOptions {
@@ -32,12 +32,16 @@ fn host() -> Host {
             },
         )
         .unwrap();
-    let area = world.layouts().destination_area(layout).unwrap();
+    let area = world.bedtime().layouts().destination_area(layout).unwrap();
     let structure = world
         .spawn((StructurePanel::default(), bedtime_workbench::InArea(area)))
         .id();
     world.flush();
-    world.layouts_mut().focus_panel(editor).unwrap();
+    world
+        .bedtime_mut()
+        .layouts_mut()
+        .focus_panel(editor)
+        .unwrap();
     let mut host = Host {
         app,
         editor,
@@ -135,7 +139,11 @@ fn a_pinned_structure_keeps_its_editor() {
     panel.refresh(world);
     assert_eq!(panel.shown.as_ref().map(|(e, _)| *e), Some(editor));
     // A closed editor unpins it.
-    world.layouts_mut().close_panel(editor).unwrap();
+    world
+        .bedtime_mut()
+        .layouts_mut()
+        .close_panel(editor)
+        .unwrap();
     host.app.update();
     panel.refresh(host.app.world());
     assert!(panel.pinned.is_none() && panel.shown.is_none());
@@ -263,7 +271,11 @@ fn the_keyboard_moves_through_the_outline_showing_each_entry() {
     let mut host = host();
     let (editor, structure) = (host.editor, host.structure);
     let world = host.app.world_mut();
-    world.layouts_mut().focus_panel(structure).unwrap();
+    world
+        .bedtime_mut()
+        .layouts_mut()
+        .focus_panel(structure)
+        .unwrap();
     let mut panel = refreshed(world, structure);
     panel.ignore_caret = true;
     let (_, cat) = entry(world, editor, "Cat");
@@ -277,8 +289,11 @@ fn the_keyboard_moves_through_the_outline_showing_each_entry() {
     // Shown in the editor, its name selected, while Structure keeps focus.
     let at = head(world, editor);
     assert_eq!(&CODE[at - 3..at], "age");
-    let layout = world.layouts().active().unwrap();
-    assert_eq!(world.layouts().focused_panel(layout), Some(structure));
+    let layout = world.bedtime().layouts().active().unwrap();
+    assert_eq!(
+        world.bedtime().layouts().focused_panel(layout),
+        Some(structure)
+    );
     // Left goes to the parent, then closes it; Right opens it again.
     keys(world, &mut panel, true, key(egui::Key::ArrowLeft));
     assert_eq!(panel.selected, Some(cat));
@@ -306,7 +321,10 @@ fn the_keyboard_moves_through_the_outline_showing_each_entry() {
     keys(world, &mut panel, false, key(egui::Key::ArrowDown));
     assert_eq!(panel.selected, Some(dog));
     keys(world, &mut panel, false, key(egui::Key::Enter));
-    assert_eq!(world.layouts().focused_panel(layout), Some(editor));
+    assert_eq!(
+        world.bedtime().layouts().focused_panel(layout),
+        Some(editor)
+    );
     let at = head(world, editor);
     assert_eq!(&CODE[at - 3..at], "dog");
     // Escape in the field clears the filter.

@@ -11,7 +11,7 @@
 //! are saved or asked about); an app without them has none, and exits once
 //! its work is done.
 use crate::*;
-use crate::{Workbench, WorkbenchRef};
+use crate::{Bedtime, BedtimeRef};
 use bevy::prelude::*;
 
 /// What a gate says of an exit, each frame it's asked.
@@ -111,7 +111,7 @@ fn poll(world: &mut World) -> Gate {
     all
 }
 
-impl WorkbenchRef {
+impl BedtimeRef {
     /// Whether an exit (a quit, or `restart_session`) is under way: settling
     /// unsaved work, or finishing background work. False again once it's
     /// cancelled or done.
@@ -124,7 +124,7 @@ impl WorkbenchRef {
     }
 }
 
-impl Workbench {
+impl Bedtime {
     /// End the session, as quitting does: what would be lost is settled
     /// (unsaved documents are saved or asked about; `name` titles the
     /// prompt, "Quit" or "Switch workspace"), background work finishes, then
@@ -195,10 +195,10 @@ fn request_quit(
         .read(world.resource::<Messages<CloseRequested>>())
         .count()
         > 0;
-    if !requested || world.workbench().is_exiting() {
+    if !requested || world.bedtime().is_exiting() {
         return;
     }
-    if let Err(error) = world.workbench_mut().request_exit("Quit", |world| {
+    if let Err(error) = world.bedtime_mut().request_exit("Quit", |world| {
         world.write_message(AppExit::Success);
     }) {
         report_error(world, "Quit", &error, None);
@@ -249,7 +249,7 @@ fn advance(world: &mut World) {
 
 /// Explain a failure with an error dialog when there is UI, otherwise log it.
 pub(crate) fn report_error(world: &mut World, title: &str, message: &str, details: Option<String>) {
-    world.request_error_dialog(ErrorDialog {
+    world.bedtime_mut().request_error_dialog(ErrorDialog {
         title: title.into(),
         message: message.into(),
         details,
@@ -271,7 +271,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, crate::AppCorePlugins));
         app.update();
-        assert!(!app.world().workbench().is_exiting());
+        assert!(!app.world().bedtime().is_exiting());
         app.world_mut()
             .write_message(CloseRequested { window: None });
         for _ in 0..4 {
@@ -316,13 +316,13 @@ mod tests {
         // Held: exiting, but not exited.
         GATE.store(1, Ordering::Relaxed);
         quit(&mut app);
-        assert!(app.world().workbench().is_exiting());
+        assert!(app.world().bedtime().is_exiting());
         assert!(!exited(&app));
 
         // Called off: the session goes on, and can be quit again.
         GATE.store(2, Ordering::Relaxed);
         app.update();
-        assert!(!app.world().workbench().is_exiting());
+        assert!(!app.world().bedtime().is_exiting());
         assert!(!exited(&app));
 
         GATE.store(0, Ordering::Relaxed);

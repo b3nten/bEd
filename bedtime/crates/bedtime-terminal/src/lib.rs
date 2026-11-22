@@ -22,6 +22,7 @@ use crate::{
     terminal_pty::{PtyEvent, TerminalCommand, TerminalPty},
 };
 use bedtime_ui::{Theme, UiContext, egui};
+use bedtime_workbench::BedtimeWorldExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -64,8 +65,7 @@ fn new_terminal(
     world: &mut World,
     _: bedtime_workbench::ActionInvocation,
 ) -> bedtime_workbench::ActionResult {
-    use bedtime_workbench::PanelsWorldExt;
-    let terminal = world.open_panel(TerminalPanel::default());
+    let terminal = world.bedtime_mut().open_panel(TerminalPanel::default());
     world
         .get_entity(terminal)
         .map(|_| ())
@@ -599,7 +599,7 @@ fn report_finished_commands(world: &mut World) {
         }
     }
     for report in reports {
-        bedtime_workbench::WorkbenchWorldExt::workbench_mut(world).notify(report);
+        world.bedtime_mut().notify(report);
     }
 }
 
@@ -607,7 +607,7 @@ fn report_finished_commands(world: &mut World) {
 /// shell's directory), web and mail links as the app opens those
 /// (`open_externally`: the system's browser, unless the app has its own way).
 fn open_links(world: &mut World) {
-    use bedtime_workbench::{Notification, PathOptions, WorkbenchWorldExt};
+    use bedtime_workbench::{BedtimeWorldExt, Notification, PathOptions};
     let mut clicked = Vec::new();
     for (entity, mut panel) in world
         .query::<(Entity, &mut TerminalPanel)>()
@@ -629,7 +629,7 @@ fn open_links(world: &mut World) {
     for (panel, link, directory) in clicked {
         let result = match link {
             terminal_links::LinkTarget::External(url) => {
-                bedtime_ui::LinksWorldExt::open_externally_from(world, &url, panel)
+                world.bedtime_mut().open_externally_from(&url, panel)
             }
             terminal_links::LinkTarget::File {
                 host: Some(host), ..
@@ -649,14 +649,14 @@ fn open_links(world: &mut World) {
                     ..Default::default()
                 };
                 world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .open_path(&path, options)
                     .map(|_| ())
                     .map_err(|error| format!("{}: {error}", path.display()))
             }
         };
         if let Err(error) = result {
-            world.workbench_mut().notify(Notification::warning(error));
+            world.bedtime_mut().notify(Notification::warning(error));
         }
     }
 }
@@ -951,10 +951,9 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) fn test_layout(world: &mut bevy::prelude::World) -> bevy::prelude::Entity {
-    use bedtime_workbench::LayoutsWorldExt;
-    let layout = world.layouts_mut().create("Test").unwrap();
-    if world.layouts().active().is_none() {
-        world.layouts_mut().activate(layout).unwrap();
+    let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+    if world.bedtime().layouts().active().is_none() {
+        world.bedtime_mut().layouts_mut().activate(layout).unwrap();
     }
     layout
 }

@@ -7,9 +7,9 @@ use bedtime_ui::UiContext;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    DocumentDraft, DocumentError, DocumentHandle, DocumentId, DocumentReference, DocumentStatus,
-    DocumentUndoGroup, EditOptions, Notification, Panel, PanelPresentation, Reveal, ViewersAppExt,
-    WorkbenchWorldExt,
+    BedtimeWorldExt, DocumentDraft, DocumentError, DocumentHandle, DocumentId, DocumentReference,
+    DocumentStatus, DocumentUndoGroup, EditOptions, Notification, Panel, PanelPresentation, Reveal,
+    ViewersAppExt,
 };
 use bevy::prelude::*;
 
@@ -285,7 +285,7 @@ pub struct EditorPanel {
 pub fn draw_editor(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
     if let Err(error) = draw(ui, world, context, panel) {
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify(Notification::warning(error.to_string()));
     }
 }
@@ -296,7 +296,7 @@ impl Panel for EditorPanel {
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         if let Err(error) = draw(ui, world, context, panel) {
             world
-                .workbench_mut()
+                .bedtime_mut()
                 .notify(Notification::warning(error.to_string()));
         }
     }
@@ -324,7 +324,7 @@ pub fn navigate_change(world: &mut World, panel: Entity, forward: bool) -> bool 
     let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document()) else {
         return false;
     };
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let Some(snapshot) = workbench
         .cast_document::<TextBuffer>(document)
         .and_then(|handle| {
@@ -356,10 +356,7 @@ fn draw(
     let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document()) else {
         return Ok(());
     };
-    let info = world
-        .workbench()
-        .inspect_document(document)
-        .map_err(error)?;
+    let info = world.bedtime().inspect_document(document).map_err(error)?;
     match info.status {
         DocumentStatus::Loading => {
             ui.centered_and_justified(|ui| ui.spinner());
@@ -374,7 +371,7 @@ fn draw(
         DocumentStatus::Ready => {}
     }
     let handle = world
-        .workbench()
+        .bedtime()
         .cast_document::<TextBuffer>(document)
         .map_err(error)?;
     let id = editor_id(panel, document);
@@ -698,7 +695,7 @@ impl DocumentSession<'_> {
         changes: Vec<BufferEdit>,
         group: DocumentUndoGroup,
     ) -> Result<u64, DocumentError> {
-        self.world.workbench_mut().edit_document_transaction(
+        self.world.bedtime_mut().edit_document_transaction(
             self.handle,
             revision,
             changes,
@@ -709,7 +706,7 @@ impl DocumentSession<'_> {
 
 impl TextSession for DocumentSession<'_> {
     fn snapshot(&self) -> Result<TextSnapshot, EditorError> {
-        let workbench = self.world.workbench();
+        let workbench = self.world.bedtime();
         Ok(TextSnapshot {
             text: workbench.read_document(self.handle).map_err(error)?.clone(),
             revision: workbench
@@ -722,7 +719,7 @@ impl TextSession for DocumentSession<'_> {
     fn changes_since(&self, revision: u64) -> Result<Option<Vec<TextCommit>>, EditorError> {
         Ok(self
             .world
-            .workbench()
+            .bedtime()
             .document_changes_since(self.handle, revision)
             .map_err(error)?
             .map(|commits| {
@@ -744,7 +741,7 @@ impl TextSession for DocumentSession<'_> {
         changes: Vec<BufferEdit>,
     ) -> Result<u64, EditorError> {
         let document = self.handle.id();
-        if self.world.workbench().document_has_drafts(document) {
+        if self.world.bedtime().document_has_drafts(document) {
             return Err(EditorError(
                 "Another view has uncommitted text composition".into(),
             ));
@@ -753,7 +750,7 @@ impl TextSession for DocumentSession<'_> {
             Some(group) => group,
             None => self
                 .world
-                .workbench_mut()
+                .bedtime_mut()
                 .begin_document_undo_group(document, self.panel)
                 .map_err(error)?,
         };
@@ -763,7 +760,7 @@ impl TextSession for DocumentSession<'_> {
             Err(DocumentError::StaleUndoGroup) => {
                 let group = self
                     .world
-                    .workbench_mut()
+                    .bedtime_mut()
                     .begin_document_undo_group(document, self.panel)
                     .map_err(error)?;
                 *self.group = Some(group);
@@ -777,10 +774,10 @@ impl TextSession for DocumentSession<'_> {
         let document = self.handle.id();
         let info = self
             .world
-            .workbench()
+            .bedtime()
             .inspect_document(document)
             .map_err(error)?;
-        let workbench = self.world.workbench_mut();
+        let workbench = self.world.bedtime_mut();
         match action {
             HistoryAction::Undo if info.undo_label.is_some() => {
                 workbench.undo_document(document).map_err(error)
@@ -796,7 +793,7 @@ impl TextSession for DocumentSession<'_> {
         if let Some(group) = self.group.take() {
             let _ = self
                 .world
-                .workbench_mut()
+                .bedtime_mut()
                 .end_document_undo_group(self.handle.id(), group);
         }
     }
@@ -814,22 +811,22 @@ impl TextSession for DocumentSession<'_> {
 mod tests {
     use super::*;
     use bedtime_document::MemorySource;
-    use bedtime_workbench::{LayoutsWorldExt, OpenOptions, WorkbenchCorePlugins};
+    use bedtime_workbench::{OpenOptions, WorkbenchCorePlugins};
 
     /// A workbench with the editor, and `text` open in two editor panels.
     fn host(text: &str) -> (App, DocumentHandle<TextBuffer>, Entity, Entity) {
         let mut app = App::new();
         app.add_plugins((WorkbenchCorePlugins, CodePlugin));
         let world = app.world_mut();
-        let layout = world.layouts_mut().create("Test").unwrap();
-        world.layouts_mut().activate(layout).unwrap();
+        let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+        world.bedtime_mut().layouts_mut().activate(layout).unwrap();
         let source = MemorySource::new("notes", TextBuffer::from(text));
         let first = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(source.clone(), OpenOptions::default())
             .unwrap();
         let second = world
-            .workbench_mut()
+            .bedtime_mut()
             .open_document(
                 source,
                 OpenOptions {
@@ -839,11 +836,11 @@ mod tests {
             )
             .unwrap();
         let document = world.get::<DocumentReference>(first).unwrap().document();
-        let handle = world.workbench().cast_document(document).unwrap();
+        let handle = world.bedtime().cast_document(document).unwrap();
         // Loading happens on a worker.
         for _ in 0..200 {
             app.update();
-            let info = app.world().workbench().inspect_document(document).unwrap();
+            let info = app.world().bedtime().inspect_document(document).unwrap();
             if info.status == DocumentStatus::Ready {
                 return (app, handle, first, second);
             }
@@ -898,11 +895,7 @@ mod tests {
         assert_eq!(other.snapshot().unwrap().text, "original");
         other.history(HistoryAction::Redo).unwrap();
         assert_eq!(other.snapshot().unwrap().text, "éoriginal");
-        let info = app
-            .world()
-            .workbench()
-            .inspect_document(handle.id())
-            .unwrap();
+        let info = app.world().bedtime().inspect_document(handle.id()).unwrap();
         assert!(info.dirty);
 
         // Composing in one view blocks edits from the other.

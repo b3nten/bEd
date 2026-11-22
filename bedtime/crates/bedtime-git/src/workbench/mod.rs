@@ -261,7 +261,7 @@ fn source_infos(world: &mut World, root: &Path) -> Vec<(DocumentInfo, PathBuf)> 
         .filter(|(id, _)| seen.insert(*id))
         .filter_map(|(id, path)| {
             world
-                .workbench()
+                .bedtime()
                 .inspect_document(id)
                 .ok()
                 .map(|info| (info, path))
@@ -359,12 +359,12 @@ fn begin(world: &mut World, session: &mut GitSession, operation: Operation) -> R
     // starts Git; a save that did finish remains an ordinary acknowledged save.
     for source in &sources {
         let info = world
-            .workbench()
+            .bedtime()
             .inspect_document(source.id)
             .map_err(|e| e.to_string())?;
         if info.dirty && !info.saving {
             world
-                .workbench_mut()
+                .bedtime_mut()
                 .save_document(source.id)
                 .map_err(|e| e.to_string())?;
         }
@@ -554,7 +554,7 @@ fn poll_pending(world: &mut World, session: &mut GitSession) -> Result<(), Strin
             let mut saving = false;
             for source in &sources {
                 let info = world
-                    .workbench()
+                    .bedtime()
                     .inspect_document(source.id)
                     .map_err(|e| e.to_string())?;
                 if info.revision != source.revision

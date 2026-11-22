@@ -1,4 +1,5 @@
 use crate::*;
+use bedtime_workbench::BedtimeWorldExt as _;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -421,7 +422,7 @@ mod panel {
     use super::*;
     use crate::panel::tests::{TestIntent, intend, settle};
     use bedtime_persistence::{MemoryStore, read_persisted, write_persisted};
-    use bedtime_workbench::{InArea, LayoutsWorldExt, WorkbenchCorePlugins};
+    use bedtime_workbench::{InArea, WorkbenchCorePlugins};
     use bevy::prelude::*;
 
     fn app() -> App {
@@ -441,8 +442,8 @@ mod panel {
     /// A panel in a layout of its own.
     fn panel(app: &mut App) -> Entity {
         let world = app.world_mut();
-        let layout = world.layouts_mut().create("Test").unwrap();
-        let area = world.layouts().destination_area(layout).unwrap();
+        let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+        let area = world.bedtime().layouts().destination_area(layout).unwrap();
         world.spawn((HttpClientPanel::default(), InArea(area))).id()
     }
 

@@ -253,7 +253,7 @@ impl FormatsAppExt for App {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DocumentFormat(pub FormatId);
 
-impl WorkbenchRef {
+impl BedtimeRef {
     /// The format `document` was opened as, if it came from a path.
     pub fn document_format(&self, document: DocumentId) -> Option<FormatId> {
         self.world

@@ -2,13 +2,13 @@
 //! shares.
 use super::{GlobalStore, Workspace, WorkspacesPanel};
 use bedtime_file_explorer::FileExplorer;
-use bedtime_workbench::WorkbenchWorldExt as _;
+use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, Handler, KeyChord, Layout,
     LayoutFallback, MenusAppExt, PanelFactory, StandardMenu,
     persistence::{LayoutTemplate, Persisted, PersistenceAppExt, ReflectPersist},
 };
-use bedtime_workbench::{LayoutsWorldExt, OnWorkspaceOpen, SplitAxis};
+use bedtime_workbench::{OnWorkspaceOpen, SplitAxis};
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -100,6 +100,7 @@ impl Plugin for LayoutSlotsPlugin {
 /// The active layout's slot.
 pub fn current(world: &World) -> Option<LayoutSlot> {
     world
+        .bedtime()
         .layouts()
         .active()
         .and_then(|layout| world.get::<LayoutSlot>(layout).copied())
@@ -107,6 +108,7 @@ pub fn current(world: &World) -> Option<LayoutSlot> {
 
 fn layout_in(world: &World, slot: LayoutSlot) -> Option<Entity> {
     world
+        .bedtime()
         .layouts()
         .all()
         .iter()
@@ -120,7 +122,7 @@ pub fn switch(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
         Some(layout) => layout,
         None => create(world, slot)?,
     };
-    world.layouts_mut().activate(layout)?;
+    world.bedtime_mut().layouts_mut().activate(layout)?;
     Ok(layout)
 }
 
@@ -129,19 +131,20 @@ fn create(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
     let default = world.resource::<LayoutDefaults>().0[slot.0].clone();
     let layout = match default {
         Some(template) => world
+            .bedtime_mut()
             .layouts_mut()
             .instantiate_layout(&template)
             .map_err(|error| format!("{}'s default can't be used: {error}", slot.name()))?,
         None => {
-            let layout = world.layouts_mut().create(slot.name())?;
+            let layout = world.bedtime_mut().layouts_mut().create(slot.name())?;
             let default_workspace = world.get_resource::<Workspace>().is_some_and(|w| w.default);
             if slot == LayoutSlot(0) {
-                let area = world.layouts_mut().destination_area(layout)?;
+                let area = world.bedtime_mut().layouts_mut().destination_area(layout)?;
                 if default_workspace {
                     (PanelFactory::of::<WorkspacesPanel>().create)(world, area);
                 } else {
                     // Files in the left quarter; files open on the right.
-                    world.layouts_mut().split_area(
+                    world.bedtime_mut().layouts_mut().split_area(
                         area,
                         SplitAxis::Horizontal,
                         2500,
@@ -162,18 +165,19 @@ fn create(world: &mut World, slot: LayoutSlot) -> Result<Entity, String> {
 /// saved before slots existed gets its active layout as layout 1.
 pub(crate) fn open_first(world: &mut World) {
     if world
+        .bedtime()
         .layouts()
         .all()
         .iter()
         .all(|&layout| world.get::<LayoutSlot>(layout).is_none())
-        && let Some(layout) = world.layouts().active()
+        && let Some(layout) = world.bedtime().layouts().active()
     {
         world.entity_mut(layout).insert(LayoutSlot(0));
     }
-    if world.layouts().active().is_none() {
+    if world.bedtime().layouts().active().is_none() {
         let result = switch(world, LayoutSlot(0));
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify_failure("Couldn't open a layout", result);
     }
 }
@@ -184,8 +188,12 @@ fn use_layout<const N: usize>(world: &mut World, _: ActionInvocation) -> ActionR
 
 fn save_as_default(world: &mut World, _: ActionInvocation) -> ActionResult {
     let slot = current(world).ok_or("This layout has no number")?;
-    let layout = world.layouts().active().ok_or("No layout is open")?;
-    let template = world.layouts_mut().capture_layout(layout)?;
+    let layout = world
+        .bedtime()
+        .layouts()
+        .active()
+        .ok_or("No layout is open")?;
+    let template = world.bedtime_mut().layouts_mut().capture_layout(layout)?;
     world.resource_mut::<LayoutDefaults>().0[slot.0] = Some(template);
     Ok(())
 }
@@ -194,9 +202,13 @@ fn save_as_default(world: &mut World, _: ActionInvocation) -> ActionResult {
 /// current layout alone.
 fn reset(world: &mut World, _: ActionInvocation) -> ActionResult {
     let slot = current(world).ok_or("This layout has no number")?;
-    let old = world.layouts().active().ok_or("No layout is open")?;
+    let old = world
+        .bedtime()
+        .layouts()
+        .active()
+        .ok_or("No layout is open")?;
     let new = create(world, slot)?;
-    let workbench = world.layouts_mut();
+    let workbench = world.bedtime_mut().layouts_mut();
     workbench.activate(new)?;
     if let Err(error) = workbench.delete(old) {
         workbench.activate(old)?;

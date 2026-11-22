@@ -14,10 +14,10 @@
 //! so repositories aren't touched. A lock file stops two instances from saving
 //! the same workspace over each other.
 use crate::{
-    ErrorDialog, ErrorDialogWorldExt, LayoutsWorldExt, Notification, Root, WorkbenchWorldExt,
+    BedtimeWorldExt, ErrorDialog, Notification, Root,
     persistence::{
-        DirectoryStore, Persisted, PersistenceAppExt, PersistenceDirectory, StoreBackend,
-        StoreId, Stores, WorkbenchStore, load_store, read_persisted, save_store, write_persisted,
+        DirectoryStore, Persisted, PersistenceAppExt, PersistenceDirectory, StoreBackend, StoreId,
+        Stores, WorkbenchStore, load_store, read_persisted, save_store, write_persisted,
     },
     settings::{Setting, SettingsAppExt, read_setting, settings},
 };
@@ -308,7 +308,7 @@ impl Plugin for WorkspacesPlugin {
             .add_systems(Update, report_unclaimed);
         if let Err(error) = &remembered {
             app.world_mut()
-                .workbench_mut()
+                .bedtime_mut()
                 .notify(Notification::error(format!(
                     "Couldn't update recent folders: {error}"
                 )));
@@ -365,7 +365,7 @@ pub fn open_workspace(world: &mut World, folder: Option<PathBuf>) -> Result<(), 
         return Err(format!("{} is open in another window.", next.name()));
     }
     world
-        .workbench_mut()
+        .bedtime_mut()
         .restart_session("Switch workspace", move |world| switch_now(world, next))
 }
 
@@ -384,7 +384,7 @@ fn switch_now(world: &mut World, next: Workspace) {
     world.run_schedule(crate::OnWorkspaceClose);
     // Layouts first (their areas and panels go with them), then whatever else
     // is the workspace's.
-    for layout in world.layouts().all().to_vec() {
+    for layout in world.bedtime().layouts().all().to_vec() {
         world.despawn(layout);
     }
     let rest: Vec<Entity> = world
@@ -435,7 +435,7 @@ fn switch_now(world: &mut World, next: Workspace) {
         };
         world.insert_resource(recent);
         if let Err(error) = remembered {
-            world.workbench_mut().notify(Notification::error(format!(
+            world.bedtime_mut().notify(Notification::error(format!(
                 "Couldn't update recent folders: {error}"
             )));
         }
@@ -534,7 +534,7 @@ struct Unclaimed(pub String);
 
 fn report_unclaimed(world: &mut World) {
     if let Some(Unclaimed(details)) = world.remove_resource::<Unclaimed>() {
-        world.request_error_dialog(ErrorDialog {
+        world.bedtime_mut().request_error_dialog(ErrorDialog {
             title: "Layout won't be saved".into(),
             message: "This folder is already open in another window, or its saved \
                           layout couldn't be claimed. Changes to this window's layout and \

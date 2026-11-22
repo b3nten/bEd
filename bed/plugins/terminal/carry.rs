@@ -7,8 +7,8 @@
 use crate::workspace::Workspace;
 use bedtime_terminal::{TerminalPanel, TerminalSession};
 use bedtime_workbench::{
-    Area, ErrorDialog, ErrorDialogWorldExt, InArea, LayoutsWorldExt, ManagedWork, Notification,
-    OnWorkspaceClosing, OnWorkspaceOpen, Place, WorkbenchWorldExt,
+    Area, BedtimeWorldExt, ErrorDialog, InArea, ManagedWork, Notification, OnWorkspaceClosing,
+    OnWorkspaceOpen, Place,
 };
 use bevy::prelude::*;
 use std::path::PathBuf;
@@ -50,7 +50,7 @@ pub fn switch_carrying_terminals(world: &mut World, folder: PathBuf, origin: Ent
     }
     if let Err(error) = crate::workspace::open_workspace(world, Some(folder)) {
         world.remove_resource::<CarryTerminals>();
-        world.request_error_dialog(ErrorDialog {
+        world.bedtime_mut().request_error_dialog(ErrorDialog {
             title: "Open Folder".into(),
             message: error,
             details: None,
@@ -61,7 +61,7 @@ pub fn switch_carrying_terminals(world: &mut World, folder: PathBuf, origin: Ent
 /// A switch cancelled at the unsaved-documents prompt carries nothing
 /// later.
 fn forget_cancelled(world: &mut World) {
-    if world.contains_resource::<CarryTerminals>() && !world.workbench().is_exiting() {
+    if world.contains_resource::<CarryTerminals>() && !world.bedtime().is_exiting() {
         world.remove_resource::<CarryTerminals>();
     }
 }
@@ -75,10 +75,16 @@ fn take(world: &mut World) {
     if !world.resource::<Workspace>().default {
         return;
     }
-    let Some(layout) = world.layouts().active() else {
+    let Some(layout) = world.bedtime().layouts().active() else {
         return;
     };
-    for (order, panel) in world.layouts().panels(layout).into_iter().enumerate() {
+    for (order, panel) in world
+        .bedtime()
+        .layouts()
+        .panels(layout)
+        .into_iter()
+        .enumerate()
+    {
         let Some(session) = world
             .get_mut::<TerminalPanel>(panel)
             .and_then(|mut terminal| terminal.take_session())
@@ -111,8 +117,9 @@ fn resume(world: &mut World) {
         return;
     }
     holders.sort_by_key(|&(_, order)| order);
-    let mut places: Vec<Entity> = match world.layouts().active() {
+    let mut places: Vec<Entity> = match world.bedtime().layouts().active() {
         Some(layout) => world
+            .bedtime()
             .layouts()
             .panels(layout)
             .into_iter()
@@ -150,10 +157,10 @@ fn resume(world: &mut World) {
         }
     }
     if let Some(panel) = focus {
-        let _ = world.layouts_mut().focus_panel(panel);
+        let _ = world.bedtime_mut().layouts_mut().focus_panel(panel);
     }
     if lost > 0 {
-        world.workbench_mut().notify(Notification::error(format!(
+        world.bedtime_mut().notify(Notification::error(format!(
             "Couldn't place {lost} terminal(s) from the default workspace"
         )));
     }
@@ -164,6 +171,7 @@ fn resume(world: &mut World) {
 fn replace(world: &mut World, old: Entity, terminal: TerminalPanel) -> Entity {
     let area = world.get::<InArea>(old).unwrap().0;
     let index = world
+        .bedtime()
         .layouts()
         .panels_in_area(area)
         .iter()
@@ -177,7 +185,10 @@ fn replace(world: &mut World, old: Entity, terminal: TerminalPanel) -> Entity {
     if world.get_entity(panel).is_err() {
         return panel;
     }
-    let _ = world.layouts_mut().move_tab(panel, area, index);
+    let _ = world
+        .bedtime_mut()
+        .layouts_mut()
+        .move_tab(panel, area, index);
     world.despawn(old);
     let selected = if selected == Some(old) {
         Some(panel)

@@ -54,9 +54,9 @@ pub fn derive_persisted(input: TokenStream) -> TokenStream {
 /// Whether the crate being compiled names `name` in its manifest, as its own
 /// name or as a dependency. (When that can't be told, it does.)
 fn names_crate(name: &str) -> bool {
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .ok()
-        .and_then(|folder| std::fs::read_to_string(std::path::Path::new(&folder).join("Cargo.toml")).ok());
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").ok().and_then(|folder| {
+        std::fs::read_to_string(std::path::Path::new(&folder).join("Cargo.toml")).ok()
+    });
     let Some(manifest) = manifest else {
         return true;
     };

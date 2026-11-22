@@ -2,6 +2,7 @@ mod tree;
 use super::*;
 use crate::{ConflictChoice, RepositoryOperation};
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
+use bedtime_workbench::BedtimeWorldExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 
@@ -327,7 +328,7 @@ impl Panel for GitPanel {
                             place: Some(bedtime_workbench::Placement::From(panel)),
                             ..default()
                         };
-                        world.workbench_mut().open_path(&path, options).map(|_| ())
+                        world.bedtime_mut().open_path(&path, options).map(|_| ())
                     }
                     Action::Terminal => {
                         if let Some(open) = world

@@ -5,12 +5,10 @@
 //! focused panel the keys of actions it handles itself (an editor's Move
 //! Line Up on Alt+Up): they're its even where a text field would otherwise
 //! keep them. After panels draw, `collect` takes the shortcuts widgets left.
+use crate::BedtimeWorldExt as _;
 use crate::actions::*;
 #[cfg(feature = "persistence")]
-use crate::settings::{
-    SettingsWorldExt,
-    ui::{CONTROL_WIDTH, Marks, columns},
-};
+use crate::settings::ui::{CONTROL_WIDTH, Marks, columns};
 #[cfg(feature = "persistence")]
 use bedtime_persistence::StoreId;
 #[cfg(feature = "persistence")]
@@ -68,7 +66,7 @@ fn claim(world: &mut World) {
     {
         return;
     }
-    let Some(focus) = world.actions().entity(InvocationContext::Focused) else {
+    let Some(focus) = world.bedtime().actions().entity(InvocationContext::Focused) else {
         return;
     };
     let Some(events) = world
@@ -96,6 +94,7 @@ fn claim(world: &mut World) {
             let registry = world.resource::<ActionRegistry>();
             if registry.entity_handler(world, &action, focus).is_none()
                 || !world
+                    .bedtime()
                     .actions()
                     .available(&action, InvocationContext::Entity(focus))
             {
@@ -147,7 +146,7 @@ fn collect(world: &mut World) {
     {
         return;
     }
-    let focus = world.actions().entity(InvocationContext::Focused);
+    let focus = world.bedtime().actions().entity(InvocationContext::Focused);
     let text = capture.text || ctx.text_edit_focused();
     let mut seen = HashSet::new();
     let mut chords: Vec<_> = world
@@ -296,10 +295,13 @@ pub fn keybindings_section(
     let recording_id = ui.id().with("recording-keys");
     let mut recording: Option<ActionId> = ui.data(|data| data.get_temp(recording_id));
     for (command, label) in actions {
-        let set_here = world.actions().keys_in(&command, layer).is_some();
-        let overridden = world.actions().keys_overridden_above(&command, layer);
-        let marks = Marks::new(world.settings(), layer, overridden);
-        let shared = world.actions().shared_with(&command);
+        let set_here = world.bedtime().actions().keys_in(&command, layer).is_some();
+        let overridden = world
+            .bedtime()
+            .actions()
+            .keys_overridden_above(&command, layer);
+        let marks = Marks::new(world.bedtime().settings(), layer, overridden);
+        let shared = world.bedtime().actions().shared_with(&command);
         let mut reset = false;
         columns(
             ui,
@@ -315,10 +317,11 @@ pub fn keybindings_section(
                         .clicked();
                     match pressed_chord(world) {
                         Some(Ok(chord)) => {
-                            let result =
-                                world
-                                    .actions_mut()
-                                    .set_keys_in(&command, layer, Some(vec![chord]));
+                            let result = world.bedtime_mut().actions_mut().set_keys_in(
+                                &command,
+                                layer,
+                                Some(vec![chord]),
+                            );
                             report(world, &format!("Couldn't change {label}'s keys"), result);
                             recording = None;
                         }
@@ -328,7 +331,7 @@ pub fn keybindings_section(
                     }
                 } else {
                     // The layer's own view, without the layers above it.
-                    let keys = world.actions().keys_at(&command, layer);
+                    let keys = world.bedtime().actions().keys_at(&command, layer);
                     let text = if keys.is_empty() {
                         egui::RichText::new("Not set").weak()
                     } else {
@@ -351,7 +354,10 @@ pub fn keybindings_section(
             },
         );
         if reset {
-            let result = world.actions_mut().set_keys_in(&command, layer, None);
+            let result = world
+                .bedtime_mut()
+                .actions_mut()
+                .set_keys_in(&command, layer, None);
             report(world, &format!("Couldn't reset {label}'s keys"), result);
         }
     }

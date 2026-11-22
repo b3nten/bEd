@@ -94,8 +94,8 @@ impl std::fmt::Display for SettingsError {
     }
 }
 
-/// `world.settings()` and `world.settings_mut()`.
-pub trait SettingsWorldExt {
+/// `world.bedtime().settings()` and `world.bedtime_mut().settings_mut()`.
+pub(crate) trait SettingsWorldExt {
     fn settings(&self) -> &Settings;
     fn settings_mut(&mut self) -> &mut SettingsMut;
 }

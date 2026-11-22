@@ -2,11 +2,11 @@
 //! under a new name, and change its colors. Changes are saved to the theme's
 //! file shortly after you stop editing; a shipped theme can be reset.
 use super::{AppearanceSettings, ColorTheme, ShippedThemes};
+use crate::BedtimeWorldExt as _;
 use crate::MenusAppExt;
-use crate::WorkbenchWorldExt as _;
 use crate::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel, PanelsWorldExt,
-    persistence::ReflectPersist, settings::SettingsWorldExt,
+    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel,
+    persistence::ReflectPersist,
 };
 use bedtime_ui::{
     BuiltinIcon, UiContext, egui,
@@ -44,7 +44,9 @@ impl Plugin for ThemeEditorPlugin {
 
 /// Open a new editor at `placement`, on `theme` if given.
 pub fn open(world: &mut World, theme: Option<String>, placement: crate::Placement) -> ActionResult {
-    let panel = world.open_panel_at(ThemeEditorPanel::default(), placement)?;
+    let panel = world
+        .bedtime_mut()
+        .open_panel_at(ThemeEditorPanel::default(), placement)?;
     if let Some(theme) = theme
         && let Some(mut editor) = world.get_mut::<ThemeEditorPanel>(panel)
     {
@@ -147,7 +149,7 @@ impl Panel for ThemeEditorPanel {
         }
         if let Some(request) = request {
             let result = act(world, panel, request);
-            world.workbench_mut().notify_failure("Theme Editor", result);
+            world.bedtime_mut().notify_failure("Theme Editor", result);
         }
     }
 }
@@ -416,7 +418,7 @@ fn autosave(world: &mut World) {
     for (id, theme) in due {
         let result = save(world, &id, &theme);
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify_failure(&format!("Couldn't save the theme {id}"), result);
     }
 }
@@ -450,12 +452,18 @@ fn remove(world: &mut World, id: &str) -> Result<(), String> {
 /// Where a settings layer chose theme `old`, choose `new` instead, or
 /// nothing (the default) without one.
 fn replace_setting(world: &mut World, old: &str, new: Option<&str>) -> Result<(), String> {
-    let layers: Vec<_> = world.settings().layers().collect();
+    let layers: Vec<_> = world.bedtime().settings().layers().collect();
     for layer in layers {
-        if world.settings().get_in::<ColorTheme>(layer).as_deref() != Some(old) {
+        if world
+            .bedtime()
+            .settings()
+            .get_in::<ColorTheme>(layer)
+            .as_deref()
+            != Some(old)
+        {
             continue;
         }
-        let settings = world.settings_mut();
+        let settings = world.bedtime_mut().settings_mut();
         match new {
             Some(new) => settings.set::<ColorTheme>(layer, new.to_owned())?,
             None => settings.clear::<ColorTheme>(layer)?,

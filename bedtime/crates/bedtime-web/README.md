@@ -42,7 +42,7 @@ app.add_plugins(WebPlugin);
 - **Overlaid pages** (the setting off). The web view shows itself: less work,
   but it covers whatever is drawn over it. A snapshot stands in for it while
   a menu or popup is open, or areas are being rearranged
-  (`world.layouts().rearranging()`). `ScreenWarp`, kept current by the app,
+  (`world.bedtime().layouts().rearranging()`). `ScreenWarp`, kept current by the app,
   says how the app bends its picture (a curved-screen effect), so the web
   view can stay inside its panel as the panel appears.
 

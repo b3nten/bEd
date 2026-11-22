@@ -9,7 +9,7 @@ use crate::{
     syntax::{DocumentSyntax, Observation},
 };
 use bedtime_ui::{UiContext, egui};
-use bedtime_workbench::{DocumentReference, WorkbenchWorldExt};
+use bedtime_workbench::{BedtimeWorldExt, DocumentReference};
 use bevy::prelude::*;
 use std::sync::Arc;
 
@@ -43,12 +43,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
     update(world, panel);
     let title = world
         .get::<DocumentReference>(panel)
-        .and_then(|reference| {
-            world
-                .workbench()
-                .inspect_document(reference.document())
-                .ok()
-        })
+        .and_then(|reference| world.bedtime().inspect_document(reference.document()).ok())
         .map(|info| info.title)
         .unwrap_or_default();
     let trail = world.get::<Trail>(panel).cloned();

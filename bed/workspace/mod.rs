@@ -5,8 +5,9 @@
 pub mod layouts;
 mod panel;
 
+use bedtime_workbench::BedtimeWorldExt as _;
+use bedtime_workbench::ErrorDialog;
 pub use bedtime_workbench::workspaces::*;
-use bedtime_workbench::{ErrorDialog, ErrorDialogWorldExt};
 use bevy::prelude::*;
 pub use panel::{WorkspacesPanel, WorkspacesPanelPlugin};
 use std::path::PathBuf;
@@ -25,7 +26,7 @@ impl Plugin for BedWorkspacesPlugin {
 /// or explain why not.
 pub fn switch(world: &mut World, folder: Option<PathBuf>) {
     if let Err(error) = open_workspace(world, folder) {
-        world.request_error_dialog(ErrorDialog {
+        world.bedtime_mut().request_error_dialog(ErrorDialog {
             title: "Open Folder".into(),
             message: error,
             details: None,

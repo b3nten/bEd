@@ -30,6 +30,7 @@ pub use chord::{KeyChord, Modifiers};
 #[cfg(feature = "persistence")]
 pub use keys::Keybinding;
 
+use crate::BedtimeWorldExt as _;
 use bevy::prelude::*;
 use std::{any::TypeId, borrow::Cow, collections::VecDeque};
 
@@ -436,13 +437,13 @@ impl ActionAppExt for App {
     }
 }
 
-/// Reading what actions would do: `world.actions()`.
+/// Reading what actions would do: `world.bedtime().actions()`.
 #[repr(transparent)]
 pub struct ActionsRef {
     world: World,
 }
 
-/// Changing actions' keys: `world.actions_mut()`. It reads too.
+/// Changing actions' keys: `world.bedtime_mut().actions_mut()`. It reads too.
 #[repr(transparent)]
 pub struct Actions {
     world: World,
@@ -460,8 +461,8 @@ fn view(world: &World) -> &ActionsRef {
     unsafe { &*(world as *const World).cast::<ActionsRef>() }
 }
 
-/// `world.actions()` and `world.actions_mut()`.
-pub trait ActionsWorldExt {
+/// `world.bedtime().actions()` and `world.bedtime_mut().actions_mut()`.
+pub(crate) trait ActionsWorldExt {
     fn actions(&self) -> &ActionsRef;
     fn actions_mut(&mut self) -> &mut Actions;
 }
@@ -590,7 +591,7 @@ fn chord_target(
 fn shortcuts(world: &mut World) {
     let presses = std::mem::take(&mut world.resource_mut::<BindingInput>().0);
     for press in presses {
-        let entity = world.actions().entity(press.context);
+        let entity = world.bedtime().actions().entity(press.context);
         let action = match chord_target(world, press.chord, entity) {
             Ok(Some(action)) => action,
             Ok(None) => continue,
@@ -624,7 +625,7 @@ pub(crate) fn dispatch(world: &mut World) {
     let pending = std::mem::take(&mut world.resource_mut::<ActionRequests>().0);
     for request in pending {
         let invocation = ActionInvocation {
-            entity: world.actions().entity(request.context),
+            entity: world.bedtime().actions().entity(request.context),
             action: request.action,
             source: request.source,
         };

@@ -1,8 +1,7 @@
 //! Autosave. Applications choose the policy with the `DocumentAutosave`
 //! resource; workbench applies it to every document.
 use super::*;
-use crate::LayoutsWorldExt;
-use crate::WorkbenchWorldExt;
+use crate::BedtimeWorldExt;
 use bevy::ecs::message::MessageCursor;
 use std::{
     collections::BTreeMap,
@@ -62,18 +61,18 @@ pub(crate) fn autosave(
         .collect();
     let now = Instant::now();
     let policy = world.resource::<DocumentAutosave>().0;
-    let current = world.layouts().active().and_then(|layout| {
-        let panel = world.layouts().focused_panel(layout)?;
+    let current = world.bedtime().layouts().active().and_then(|layout| {
+        let panel = world.bedtime().layouts().focused_panel(layout)?;
         Some(world.get::<DocumentReference>(panel)?.document())
     });
     let departed = (*focused != current).then_some(*focused).flatten();
     *focused = current;
 
     let infos: Vec<_> = world
-        .workbench()
+        .bedtime()
         .document_ids()
         .into_iter()
-        .filter_map(|id| world.workbench().inspect_document(id).ok())
+        .filter_map(|id| world.bedtime().inspect_document(id).ok())
         .collect();
     pending.retain(|id, _| infos.iter().any(|info| info.id == *id));
     for info in infos {
@@ -110,7 +109,7 @@ pub(crate) fn autosave(
         }
         p.attempted = Some(info.revision);
         p.focus_left = false;
-        match world.workbench_mut().save_document(info.id) {
+        match world.bedtime_mut().save_document(info.id) {
             Ok(()) => p.saving = true,
             Err(error) => errors.push(error.to_string()),
         }

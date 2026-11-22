@@ -4,10 +4,10 @@
 //! with a status bar under them. An app adds it, then `DocumentsPlugins` if
 //! its panels show documents, then its own plugins.
 use crate::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, CloseRequested, Handler, KeyChord,
-    MenusAppExt, StandardMenu,
-    AppWindowPlugins, CommandPalettePlugin, LayoutCamera, LayoutSurface, StandardMenusPlugin,
-    SurfaceBody, persistence::PersistencePlugin, settings::SettingsPanelPlugin,
+    Action, ActionAppExt, ActionInvocation, ActionResult, AppWindowPlugins, CloseRequested,
+    CommandPalettePlugin, Handler, KeyChord, LayoutCamera, LayoutSurface, MenusAppExt,
+    StandardMenu, StandardMenusPlugin, SurfaceBody, persistence::PersistencePlugin,
+    settings::SettingsPanelPlugin,
 };
 use bevy::{app::PluginGroupBuilder, prelude::*, window::PrimaryWindow};
 
@@ -75,6 +75,7 @@ impl PluginGroup for AppPlugins {
             group = group.add_group(DefaultPlugins).set(WindowPlugin {
                 primary_window: Some(Window {
                     title: (*name).into(),
+                    focused: !driven_by_script(),
                     ..default()
                 }),
                 close_when_requested: false,
@@ -90,6 +91,17 @@ impl PluginGroup for AppPlugins {
             .add(CommandPalettePlugin)
             .add(ShellPlugin(self.info.clone()))
     }
+}
+
+/// Whether a script is driving the app (bedtime-automation: its port is in
+/// `BEDTIME_AUTOMATION_PORT`). A script's window opens unfocused, behind
+/// what's being worked in, so it takes neither the keyboard nor the front:
+/// `Window { focused: !driven_by_script(), .. }`, as `AppPlugins`' window
+/// has. It has to be the window Bevy's plugins are given: whether the app
+/// comes to the front is settled when they're built, from whether a window
+/// is to be focused, and a window can't be made unfocused once it's open.
+pub fn driven_by_script() -> bool {
+    std::env::var_os("BEDTIME_AUTOMATION_PORT").is_some()
 }
 
 /// The app's window as a window of panels: its layouts, with the status bar

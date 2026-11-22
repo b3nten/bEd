@@ -13,7 +13,8 @@ use crate::{
     with_scheme,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiWaker, egui};
-use bedtime_workbench::{LayoutsWorldExt, Panel, PanelInstance, PanelPresentation};
+use bedtime_workbench::BedtimeWorldExt as _;
+use bedtime_workbench::{Panel, PanelInstance, PanelPresentation};
 use bevy::{
     ecs::system::NonSendMarker,
     platform::collections::HashMap,
@@ -257,7 +258,7 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel
     let covered = egui::Popup::is_any_open(ui.ctx())
         || ui.ctx().memory(|memory| memory.top_modal_layer().is_some())
         || egui::DragAndDrop::has_any_payload(ui.ctx())
-        || world.layouts().rearranging();
+        || world.bedtime().layouts().rearranging();
     let showable = ui.is_rect_visible(rect);
 
     if view.is_none() {
@@ -395,7 +396,7 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel
         if has_keyboard && !view.had_keyboard && !panel_focused {
             // After drawing: the layout isn't changed while it's drawn.
             world.commands().queue(move |world: &mut World| {
-                let _ = world.layouts_mut().focus_panel(panel);
+                let _ = world.bedtime_mut().layouts_mut().focus_panel(panel);
             });
         }
         view.had_keyboard = has_keyboard;

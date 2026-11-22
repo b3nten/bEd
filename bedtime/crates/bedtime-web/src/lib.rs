@@ -11,6 +11,7 @@
 //! rest of the app. With the setting off the web view shows itself, over
 //! everything the app draws.
 use bedtime_ui::{UiContext, egui};
+use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::{Panel, persistence::ReflectPersist};
 use bevy::prelude::*;
 
@@ -63,22 +64,27 @@ bedtime_workbench::settings! {
 /// (focused), else a new one, somewhere other than `from` (the panel it was
 /// opened from; with none, the focused area). Returns the panel.
 pub fn open_url(world: &mut World, url: &str, from: Option<Entity>) -> Result<Entity, String> {
-    use bedtime_workbench::{LayoutsWorldExt, PanelsWorldExt, Placement};
+    use bedtime_workbench::Placement;
     if cfg!(not(target_os = "macos")) {
         return Err("Web pages show on macOS".into());
     }
-    let layout = world.layouts_mut().ensure_active()?;
+    let layout = world.bedtime_mut().layouts_mut().ensure_active()?;
     let same = |a: &str, b: &str| a.trim_end_matches('/') == b.trim_end_matches('/');
-    let showing = world.layouts().panels(layout).into_iter().find(|&panel| {
-        world
-            .get::<WebPanel>(panel)
-            .is_some_and(|web| same(&web.url, url))
-    });
+    let showing = world
+        .bedtime()
+        .layouts()
+        .panels(layout)
+        .into_iter()
+        .find(|&panel| {
+            world
+                .get::<WebPanel>(panel)
+                .is_some_and(|web| same(&web.url, url))
+        });
     if let Some(panel) = showing {
-        world.layouts_mut().focus_panel(panel)?;
+        world.bedtime_mut().layouts_mut().focus_panel(panel)?;
         return Ok(panel);
     }
-    world.open_panel_at(
+    world.bedtime_mut().open_panel_at(
         WebPanel {
             url: url.to_string(),
         },

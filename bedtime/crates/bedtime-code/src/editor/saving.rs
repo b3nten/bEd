@@ -8,9 +8,9 @@
 //! or failed) up to `FORMAT_WAIT`, then saves without it.
 use super::*;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionHandler, ActionInvocation, ActionResult, DocumentId, DocumentInfo,
-    DocumentReference, EditOptions, Handler, MenusAppExt, Notification, SaveDocument, StandardMenu,
-    WorkbenchWorldExt,
+    Action, ActionAppExt, ActionHandler, ActionInvocation, ActionResult, BedtimeWorldExt,
+    DocumentId, DocumentInfo, DocumentReference, EditOptions, Handler, MenusAppExt, Notification,
+    SaveDocument, StandardMenu,
 };
 use bevy::prelude::*;
 use std::time::{Duration, Instant};
@@ -66,7 +66,7 @@ fn handle_save(add: On<Add<EditorPanel>>, mut commands: Commands) {
 
 fn info(world: &World, panel: Option<Entity>) -> Option<DocumentInfo> {
     let document = world.get::<DocumentReference>(panel?)?.document();
-    world.workbench().inspect_document(document).ok()
+    world.bedtime().inspect_document(document).ok()
 }
 
 fn save(world: &mut World, invocation: ActionInvocation) -> ActionResult {
@@ -102,7 +102,7 @@ fn start(world: &mut World, invocation: ActionInvocation, format: bool) -> Actio
         }
         // Asked for by name: say why it saved without.
         if invocation.action.as_str() == FormatAndSave::KEY {
-            world.workbench_mut().notify(Notification::info(
+            world.bedtime_mut().notify(Notification::info(
                 "Not formatted: no language server for this file",
             ));
         }
@@ -138,7 +138,7 @@ fn progress(world: &mut World) {
             if let Some(ticket) = save.ticket {
                 crate::lsp::actions::forget_format(world, ticket);
             }
-            world.workbench_mut().notify(Notification::info(
+            world.bedtime_mut().notify(Notification::info(
                 "Formatting took too long; saved without it",
             ));
             let result = finish(world, save.document);
@@ -160,7 +160,7 @@ fn progress(world: &mut World) {
 fn report(world: &mut World, result: ActionResult) {
     if let Err(error) = result {
         world
-            .workbench_mut()
+            .bedtime_mut()
             .notify(Notification::warning(format!("Save: {error}")));
     }
 }
@@ -170,7 +170,7 @@ fn finish(world: &mut World, document: DocumentId) -> ActionResult {
     // Tidying is a nicety: a document that can't take it now still saves.
     let _ = tidy(world, document);
     world
-        .workbench_mut()
+        .bedtime_mut()
         .save_document(document)
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -187,12 +187,12 @@ fn tidy(world: &mut World, document: DocumentId) -> Result<(), String> {
         return Ok(());
     }
     let info = world
-        .workbench()
+        .bedtime()
         .inspect_document(document)
         .map_err(|e| e.to_string())?;
     let markdown =
         crate::syntax::document_language(world, document, &info.title) == Some("markdown");
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let handle = workbench
         .cast_document::<TextBuffer>(document)
         .map_err(|e| e.to_string())?;
@@ -209,7 +209,7 @@ fn tidy(world: &mut World, document: DocumentId) -> Result<(), String> {
         return Ok(());
     }
     world
-        .workbench_mut()
+        .bedtime_mut()
         .edit_document_transaction(handle, info.revision, edits, EditOptions::new("Tidy"))
         .map(|_| ())
         .map_err(|e| e.to_string())

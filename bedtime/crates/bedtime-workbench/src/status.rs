@@ -307,9 +307,10 @@ pub(crate) fn follow_focus(world: &mut World) {
     let describes =
         |panel: Entity| world.get_entity(panel).is_ok() && items.describes(world, panel);
     let focused = world
+        .bedtime()
         .layouts()
         .active()
-        .and_then(|layout| world.layouts().focused_panel(layout))
+        .and_then(|layout| world.bedtime().layouts().focused_panel(layout))
         .filter(|&panel| describes(panel));
     let remembered = world
         .get_resource::<StatusSource>()
@@ -461,6 +462,7 @@ fn panel_gap(world: &World, context: &UiContext<'_>) -> f32 {
         return 0.0;
     };
     let single = world
+        .bedtime()
         .layouts()
         .active()
         .and_then(|layout| world.get::<LayoutAreas>(layout))
@@ -930,7 +932,11 @@ fn draw_global(
     }
     if let Some(text) = &item.text {
         // Plain text is weak; a warning or error colours it.
-        let text_tone = if tone >= Tone::Warning { tone } else { Tone::Weak };
+        let text_tone = if tone >= Tone::Warning {
+            tone
+        } else {
+            Tone::Weak
+        };
         bits.push(Bit::Text(StatusPiece::new(text_tone, text.clone())));
     }
     let measure = Measure { ui, context };
@@ -962,7 +968,8 @@ fn draw_global(
                 let galley = Measure { ui, context }.galley(piece, None);
                 let top = at.center().y - galley.size().y / 2.0;
                 let color = piece.tone.color(ui, context);
-                ui.painter().galley(egui::pos2(at.left(), top), galley, color);
+                ui.painter()
+                    .galley(egui::pos2(at.left(), top), galley, color);
             }
             bit => {
                 let side = context.metrics.font_size;
@@ -972,11 +979,14 @@ fn draw_global(
         }
         x += bit_width;
     }
-    let response = ui.interact(rect, ui.id().with(("status-global", index)), egui::Sense::hover());
+    let response = ui.interact(
+        rect,
+        ui.id().with(("status-global", index)),
+        egui::Sense::hover(),
+    );
     // Its text and rows, for automation and screen readers (they can't hover).
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, item.described())
-    });
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, item.described()));
     if !item.lines.is_empty() {
         context.frame(ui).tooltip_ui(&response, |frame| {
             global_tooltip(frame.ui, context, index, item);
@@ -1167,8 +1177,9 @@ mod tests {
             .add_panel_status::<Described>(noop);
         let world = app.world_mut();
         let layout = crate::tests::layout(world);
-        let left = world.layouts().destination_area(layout).unwrap();
+        let left = world.bedtime().layouts().destination_area(layout).unwrap();
         let right = world
+            .bedtime_mut()
             .layouts_mut()
             .split_area(left, SplitAxis::Horizontal, 5000, [100, 100])
             .unwrap();

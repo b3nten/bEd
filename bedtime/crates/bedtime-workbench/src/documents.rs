@@ -20,20 +20,19 @@
 //!
 //! let mut app = App::new();
 //! app.add_plugins(WorkbenchCorePlugins);
-//! let document = app.world_mut().workbench_mut().load_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
-//! while app.world().workbench().inspect_document(document.id())?.status == DocumentStatus::Loading {
+//! let document = app.world_mut().bedtime_mut().load_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
+//! while app.world().bedtime().inspect_document(document.id())?.status == DocumentStatus::Loading {
 //!     app.update();
 //! }
-//! app.world_mut().workbench_mut().edit_document(document, 0, BufferEdit::new(5..5, " world"), EditOptions::new("Append"))?;
-//! assert_eq!(app.world().workbench().read_document(document)?.to_string(), "hello world");
-//! assert!(app.world().workbench().inspect_document(document.id())?.dirty);
-//! app.world_mut().workbench_mut().undo_document(document.id())?;
-//! assert!(!app.world().workbench().inspect_document(document.id())?.dirty);
+//! app.world_mut().bedtime_mut().edit_document(document, 0, BufferEdit::new(5..5, " world"), EditOptions::new("Append"))?;
+//! assert_eq!(app.world().bedtime().read_document(document)?.to_string(), "hello world");
+//! assert!(app.world().bedtime().inspect_document(document.id())?.dirty);
+//! app.world_mut().bedtime_mut().undo_document(document.id())?;
+//! assert!(!app.world().bedtime().inspect_document(document.id())?.dirty);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
-use crate::LayoutsWorldExt;
-use crate::{ManagedWork, PanelInstance, Workbench};
-use crate::{WorkbenchRef, WorkbenchWorldExt};
+use crate::{Bedtime, ManagedWork, PanelInstance};
+use crate::{BedtimeRef, BedtimeWorldExt};
 use bevy::{
     ecs::lifecycle::{Discard, Insert},
     prelude::*,
@@ -348,7 +347,7 @@ pub enum DocumentConflictResolution<M: DocumentModel> {
     Merged(M),
 }
 
-impl WorkbenchRef {
+impl BedtimeRef {
     pub fn cast_document<M: DocumentModel>(
         &self,
         id: DocumentId,
@@ -401,7 +400,7 @@ impl WorkbenchRef {
             missing: info.missing,
             writable: info.writable,
             error: info.error,
-            has_drafts: world.workbench().document_has_drafts(id),
+            has_drafts: world.bedtime().document_has_drafts(id),
             untitled: world.get::<crate::Untitled>(id.0).is_some(),
             undo_label: info.undo_label,
             redo_label: info.redo_label,
@@ -457,7 +456,7 @@ impl WorkbenchRef {
     }
 }
 
-impl Workbench {
+impl Bedtime {
     /// Open the document for `source`, or return the one already open for it.
     /// Loading happens on a worker; `inspect_document` reports when it's ready.
     pub fn load_document<M: DocumentModel>(
@@ -478,7 +477,7 @@ impl Workbench {
             })
             .map(|(entity, _)| DocumentId(entity));
         if let Some(id) = existing {
-            return world.workbench().cast_document(id);
+            return world.bedtime().cast_document(id);
         }
         let entity = world
             .spawn(Document {
@@ -523,12 +522,9 @@ impl Workbench {
         options: EditOptions,
     ) -> Result<u64, DocumentError> {
         let world = &mut self.world;
-        world.workbench_mut().edit_document_transaction(
-            handle,
-            expected_revision,
-            [change],
-            options,
-        )
+        world
+            .bedtime_mut()
+            .edit_document_transaction(handle, expected_revision, [change], options)
     }
 
     /// Apply the changes as one undoable step, or none of them.
@@ -629,7 +625,7 @@ impl Workbench {
 
 fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(), DocumentError> {
     validate_session(world)?;
-    let info = world.workbench().inspect_document(id)?;
+    let info = world.bedtime().inspect_document(id)?;
     if info.has_drafts {
         return Err(DocumentError::Drafts);
     }
@@ -642,7 +638,7 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
     if !discard && info.dirty {
         return Err(DocumentError::Dirty);
     }
-    if world.layouts().drawing() {
+    if world.bedtime().layouts().drawing() {
         return Err(DocumentError::InvalidGraph(
             "Documents can't be closed while the workbench is drawing".into(),
         ));
@@ -655,7 +651,7 @@ fn retire_document(world: &mut World, id: DocumentId, discard: bool) -> Result<(
         .copied()
         .filter(|&holder| world.get::<PanelInstance>(holder).is_some())
         .collect();
-    let layouts = world.layouts_mut();
+    let layouts = world.bedtime_mut().layouts_mut();
     for panel in panels {
         layouts
             .close_panel(panel)
@@ -867,7 +863,7 @@ fn validate_holder(world: &World, holder: Entity, id: DocumentId) -> Result<(), 
 }
 
 fn reject_drafts(world: &World, id: DocumentId) -> Result<(), DocumentError> {
-    if world.workbench().document_has_drafts(id) {
+    if world.bedtime().document_has_drafts(id) {
         Err(DocumentError::Drafts)
     } else {
         Ok(())

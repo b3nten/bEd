@@ -13,7 +13,8 @@ mod rig;
 use bedtime_ui::{
     InSurface, UiContext, UiSurface, egui, layouts::LayoutSurface, register_view, viewport_image,
 };
-use bedtime_workbench::settings::{SettingsAppExt, SettingsWorldExt, settings, ui::row};
+use bedtime_workbench::BedtimeWorldExt as _;
+use bedtime_workbench::settings::{SettingsAppExt, settings, ui::row};
 use bevy::{
     asset::{AssetPath, embedded_asset, embedded_path},
     camera::{RenderTarget, ScalingMode},
@@ -49,7 +50,7 @@ settings! {
             label: "kitty color",
             description: "The colour of its fur. Reset it for the cat's own grey.",
             ui: custom(color_row),
-            visible: |world, layer| world.settings().get_at::<ShowCat>(layer),
+            visible: |world, layer| world.bedtime().settings().get_at::<ShowCat>(layer),
             apply: |world, color| world.resource_mut::<Companion>().color = parse_color(color),
         }
     }

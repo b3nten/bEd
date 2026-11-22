@@ -11,7 +11,7 @@ pub use bedtime_persistence::*;
 pub use bedtime_ui::layouts::LayoutTemplate;
 
 use crate::*;
-use crate::{Notification, WorkbenchWorldExt};
+use crate::{BedtimeWorldExt, Notification};
 use bevy::{ecs::message::MessageCursor, prelude::*};
 
 /// The session's store: the world snapshot (layouts, areas, panels and
@@ -66,6 +66,6 @@ fn report_store_errors(world: &mut World, mut cursor: Local<MessageCursor<StoreE
         .map(ToString::to_string)
         .collect();
     for error in errors {
-        world.workbench_mut().notify(Notification::error(error));
+        world.bedtime_mut().notify(Notification::error(error));
     }
 }

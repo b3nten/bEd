@@ -52,8 +52,8 @@ action's chords are also the setting `keys.<KEY>` (`Keybinding<C>`), so they
 live in settings layers like any other setting: a higher layer's list replaces
 lower ones for that action, and an empty list unbinds it. Chords are written
 portably, e.g. `"Primary+Shift+Z"` (Primary is Cmd on macOS, Ctrl elsewhere).
-`world.actions().keys_in` / `keys_at` / `keys_overridden_above` and
-`world.actions_mut().set_keys_in` read and write one layer's chords by action
+`world.bedtime().actions().keys_in` / `keys_at` / `keys_overridden_above` and
+`world.bedtime_mut().actions_mut().set_keys_in` read and write one layer's chords by action
 id, for settings UIs.
 
 Actions may share a chord. Pressing it runs the bound action handled in the
@@ -67,7 +67,7 @@ exactly.
 `InvocationContext::{Focused, Global, Entity(entity)}`). Dispatch runs them in
 order in `PreUpdate` and sends `ActionFinished` with each result, and whether
 a handler ran. Requests made by handlers run next frame.
-`world.actions().available` and `shortcut_for` answer the same questions for
+`world.bedtime().actions().available` and `shortcut_for` answer the same questions for
 menus.
 
 ## The `ui` feature

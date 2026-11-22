@@ -12,8 +12,8 @@ use bedtime_code::{
 };
 use bedtime_document::{BufferEdit, TextBuffer};
 use bedtime_workbench::{
-    DocumentReference, EditOptions, LayoutsWorldExt, PathOptions, Root, ViewerFile,
-    WorkbenchCorePlugins, WorkbenchWorldExt,
+    BedtimeWorldExt, DocumentReference, EditOptions, PathOptions, Root, ViewerFile,
+    WorkbenchCorePlugins,
 };
 use bevy::prelude::*;
 use std::{path::PathBuf, time::Duration};
@@ -63,10 +63,10 @@ fn host(name: &str, scenario: &str) -> (App, PathBuf, Entity) {
             .into(),
         ));
     let world = app.world_mut();
-    let layout = world.layouts_mut().create("Test").unwrap();
-    world.layouts_mut().activate(layout).unwrap();
+    let layout = world.bedtime_mut().layouts_mut().create("Test").unwrap();
+    world.bedtime_mut().layouts_mut().activate(layout).unwrap();
     let panel = world
-        .workbench_mut()
+        .bedtime_mut()
         .open_path(&root.join("main.rs"), PathOptions::default())
         .unwrap();
     (app, root, panel)
@@ -74,7 +74,7 @@ fn host(name: &str, scenario: &str) -> (App, PathBuf, Entity) {
 
 fn text(world: &World, panel: Entity) -> String {
     let document = world.get::<DocumentReference>(panel).unwrap().document();
-    let workbench = world.workbench();
+    let workbench = world.bedtime();
     let handle = workbench.cast_document::<TextBuffer>(document).unwrap();
     workbench.read_document(handle).unwrap().to_string()
 }
@@ -101,11 +101,11 @@ fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
     let world = app.world_mut();
     let document = world.get::<DocumentReference>(panel).unwrap().document();
     let handle = world
-        .workbench()
+        .bedtime()
         .cast_document::<TextBuffer>(document)
         .unwrap();
     world
-        .workbench_mut()
+        .bedtime_mut()
         .edit_document(
             handle,
             0,
@@ -165,16 +165,20 @@ fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
     // Closed (and saved, so nothing unsaved keeps it): the document leaves
     // the server.
     app.world_mut()
-        .workbench_mut()
+        .bedtime_mut()
         .save_document(document)
         .unwrap();
     until(&mut app, "saved", |world| {
         world
-            .workbench()
+            .bedtime()
             .inspect_document(document)
             .is_ok_and(|info| !info.dirty)
     });
-    app.world_mut().layouts_mut().close_panel(panel).unwrap();
+    app.world_mut()
+        .bedtime_mut()
+        .layouts_mut()
+        .close_panel(panel)
+        .unwrap();
     until(&mut app, "the document is closed", |world| {
         world.get::<DocumentServer>(document.entity()).is_none()
     });
@@ -270,11 +274,11 @@ fn saves_asked_for_format_and_tidy_but_programmatic_saves_dont() {
     let edit = |app: &mut App, edit: BufferEdit| {
         let world = app.world_mut();
         let document = world.get::<DocumentReference>(panel).unwrap().document();
-        let workbench = world.workbench();
+        let workbench = world.bedtime();
         let handle = workbench.cast_document::<TextBuffer>(document).unwrap();
         let revision = workbench.inspect_document(document).unwrap().revision;
         world
-            .workbench_mut()
+            .bedtime_mut()
             .edit_document(handle, revision, edit, EditOptions::new("Typing"))
             .unwrap();
         document
@@ -300,11 +304,11 @@ fn saves_asked_for_format_and_tidy_but_programmatic_saves_dont() {
     // (The file is written before the document hears its save finished.)
     until(&mut app, "the save to finish", |world| {
         let document = world.get::<DocumentReference>(panel).unwrap().document();
-        !world.workbench().inspect_document(document).unwrap().saving
+        !world.bedtime().inspect_document(document).unwrap().saving
     });
     let document = edit(&mut app, BufferEdit::new(26..26, "x  "));
     app.world_mut()
-        .workbench_mut()
+        .bedtime_mut()
         .save_document(document)
         .unwrap();
     until(&mut app, "a plain save", |_| {

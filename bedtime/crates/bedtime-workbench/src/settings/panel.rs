@@ -2,7 +2,7 @@
 //! section it was declared in, for whichever layer is chosen, then the
 //! keyboard shortcuts. Add
 //! `SettingsPanelPlugin` to have it, and its `OpenSettings` action.
-use crate::settings::{SettingsWorldExt, ui};
+use crate::settings::ui;
 use crate::*;
 use bedtime_persistence::{StoreId, Stores};
 use bedtime_ui::{UiContext, egui};
@@ -53,7 +53,7 @@ impl Panel for SettingsPanel {
                 ui.add(egui::Label::new(egui::RichText::new(location).small().weak()).truncate());
             }
             let errors = [
-                world.settings().error(layer),
+                world.bedtime().settings().error(layer),
                 world
                     .get_resource::<Stores>()
                     .and_then(|stores| stores.error_in(layer))

@@ -9,17 +9,15 @@
 //! This is the measure of how much an app has to write: `AppPlugins` is the
 //! app, from its name, and `CounterPlugin` is its own feature, as short as a
 //! plugin should be (see docs/concerns.md, "The second app").
+use bedtime::BedtimeWorldExt as _;
 use bedtime::{
     AppPlugins,
     automation::AutomationPlugin,
     persistence::ReflectPersist,
-    ui::{
-        UiContext, egui,
-        layouts::{LayoutsWorldExt, Panel, PanelsWorldExt},
-    },
+    ui::{UiContext, egui, layouts::Panel},
     workbench::{
         Action, ActionAppExt, Handler, MenusAppExt, OnWorkspaceOpen, StandardMenu, open_new,
-        settings::{SettingsAppExt, SettingsWorldExt, settings},
+        settings::{SettingsAppExt, settings},
         status::{GlobalStatus, StatusAppExt},
     },
 };
@@ -81,7 +79,7 @@ impl Panel for Counter {
     const LABEL: &'static str = "Counter";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, _: &UiContext<'_>, panel: Entity) {
-        let step = world.settings().get::<Step>();
+        let step = world.bedtime().settings().get::<Step>();
         let Some(mut counter) = world.get_mut::<Counter>(panel) else {
             return;
         };
@@ -105,7 +103,7 @@ fn total(world: &World, status: &mut GlobalStatus) {
 
 /// With nothing saved, start with a counter.
 fn first_layout(world: &mut World) {
-    if world.layouts().active().is_none() {
-        world.open_panel(Counter::default());
+    if world.bedtime().layouts().active().is_none() {
+        world.bedtime_mut().open_panel(Counter::default());
     }
 }

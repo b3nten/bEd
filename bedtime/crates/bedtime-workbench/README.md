@@ -94,20 +94,20 @@ close_when_requested: false. Workbench handles `CloseRequested` itself; see
 
 ## Operations
 
-Workbench operations are methods on two views of the `World`, from
-`WorkbenchWorldExt`:
+bedtime's operations are methods on two views of the `World`, from
+`BedtimeWorldExt`, the one name for them:
 
 ```rust,ignore
-use bedtime_workbench::WorkbenchWorldExt;
+use bedtime_workbench::BedtimeWorldExt;
 
-// Reads: a `&WorkbenchRef`.
-let layout = world.workbench().active_layout();
-let ids = world.workbench().document_ids();
+// Reads: a `&BedtimeRef`.
+let layout = world.bedtime().layouts().active();
+let ids = world.bedtime().document_ids();
 
-// Changes: a `&mut Workbench`, which also has every read.
-let workbench = world.workbench_mut();
-workbench.focus_panel(panel)?;
-workbench.save_document(id)?;
+// Changes: a `&mut Bedtime`, which also has every read.
+let bedtime = world.bedtime_mut();
+bedtime.layouts_mut().focus_panel(panel)?;
+bedtime.save_document(id)?;
 ```
 
 Changes that have to keep the workbench's rules (membership, persistence,
@@ -118,7 +118,7 @@ command:
 
 ```rust,ignore
 commands.queue(move |world: &mut World| {
-    let _ = world.workbench_mut().save_document(id);
+    let _ = world.bedtime_mut().save_document(id);
 });
 ```
 
@@ -180,9 +180,9 @@ Opening a file gives its document the codec (`set_byte_codec`). Models come from
 
 ```rust,ignore
 let document = world
-    .workbench_mut()
+    .bedtime_mut()
     .load_document(MemorySource::new("Notes", TextBuffer::from("hello")))?;
-// Loads on a worker; world.workbench().inspect_document(document.id())?.status says when it's Ready.
+// Loads on a worker; world.bedtime().inspect_document(document.id())?.status says when it's Ready.
 world.spawn((NotesViewer, DocumentReference::new(document.id()), InArea(area)));
 ```
 
@@ -262,8 +262,8 @@ app.register_viewer::<TextBuffer, EditorPanel>("Text Editor").formats([TEXT])
    .register_viewer::<Bytes, HexPanel>("Hex").formats([DATA])
    .register_default_viewer::<EditorPanel>();
 
-world.workbench_mut().open_document(source, OpenOptions::at(state))?;
-world.workbench_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..default() })?;
+world.bedtime_mut().open_document(source, OpenOptions::at(state))?;
+world.bedtime_mut().open_path(&path, PathOptions { line: Some((41, 0)), ..default() })?;
 commands.open_document(handle, OpenOptions::at(state)); // errors become notifications
 ```
 

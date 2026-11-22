@@ -8,7 +8,7 @@ pub mod scene;
 
 use bedtime_ui::{BackdropStatus, SurfaceBackdrop, layouts::LayoutSurface};
 use bedtime_workbench::{
-    WorkbenchWorldExt,
+    BedtimeWorldExt,
     persistence::PersistenceDirectory,
     settings::{
         SettingsAppExt, settings,
@@ -102,7 +102,7 @@ impl Plugin for BackdropPlugin {
                     std::fs::write(path, source)
                 })
             });
-            app.world_mut().workbench_mut().notify_failure(
+            app.world_mut().bedtime_mut().notify_failure(
                 &format!("Couldn't write backdrops to {}", folder.display()),
                 result,
             );
@@ -192,7 +192,7 @@ fn read(world: &mut World) {
     backdrops.source = source;
     world.resource_mut::<Backdrops>().set_changed();
     world
-        .workbench_mut()
+        .bedtime_mut()
         .notify_failure(&format!("Couldn't read {}", path.display()), result);
 }
 
@@ -238,7 +238,7 @@ fn report(world: &mut World) {
         .collect();
     let name = world.resource::<Backdrops>().chosen.clone();
     for error in failures {
-        world.workbench_mut().notify_failure(
+        world.bedtime_mut().notify_failure(
             &format!("Couldn't compile the backdrop {name}"),
             Err::<(), _>(error),
         );

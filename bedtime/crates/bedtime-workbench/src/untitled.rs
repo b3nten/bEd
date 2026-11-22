@@ -22,7 +22,7 @@ pub struct Untitled {
 #[derive(Resource, Clone, Copy)]
 pub struct SaveAs(pub fn(&mut World, DocumentId));
 
-impl Workbench {
+impl Bedtime {
     /// A new, empty untitled document of model `M`, shown as `options` says.
     #[cfg(feature = "files")]
     pub fn new_untitled<M: bedtime_filesystem::FileModel + Default>(
@@ -47,7 +47,7 @@ impl Workbench {
             .unwrap();
         let source = MemorySource::unsaved(name.clone(), M::default());
         let document = world
-            .workbench_mut()
+            .bedtime_mut()
             .load_document::<M>(source)
             .map_err(|e| e.to_string())?;
         world.entity_mut(document.id().0).insert(Untitled {
@@ -55,9 +55,7 @@ impl Workbench {
             choosing: false,
             save_to: save_to::<M>,
         });
-        world
-            .workbench_mut()
-            .open_document_handle(document, options)
+        world.bedtime_mut().open_document_handle(document, options)
     }
 
     /// Save an untitled document at `path` (overwriting what's there: the
@@ -132,7 +130,7 @@ fn save_to<M: bedtime_filesystem::FileModel>(
     let source_path = source.path();
     crate::documents::replace_source::<M>(world, id, std::sync::Arc::new(source), expected)?;
     world
-        .workbench_mut()
+        .bedtime_mut()
         .save_document(id)
         .map_err(|e| e.to_string())?;
     // Viewers of it reopen it from its file after a restart.

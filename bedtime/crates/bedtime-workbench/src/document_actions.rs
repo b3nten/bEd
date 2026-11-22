@@ -2,7 +2,7 @@
 //! their default keys are always registered; the handlers are opt-in, so an
 //! app can supply its own.
 use crate::*;
-use crate::{Workbench, WorkbenchWorldExt};
+use crate::{Bedtime, BedtimeWorldExt};
 use bevy::prelude::*;
 
 /// Something new where you are: the focused panel's own new thing if it has
@@ -41,7 +41,7 @@ fn new_document<M: bedtime_filesystem::FileModel + Default>(
         .filter(|&panel| world.get::<DocumentReference>(panel).is_some());
     let area = focused.and_then(|panel| world.get::<InArea>(panel).map(|area| area.0));
     world
-        .workbench_mut()
+        .bedtime_mut()
         .new_untitled::<M>(OpenOptions {
             target: Target::New,
             place: area.map(Placement::In),
@@ -85,10 +85,10 @@ pub(crate) fn install(app: &mut App) {
         .add_menu_item::<SaveDocument>(StandardMenu::File, "save")
         .add_menu_item::<UndoDocument>(StandardMenu::Edit, "history")
         .add_menu_item::<RedoDocument>(StandardMenu::Edit, "history");
-    app.world_mut().workbench_mut().register_document_handlers();
+    app.world_mut().bedtime_mut().register_document_handlers();
 }
 
-impl Workbench {
+impl Bedtime {
     /// Handle Save, Undo and Redo globally, for the focused panel's document.
     pub fn register_document_handlers(&mut self) {
         let world = &mut self.world;
@@ -112,10 +112,7 @@ impl Workbench {
 /// The state of the document `panel` references.
 fn info(world: &World, panel: Option<Entity>) -> Option<DocumentInfo> {
     let reference = world.get::<DocumentReference>(panel?)?;
-    world
-        .workbench()
-        .inspect_document(reference.document())
-        .ok()
+    world.bedtime().inspect_document(reference.document()).ok()
 }
 
 fn target(world: &World, invocation: &ActionInvocation) -> Result<DocumentId, String> {
@@ -129,7 +126,7 @@ fn target(world: &World, invocation: &ActionInvocation) -> Result<DocumentId, St
 fn save(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let document = target(world, &invocation)?;
     world
-        .workbench_mut()
+        .bedtime_mut()
         .save_document(document)
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -138,7 +135,7 @@ fn save(world: &mut World, invocation: ActionInvocation) -> ActionResult {
 fn undo(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let document = target(world, &invocation)?;
     world
-        .workbench_mut()
+        .bedtime_mut()
         .undo_document(document)
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -147,7 +144,7 @@ fn undo(world: &mut World, invocation: ActionInvocation) -> ActionResult {
 fn redo(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let document = target(world, &invocation)?;
     world
-        .workbench_mut()
+        .bedtime_mut()
         .redo_document(document)
         .map(|_| ())
         .map_err(|error| error.to_string())
@@ -209,8 +206,9 @@ mod tests {
     }
 
     fn viewers(world: &mut World) -> Vec<Entity> {
-        let layout = world.layouts().active().unwrap();
+        let layout = world.bedtime().layouts().active().unwrap();
         world
+            .bedtime()
             .layouts()
             .panels(layout)
             .into_iter()
@@ -236,10 +234,15 @@ mod tests {
         // Beside it: in its area, though another is larger.
         let area = world.get::<InArea>(first[0]).unwrap().0;
         world
+            .bedtime_mut()
             .layouts_mut()
             .split_area(area, SplitAxis::Horizontal, 2500, [100, 100])
             .unwrap();
-        world.layouts_mut().focus_panel(first[0]).unwrap();
+        world
+            .bedtime_mut()
+            .layouts_mut()
+            .focus_panel(first[0])
+            .unwrap();
         new(&mut app);
         let world = app.world_mut();
         let both = viewers(world);
@@ -250,8 +253,12 @@ mod tests {
         );
 
         // A focused panel with its own New handles it.
-        let console = world.open_panel(Console);
-        world.layouts_mut().focus_panel(console).unwrap();
+        let console = world.bedtime_mut().open_panel(Console);
+        world
+            .bedtime_mut()
+            .layouts_mut()
+            .focus_panel(console)
+            .unwrap();
         new(&mut app);
         let world = app.world_mut();
         assert_eq!(world.resource::<Consoles>().0, 1);

@@ -1,8 +1,9 @@
 //! Keybindings as settings (`settings` feature): one setting per action.
+use crate::BedtimeWorldExt as _;
 use crate::actions::{
     Action, ActionId, ActionRegistry, Actions, ActionsRef, KeyChord, Keybindings,
 };
-use crate::settings::{Setting, SettingsWorldExt};
+use crate::settings::Setting;
 use bedtime_persistence::StoreId;
 use bevy::prelude::*;
 use std::borrow::Cow;
@@ -39,14 +40,23 @@ pub(crate) struct KeySettings {
 impl KeySettings {
     pub(crate) fn of<A: Action>() -> Self {
         Self {
-            keys_in: |world, store| world.settings().get_in::<Keybinding<A>>(store),
-            keys_at: |world, store| world.settings().get_at::<Keybinding<A>>(store),
+            keys_in: |world, store| world.bedtime().settings().get_in::<Keybinding<A>>(store),
+            keys_at: |world, store| world.bedtime().settings().get_at::<Keybinding<A>>(store),
             overridden_above: |world, store| {
-                world.settings().overridden_above::<Keybinding<A>>(store)
+                world
+                    .bedtime()
+                    .settings()
+                    .overridden_above::<Keybinding<A>>(store)
             },
             set_keys_in: |world, store, chords| match chords {
-                Some(chords) => world.settings_mut().set::<Keybinding<A>>(store, chords),
-                None => world.settings_mut().clear::<Keybinding<A>>(store),
+                Some(chords) => world
+                    .bedtime_mut()
+                    .settings_mut()
+                    .set::<Keybinding<A>>(store, chords),
+                None => world
+                    .bedtime_mut()
+                    .settings_mut()
+                    .clear::<Keybinding<A>>(store),
             },
         }
     }
