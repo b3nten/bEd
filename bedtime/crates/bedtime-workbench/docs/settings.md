@@ -104,25 +104,19 @@ Stored values still win over it, and clearing one goes back to it.
 (`SettingsLocation`, which workspaces sets), its errors, every setting, then
 the keyboard shortcuts.
 
-Without a layout, settings show in the sections they were declared in, in the
-order given to `app.settings_sections([...])`, then the order their first
-setting was registered. An app lays the panel out itself with
-`settings_panel!`, listing settings by type from any plugin; a setting it
-leaves out isn't shown (an app may set some itself):
-
-```rust,ignore
-app.set_settings_layout(settings_panel! {
-    "Appearance" { ColorTheme, FontFamily, FontSize }
-    "Editor" { bedtime_code::WrapLines, Autosave }
-});
-```
+Settings show in the sections they were declared in, with nothing for the
+app to list: a plugin's settings appear when the plugin is added. Sections
+come in the order given to `app.settings_sections([...])`, then the order
+their first setting was registered; a section's settings, in the order they
+were registered. A setting declared outside a section isn't in the panel.
 
 `ui::layer_tabs` shows a tab per layer (when there's more than one) and returns
 the one being edited; `ui::sections` draws the sections with a row shown for
 it. Each row shows the layer's own value, a warning when a higher layer
 overrides it, and a button that clears the layer's value. An app wanting
-something else (search) reads the `SettingsUi` resource and draws the rows
-itself, using `ui::row`, `ui::columns` and `ui::Marks`.
+something else (search, its own arrangement) reads the `SettingsUi` resource
+(`rows`) and draws the rows itself, using `ui::row`, `ui::columns` and
+`ui::Marks`.
 
 ```sh
 cargo test -p bedtime-workbench --features persistence settings::

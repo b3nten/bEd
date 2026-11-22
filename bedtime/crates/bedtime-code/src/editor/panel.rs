@@ -36,37 +36,43 @@ bedtime_workbench::settings! {
         pub HighlightOccurrences: bool {
             default: true,
             key: "editor.highlight_occurrences",
-            label: "Highlight occurrences of the selection",
+            label: "Highlight matches",
+            description: "Highlight the other occurrences of the selected text",
             apply: |world, on| world.resource_mut::<EditorDefaults>().highlight_occurrences = *on,
         }
         pub FormatOnSave: bool {
             default: false,
             key: "editor.format_on_save",
-            label: "Format on save (with the language server; not autosave)",
+            label: "Format on save",
+            description: "With the language server, when saving (not when autosaving)",
             apply: |world, on| world.resource_mut::<EditorDefaults>().format_on_save = *on,
         }
         pub TrimTrailingWhitespace: bool {
             default: false,
             key: "editor.trim_trailing_whitespace",
-            label: "Trim trailing whitespace on save",
+            label: "Trim line ends",
+            description: "Remove whitespace at the ends of lines when saving",
             apply: |world, on| world.resource_mut::<EditorDefaults>().trim_trailing_whitespace = *on,
         }
         pub InsertFinalNewline: bool {
             default: false,
             key: "editor.insert_final_newline",
-            label: "End files with a newline on save",
+            label: "Final newline",
+            description: "End files with a newline when saving",
             apply: |world, on| world.resource_mut::<EditorDefaults>().insert_final_newline = *on,
         }
         pub Breadcrumbs: bool {
             default: true,
             key: "editor.breadcrumbs",
-            label: "Breadcrumbs (where the caret is in the file's structure)",
+            label: "Breadcrumbs",
+            description: "Where the caret is in the file's structure, above the text",
             apply: |world, shown| world.resource_mut::<EditorDefaults>().breadcrumbs = *shown,
         }
         pub AutoCloseBrackets: bool {
             default: true,
             key: "editor.auto_close_brackets",
-            label: "Close brackets and quotes",
+            label: "Close brackets",
+            description: "Type a bracket's or quote's other half with it",
             apply: |world, close| world.resource_mut::<EditorDefaults>().auto_close = *close,
         }
     }

@@ -1,6 +1,6 @@
-//! The settings panel (`ui` feature): every registered setting, laid out by
-//! the app's `settings_panel!` or by the sections settings were declared in,
-//! for whichever layer is chosen, then the keyboard shortcuts. Add
+//! The settings panel (`ui` feature): every registered setting, in the
+//! section it was declared in, for whichever layer is chosen, then the
+//! keyboard shortcuts. Add
 //! `SettingsPanelPlugin` to have it, and its `OpenSettings` action.
 use crate::settings::{SettingsWorldExt, ui};
 use crate::*;

@@ -29,8 +29,12 @@ with Bed() as bed:
     assert bed.exists("rotate-ccw"), "the font row has no reset button"
     bed.screenshot("settings-menlo")
 
-    bed.click("rotate-ccw")
-    assert bed.exists("Bedfont") and not bed.exists("rotate-ccw"), "reset didn't clear the font"
+    # The Font row's own reset button: other rows may have one too (a
+    # setting the script was started with).
+    font = centre(bed.find("Font"))
+    on_font_row = lambda: [w for w in bed.find_all("rotate-ccw") if abs(centre(w) - font) < 8]
+    bed.click(on_font_row()[0])
+    assert bed.exists("Bedfont") and not on_font_row(), "reset didn't clear the font"
 
     # Toggles can be switched on: one that's off (some default to on).
     off = [w for w in bed.find_all(role="CheckBox") if w["toggled"] == "False"]

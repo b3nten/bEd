@@ -164,10 +164,11 @@ impl PluginGroup for WorkbenchPlugins {
         #[cfg(feature = "ui")]
         let group = group.add(WorkbenchUiPlugin);
         let group = group.add(StandardMenusPlugin::default());
-        #[cfg(feature = "persistence")]
-        let group = group.add(DocumentSettingsPlugin);
+        // Appearance first: its sections lead the settings panel.
         #[cfg(all(feature = "ui", feature = "persistence"))]
         let group = group.add(appearance::AppearancePlugin);
+        #[cfg(feature = "persistence")]
+        let group = group.add(DocumentSettingsPlugin);
         group
     }
 }

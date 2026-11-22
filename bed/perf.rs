@@ -34,8 +34,8 @@ settings! {
         pub ShowFrameRate: bool {
             default: false,
             key: "status.frame_rate",
-            label: "Frame rate in status bar",
-            description: "Frames drawn in the last second. Hover it for frame times.",
+            label: "Frame rate",
+            description: "In the status bar: frames drawn in the last second. Hover it for frame times.",
             apply: |world, show| world.resource_mut::<FrameStats>().shown = *show,
         }
     }

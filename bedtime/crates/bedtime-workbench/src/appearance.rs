@@ -143,6 +143,9 @@ pub struct AppearancePlugin;
 
 impl Plugin for AppearancePlugin {
     fn build(&self, app: &mut App) {
+        // For the Font setting's list.
+        #[cfg(feature = "system-fonts")]
+        app.init_resource::<bedtime_ui::fonts::InstalledFonts>();
         app.init_resource::<AppearanceSettings>()
             .register_setting::<ColorTheme>()
             .register_setting::<FontFamily>()

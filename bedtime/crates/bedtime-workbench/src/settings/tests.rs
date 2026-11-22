@@ -406,6 +406,15 @@ mod ui {
                 ("Startup", vec![]),
             ]
         );
+        // A setting outside a section has a row, for an app's own panel,
+        // but isn't in a section.
+        let ui = app.world().resource::<SettingsUi>();
+        assert!(ui.rows().iter().any(|row| row.key == "ui.hidden"));
+        assert!(
+            ui.sections()
+                .iter()
+                .all(|(_, rows)| rows.iter().all(|row| row.key != "ui.hidden"))
+        );
         let settings = app.world().settings();
         assert_eq!(settings.label(global()), Some("Global"));
         assert_eq!(settings.label(workspace()), Some("Workspace"));

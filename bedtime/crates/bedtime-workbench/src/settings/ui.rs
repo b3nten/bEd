@@ -1,14 +1,16 @@
 //! Drawing settings: the rows of settings declared in a section, and the
 //! pieces of a settings panel (layer tabs, sections, rows).
 //!
-//! A panel is usually [`layer_tabs`] then [`sections`]. An app that wants
-//! something else (search, another layout) reads [`SettingsUi`] and draws the
-//! rows itself; [`row`], [`columns`] and the markers are the parts.
+//! A panel is usually [`layer_tabs`] then [`sections`]: every setting, in
+//! the section it was declared in, with nothing for the app to lay out. An
+//! app that wants something else (search, its own arrangement) reads
+//! [`SettingsUi`] (`rows`) and draws the rows itself; [`row`], [`columns`]
+//! and the markers are the parts.
 use crate::settings::{Setting, Settings, SettingsError, SettingsWorldExt};
 use bedtime_persistence::StoreId;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bevy::prelude::*;
-use std::{borrow::Cow, ops::RangeInclusive, sync::Arc};
+use std::{ops::RangeInclusive, sync::Arc};
 
 /// The width of the label column, so every section's controls line up.
 pub const LABEL_WIDTH: f32 = 210.0;
@@ -208,8 +210,8 @@ pub mod infer {
 /// One setting row the panel can draw.
 pub struct SettingRow {
     pub key: String,
-    /// The section it was declared in; `None` shows it only where a layout
-    /// puts it.
+    /// The section it was declared in; `None` isn't in the panel (it's
+    /// edited somewhere of its own, or in the settings file).
     pub section: Option<&'static str>,
     pub label: String,
     pub description: Option<&'static str>,
@@ -236,38 +238,26 @@ impl SettingRow {
     }
 }
 
-/// The settings panel's rows, and how they're laid out.
+/// The settings panel's rows, and the order of its sections.
 #[derive(Resource, Default)]
 pub struct SettingsUi {
     rows: Vec<Arc<SettingRow>>,
     /// Section order: the app's, then first registration.
     order: Vec<&'static str>,
-    /// The app's own layout, if it has one.
-    layout: Option<SettingsLayout>,
 }
 
 impl SettingsUi {
-    /// The sections in order, each with its rows. With a layout, exactly its
-    /// sections and settings, in its order (a setting it leaves out isn't
-    /// shown). Without one, each setting in the section it was declared in:
-    /// the sections in the app's order (`settings_sections`), then the
-    /// order their first setting was registered.
+    /// Every registered setting's row, in the order they were registered:
+    /// for an app drawing a settings panel of its own.
+    pub fn rows(&self) -> &[Arc<SettingRow>] {
+        &self.rows
+    }
+
+    /// The sections in order, each with its rows: each setting in the
+    /// section it was declared in, in the order they were registered. The
+    /// sections are in the app's order (`settings_sections`), then the order
+    /// their first setting was registered.
     pub fn sections(&self) -> Vec<(&'static str, Vec<Arc<SettingRow>>)> {
-        if let Some(layout) = &self.layout {
-            return layout
-                .0
-                .iter()
-                .map(|(section, keys)| {
-                    let rows = keys
-                        .iter()
-                        .filter_map(|key| self.rows.iter().find(|row| row.key == **key))
-                        .cloned()
-                        .collect();
-                    (*section, rows)
-                })
-                .filter(|(_, rows): &(_, Vec<_>)| !rows.is_empty())
-                .collect();
-        }
         let mut sections: Vec<&'static str> = self.order.clone();
         for section in self.rows.iter().filter_map(|row| row.section) {
             if !sections.contains(&section) {
@@ -290,60 +280,15 @@ impl SettingsUi {
     }
 }
 
-/// An app's own settings panel: its sections, each listing settings by key,
-/// in order. Usually written with [`settings_panel!`](crate::settings_panel!).
-/// Settings can come from any plugin; ones it leaves out aren't shown.
-#[derive(Clone, Debug, Default)]
-pub struct SettingsLayout(Vec<(&'static str, Vec<Cow<'static, str>>)>);
-
-impl SettingsLayout {
-    pub fn new() -> Self {
-        Self::default()
-    }
-    /// A section titled `title` with these settings (their keys).
-    pub fn section(
-        mut self,
-        title: &'static str,
-        keys: impl IntoIterator<Item = Cow<'static, str>>,
-    ) -> Self {
-        self.0.push((title, keys.into_iter().collect()));
-        self
-    }
-}
-
-/// Lay out the settings panel: sections, each with its settings by type.
-///
-/// ```rust,ignore
-/// app.set_settings_layout(settings_panel! {
-///     "Appearance" { ColorTheme, FontSize }
-///     "Editor" { bedtime_code::WrapLines, Autosave }
-/// });
-/// ```
-#[macro_export]
-macro_rules! settings_panel {
-    ($($title:literal { $($setting:ty),* $(,)? })*) => {
-        $crate::settings::ui::SettingsLayout::new()
-            $(.section($title, [$(<$setting as $crate::settings::Setting>::key()),*]))*
-    };
-}
-
 pub trait SettingsUiAppExt {
     /// The order of the settings panel's sections. Sections not listed follow,
     /// in the order their first setting was registered.
     fn settings_sections(&mut self, order: impl IntoIterator<Item = &'static str>) -> &mut Self;
-    /// Lay the panel out the app's way (`settings_panel!`), in place of each
-    /// setting's declared section.
-    fn set_settings_layout(&mut self, layout: SettingsLayout) -> &mut Self;
 }
 
 impl SettingsUiAppExt for App {
     fn settings_sections(&mut self, order: impl IntoIterator<Item = &'static str>) -> &mut Self {
         self.world_mut().get_resource_or_init::<SettingsUi>().order = order.into_iter().collect();
-        self
-    }
-
-    fn set_settings_layout(&mut self, layout: SettingsLayout) -> &mut Self {
-        self.world_mut().get_resource_or_init::<SettingsUi>().layout = Some(layout);
         self
     }
 }
