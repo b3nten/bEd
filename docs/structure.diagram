@@ -1,0 +1,72 @@
+(
+    version: 1,
+    elements: [
+        (id: "legend", shape: Text(at: (0, -170), text: "Target structure (draft). Green: new. Yellow: splits out of workbench, taking what bed holds of it today.\nPlain: exists today. Arrows read \"builds on\".", size: 16), stroke: Muted),
+        (id: "bins", shape: Rectangle(x: -50, y: -90, w: 1340, h: 162), stroke: Muted, dash: Dashed, rounded: true),
+        (id: "text-1", shape: Text(at: (-34, -82), text: "binaries: thin", size: 16), stroke: Muted),
+        (id: "bin-bed", shape: Group, label: "bed (binary, src/bed.rs)", stroke: Green, children: [
+            (id: "text-2", shape: Text(at: (0, 0), text: "about 10 lines:\nApp + BedPlugins + runtime policy", size: 14)),
+        ]),
+        (id: "bin-engine", shape: Group, label: "game engine (later)", dash: Dashed, children: [
+            (id: "text-3", shape: Text(at: (420, 0), text: "BedPlugins + engine plugins;\nthe game runs in the same ECS", size: 14)),
+        ]),
+        (id: "bin-other", shape: Group, label: "other apps", dash: Dashed, children: [
+            (id: "text-4", shape: Text(at: (840, 0), text: "AppPlugins + the plugins they pick,\nplus their own", size: 14)),
+        ]),
+        (id: "bedlib", shape: Rectangle(x: -50, y: 160, w: 1340, h: 216), stroke: Muted, dash: Dashed, rounded: true),
+        (id: "text-5", shape: Text(at: (-34, 168), text: "bed (library): the IDE, as plugins", size: 16), stroke: Muted),
+        (id: "bed-compose", shape: Group, label: "BedPlugins", stroke: Green, children: [
+            (id: "text-6", shape: Text(at: (0, 250), text: "which bedtime plugins, in what order\nkeymap (VS Code), bed's own keys\nstatus bar order\ntitlebar tools, default layouts", size: 14)),
+        ]),
+        (id: "bed-glue", shape: Group, label: "glue between plugins", children: [
+            (id: "text-7", shape: Text(at: (420, 250), text: "+open, +web, +ducky shell commands\nterminals carried into a new workspace\nsearch seeded from the editor's selection\ngit: open folder, open terminal here\nlinks open in the web panel", size: 14)),
+        ]),
+        (id: "bed-look", shape: Group, label: "personality", children: [
+            (id: "text-8", shape: Text(at: (840, 250), text: "3D backdrops (flyover, internals)\nscreen effects\nshipped themes", size: 14)),
+        ]),
+        (id: "plugins", shape: Rectangle(x: -50, y: 470, w: 1340, h: 198), stroke: Muted, dash: Dashed, rounded: true),
+        (id: "text-9", shape: Text(at: (-34, 478), text: "bedtime plugins: one crate each, added with one line", size: 16), stroke: Muted),
+        (id: "plug-docs", shape: Group, label: "documents and viewers", children: [
+            (id: "text-10", shape: Text(at: (0, 560), text: "code: editor, LSP, structure, TODOs\nmarkdown, datatree, table\ndiagram, sqlite, hex\nimage, audio, video, model, font", size: 14)),
+        ]),
+        (id: "plug-tools", shape: Group, label: "tools", children: [
+            (id: "text-11", shape: Text(at: (420.8, 554.5), text: "terminal, file-explorer\ngit, search\nhttp-client, web\nnotes, schedules, mascots\ncat, frame-rate (from bed)", size: 14)),
+        ]),
+        (id: "plug-rule", shape: Group, label: "the rule", stroke: Muted, children: [
+            (id: "text-12", shape: Text(at: (840, 560), text: "a plugin names the framework,\nnever the app, and another plugin\nonly when it builds on it\n(git on code's editor, for diffs)", size: 14), stroke: Muted),
+        ]),
+        (id: "framework", shape: Rectangle(x: -50, y: 740, w: 1340, h: 288), stroke: Muted, dash: Dashed, rounded: true),
+        (id: "text-13", shape: Text(at: (-34, 748), text: "bedtime framework (today: bedtime-workbench, one crate)", size: 16), stroke: Muted),
+        (id: "fw-app", shape: Group, label: "app: shell and services", stroke: Green, children: [
+            (id: "text-14", shape: Text(at: (0.89, 830.64), text: "AppInfo: name, config folder (once)\nshell: window, camera, surface, titlebar\nactions, keys, command palette\nmenus (native), status bar\nsettings in layers, settings panel\nthemes, fonts, theme editor\nbackground work, notifications\ndialogs, native file pickers\nquit handling; runtime policy (opt in)", size: 14)),
+        ]),
+        (id: "fw-docs", shape: Group, label: "documents", stroke: Yellow, children: [
+            (id: "text-15", shape: Text(at: (420, 830), text: "document store, formats, viewers\nopen by path, file drops\nNew, untitled, Save As\nSave, Undo, Redo\nunsaved-changes prompt, autosave", size: 14)),
+        ]),
+        (id: "fw-ws", shape: Group, label: "workspaces", stroke: Yellow, children: [
+            (id: "text-16", shape: Text(at: (840, 830), text: "a folder with its own store\nrecent folders, switching\nOpen Folder, Open Recent, Close Folder\nnumbered layouts and their defaults\nWorkspaces panel\nNew Window", size: 14)),
+        ]),
+        (id: "foundations", shape: Rectangle(x: -50, y: 1080, w: 1340, h: 216), stroke: Muted, dash: Dashed, rounded: true),
+        (id: "text-17", shape: Text(at: (-34, 1088), text: "bedtime foundations", size: 16), stroke: Muted),
+        (id: "f-ui", shape: Group, label: "bedtime-ui", children: [
+            (id: "text-18", shape: Text(at: (0, 1170), text: "theme, metrics, icons, widgets\nlayouts: areas, tabs, panels\nsurfaces, window chrome\nviewports (3D in a panel)\nbackdrops, pickers, links", size: 14)),
+        ]),
+        (id: "f-persist", shape: Group, label: "bedtime-persistence", children: [
+            (id: "text-19", shape: Text(at: (320, 1170), text: "stores and backends\nworld snapshot (Persist)\npersisted resources\napp scope + session scope", size: 14)),
+        ]),
+        (id: "f-docs", shape: Group, label: "document, filesystem", children: [
+            (id: "text-20", shape: Text(at: (640, 1170), text: "document models and changes\nfile sources, watching\nbyte and text models", size: 14)),
+        ]),
+        (id: "f-misc", shape: Group, label: "supporting crates", children: [
+            (id: "text-21", shape: Text(at: (960, 1170), text: "clipboard, syntax + grammars\nautomation (scripted UI tests)", size: 14)),
+        ]),
+        (id: "facade", shape: Group, label: "bedtime (facade crate)", stroke: Green, children: [
+            (id: "text-22", shape: Text(at: (1420, 560), text: "the one dependency:\nre-exports the layers by feature,\na prelude, plugin groups", size: 14)),
+        ]),
+        (id: "bins-on-bedlib", shape: Arrow(from: "bins", to: "bedlib", from_side: Bottom, to_side: Top)),
+        (id: "bedlib-on-plugins", shape: Arrow(from: "bedlib", to: "plugins", from_side: Bottom, to_side: Top)),
+        (id: "plugins-on-framework", shape: Arrow(from: "plugins", to: "framework", from_side: Bottom, to_side: Top)),
+        (id: "framework-on-foundations", shape: Arrow(from: "framework", to: "foundations", from_side: Bottom, to_side: Top)),
+        (id: "other-on-facade", shape: Arrow(from: "bin-other", to: "facade", from_side: Right, to_side: Top, via: [(1540, 18)]), label: "without bed", stroke: Muted, dash: Dashed),
+    ],
+)
