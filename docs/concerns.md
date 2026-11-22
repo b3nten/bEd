@@ -33,6 +33,22 @@ and the decision to make.
   build on it. Done: `bed::BedPlugins`, `bed::default_plugins()`,
   `bed::runtime`.
 
+Step 6 (contributions), as decided:
+
+- A panel the app opens by name is one call, `app.add_panel::<P>()`, with
+  `impl ShowPanel for P { const SHOW: &str = "notes.show"; }`. It gives
+  `Show<P>` (in the palette, with its keys) and an item in the View menu's
+  one list of panels. It always opens a new panel.
+- Action keys for opening panels are one scheme, `<panel>.show`
+  (`settings.show`, `terminal.show`, `git_history.show`, `structure.show`,
+  `todos.show`, `language_servers.show`, `theme_editor.show`, `bed.show`,
+  `workspaces.show`). Custom keybindings saved under the old keys are
+  dropped.
+- Plugins add their own global status items; they show in the order plugins
+  are added, as menu items do. Menu order stays plugin order.
+- Titlebar tools are the app's: bed lists them (`tool::<GitPanel>(…)`).
+- The status bar names the focused panel at its right, while there's room.
+
 ## The kinds, at a glance
 
 | Kind | Count | Contributed with | Who arranges it today |

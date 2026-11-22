@@ -23,6 +23,7 @@ use crate::{
 };
 use bedtime_ui::{Theme, UiContext, egui};
 use bedtime_workbench::BedtimeWorldExt as _;
+use bedtime_workbench::PanelsAppExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -48,17 +49,12 @@ pub enum TerminalSystems {
     Update,
 }
 
-/// A new terminal, focused: beside the other terminals, else in the largest
-/// area.
-pub struct NewTerminal;
-impl bedtime_workbench::Action for NewTerminal {
-    const KEY: &'static str = "terminal.new";
-    const LABEL: &'static str = "New Terminal";
-    const DEFAULT_KEYS: &'static [bedtime_workbench::KeyChord] =
-        &[bedtime_workbench::KeyChord::new(
-            bedtime_workbench::Modifiers::CONTROL,
-            KeyCode::Backquote,
-        )];
+impl bedtime_workbench::ShowPanel for TerminalPanel {
+    const SHOW: &'static str = "terminal.show";
+    const SHOW_KEYS: &'static [bedtime_workbench::KeyChord] = &[bedtime_workbench::KeyChord::new(
+        bedtime_workbench::Modifiers::CONTROL,
+        KeyCode::Backquote,
+    )];
 }
 
 fn new_terminal(
@@ -96,10 +92,8 @@ pub struct TerminalPlugin;
 
 impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
-        use bedtime_workbench::{ActionAppExt, MenusAppExt};
         app.register_type::<TerminalPanel>()
-            .add_action_handler::<NewTerminal>(bedtime_workbench::Handler::new(new_terminal))
-            .add_menu_item::<NewTerminal>(bedtime_workbench::StandardMenu::View, "tools")
+            .add_panel_opened_by::<TerminalPanel>(bedtime_workbench::Handler::new(new_terminal))
             .init_resource::<shell::ShellCommands>()
             .add_systems(Startup, shell::initialize)
             .add_systems(

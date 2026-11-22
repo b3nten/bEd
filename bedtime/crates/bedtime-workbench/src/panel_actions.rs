@@ -6,9 +6,68 @@
 use crate::*;
 use bevy::prelude::*;
 
+/// A panel the app opens by name, from the View menu, the command palette
+/// or a key: `app.add_panel::<P>()`.
+///
+/// ```rust,ignore
+/// impl ShowPanel for NotesPanel {
+///     const SHOW: &'static str = "notes.show";
+/// }
+/// ```
+pub trait ShowPanel: Panel + Default {
+    /// Its action's key, `<panel>.show`: stable, used in keybinding
+    /// settings.
+    const SHOW: &'static str;
+    /// What the action is called in menus and the palette: the panel's
+    /// label, unless that's too short out of its tab ("History").
+    const SHOW_LABEL: &'static str = Self::LABEL;
+    /// Its keys, unless the app or the user gives it others.
+    const SHOW_KEYS: &'static [KeyChord] = &[];
+}
+
+/// The action that opens a `P`: a new one each time, in the focused area.
+/// `Show<GitPanel>`, for a button or a keymap.
+pub struct Show<P>(std::marker::PhantomData<fn() -> P>);
+
+impl<P: ShowPanel> Action for Show<P> {
+    const KEY: &'static str = P::SHOW;
+    const LABEL: &'static str = P::SHOW_LABEL;
+    const DEFAULT_KEYS: &'static [KeyChord] = P::SHOW_KEYS;
+}
+
+pub trait PanelsAppExt {
+    /// Make `P` a panel the app opens by name: its type is registered (so
+    /// it's saved with its layout, if it's marked `Persist`), and
+    /// `Show<P>` opens a new one in the focused area, from the View menu's
+    /// panels (in the order plugins add them), the command palette, and its
+    /// keys.
+    fn add_panel<P: ShowPanel + bevy::reflect::GetTypeRegistration>(&mut self) -> &mut Self;
+    /// As `add_panel`, for a panel that's opened its own way: `handler`
+    /// handles `Show<P>`.
+    fn add_panel_opened_by<P: ShowPanel + bevy::reflect::GetTypeRegistration>(
+        &mut self,
+        handler: Handler,
+    ) -> &mut Self;
+}
+
+impl PanelsAppExt for App {
+    fn add_panel<P: ShowPanel + bevy::reflect::GetTypeRegistration>(&mut self) -> &mut Self {
+        self.add_panel_opened_by::<P>(Handler::new(open_new::<P>))
+    }
+
+    fn add_panel_opened_by<P: ShowPanel + bevy::reflect::GetTypeRegistration>(
+        &mut self,
+        handler: Handler,
+    ) -> &mut Self {
+        self.register_type::<P>()
+            .add_action_handler::<Show<P>>(handler)
+            .add_menu_item::<Show<P>>(StandardMenu::View, "panels")
+    }
+}
+
 /// A handler for an action that opens a panel: a new `P` in the focused
 /// area (`Placement::Focused`), whether or not one is open already.
-/// `Handler::new(open_new::<GitPanel>)`.
+/// `Show<P>`'s, from `add_panel`.
 pub fn open_new<P: Component + Default>(world: &mut World, _: ActionInvocation) -> ActionResult {
     world
         .bedtime_mut()
@@ -157,6 +216,54 @@ mod tests {
 
     #[derive(Component)]
     struct ZoomedItself;
+
+    #[bedtime_ui::panel]
+    #[derive(Reflect, Default)]
+    #[reflect(Component)]
+    struct Scratch;
+
+    impl Panel for Scratch {
+        const LABEL: &'static str = "Scratch";
+        fn draw(
+            _: &mut bedtime_ui::egui::Ui,
+            _: &mut World,
+            _: &bedtime_ui::UiContext<'_>,
+            _: Entity,
+        ) {
+        }
+    }
+
+    impl ShowPanel for Scratch {
+        const SHOW: &'static str = "scratch.show";
+    }
+
+    /// One call makes a panel something the app opens by name: its action,
+    /// which opens another each time.
+    #[test]
+    fn an_added_panel_has_an_action_that_opens_a_new_one() {
+        let mut app = App::new();
+        app.add_plugins(AppCorePlugins).add_panel::<Scratch>();
+        crate::tests::layout(app.world_mut());
+        app.update();
+        let show = ActionId::of::<Show<Scratch>>();
+        assert_eq!(show.as_str(), "scratch.show");
+        assert_eq!(
+            app.world().resource::<ActionRegistry>().label(&show),
+            Some("Scratch")
+        );
+        for _ in 0..2 {
+            app.world_mut()
+                .resource_mut::<ActionRequests>()
+                .submit(ActionRequest {
+                    action: show.clone(),
+                    context: InvocationContext::Focused,
+                    source: None,
+                });
+            app.update();
+        }
+        let world = app.world_mut();
+        assert_eq!(world.query::<&Scratch>().iter(world).count(), 2);
+    }
 
     #[test]
     fn zooming_steps_a_panel_unless_it_zooms_itself() {

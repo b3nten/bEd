@@ -44,7 +44,7 @@ with tempfile.TemporaryDirectory() as folder:
     # terminal open, it can sleep through automation requests.
     with Bed(settings={"effects.enabled": True}) as bed:
         # The default workspace, with a shell that has some state.
-        bed.invoke("terminal.new")
+        bed.invoke("terminal.show")
         until(bed, lambda: any(w["role"] == "TextInput" for w in bed.widgets()), "a terminal opens")
         bed.wait(30)
         bed.type(f"export CARRIED=yes-$((6*7)); cd '{root}'; echo before-the-switch")

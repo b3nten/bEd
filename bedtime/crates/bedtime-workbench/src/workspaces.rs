@@ -306,6 +306,9 @@ impl Plugin for WorkspacesPlugin {
                 workspace_settings: self.workspace_settings,
             })
             .add_systems(Update, report_unclaimed);
+        // The workspace's name, in the status bar.
+        #[cfg(feature = "ui")]
+        crate::status::StatusAppExt::add_global_status(app, status_item);
         if let Err(error) = &remembered {
             app.world_mut()
                 .bedtime_mut()
@@ -817,8 +820,7 @@ mod tests {
     }
 }
 
-/// A global status item (`app.add_global_status`): the workspace's name,
-/// with its folder on hover.
+/// The workspace's global status item: its name, with its folder on hover.
 #[cfg(feature = "ui")]
 pub fn status_item(world: &World, status: &mut crate::status::GlobalStatus) {
     if let Some(workspace) = world.get_resource::<Workspace>() {

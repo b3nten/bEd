@@ -82,7 +82,7 @@ for name, settings in [("web", {}), ("web_overlay", {"web.draw_pages": False})]:
 # plainly one. Each address gets a web panel of its own; one already showing
 # it is focused instead.
 with Bed(name="web_shell") as bed:
-    bed.invoke("terminal.new")
+    bed.invoke("terminal.show")
     until(bed, lambda: any(w["role"] == "TextInput" for w in bed.widgets()), "a terminal opens")
     bed.wait(30)
     bed.type(f"+web {site}")

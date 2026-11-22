@@ -4,6 +4,7 @@
 use super::*;
 use bedtime_document::{TextOpenState, TextPosition};
 use bedtime_ui::UiContext;
+use bedtime_workbench::PanelsAppExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -227,11 +228,8 @@ impl Plugin for CodePlugin {
             .formats([bedtime_workbench::TEXT])
             .register_default_viewer::<EditorPanel>()
             .register_type::<crate::structure::StructurePanel>()
-            .add_action_handler::<crate::structure::ShowStructure>(bedtime_workbench::Handler::new(
-                bedtime_workbench::open_new::<crate::structure::StructurePanel>,
-            ))
+            .add_panel::<crate::structure::StructurePanel>()
             .add_plugins(crate::lsp::LanguageServersPlugin)
-            .add_menu_item::<crate::structure::ShowStructure>(View, "panels")
             .add_menu_item::<crate::structure::GoToSymbol>(Edit, "code")
             .add_menu_item::<ToggleWordWrap>(View, "editor")
             .add_menu_item::<crate::lsp::GoToDefinition>(Edit, "code")

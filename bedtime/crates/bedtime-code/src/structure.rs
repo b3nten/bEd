@@ -182,11 +182,8 @@ pub(crate) fn peek(
     }
 }
 
-/// Open Structure: a new one, in the focused area.
-pub struct ShowStructure;
-impl bedtime_workbench::Action for ShowStructure {
-    const KEY: &'static str = "code.show_structure";
-    const LABEL: &'static str = "Structure";
+impl bedtime_workbench::ShowPanel for StructurePanel {
+    const SHOW: &'static str = "structure.show";
 }
 
 /// Which text an outline is of: its document's source and language. Its

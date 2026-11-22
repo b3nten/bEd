@@ -2,20 +2,16 @@
 use super::{RecentWorkspaces, Workspace, available, delete};
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::BedtimeWorldExt as _;
-use bedtime_workbench::{
-    Action, ActionAppExt, ErrorDialog, Handler, MenusAppExt, Panel, StandardMenu,
-    persistence::ReflectPersist,
-};
+use bedtime_workbench::PanelsAppExt as _;
+use bedtime_workbench::{ErrorDialog, Panel, persistence::ReflectPersist};
 use bevy::prelude::*;
 use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
-pub struct OpenWorkspaces;
-impl Action for OpenWorkspaces {
-    const KEY: &'static str = "app.open_workspaces";
-    const LABEL: &'static str = "Workspaces";
+impl bedtime_workbench::ShowPanel for WorkspacesPanel {
+    const SHOW: &'static str = "workspaces.show";
 }
 
 #[bedtime_ui::panel]
@@ -31,10 +27,7 @@ impl Plugin for WorkspacesPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<WorkspacesPanel>()
             .init_resource::<KnownWorkspaces>()
-            .add_action_handler::<OpenWorkspaces>(Handler::new(
-                bedtime_workbench::open_new::<WorkspacesPanel>,
-            ))
-            .add_menu_item::<OpenWorkspaces>(StandardMenu::View, "tools");
+            .add_panel::<WorkspacesPanel>();
     }
 }
 

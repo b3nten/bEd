@@ -1,10 +1,9 @@
 //! bEd's main window: transparent, its content under the titlebar; the
-//! panels with the status bar under them; and what `main` arranged of what
-//! the plugins share: the status bar's global items, bEd's own keys and the
-//! dock menu.
-use crate::{menus, perf, titlebar};
+//! panels with the status bar under them; and what bEd arranges of what the
+//! plugins share: its own keys and the dock menu.
+use crate::{menus, titlebar};
 use bedtime_workbench::{
-    AreaBackground, DockMenuAppExt, LayoutSurface, TabBarVisibility, Titlebar, status::StatusAppExt,
+    AreaBackground, DockMenuAppExt, LayoutSurface, TabBarVisibility, Titlebar,
 };
 use bevy::{prelude::*, window::PrimaryWindow};
 
@@ -25,12 +24,7 @@ pub struct BedWindowPlugin;
 
 impl Plugin for BedWindowPlugin {
     fn build(&self, app: &mut App) {
-        // The status bar's global items, left to right.
-        app.add_global_status(bedtime_workbench::workspaces::status_item)
-            .add_global_status(bedtime_git::workbench::status::global_item)
-            .add_global_status(bedtime_code::lsp::status::global_item)
-            .add_global_status(perf::status_item)
-            .add_dock_menu_item::<menus::NewWindow>()
+        app.add_dock_menu_item::<menus::NewWindow>()
             .add_systems(Startup, setup);
         bedtime_workbench::ActionAppExt::add_keymap(app, KEYS);
     }

@@ -37,7 +37,7 @@ with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as oth
         bed.click("notes.txt")
         bed.invoke("git.show")
         until(bed, lambda: bed.exists("trunk"), "Git shows the branch")
-        bed.invoke("terminal.new")
+        bed.invoke("terminal.show")
         until(bed, lambda: terminal(bed), "a terminal opens")
         bed.screenshot("workspace-switch-before")
 

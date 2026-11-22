@@ -23,9 +23,7 @@ use bevy::prelude::*;
 use std::{ops::RangeInclusive, path::PathBuf};
 
 mod theme_editor;
-pub use theme_editor::{
-    OpenThemeEditor, ThemeEditorPanel, ThemeEditorPlugin, open as open_theme_editor,
-};
+pub use theme_editor::{ThemeEditorPanel, ThemeEditorPlugin, open as open_theme_editor};
 
 const OPACITY: RangeInclusive<f32> = 0.0..=1.0;
 const PANEL_RADIUS: RangeInclusive<f32> = 0.0..=32.0;

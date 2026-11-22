@@ -24,7 +24,7 @@ use std::{
 };
 
 pub use diff::DiffPanel;
-pub use history::{CommitDiffPanel, HistoryPanel, ShowHistory};
+pub use history::{CommitDiffPanel, HistoryPanel};
 pub use panel::{GitHost, GitPanel};
 
 /// Whether a Git operation is under way.
@@ -34,25 +34,21 @@ pub fn has_pending_operation(world: &World) -> bool {
         .is_some_and(|s| s.pending.is_some() || !s.queue.is_empty())
 }
 
-/// Open a Git panel: a new one, in the focused area.
-pub struct ShowGit;
-impl Action for ShowGit {
-    const KEY: &'static str = "git.show";
-    const LABEL: &'static str = "Git";
+impl bedtime_workbench::ShowPanel for GitPanel {
+    const SHOW: &'static str = "git.show";
 }
 
 /// The Git, History and diff panels, and the session behind them.
 pub struct GitPlugin;
 impl Plugin for GitPlugin {
     fn build(&self, app: &mut App) {
+        bedtime_workbench::status::StatusAppExt::add_global_status(app, status::global_item);
         app.register_type::<GitPanel>()
-            .add_action_handler::<ShowGit>(Handler::new(open_new::<GitPanel>))
-            .add_menu_item::<ShowGit>(StandardMenu::View, "panels")
+            .add_panel::<GitPanel>()
             .register_type::<DiffPanel>()
             .register_type::<HistoryPanel>()
             .register_type::<CommitDiffPanel>()
-            .add_action_handler::<ShowHistory>(Handler::new(open_new::<HistoryPanel>))
-            .add_menu_item::<ShowHistory>(StandardMenu::View, "panels")
+            .add_panel::<HistoryPanel>()
             .add_systems(Update, (update, history::update_diffs))
             // The session is the workspace folder's; the next one makes its own.
             .add_systems(OnWorkspaceClose, |world: &mut World| {

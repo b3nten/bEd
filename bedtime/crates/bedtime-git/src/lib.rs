@@ -23,8 +23,7 @@ pub use repository::execute;
 pub mod workbench;
 #[cfg(feature = "workbench")]
 pub use workbench::{
-    CommitDiffPanel, DiffPanel, GitHost, GitPanel, GitPlugin, GitSession, HistoryPanel, ShowGit,
-    ShowHistory,
+    CommitDiffPanel, DiffPanel, GitHost, GitPanel, GitPlugin, GitSession, HistoryPanel,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, Hash)]

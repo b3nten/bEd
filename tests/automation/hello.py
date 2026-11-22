@@ -28,7 +28,7 @@ try:
         bed.screenshot("hello")
 
         # The plugin's setting, in the section it declared.
-        bed.invoke("settings.open")
+        bed.invoke("settings.show")
         until(bed, lambda: bed.exists("Counter") and bed.exists("Step"), "Step shows in Settings")
         bed.screenshot("hello-settings")
         # It has no documents, so nothing about them.

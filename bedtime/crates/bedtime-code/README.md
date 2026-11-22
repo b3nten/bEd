@@ -200,7 +200,7 @@ connects servers to workbench documents:
 
 With `persistence`, `lsp::LanguageServersPanelPlugin` (opt-in) makes the
 servers a setting and adds the Language Servers panel
-(`code.show_language_servers`): each server, built in or added, its program,
+(`language_servers.show`): each server, built in or added, its program,
 arguments and settings per settings layer, and its status. The changes are
 the `LanguageServerConfig` setting, which builds the `ServerCatalog`.
 Without it, an app sets `LanguageServers` itself.

@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as e
         assert outside.exists(), "a copy, not a move"
 
         # Cmd+N in a terminal: another terminal beside it.
-        bed.invoke("terminal.new")
+        bed.invoke("terminal.show")
         until(bed, lambda: tabs(bed, "zsh") + tabs(bed, "bash") >= 1, "a terminal opens")
         bed.wait(30)
         before = tabs(bed, "zsh") + tabs(bed, "bash")

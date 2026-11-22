@@ -66,7 +66,7 @@ with tempfile.TemporaryDirectory() as folder:
         bed.input(at, {"press": "Left"}, {"release": "Left"}, {"press": "Left"}, {"release": "Left"})
         until(bed, lambda: bed.exists(contains="struct Cat"), "cats.rs opens")
 
-        bed.invoke("code.show_structure")
+        bed.invoke("structure.show")
         until(bed, lambda: bed.exists("meow"), "Structure lists the outline")
         # Beside the editor: its tab dragged to the window's right edge.
         tab = [w for w in bed.find_all("Structure", role="Button") if w["rect"][1] < 130][0]

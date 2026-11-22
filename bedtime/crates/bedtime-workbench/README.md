@@ -234,7 +234,7 @@ and the panels' opacity, corner radius and gap. `ThemesPlugin { folder,
 shipped, default }` is an app's themes: it writes the shipped themes missing
 from the folder, makes the folder the `ThemeFolder`, and sets the default
 theme. `ThemeEditorPlugin` (opt-in) adds the Theme Editor panel
-(`appearance.show_theme_editor`): duplicate, rename, recolor, reset a
+(`theme_editor.show`): duplicate, rename, recolor, reset a
 shipped theme, saved to its file as you edit.
 
 ## Status bar (`ui` feature)

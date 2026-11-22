@@ -45,6 +45,7 @@ pub struct PerfPlugin;
 
 impl Plugin for PerfPlugin {
     fn build(&self, app: &mut App) {
+        bedtime_workbench::status::StatusAppExt::add_global_status(app, status_item);
         app.init_resource::<FrameStats>()
             .register_setting::<ShowFrameRate>()
             .add_systems(First, start_frame.run_if(shown))

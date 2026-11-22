@@ -14,7 +14,7 @@ with Bed(settings={"effects.enabled": True}) as bed:
     assert tabs(bed) == {}, "one tab in one area has no tab bar"
     assert bed.exists("Workspaces"), "the Workspaces panel is the only one"
 
-    bed.invoke("settings.open")
+    bed.invoke("settings.show")
     assert set(tabs(bed)) == {"Workspaces", "Settings"}
 
     # Drag Settings out to the right edge: two areas of one tab each.

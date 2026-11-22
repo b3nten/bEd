@@ -16,7 +16,7 @@ with Bed(settings={"appearance.theme": '"tokyo"'}) as bed:
     tokyo = folder / "tokyo.ron"
     shipped = tokyo.read_text()
     bed.key("Primary+2")
-    bed.invoke("appearance.show_theme_editor")
+    bed.invoke("theme_editor.show")
     assert bed.exists("Tokyo Night"), "the theme in use is edited"
     assert bed.find("Reset theme")["disabled"], "nothing to reset yet"
     bed.screenshot("theme-editor")
@@ -66,7 +66,7 @@ with Bed(settings={"appearance.theme": '"tokyo"'}) as bed:
     settings.write_text(settings.read_text().replace('"tokyo"', '"solarized-light"'))
     time.sleep(1.5)
     bed.wait(5)
-    bed.invoke("settings.open")
+    bed.invoke("settings.show")
     bed.click("Edit theme")
     assert bed.exists("Solarized Light", role="TextInput"), "editing the chosen theme"
     assert not bed.status()["errors"]

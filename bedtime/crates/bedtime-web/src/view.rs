@@ -8,12 +8,13 @@
 //! itself, and a snapshot stands in for it only while something would be
 //! drawn over it: a menu or popup, or areas being rearranged.
 use crate::{
-    Navigate, ScreenWarp, ShowWeb, WebOptions, WebPanel, fit_inside,
+    Navigate, ScreenWarp, WebOptions, WebPanel, fit_inside,
     native::{self, Shot, Shots},
     with_scheme,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiWaker, egui};
 use bedtime_workbench::BedtimeWorldExt as _;
+use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{Panel, PanelInstance, PanelPresentation};
 use bevy::{
     ecs::system::NonSendMarker,
@@ -31,9 +32,7 @@ use wry::{
 };
 
 pub fn install(app: &mut App) {
-    use bedtime_workbench::{ActionAppExt, Handler, MenusAppExt, StandardMenu};
-    app.add_action_handler::<ShowWeb>(Handler::new(bedtime_workbench::open_new::<WebPanel>))
-        .add_menu_item::<ShowWeb>(StandardMenu::View, "panels")
+    app.add_panel::<WebPanel>()
         .insert_non_send(Views::default())
         .add_systems(First, follow_panels);
 }

@@ -3,11 +3,7 @@
 //! file shortly after you stop editing; a shipped theme can be reset.
 use super::{AppearanceSettings, ColorTheme, ShippedThemes};
 use crate::BedtimeWorldExt as _;
-use crate::MenusAppExt;
-use crate::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, Handler, Panel,
-    persistence::ReflectPersist,
-};
+use crate::{ActionInvocation, ActionResult, Handler, Panel, persistence::ReflectPersist};
 use bedtime_ui::{
     BuiltinIcon, UiContext, egui,
     theme::{Appearance, Palette, Rgba, Theme, ThemeFolder},
@@ -18,10 +14,8 @@ use std::time::{Duration, Instant};
 /// How long after the last change a theme is saved.
 const SAVE_AFTER: Duration = Duration::from_millis(400);
 
-pub struct OpenThemeEditor;
-impl Action for OpenThemeEditor {
-    const KEY: &'static str = "appearance.show_theme_editor";
-    const LABEL: &'static str = "Theme Editor";
+impl crate::ShowPanel for ThemeEditorPanel {
+    const SHOW: &'static str = "theme_editor.show";
 }
 
 pub struct ThemeEditorPlugin;
@@ -32,13 +26,12 @@ pub(super) struct Installed;
 
 impl Plugin for ThemeEditorPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<ThemeEditorPanel>()
-            .add_action_handler::<OpenThemeEditor>(Handler::new(|world, _: ActionInvocation| {
-                open(world, None, crate::Placement::Focused)
-            }))
-            .init_resource::<Installed>()
-            .add_menu_item::<OpenThemeEditor>(crate::StandardMenu::View, "tools")
-            .add_systems(Update, autosave);
+        crate::PanelsAppExt::add_panel_opened_by::<ThemeEditorPanel>(
+            app,
+            Handler::new(|world, _: ActionInvocation| open(world, None, crate::Placement::Focused)),
+        )
+        .init_resource::<Installed>()
+        .add_systems(Update, autosave);
     }
 }
 

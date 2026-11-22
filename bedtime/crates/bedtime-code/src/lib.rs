@@ -17,5 +17,5 @@ pub use editor::{
     CodePlugin, ComparisonRequest, EditorComparison, EditorDefaults, EditorPanel, ToggleWordWrap,
     draw_editor, navigate_change,
 };
-pub use structure::{GoToSymbol, ShowStructure, StructurePanel};
-pub use todos::{ShowTodos, TodoPanel};
+pub use structure::{GoToSymbol, StructurePanel};
+pub use todos::TodoPanel;

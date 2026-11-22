@@ -93,7 +93,7 @@ tree, else in a split of the Git panel's area.
 
 ## The History panel
 
-`HistoryPanel` (`ShowHistory`, "Git History" in the View menu) lists the
+`HistoryPanel` (`Show<HistoryPanel>`, "Git History" in the View menu) lists the
 commits reachable from HEAD, newest first, 400 at a time as it's scrolled,
 with the lines of history drawn before them (`history::graph`). A row holds
 the names on the commit (the current branch, branches, remotes, tags), its

@@ -24,7 +24,7 @@ mod tests;
 #[cfg(feature = "ui")]
 pub mod ui;
 #[cfg(feature = "ui")]
-pub use panel::{OpenSettings, SettingsLocation, SettingsPanel, SettingsPanelPlugin};
+pub use panel::{SettingsLocation, SettingsPanel, SettingsPanelPlugin};
 
 /// The `settings!` macro, also at the crate root (where `#[macro_export]` puts it).
 pub use crate::settings;

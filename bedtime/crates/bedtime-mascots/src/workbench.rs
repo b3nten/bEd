@@ -6,11 +6,8 @@ use bedtime_workbench::Panel;
 use bedtime_workbench::persistence::ReflectPersist;
 use bevy::prelude::*;
 
-/// Open Bed: a new one, in the focused area.
-pub struct ShowBed;
-impl bedtime_workbench::Action for ShowBed {
-    const KEY: &'static str = "mascots.show_bed";
-    const LABEL: &'static str = "Bed";
+impl bedtime_workbench::ShowPanel for BedPanel {
+    const SHOW: &'static str = "bed.show";
 }
 
 #[bedtime_ui::panel]

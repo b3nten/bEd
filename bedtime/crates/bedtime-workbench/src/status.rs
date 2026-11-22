@@ -2,22 +2,23 @@
 //! drawing the panels with a bar along the bottom.
 //!
 //! ```text
-//! bed  ⑂ main  ◉  60 fps   Ln 12, Col 4 · Rust · 2 errors ····· ⟳ rust-analyzer: indexing · ⚠ Saved
-//! └ global status, one item each ┘ └ the panel's status ┘                         updates ┘
+//! bed  ⑂ main  ◉  60 fps   Ln 12, Col 4 · Rust · 2 errors ··· ⟳ rust-analyzer: indexing · ⚠ Saved   main.rs
+//! └ global status, one item each ┘ └ the panel's status ┘                       updates ┘  └ focused panel
 //! ```
 //!
 //! - **Global status** is about the workspace (its name, language servers,
 //!   the repository, the frame rate). Each item is small, by convention an
 //!   icon or a short text or both, coloured by its most urgent row (a
-//!   spinner while one is busy), with its rows on hover. The app chooses
-//!   which items show and their order (`add_global_status`); plugins export
-//!   them.
+//!   spinner while one is busy), with its rows on hover. A plugin adds its
+//!   own (`add_global_status`); they show in the order plugins are added.
 //! - **The panel's status** is about the panel the bar describes
 //!   (`StatusSource`): the focused one, or, while a panel without items has
 //!   focus (a sidebar), the last focused that had some. The plugin that
 //!   provides a panel kind adds its items (`add_panel_status::<P>`).
 //! - **Updates** are what's going on (`StatusActivity`, any plugin can report
 //!   to it) and the latest notification, for a few seconds.
+//! - **The focused panel's name** is at the far right, while there's room
+//!   to spare: it's the first thing to go.
 //!
 //! Items don't draw: they say what to show (`PanelStatus`, `GlobalStatus`),
 //! and the bar measures it all and picks how much of each zone fits
@@ -45,6 +46,9 @@ const RECENT: usize = 10;
 
 /// The narrowest a cut text gets (points) before its zone becomes an icon.
 const NARROWEST_CUT: f32 = 60.0;
+
+/// The widest the focused panel's name gets (points): a long title is cut.
+const WIDEST_NAME: f32 = 260.0;
 
 /// How a piece of status reads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
@@ -897,6 +901,37 @@ fn draw(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, content: egui
             egui::pos2(from + width, content.bottom()),
         )
     };
+    // The focused panel's name, at the far right, where there's usually
+    // nothing: only while everything else shows in full with room to spare.
+    let mut right = content.right();
+    let name = crate::lifecycle::focused_panel(world)
+        .and_then(|panel| world.get::<PanelInstance>(panel))
+        .map(|panel| panel.title.trim().to_owned())
+        .filter(|title| !title.is_empty());
+    if let Some(name) = name
+        && p == 0
+        && u == 0
+    {
+        let color = Tone::Weak.color(ui, context);
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let width = ui
+            .painter()
+            .layout_no_wrap(name.clone(), font, color)
+            .size()
+            .x
+            .min(WIDEST_NAME);
+        let spare = (content.right() - left) - panel_width - updates_width - gap * 2.0;
+        if spare >= width + gap * 4.0 {
+            let at = row(content.right() - width, width);
+            ui.put(
+                at,
+                egui::Label::new(egui::RichText::new(name).color(color))
+                    .truncate()
+                    .selectable(false),
+            );
+            right = at.left() - gap * 2.0;
+        }
+    }
     paint(
         ui,
         context,
@@ -909,7 +944,7 @@ fn draw(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, content: egui
         context,
         "status-updates",
         &update_shapes[u],
-        row(content.right() - updates_width, updates_width),
+        row(right - updates_width, updates_width),
     );
 }
 

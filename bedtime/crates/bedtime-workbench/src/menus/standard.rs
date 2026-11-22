@@ -32,7 +32,7 @@ impl StandardMenu {
             StandardMenu::App => &["about", "settings", "quit"],
             StandardMenu::File => &["new", "open", "save", "close"],
             StandardMenu::Edit => &["history", "clipboard", "find", "code"],
-            StandardMenu::View => &["panels", "editor", "zoom", "tools"],
+            StandardMenu::View => &["panels", "editor", "zoom"],
             StandardMenu::Custom(_) | StandardMenu::Window | StandardMenu::Help => &[],
         }
     }

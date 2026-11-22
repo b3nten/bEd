@@ -1,13 +1,10 @@
 //! The titlebar: the menu bar where the platform has no native one, and
 //! the tool buttons that open (or drag out) panels.
-use bedtime_code::ShowStructure;
-use bedtime_file_explorer::{FileExplorer, ShowFiles};
-use bedtime_git::ShowGit;
-use bedtime_terminal::NewTerminal;
+use bedtime_file_explorer::FileExplorer;
 use bedtime_ui::{BuiltinIcon, UiContext, egui};
 use bedtime_workbench::{
-    Action, ActionId, BedtimeWorldExt as _, InvocationContext, LayoutSurface, PanelFactory,
-    StandardMenus, draw_menu_bar, panel_drag_source,
+    Action, ActionId, BedtimeWorldExt as _, InvocationContext, LayoutSurface, PanelFactory, Show,
+    ShowPanel, StandardMenus, draw_menu_bar, panel_drag_source,
 };
 use bevy::prelude::*;
 
@@ -21,46 +18,23 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
         let result = draw_menu_bar(&mut context.frame(ui), world, root, inset);
         world.bedtime_mut().notify_failure("Menu", result);
     }
-    // Right to left: terminal, search, files, git, structure, settings.
+    // Right to left: terminal, search, files, git, structure.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.add_space(4.0);
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.spacing_mut().button_padding = egui::vec2(5.0, 4.0);
-        tool::<ShowStructure>(
-            ui,
-            world,
-            context,
-            BuiltinIcon::Structure,
-            PanelFactory::of::<bedtime_code::StructurePanel>(),
-        );
-        tool::<ShowGit>(
-            ui,
-            world,
-            context,
-            BuiltinIcon::GitBranch,
-            PanelFactory::of::<bedtime_git::GitPanel>(),
-        );
-        tool::<ShowFiles>(
-            ui,
-            world,
-            context,
-            BuiltinIcon::Folder,
-            PanelFactory::of::<FileExplorer>(),
-        );
-        tool::<bedtime_search::SearchWorkspace>(
+        tool::<bedtime_code::StructurePanel>(ui, world, context, BuiltinIcon::Structure);
+        tool::<bedtime_git::GitPanel>(ui, world, context, BuiltinIcon::GitBranch);
+        tool::<FileExplorer>(ui, world, context, BuiltinIcon::Folder);
+        // Search is more than its panel: it's seeded with the selection.
+        tool_for::<bedtime_search::SearchWorkspace>(
             ui,
             world,
             context,
             BuiltinIcon::Search,
             PanelFactory::of::<bedtime_search::SearchPanel>(),
         );
-        tool::<NewTerminal>(
-            ui,
-            world,
-            context,
-            BuiltinIcon::Terminal,
-            PanelFactory::of::<bedtime_terminal::TerminalPanel>(),
-        );
+        tool::<bedtime_terminal::TerminalPanel>(ui, world, context, BuiltinIcon::Terminal);
     });
 }
 
@@ -77,9 +51,21 @@ fn open_in_largest(world: &mut World, factory: &PanelFactory) -> Result<(), Stri
     world.bedtime_mut().layouts_mut().focus_panel(panel)
 }
 
+/// A titlebar button for panel `P`: its `Show<P>`'s label and keys, opening
+/// one in the largest area on a click, or where it's dropped when dragged
+/// out.
+fn tool<P: ShowPanel>(
+    ui: &mut egui::Ui,
+    world: &mut World,
+    context: &UiContext<'_>,
+    icon: BuiltinIcon,
+) {
+    tool_for::<Show<P>>(ui, world, context, icon, PanelFactory::of::<P>());
+}
+
 /// A titlebar button for command `C`. Clicking it opens a new panel from
 /// `factory` in the largest area; dragging it out, where it's dropped.
-fn tool<C: Action>(
+fn tool_for<C: Action>(
     ui: &mut egui::Ui,
     world: &mut World,
     context: &UiContext<'_>,

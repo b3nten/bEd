@@ -26,9 +26,7 @@ mod transport;
 #[cfg(unix)]
 pub use backend::*;
 #[cfg(feature = "persistence")]
-pub use panel::{
-    LanguageServerConfig, LanguageServersPanel, LanguageServersPanelPlugin, OpenLanguageServers,
-};
+pub use panel::{LanguageServerConfig, LanguageServersPanel, LanguageServersPanelPlugin};
 pub use protocol::{Encoding, FileUri, Position, ProtocolRange};
 #[cfg(unix)]
 pub(crate) mod actions;

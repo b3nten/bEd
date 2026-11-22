@@ -20,11 +20,9 @@ mod native;
 #[cfg(target_os = "macos")]
 mod view;
 
-/// Open a web browser: a new one, in the focused area.
-pub struct ShowWeb;
-impl bedtime_workbench::Action for ShowWeb {
-    const KEY: &'static str = "web.show";
-    const LABEL: &'static str = "Web Browser";
+impl bedtime_workbench::ShowPanel for WebPanel {
+    const SHOW: &'static str = "web.show";
+    const SHOW_LABEL: &'static str = "Web Browser";
 }
 
 pub struct WebPlugin;

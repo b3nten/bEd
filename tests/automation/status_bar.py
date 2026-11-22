@@ -1,5 +1,5 @@
-"""Status bar: shows the workspace, and a setting that can't be saved is
-reported there instead of in a dialog."""
+"""Status bar: shows the workspace, names the focused panel at its right,
+and a setting that can't be saved is reported there instead of in a dialog."""
 import os
 import stat
 
@@ -13,6 +13,14 @@ with Bed() as bed:
     os.chmod(global_dir, stat.S_IRUSR | stat.S_IXUSR)
     try:
         bed.key("Primary+Comma")
+        # The focused panel is named at the right of the bar.
+        window = bed.status()["window"]
+        for _ in range(100):
+            named = [w for w in bed.find_all("Settings", role="Label") if w["rect"][1] > window["height"] - 40]
+            if named:
+                break
+            bed.wait(5)
+        assert named and named[0]["rect"][0] > window["width"] / 2, "the focused panel isn't named at the right"
         bed.click(bed.find(role="CheckBox"))
         for _ in range(100):
             if bed.exists(contains="Couldn't save settings"):

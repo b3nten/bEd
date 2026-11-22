@@ -5,7 +5,7 @@ from bed import Bed
 
 with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     bed.key("Primary+2")
-    bed.invoke("settings.open")
+    bed.invoke("settings.show")
     # Override window opacity in the workspace, then look at the global tab.
     bed.click(contains="Workspace:")
     x0, y0, x1, y1 = bed.find_all(role="Slider")[1]["rect"]
@@ -17,7 +17,7 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     assert marker["rect"][0] > opacity["rect"][2], "after the label"
 
     # Split Settings and Workspaces, then narrow the Settings area.
-    bed.invoke("app.open_workspaces")
+    bed.invoke("workspaces.show")
     tab = [w for w in bed.find_all("Workspaces", role="Button") if w["rect"][1] < 80][0]
     window = bed.status()["window"]
     centre = lambda r: ((r[0] + r[2]) / 2, (r[1] + r[3]) / 2)

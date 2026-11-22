@@ -51,7 +51,7 @@ with Bed(settings={"appearance.cat": True}) as bed:
 
     # The setting sends it away, and brings it back.
     bed.key("Primary+2")
-    bed.invoke("settings.open")
+    bed.invoke("settings.show")
     for _ in range(30):
         if bed.exists("kitty!"):
             break

@@ -46,7 +46,7 @@ with tempfile.TemporaryDirectory(dir="/tmp") as folder:
         bed.invoke("git.show"); until(bed, lambda: "main" in bar(bed) and "3 changed (1 staged)" in bar(bed), "the branch and changes")
         bed.screenshot("status_bar_git")
 
-        bed.invoke("terminal.new"); until(bed, lambda: "×" in bar(bed), "the terminal's size")
+        bed.invoke("terminal.show"); until(bed, lambda: "×" in bar(bed), "the terminal's size")
         bed.screenshot("status_bar_terminal")
 
         rows = [w for w in bed.find_all("demo.db")]; w = min(rows, key=lambda w: w["rect"][0])

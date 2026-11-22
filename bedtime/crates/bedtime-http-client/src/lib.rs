@@ -18,7 +18,7 @@ pub use json::pretty as pretty_json;
 #[cfg(feature = "workbench")]
 pub use panel::{
     Exchange, Exchanges, HttpClientPanel, HttpClientPlugin, HttpClientSystems, HttpClientView,
-    HttpRequests, Received, ShowHttpClient, Shown,
+    HttpRequests, Received, Shown,
 };
 
 #[cfg(test)]

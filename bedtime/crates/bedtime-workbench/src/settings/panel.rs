@@ -1,19 +1,17 @@
 //! The settings panel (`ui` feature): every registered setting, in the
 //! section it was declared in, for whichever layer is chosen, then the
 //! keyboard shortcuts. Add
-//! `SettingsPanelPlugin` to have it, and its `OpenSettings` action.
+//! `SettingsPanelPlugin` to have it, and `Show<SettingsPanel>`, which opens
+//! it.
 use crate::settings::ui;
 use crate::*;
 use bedtime_persistence::{StoreId, Stores};
 use bedtime_ui::{UiContext, egui};
 use bevy::prelude::*;
 
-/// Open a settings panel: a new one, in the focused area.
-pub struct OpenSettings;
-impl Action for OpenSettings {
-    const KEY: &'static str = "settings.open";
-    const LABEL: &'static str = "Open Settings";
-    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::Comma)];
+impl crate::ShowPanel for SettingsPanel {
+    const SHOW: &'static str = "settings.show";
+    const SHOW_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::Comma)];
 }
 
 /// Where a layer is saved, shown under the layer tabs: set by whoever adds
@@ -26,10 +24,12 @@ pub struct SettingsPanelPlugin;
 
 impl Plugin for SettingsPanelPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<SettingsPanel>()
-            .add_action_handler::<OpenSettings>(Handler::new(open_new::<SettingsPanel>))
-            .add_menu_item_labelled::<OpenSettings>(StandardMenu::App, "settings", "Settings…")
-            .add_menu_item_labelled::<OpenSettings>(StandardMenu::View, "panels", "Settings");
+        app.add_panel::<SettingsPanel>()
+            .add_menu_item_labelled::<Show<SettingsPanel>>(
+                StandardMenu::App,
+                "settings",
+                "Settings…",
+            );
     }
 }
 

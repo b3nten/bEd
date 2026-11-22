@@ -17,8 +17,9 @@ def until(bed, check, what):
 
 
 def tabs(bed, name):
-    """`name`'s tabs, left to right: its editor's, then its other viewer's."""
-    return sorted(bed.find_all(name), key=lambda widget: widget["rect"][0])[1:]
+    """`name`'s tabs, left to right: its editor's, then its other viewer's.
+    (Buttons: the status bar names the focused panel too, as a label.)"""
+    return sorted(bed.find_all(name, role="Button"), key=lambda widget: widget["rect"][0])[1:]
 
 
 def focus_editor(bed, name):

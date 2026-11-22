@@ -99,8 +99,8 @@ Stored values still win over it, and clearing one goes back to it.
 
 ## The settings panel (`ui` feature)
 
-`SettingsPanelPlugin` adds `SettingsPanel` and `OpenSettings`
-(`settings.open`, Cmd/Ctrl+,): layer tabs, where the chosen layer is saved
+`SettingsPanelPlugin` adds `SettingsPanel` and `Show<SettingsPanel>`
+(`settings.show`, Cmd/Ctrl+,): layer tabs, where the chosen layer is saved
 (`SettingsLocation`, which workspaces sets), its errors, every setting, then
 the keyboard shortcuts.
 

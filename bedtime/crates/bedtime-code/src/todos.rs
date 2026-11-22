@@ -6,6 +6,7 @@
 //! opens, when the root changes, after a document is saved, and when asked
 //! (the refresh button). Unsaved edits aren't seen until they're saved.
 use bedtime_ui::{UiContext, egui};
+use bedtime_workbench::PanelsAppExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -25,23 +26,16 @@ mod view;
 
 pub use scan::{Found, Scan, TodoItem};
 
-/// Open TODOs: a new one, in the focused area.
-pub struct ShowTodos;
-impl bedtime_workbench::Action for ShowTodos {
-    const KEY: &'static str = "code.show_todos";
-    const LABEL: &'static str = "TODOs";
+impl bedtime_workbench::ShowPanel for TodoPanel {
+    const SHOW: &'static str = "todos.show";
 }
 
 /// Installed by `CodePlugin`.
 pub(crate) fn install(app: &mut App) {
-    use bedtime_workbench::{ActionAppExt, MenusAppExt};
     app.register_type::<TodoPanel>()
         .register_type::<TodoLayout>()
         .register_type::<TodoSort>()
-        .add_action_handler::<ShowTodos>(bedtime_workbench::Handler::new(
-            bedtime_workbench::open_new::<TodoPanel>,
-        ))
-        .add_menu_item::<ShowTodos>(bedtime_workbench::StandardMenu::View, "panels")
+        .add_panel::<TodoPanel>()
         .add_systems(Update, (notice_saves, start_scans, collect_scans).chain());
 }
 

@@ -14,7 +14,7 @@ def toggle_beside(bed, label):
 
 with Bed() as bed:
     bed.key("Primary+2")
-    bed.invoke("settings.open")
+    bed.invoke("settings.show")
     for _ in range(20):
         if bed.exists("Screen effects"):
             break

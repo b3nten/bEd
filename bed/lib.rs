@@ -44,12 +44,13 @@ pub struct BedPlugins;
 impl PluginGroup for BedPlugins {
     fn build(self) -> PluginGroupBuilder {
         PluginGroupBuilder::start::<Self>()
-            // Menu items appear in the order their plugins add them.
+            // Menu items and the status bar's items appear in the order
+            // their plugins add them: the frame rate is last.
             .add(workbench::BedWorkbenchPlugin)
             .add(workspace::BedWorkspacesPlugin)
             .add(visuals::VisualsPlugin)
-            .add(perf::PerfPlugin)
             .add(plugins::BedtimePlugins)
+            .add(perf::PerfPlugin)
             .add(bedtime_automation::AutomationPlugin::from_env())
             .add(window::BedWindowPlugin)
     }

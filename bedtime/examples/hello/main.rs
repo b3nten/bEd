@@ -16,7 +16,7 @@ use bedtime::{
     persistence::ReflectPersist,
     ui::{UiContext, egui, layouts::Panel},
     workbench::{
-        Action, ActionAppExt, Handler, MenusAppExt, OnWorkspaceOpen, StandardMenu, open_new,
+        OnWorkspaceOpen, PanelsAppExt, ShowPanel,
         settings::{SettingsAppExt, settings},
         status::{GlobalStatus, StatusAppExt},
     },
@@ -41,10 +41,8 @@ struct CounterPlugin;
 
 impl Plugin for CounterPlugin {
     fn build(&self, app: &mut App) {
-        app.register_type::<Counter>()
+        app.add_panel::<Counter>()
             .register_setting::<Step>()
-            .add_action_handler::<ShowCounter>(Handler::new(open_new::<Counter>))
-            .add_menu_item::<ShowCounter>(StandardMenu::View, "panels")
             .add_global_status(total)
             .add_systems(OnWorkspaceOpen, first_layout);
     }
@@ -61,10 +59,8 @@ settings! {
     }
 }
 
-struct ShowCounter;
-impl Action for ShowCounter {
-    const KEY: &'static str = "counter.show";
-    const LABEL: &'static str = "Counter";
+impl ShowPanel for Counter {
+    const SHOW: &'static str = "counter.show";
 }
 
 /// A counter. Its count is saved with it.

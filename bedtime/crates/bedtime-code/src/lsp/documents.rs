@@ -126,7 +126,8 @@ fn install(app: &mut App) {
     app.add_systems(Update, super::status::report_activity);
     {
         use bedtime_workbench::status::StatusAppExt;
-        app.add_panel_status::<crate::editor::EditorPanel>(super::status::file_item);
+        app.add_global_status(super::status::global_item)
+            .add_panel_status::<crate::editor::EditorPanel>(super::status::file_item);
     }
     app.init_resource::<LanguageServers>()
         .init_resource::<super::InstalledServers>()

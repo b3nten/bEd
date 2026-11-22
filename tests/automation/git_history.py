@@ -71,7 +71,7 @@ with tempfile.TemporaryDirectory() as folder:
     with Bed(folder) as bed:
         until(bed, lambda: bed.exists("ABOUT.md"), "the root is listed")
         # In the focused area, the explorer's: narrow.
-        bed.invoke("git.history")
+        bed.invoke("git_history.show")
         until(bed, lambda: bed.exists("Correct the datum"), "the commits are listed")
         assert bed.exists("Merge moon-phase: spring and neap tides")
         bed.screenshot("git-history-narrow")
@@ -103,7 +103,7 @@ with tempfile.TemporaryDirectory() as folder:
 
         # In the large area: wide, with the details beside the list.
         bed.click(next(w for w in bed.widgets() if (w.get("label") or "").startswith("ABOUT.md (")))
-        bed.invoke("git.history")
+        bed.invoke("git_history.show")
         until(bed, lambda: len(bed.find_all("Correct the datum")) == 2, "a second panel lists the commits")
         wide = max(bed.find_all("Correct the datum"), key=lambda widget: widget["rect"][2])
         bed.screenshot("git-history-wide")

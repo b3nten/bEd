@@ -14,14 +14,14 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     bed.screenshot("workspaces-panel")
 
     # The default workspace has no settings layer of its own.
-    bed.invoke("settings.open")
+    bed.invoke("settings.show")
     assert not bed.exists(contains="Workspace:")
 
     stores = bed.config / "workspaces"
     folder_stores = lambda: [p.name for p in stores.iterdir() if p.name != "default"]
     assert len(folder_stores()) == 1
     bed.key("Primary+1")
-    bed.invoke("app.open_workspaces")
+    bed.invoke("workspaces.show")
     bed.click(f"Delete {name}")
     assert bed.exists("Delete its saved layout and settings?")
     bed.screenshot("workspaces-panel-confirm")

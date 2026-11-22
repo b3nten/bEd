@@ -61,7 +61,10 @@ pub use lifecycle::*;
 pub use notifications::{Notification, NotificationLevel, Notifications};
 #[cfg(feature = "documents")]
 pub use opening::*;
-pub use panel_actions::{ClosePanel, ResetZoom, ToggleMaximizePanel, ZoomIn, ZoomOut, open_new};
+pub use panel_actions::{
+    ClosePanel, PanelsAppExt, ResetZoom, Show, ShowPanel, ToggleMaximizePanel, ZoomIn, ZoomOut,
+    open_new,
+};
 pub use session::{InWorkspace, OnWorkspaceClose, OnWorkspaceClosing, OnWorkspaceOpen};
 #[cfg(feature = "documents")]
 pub use untitled::{SaveAs, Untitled};

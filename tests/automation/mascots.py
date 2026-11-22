@@ -18,12 +18,12 @@ def tab(bed, name):
 
 with tempfile.TemporaryDirectory() as folder:
     with Bed(folder) as bed:
-        bed.invoke("mascots.show_bed")
+        bed.invoke("bed.show")
         until(bed, lambda: tab(bed, "Bed"), "Bed opens")
         bed.wait(30)
         bed.screenshot("mascots-bed")
 
-        bed.invoke("terminal.new")
+        bed.invoke("terminal.show")
         until(bed, lambda: any(w["role"] == "TextInput" for w in bed.widgets()), "a terminal opens")
         bed.wait(60)
         bed.type("+ducky")

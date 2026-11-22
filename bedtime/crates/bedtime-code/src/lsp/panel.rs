@@ -7,8 +7,9 @@ use super::{
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, egui, theme};
 use bedtime_workbench::BedtimeWorldExt as _;
+use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
-    Action, ActionAppExt, Handler, MenusAppExt, Panel, open_new,
+    Panel,
     persistence::{ReflectPersist, StoreId},
     settings::{Settings, SettingsAppExt, settings, ui::layer_tabs},
 };
@@ -23,10 +24,8 @@ settings! {
     }
 }
 
-pub struct OpenLanguageServers;
-impl Action for OpenLanguageServers {
-    const KEY: &'static str = "code.show_language_servers";
-    const LABEL: &'static str = "Language Servers";
+impl bedtime_workbench::ShowPanel for LanguageServersPanel {
+    const SHOW: &'static str = "language_servers.show";
 }
 
 pub struct LanguageServersPanelPlugin;
@@ -35,10 +34,7 @@ impl Plugin for LanguageServersPanelPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<LanguageServersPanel>()
             .register_setting::<LanguageServerConfig>()
-            .add_action_handler::<OpenLanguageServers>(Handler::new(
-                open_new::<LanguageServersPanel>,
-            ))
-            .add_menu_item::<OpenLanguageServers>(bedtime_workbench::StandardMenu::View, "tools")
+            .add_panel::<LanguageServersPanel>()
             .add_systems(Update, refresh_catalog.run_if(resource_changed::<Settings>));
     }
 }

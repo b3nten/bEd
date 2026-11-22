@@ -19,6 +19,7 @@ use bedtime_ui::{
     image::{Decoded, ImageView},
     theme,
 };
+use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
     ManagedTask, ManagedWork, Panel, PanelPresentation, WorkStatus,
     persistence::{Persisted, PersistenceAppExt, ReflectPersist, WorkbenchStore},
@@ -35,23 +36,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// Open an HTTP client: a new one, in the focused area.
-pub struct ShowHttpClient;
-impl bedtime_workbench::Action for ShowHttpClient {
-    const KEY: &'static str = "http_client.show";
-    const LABEL: &'static str = "HTTP Client";
+impl bedtime_workbench::ShowPanel for HttpClientPanel {
+    const SHOW: &'static str = "http_client.show";
 }
 
 pub struct HttpClientPlugin;
 
 impl Plugin for HttpClientPlugin {
     fn build(&self, app: &mut App) {
-        use bedtime_workbench::{ActionAppExt, MenusAppExt, status::StatusAppExt};
+        use bedtime_workbench::status::StatusAppExt;
         app.register_type::<HttpClientPanel>()
-            .add_action_handler::<ShowHttpClient>(bedtime_workbench::Handler::new(
-                bedtime_workbench::open_new::<HttpClientPanel>,
-            ))
-            .add_menu_item::<ShowHttpClient>(bedtime_workbench::StandardMenu::View, "panels")
+            .add_panel::<HttpClientPanel>()
             .init_resource::<HttpRequests>()
             .persist::<HttpRequests, WorkbenchStore>()
             .init_resource::<Exchanges>()

@@ -16,11 +16,9 @@ use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::persistence::ReflectPersist;
 use std::{hash::Hasher, ops::Range};
 
-/// Open a History panel: a new one, in the focused area.
-pub struct ShowHistory;
-impl Action for ShowHistory {
-    const KEY: &'static str = "git.history";
-    const LABEL: &'static str = "Git History";
+impl bedtime_workbench::ShowPanel for HistoryPanel {
+    const SHOW: &'static str = "git_history.show";
+    const SHOW_LABEL: &'static str = "Git History";
 }
 
 /// Commits read at a time; more are read as the list is scrolled.

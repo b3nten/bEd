@@ -8,6 +8,7 @@
 //! Drawing reads the notes and returns what was asked (`Intent`s); `apply`
 //! does it, right after drawing.
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
+use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
     Panel,
     persistence::{Persisted, PersistenceAppExt, ReflectPersist, WorkbenchStore},
@@ -15,23 +16,16 @@ use bedtime_workbench::{
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// Open a Notes panel: a new one, in the focused area.
-pub struct ShowNotes;
-impl bedtime_workbench::Action for ShowNotes {
-    const KEY: &'static str = "notes.show";
-    const LABEL: &'static str = "Notes";
+impl bedtime_workbench::ShowPanel for NotesPanel {
+    const SHOW: &'static str = "notes.show";
 }
 
 pub struct NotesPlugin;
 
 impl Plugin for NotesPlugin {
     fn build(&self, app: &mut App) {
-        use bedtime_workbench::{ActionAppExt, MenusAppExt};
         app.register_type::<NotesPanel>()
-            .add_action_handler::<ShowNotes>(bedtime_workbench::Handler::new(
-                bedtime_workbench::open_new::<NotesPanel>,
-            ))
-            .add_menu_item::<ShowNotes>(bedtime_workbench::StandardMenu::View, "panels")
+            .add_panel::<NotesPanel>()
             .init_resource::<Notes>()
             .persist::<Notes, WorkbenchStore>()
             // The notes are the workspace's; the next workspace's are loaded

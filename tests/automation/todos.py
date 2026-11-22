@@ -27,7 +27,7 @@ with tempfile.TemporaryDirectory() as folder:
         window = bed.status()["window"]
         bed.click((window["width"] * 0.6, window["height"] * 0.5))
         bed.wait(5)
-        bed.invoke("code.show_todos")
+        bed.invoke("todos.show")
         until(bed, lambda: bed.exists(contains="say hello"), "the TODOs are found")
         assert bed.exists(contains="exit code") and bed.exists(contains="quick fix")
         assert bed.exists(contains="3 in 2 files"), "the summary counts them"

@@ -30,11 +30,8 @@ pub use view::{
 #[cfg(test)]
 mod tests;
 
-/// Open a file explorer: a new one, in the focused area.
-pub struct ShowFiles;
-impl bedtime_workbench::Action for ShowFiles {
-    const KEY: &'static str = "files.show";
-    const LABEL: &'static str = "Files";
+impl bedtime_workbench::ShowPanel for FileExplorer {
+    const SHOW: &'static str = "files.show";
 }
 
 pub struct FileExplorerPlugin;
@@ -67,15 +64,7 @@ impl Plugin for FileExplorerPlugin {
             app.register_setting::<ShowHiddenFiles>()
                 .register_setting::<ShowIgnoredFiles>();
         }
-        bedtime_workbench::ActionAppExt::add_action_handler::<ShowFiles>(
-            app,
-            bedtime_workbench::Handler::new(bedtime_workbench::open_new::<FileExplorer>),
-        );
-        bedtime_workbench::MenusAppExt::add_menu_item::<ShowFiles>(
-            app,
-            bedtime_workbench::StandardMenu::View,
-            "panels",
-        );
+        bedtime_workbench::PanelsAppExt::add_panel::<FileExplorer>(app);
         view::install_actions(app);
     }
 }

@@ -1,15 +1,12 @@
 //! The Schedules panel: the viewer in a workbench panel, opened from View.
 use crate::{AppSnapshot, ScheduleExtractPlugin, view};
 use bedtime_ui::{UiContext, egui};
-use bedtime_workbench::{
-    Action, ActionAppExt, Handler, MenusAppExt, Panel, open_new, persistence::ReflectPersist,
-};
+use bedtime_workbench::PanelsAppExt as _;
+use bedtime_workbench::{Panel, persistence::ReflectPersist};
 use bevy::prelude::*;
 
-pub struct OpenSchedules;
-impl Action for OpenSchedules {
-    const KEY: &'static str = "schedules.show";
-    const LABEL: &'static str = "Schedules";
+impl bedtime_workbench::ShowPanel for SchedulesPanel {
+    const SHOW: &'static str = "schedules.show";
 }
 
 /// Reads the app's schedules (`ScheduleExtractPlugin`) and offers them in a
@@ -24,8 +21,7 @@ impl Plugin for SchedulesPlugin {
             app.add_plugins(ScheduleExtractPlugin::default());
         }
         app.register_type::<SchedulesPanel>()
-            .add_action_handler::<OpenSchedules>(Handler::new(open_new::<SchedulesPanel>))
-            .add_menu_item::<OpenSchedules>(bedtime_workbench::StandardMenu::View, "tools");
+            .add_panel::<SchedulesPanel>();
     }
 }
 

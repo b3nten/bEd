@@ -23,5 +23,5 @@ pub mod view;
 
 pub use extract::{ExtractConfig, ScheduleExtractPlugin, snapshot_now};
 #[cfg(feature = "panel")]
-pub use plugin::{OpenSchedules, SchedulesPanel, SchedulesPlugin};
+pub use plugin::{SchedulesPanel, SchedulesPlugin};
 pub use snapshot::AppSnapshot;

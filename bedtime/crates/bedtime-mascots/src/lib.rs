@@ -2,9 +2,10 @@
 mod audio;
 mod scene;
 mod workbench;
-pub use workbench::{BedPanel, DuckPanel, ShowBed};
+pub use workbench::{BedPanel, DuckPanel};
 
 use bedtime_ui::{UiComponent, UiContext, UiSystems, UiViewport, egui, viewport_image};
+use bedtime_workbench::PanelsAppExt as _;
 use bevy::{
     camera::visibility::RenderLayers,
     ecs::{lifecycle::HookContext, world::DeferredWorld},
@@ -98,13 +99,9 @@ fn remove_scene(mut world: DeferredWorld, context: HookContext) {
 pub struct MascotPlugin;
 impl Plugin for MascotPlugin {
     fn build(&self, app: &mut App) {
-        use bedtime_workbench::{ActionAppExt, MenusAppExt};
         app.register_type::<BedPanel>()
             .register_type::<DuckPanel>()
-            .add_action_handler::<ShowBed>(bedtime_workbench::Handler::new(
-                bedtime_workbench::open_new::<BedPanel>,
-            ))
-            .add_menu_item::<ShowBed>(bedtime_workbench::StandardMenu::View, "tools")
+            .add_panel::<BedPanel>()
             .init_non_send::<audio::AudioOutput>()
             .add_systems(Update, prepare_scenes)
             .add_systems(
