@@ -5,13 +5,14 @@ use bevy::{
     input::{
         ButtonState,
         keyboard::{Key, KeyboardInput, NativeKey, NativeKeyCode},
-        mouse::{MouseButtonInput, MouseScrollUnit, MouseWheel},
+        mouse::{MouseButtonInput, MouseMotion, MouseScrollUnit, MouseWheel},
         touch::TouchPhase,
     },
+    ecs::message::MessageCursor,
     prelude::*,
     remote::{BrpError, BrpResult, RemotePlugin, error_codes, http::RemoteHttpPlugin},
     render::view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
-    window::{CursorMoved, PrimaryWindow, WindowEvent},
+    window::{CursorEntered, CursorLeft, CursorMoved, PrimaryWindow, WindowEvent},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -73,7 +74,7 @@ pub(crate) fn install(app: &mut App, port: u16) {
         )
         .init_resource::<Automation>()
         .init_resource::<AccessibilityTree>()
-        .add_systems(First, (pretend_focus, run_step))
+        .add_systems(First, (pretend_focus, clicks_take_as_long_as_they_take, run_step))
         .add_systems(PostUpdate, stop_pretending)
         .add_systems(Last, |mut automation: ResMut<Automation>| {
             automation.frame += 1
@@ -127,6 +128,20 @@ fn input(In(request): In<Option<Value>>, world: &mut World) -> BrpResult {
     Ok(Value::Null)
 }
 
+/// A script's press and release are a frame apart, however long the frame
+/// takes: while the app starts, or the computer is busy, that can be longer
+/// than egui lets a click be (0.8 s), and it would be taken for a drag that
+/// went nowhere. A script's click is a click.
+fn clicks_take_as_long_as_they_take(
+    mut contexts: Query<&mut bevy_egui::EguiContext, Added<bevy_egui::EguiContext>>,
+) {
+    for mut context in &mut contexts {
+        context
+            .get_mut()
+            .options_mut(|options| options.input_options.max_click_duration = f64::INFINITY);
+    }
+}
+
 /// The window opens unfocused so scripts don't take over the computer, but the
 /// app (shortcuts, egui) should behave as if it had focus. Mark it focused for
 /// the frame without change detection, and restore it before `Last`, where
@@ -152,7 +167,61 @@ fn stop_pretending(mut automation: ResMut<Automation>, mut windows: Query<&mut W
 }
 
 /// Run the next input step, before the input systems read this frame's input.
-fn run_step(world: &mut World) {
+fn run_step(world: &mut World, mut seen: Local<MessageCursor<WindowEvent>>) {
+    drop_the_real_pointer(world, &mut seen);
+    step(world);
+    // What the step wrote is the script's: next frame, what's new is the
+    // window's own.
+    seen.clear(world.resource::<Messages<WindowEvent>>());
+}
+
+/// The pointer is the script's. The window is on screen, so the real pointer
+/// crosses it while someone works beside a running script, and a real move
+/// between a script's press and release would put the release somewhere
+/// else. What the real pointer did since the last frame is dropped, before
+/// this frame's step is written. (Passing the pointer through the window,
+/// `CursorOptions::hit_test`, doesn't stop its moves arriving on macOS.)
+///
+/// `seen` is at the end of what the last step wrote, so what it hasn't read
+/// came from the window.
+fn drop_the_real_pointer(world: &mut World, seen: &mut MessageCursor<WindowEvent>) {
+    fn clear<M: Message>(world: &mut World) {
+        if let Some(mut messages) = world.get_resource_mut::<Messages<M>>() {
+            messages.clear();
+        }
+    }
+    // Only the pointer writes these. Last frame's are the script's, and
+    // every system has read them.
+    clear::<CursorMoved>(world);
+    clear::<CursorEntered>(world);
+    clear::<CursorLeft>(world);
+    clear::<MouseButtonInput>(world);
+    clear::<MouseWheel>(world);
+    clear::<MouseMotion>(world);
+
+    let pointer = |event: &WindowEvent| {
+        matches!(
+            event,
+            WindowEvent::CursorMoved(_)
+                | WindowEvent::CursorEntered(_)
+                | WindowEvent::CursorLeft(_)
+                | WindowEvent::MouseButtonInput(_)
+                | WindowEvent::MouseMotion(_)
+        )
+    };
+    let mut messages = world.resource_mut::<Messages<WindowEvent>>();
+    let new: Vec<WindowEvent> = seen.read(&messages).cloned().collect();
+    if new.iter().any(pointer) {
+        // Window events hold more than the pointer's: keep the rest of the
+        // new ones. (The older ones have been read, like the pointer's.)
+        messages.clear();
+        for event in new.into_iter().filter(|event| !pointer(event)) {
+            messages.write(event);
+        }
+    }
+}
+
+fn step(world: &mut World) {
     let Ok(window) = world
         .query_filtered::<Entity, With<PrimaryWindow>>()
         .single(world)
@@ -373,6 +442,58 @@ fn exit(_: In<Option<Value>>, world: &mut World) -> BrpResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The real pointer moves over the window between a script's press and
+    /// release: its moves are dropped, the script's input and the window's
+    /// other events are kept.
+    #[test]
+    fn the_real_pointer_is_dropped_and_the_rest_kept() {
+        let mut world = World::new();
+        world.init_resource::<Messages<WindowEvent>>();
+        world.init_resource::<Messages<CursorMoved>>();
+        world.init_resource::<Messages<MouseButtonInput>>();
+        let window = world.spawn_empty().id();
+        let moved = |x| CursorMoved {
+            window,
+            position: Vec2::new(x, 5.0),
+            delta: None,
+        };
+        let mut seen = MessageCursor::<WindowEvent>::default();
+
+        // A frame: nothing from the window, then the script's press.
+        drop_the_real_pointer(&mut world, &mut seen);
+        let press = MouseButtonInput {
+            button: MouseButton::Left,
+            state: ButtonState::Pressed,
+            window,
+        };
+        world.write_message(WindowEvent::MouseButtonInput(press));
+        world.write_message(press);
+        seen.clear(world.resource::<Messages<WindowEvent>>());
+        assert_eq!(world.resource::<Messages<MouseButtonInput>>().len(), 1);
+
+        // Before the next frame the real pointer crosses the window, and the
+        // window is resized.
+        world.write_message(WindowEvent::CursorMoved(moved(700.0)));
+        world.write_message(moved(700.0));
+        world.write_message(WindowEvent::WindowResized(bevy::window::WindowResized {
+            window,
+            width: 800.0,
+            height: 600.0,
+        }));
+        drop_the_real_pointer(&mut world, &mut seen);
+
+        assert!(world.resource::<Messages<CursorMoved>>().is_empty());
+        let mut all = MessageCursor::<WindowEvent>::default();
+        let left: Vec<_> = all
+            .read(world.resource::<Messages<WindowEvent>>())
+            .cloned()
+            .collect();
+        assert!(
+            matches!(left.as_slice(), [WindowEvent::WindowResized(_)]),
+            "{left:?}"
+        );
+    }
 
     #[test]
     fn steps_read_as_scripts_write_them() {

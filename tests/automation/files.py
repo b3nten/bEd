@@ -18,6 +18,8 @@ def until(bed, check, what):
     raise AssertionError(f"never: {what}")
 
 
+# Counting a file's name counts buttons (its row in the tree and its tab):
+# the status bar shows the focused file's name too, as a label.
 def row(bed, name):
     """The tree's row (tabs with the same name are further right)."""
     return min(bed.find_all(name), key=lambda widget: widget["rect"][0])
@@ -58,9 +60,9 @@ with tempfile.TemporaryDirectory() as folder:
         bed.input(at, {"press": "Left"}, {"release": "Left"}, {"press": "Left"}, {"release": "Left"})
         until(bed, lambda: bed.exists(contains="first line of notes"), "notes.txt shows again")
         bed.click(row(bed, "other.txt"))
-        until(bed, lambda: bed.exists("other.txt") and len(bed.find_all("other.txt")) == 2, "other.txt previews")
+        until(bed, lambda: bed.exists("other.txt") and len(bed.find_all("other.txt", role="Button")) == 2, "other.txt previews")
 
-        assert len(bed.find_all("notes.txt")) == 2, "the double-clicked file was replaced"
+        assert len(bed.find_all("notes.txt", role="Button")) == 2, "the double-clicked file was replaced"
 
         # Only a row's item takes the pointer: the space after the name is
         # the tree's background.
@@ -107,7 +109,7 @@ with tempfile.TemporaryDirectory() as folder:
         bed.type("made.rs")
         bed.key("Enter")
         until(bed, lambda: (root / "src" / "made.rs").exists(), "made.rs is created")
-        until(bed, lambda: len(bed.find_all("made.rs")) == 2, "made.rs is listed and opened")
+        until(bed, lambda: len(bed.find_all("made.rs", role="Button")) == 2, "made.rs is listed and opened")
 
         # F2 renames the selected row; the name without its extension is
         # selected, so typing replaces it.

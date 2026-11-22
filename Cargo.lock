@@ -581,6 +581,7 @@ dependencies = [
  "bedtime-ui",
  "bedtime-workbench",
  "bevy",
+ "bevy_egui",
  "serde",
  "serde_json",
 ]

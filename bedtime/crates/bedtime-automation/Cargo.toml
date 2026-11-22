@@ -12,6 +12,7 @@ description = "Drive a bedtime app from scripts over the Bevy Remote Protocol"
 enabled = [
     "dep:bedtime-ui",
     "dep:bedtime-workbench",
+    "dep:bevy_egui",
     "dep:serde",
     "dep:serde_json",
     "bevy/bevy_remote",
@@ -23,5 +24,6 @@ enabled = [
 bevy = { workspace = true, features = ["std", "bevy_window", "bevy_render", "keyboard", "mouse"] }
 bedtime-ui = { workspace = true, optional = true, features = ["accessibility"] }
 bedtime-workbench = { workspace = true, optional = true }
+bevy_egui = { workspace = true, optional = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }

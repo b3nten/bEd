@@ -29,7 +29,9 @@ def bar(bed):
 
 def git(root, *a): subprocess.run(["git", *a], cwd=root, check=True, capture_output=True)
 
-with tempfile.TemporaryDirectory() as folder:
+# A short path: the terminal's item shows its folder, and what doesn't fit
+# the bar is left out (its size, after a long folder).
+with tempfile.TemporaryDirectory(dir="/tmp") as folder:
     root = Path(folder)
     git(root, "init", "-q", "-b", "main"); git(root, "config", "user.email", "b@e.com"); git(root, "config", "user.name", "b")
     (root / "a.txt").write_text("one\n"); git(root, "add", "."); git(root, "commit", "-q", "-m", "x")

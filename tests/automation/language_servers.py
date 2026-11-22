@@ -84,7 +84,7 @@ with tempfile.TemporaryDirectory() as folder:
             bed.key("ArrowRight")
         settled(bed)
         bed.key("F12")
-        until(bed, lambda: bed.exists("other.rs") and len(bed.find_all("other.rs")) == 2,
+        until(bed, lambda: bed.exists("other.rs") and len(bed.find_all("other.rs", role="Button")) == 2,
               "the definition opens", seconds=30)
         bed.screenshot("language-servers-definition")
 
