@@ -1,0 +1,41 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -142), text: "Settings: declared once, stored as RON in layers, resolved top down, and pushed to the code that uses them\nby `apply`. The Settings panel lays itself out from what's registered. Green: what a plugin writes.", size: 16), stroke: Muted),
+        (id: "declare", shape: Group, label: "a setting", stroke: Green, children: [
+            (shape: Text(at: (16, 44), text: "settings! {\n    \"Editor\" {\n        pub WrapLines: bool {\n            key: \"editor.wrap_lines\",\n            default: false,\n            apply: |world, wrap| …,\n        }\n    }\n}\napp.register_setting::<WrapLines>()", size: 14)),
+        ]),
+        (id: "layers", shape: Group, label: "Settings: its layers, lowest first", children: [
+            (shape: Text(at: (448.8, 44), text: "Global: <config>/global/settings.ron\nWorkspace: <its folder's store>/settings.ron\n  (a folder workspace only)\neach holds raw RON by key: values of\nsettings not registered are kept as they are", size: 14)),
+        ]),
+        (id: "resolve", shape: Group, label: "its value", children: [
+            (shape: Text(at: (940.4, 44), text: "the highest layer with a value that\ndecodes, and that it may be in\n(only_in), else the app's default\n(set_setting_default), else default\na value that doesn't decode: a warning,\nand the next one down applies", size: 14)),
+        ]),
+        (id: "apply", shape: Group, label: "apply(world, value)", children: [
+            (shape: Text(at: (1390, 44), text: "copies it into the plugin's own\nresource, which its systems read\nruns once at load, then whenever\nthe resolved value changes\n(or read it: settings().get::<S>())", size: 14)),
+        ]),
+        (id: "save", shape: Group, label: "Last: save_layers", children: [
+            (shape: Text(at: (448.8, 514), text: "dirty layers written about once a\nsecond, and at once on exit\n(atomically: a temporary file, renamed)", size: 14)),
+        ]),
+        (id: "set", shape: Group, label: "a row changed", children: [
+            (shape: Text(at: (1270, 514), text: "settings_mut().set::<S>(layer, value)\nequal to what's below: cleared instead,\nso the layer follows the ones below\nthe layer is dirty; apply runs now", size: 14)),
+        ]),
+        (id: "panel", shape: Group, label: "the Settings panel", children: [
+            (shape: Text(at: (1719.6, 514), text: "a tab for each layer; sections in the order\nthe app gives (settings_sections), then by\nfirst registration; a control by type: a\ntoggle, a text field, a number, a choice", size: 14)),
+        ]),
+        (id: "reload", shape: Group, label: "Last: reload_changed_layers", children: [
+            (shape: Text(at: (16, 514), text: "a settings.ron changed on disk (by hand,\nor by another window) is read again, and\nwhat changed applied: the last write wins", size: 14)),
+        ]),
+        (id: "keys", shape: Group, label: "keys are settings too", children: [
+            (shape: Text(at: (16, 744), text: "an action's keys: \"keys.<KEY>\", a list of chords\nper layer, edited in the panel's Keybindings section\na higher layer's list replaces the lower; empty unbinds", size: 14)),
+        ]),
+        (shape: Arrow(from: "declare", to: "layers", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "layers", to: "resolve", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "resolve", to: "apply", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "panel", to: "set", from_side: Left, to_side: Right), label: "edited"),
+        (shape: Arrow(from: "set", to: "save", from_side: Left, to_side: Right), label: "dirty"),
+        (shape: Arrow(from: "save", to: "layers", from_side: Top, to_side: Bottom), label: "settings.ron"),
+        (shape: Arrow(from: "set", to: "apply", from_side: Top, to_side: Bottom), label: "apply_changed", stroke: Muted, dash: Dashed),
+        (shape: Arrow(from: "reload", to: "layers", from_side: Top, to_side: Bottom)),
+    ],
+)

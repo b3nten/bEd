@@ -1,6 +1,7 @@
 //! Headless file access. Call blocking operations from a host-owned worker.
 //! Filesystem identity and native paths identify sources; documents own content.
 mod document;
+mod file_watch;
 mod local;
 #[cfg(target_os = "macos")]
 mod mac_watch;

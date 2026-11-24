@@ -54,6 +54,10 @@ pub trait StoreBackend: Send + Sync + 'static {
     fn version(&self, _entry: &str) -> Result<Option<String>, String> {
         Ok(None)
     }
+    /// The file the entry is kept in, if it's one: for watching it.
+    fn file(&self, _entry: &str) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// One `<entry>.ron` file per entry in a directory, written atomically.
@@ -85,6 +89,10 @@ impl StoreBackend for DirectoryStore {
 
     fn write(&self, entry: &str, bytes: &[u8]) -> Result<(), String> {
         atomic_write(&self.path(entry), bytes)
+    }
+
+    fn file(&self, entry: &str) -> Option<PathBuf> {
+        Some(self.path(entry))
     }
 
     fn version(&self, entry: &str) -> Result<Option<String>, String> {

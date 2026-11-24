@@ -1,4 +1,4 @@
-//! Save, Undo and Redo for the document a panel references. The commands and
+//! Save, Save As, Undo and Redo for the document a panel references. The commands and
 //! their default keys are always registered; the handlers are opt-in, so an
 //! app can supply its own.
 use crate::*;
@@ -27,6 +27,8 @@ pub trait NewAppExt {
 #[cfg(feature = "files")]
 impl NewAppExt for App {
     fn set_new_document<M: bedtime_filesystem::FileModel + Default>(&mut self) -> &mut Self {
+        // Untitled ones reopen in restored panels.
+        crate::untitled::register_untitled::<M>(self.world_mut());
         self.add_action_handler::<New>(Handler::new(new_document::<M>))
     }
 }
@@ -57,6 +59,21 @@ impl Action for SaveDocument {
     const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::primary(KeyCode::KeyS)];
 }
 
+/// Keep the document somewhere else from now on: the app asks where.
+pub struct SaveDocumentAs;
+impl Action for SaveDocumentAs {
+    const KEY: &'static str = "document.save_as";
+    const LABEL: &'static str = "Save As…";
+    const DEFAULT_KEYS: &'static [KeyChord] = &[KeyChord::new(
+        Modifiers::PRIMARY.union(Modifiers::SHIFT),
+        KeyCode::KeyS,
+    )];
+}
+
+/// The document Save would write over an outside change: asking whether to.
+#[derive(Resource, Default)]
+pub(crate) struct OverwriteQuestion(pub(crate) Option<DocumentId>);
+
 pub struct UndoDocument;
 impl Action for UndoDocument {
     const KEY: &'static str = "document.undo";
@@ -79,10 +96,13 @@ impl Action for RedoDocument {
 pub(crate) fn install(app: &mut App) {
     app.register_action::<New>()
         .register_action::<SaveDocument>()
+        .register_action::<SaveDocumentAs>()
+        .init_resource::<OverwriteQuestion>()
         .register_action::<UndoDocument>()
         .register_action::<RedoDocument>()
         .add_menu_item::<New>(StandardMenu::File, "new")
         .add_menu_item::<SaveDocument>(StandardMenu::File, "save")
+        .add_menu_item::<SaveDocumentAs>(StandardMenu::File, "save")
         .add_menu_item::<UndoDocument>(StandardMenu::Edit, "history")
         .add_menu_item::<RedoDocument>(StandardMenu::Edit, "history");
     app.world_mut().bedtime_mut().register_document_handlers();
@@ -95,9 +115,20 @@ impl Bedtime {
         let mut registry = world.resource_mut::<ActionRegistry>();
         registry.set_global_handler::<SaveDocument>(Some(Handler::new(save).available_when(
             |world, panel| {
-                info(world, panel).is_some_and(|info| {
-                    (info.dirty || info.untitled) && info.writable && !info.saving
-                })
+                panel
+                    .and_then(|panel| world.get::<DocumentReference>(panel))
+                    .is_some_and(|reference| {
+                        world.bedtime().can_save_document(reference.document())
+                    })
+            },
+        )));
+        registry.set_global_handler::<SaveDocumentAs>(Some(Handler::new(save_as).available_when(
+            |world, panel| {
+                panel
+                    .and_then(|panel| world.get::<DocumentReference>(panel))
+                    .is_some_and(|reference| {
+                        world.bedtime().can_save_document_as(reference.document())
+                    })
             },
         )));
         registry.set_global_handler::<UndoDocument>(Some(Handler::new(undo).available_when(
@@ -127,8 +158,47 @@ fn save(world: &mut World, invocation: ActionInvocation) -> ActionResult {
     let document = target(world, &invocation)?;
     world
         .bedtime_mut()
-        .save_document(document)
-        .map(|_| ())
+        .request_save(document)
+        .map_err(|error| error.to_string())
+}
+
+impl BedtimeRef {
+    /// Whether Save does anything for `id`: it has changes to save, has
+    /// nowhere to be saved yet, or is gone from disk or changed there; and
+    /// it can be written and isn't being saved.
+    pub fn can_save_document(&self, id: DocumentId) -> bool {
+        self.world.bedtime().inspect_document(id).is_ok_and(|info| {
+            (info.dirty || info.untitled || info.missing || info.conflict)
+                && (info.writable || info.untitled)
+                && !info.saving
+        })
+    }
+}
+
+impl Bedtime {
+    /// Save `id` because someone asked to (the Save action, or a panel's own
+    /// Save): untitled, ask where; over an outside change, ask whether to
+    /// write over it (with UI to ask in); else save.
+    pub fn request_save(&mut self, id: DocumentId) -> Result<(), DocumentError> {
+        let world = &mut self.world;
+        #[cfg(feature = "ui")]
+        if world
+            .bedtime()
+            .inspect_document(id)
+            .is_ok_and(|info| info.conflict)
+        {
+            world.resource_mut::<OverwriteQuestion>().0 = Some(id);
+            return Ok(());
+        }
+        world.bedtime_mut().save_document(id)
+    }
+}
+
+fn save_as(world: &mut World, invocation: ActionInvocation) -> ActionResult {
+    let document = target(world, &invocation)?;
+    world
+        .bedtime_mut()
+        .save_document_as(document)
         .map_err(|error| error.to_string())
 }
 

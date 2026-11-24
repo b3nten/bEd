@@ -14,6 +14,7 @@ workbench = [
     "dep:bedtime-ui",
     "dep:bedtime-workbench",
     "dep:bedtime-persistence",
+    "dep:ron",
 ]
 
 [dependencies]
@@ -25,3 +26,4 @@ bevy = { workspace = true, features = ["std"], optional = true }
 bedtime-ui = { workspace = true, optional = true, features = ["syntax", "image", "data"] }
 bedtime-workbench = { workspace = true, features = ["persistence"], optional = true }
 bedtime-persistence = { workspace = true, optional = true }
+ron = { version = "0.12.2", optional = true }

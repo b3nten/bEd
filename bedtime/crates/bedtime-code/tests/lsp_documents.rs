@@ -12,8 +12,7 @@ use bedtime_code::{
 };
 use bedtime_document::{BufferEdit, TextBuffer};
 use bedtime_workbench::{
-    BedtimeWorldExt, DocumentReference, EditOptions, PathOptions, Root, ViewerFile,
-    WorkbenchCorePlugins,
+    BedtimeWorldExt, DocumentReference, EditOptions, PathOptions, Root, WorkbenchCorePlugins,
 };
 use bevy::prelude::*;
 use std::{path::PathBuf, time::Duration};
@@ -156,10 +155,13 @@ fn shown_files_sync_get_diagnostics_and_go_to_definitions() {
     go_to_definition(app.world_mut(), panel, 0).unwrap();
     let target: PathBuf = root.join("target.rs");
     until(&mut app, "the definition opens", |world| {
-        world
-            .query_filtered::<&ViewerFile, With<EditorPanel>>()
+        let editors: Vec<Entity> = world
+            .query_filtered::<Entity, With<EditorPanel>>()
             .iter(world)
-            .any(|file| file.0 == target)
+            .collect();
+        editors
+            .into_iter()
+            .any(|panel| world.bedtime().holder_file(panel).as_deref() == Some(target.as_path()))
     });
 
     // Closed (and saved, so nothing unsaved keeps it): the document leaves

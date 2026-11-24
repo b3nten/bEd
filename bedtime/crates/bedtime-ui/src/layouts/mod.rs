@@ -16,6 +16,7 @@
 mod chrome;
 mod dialogs;
 mod geometry;
+mod headers;
 mod membership;
 #[cfg(feature = "persistence")]
 mod persistence;
@@ -31,6 +32,7 @@ pub mod view;
 pub use bedtime_ui_macros::panel;
 pub use chrome::*;
 pub use dialogs::{ErrorDialog, ErrorDialogWorldExt, ErrorDialogs, ModalAppExt, ModalFn};
+pub use headers::{PanelHeaderAppExt, PanelHeaderFn};
 pub use placement::{LayoutFallback, PanelsCommandsExt, PanelsWorldExt, Place, Placement};
 pub use surface::{AreaBackground, LayoutCamera, LayoutSurface, SurfaceBody, TabBarVisibility};
 #[cfg(feature = "persistence")]

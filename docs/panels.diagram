@@ -1,0 +1,49 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -142), text: "Panels and layouts are entities. A layout is a flat tiling of areas (each a rectangle in 0..10000 both ways:\nno split tree); an area's panels are its tabs. Green: what a plugin writes.", size: 16), stroke: Muted),
+        (id: "layout", shape: Group, label: "a layout", children: [
+            (shape: Text(at: (16, 44), text: "Layout { name, focused_area }\nActiveLayout: on one of them\nLayoutSlot(n): bEd's numbered layouts (Cmd+1…5)", size: 14)),
+        ]),
+        (id: "area", shape: Group, label: "an area", children: [
+            (shape: Text(at: (16, 274), text: "Area { rect, selected }: the rectangle, and its\nselected tab, the one drawn\nInLayout(layout): the layout it's in\ntwo areas side by side are a split", size: 14)),
+        ]),
+        (id: "panel", shape: Group, label: "a panel", stroke: Green, children: [
+            (shape: Text(at: (16, 524), text: "the plugin's component, e.g. DiagramPanel: its state\nPanelInstance: title, and P::draw, from #[require]\nInArea(area): the area it's a tab of, in order\nPanelPresentation: visible, focused, rect: each frame\nDocumentReference(doc): a viewer's document\nActionHandler<A>: actions it handles itself", size: 14)),
+        ]),
+        (id: "panel-code", shape: Group, label: "a panel kind", stroke: Green, children: [
+            (shape: Text(at: (16, 844), text: "#[panel] struct Notes { … }  (or derive Component and\n    require PanelInstance::of::<Self>())\nimpl Panel for Notes {\n    const LABEL: &str = \"Notes\";\n    fn draw(ui, world, context, panel) { … }\n}\nimpl ShowPanel for Notes { SHOW = \"notes.show\" }\napp.add_panel::<Notes>(): View menu, palette, saved", size: 14)),
+        ]),
+        (id: "p-open", shape: Group, label: "open it", children: [
+            (shape: Text(at: (776, 44), text: "world.bedtime_mut().open_panel((\n    Notes::default(),\n    Place { at: Placement::Focused, focus: true },\n))", size: 14)),
+        ]),
+        (id: "p-where", shape: Group, label: "Place's on_insert hook: which area", children: [
+            (shape: Text(at: (1298, 44), text: "Focused: the focused area, else the largest\nLargest, or In(area)\nFrom(panel): the largest other area; or the\n    one there is, split in two\nno layout active: LayoutFallback makes one", size: 14)),
+        ]),
+        (id: "p-in", shape: Group, label: "then", children: [
+            (shape: Text(at: (1761.2, 44), text: "InArea(area): a new last tab\nfocused, if focus\nnowhere to go: despawned", size: 14)),
+        ]),
+        (id: "g-draw", shape: Group, label: "while the layout draws", children: [
+            (shape: Text(at: (776, 344), text: "a click on a tab, a drag of a tab, a border\nor a corner, a tab's ×: a LayoutEdit\n(FocusPanel, MoveTab, SplitTab, ResizeBorder,\nClosePanels…) into PendingEdits", size: 14)),
+        ]),
+        (id: "g-apply", shape: Group, label: "LayoutSystems::Apply, after the draw", children: [
+            (shape: Text(at: (1256, 344), text: "user_edit: allowed on this surface?\nclosing: CloseChecks, then CloseHooks\n(documents: the unsaved-changes prompt)\nout of date (the layout changed): dropped", size: 14)),
+        ]),
+        (id: "g-done", shape: Group, label: "apply_edit", children: [
+            (shape: Text(at: (1703.6, 344), text: "areas spawned and despawned (a split\nis a new area), tabs moved, focus fixed", size: 14)),
+        ]),
+        (id: "focus", shape: Group, label: "the focused panel", children: [
+            (shape: Text(at: (776, 664), text: "the active layout → its focused_area → that area's selected tab\nchanged by: a click, Place { focus: true }, focus_panel()\nused by: actions (Focused), the status bar's middle,\nmenus (what's enabled), autosave (on leaving a panel)", size: 14)),
+        ]),
+        (id: "saved", shape: Group, label: "saved with the session", children: [
+            (shape: Text(at: (1476, 664), text: "layouts, areas and panels are Persist: in world.ron\na panel whose kind isn't Persist is left out\na viewer saves ViewerSource(name), the document's\nname (file:///…, untitled:…), to open it again", size: 14)),
+        ]),
+        (shape: Arrow(from: "panel", to: "area", from_side: Top, to_side: Bottom), label: "InArea"),
+        (shape: Arrow(from: "area", to: "layout", from_side: Top, to_side: Bottom), label: "InLayout"),
+        (shape: Arrow(from: "panel-code", to: "panel", from_side: Top, to_side: Bottom), stroke: Muted, dash: Dashed),
+        (shape: Arrow(from: "p-open", to: "p-where", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "p-where", to: "p-in", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "g-draw", to: "g-apply", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "g-apply", to: "g-done", from_side: Right, to_side: Left)),
+    ],
+)

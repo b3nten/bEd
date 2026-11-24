@@ -12,10 +12,9 @@ use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    Action, ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentId,
-    DocumentReference, EditOptions, Handler, KeyChord, ManagedTask, ManagedWork, MenusAppExt,
-    Modifiers, Notification, Panel, PanelFactory, PanelFactoryPayload, PanelPresentation,
-    PathOptions, Root, StandardMenu, Target, ViewerFile,
+    Action, ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentId, EditOptions,
+    Handler, KeyChord, ManagedTask, ManagedWork, MenusAppExt, Modifiers, Notification, Panel,
+    PanelFactory, PanelFactoryPayload, PanelPresentation, PathOptions, Root, StandardMenu, Target,
 };
 use bevy::prelude::*;
 use std::{
@@ -559,12 +558,14 @@ fn start(world: &mut World, panel: Entity, query: SearchQuery, root: Option<Path
 /// The files open in panels (with their unsaved text, if `texts`), and which
 /// of them have unsaved text, with its revision.
 fn open_files(world: &mut World, texts: bool) -> (OpenFiles, Vec<(PathBuf, u64)>) {
-    let documents: Vec<(PathBuf, DocumentId)> = world
-        .query::<(&ViewerFile, &DocumentReference)>()
-        .iter(world)
-        .map(|(file, reference)| (file.0.clone(), reference.document()))
-        .collect();
     let workbench = world.bedtime();
+    let mut documents: Vec<(PathBuf, DocumentId)> = workbench
+        .document_ids()
+        .into_iter()
+        .filter_map(|id| Some((workbench.document_file(id)?, id)))
+        .collect();
+    // A file open as text and as something else (hex): the text first.
+    documents.sort_by_key(|(_, id)| workbench.cast_document::<TextBuffer>(*id).is_err());
     let mut open = OpenFiles::new();
     let mut unsaved = Vec::new();
     for (path, id) in documents {
@@ -753,10 +754,9 @@ fn name(path: &Path) -> String {
 /// The document open for the file at `path`, if any.
 fn document_at(world: &mut World, path: &Path) -> Option<DocumentId> {
     world
-        .query::<(&ViewerFile, &DocumentReference)>()
-        .iter(world)
-        .find(|(file, _)| file.0 == path)
-        .map(|(_, reference)| reference.document())
+        .bedtime()
+        .document_for_file::<TextBuffer>(path)
+        .map(|handle| handle.id())
 }
 
 /// The edits that replace the matches at `ranges` in `text`, last first.
@@ -1026,10 +1026,11 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         .get::<SearchState>(panel)
         .is_some_and(|state| state.confirming);
     let open: HashSet<PathBuf> = if confirming {
-        world
-            .query::<&ViewerFile>()
-            .iter(world)
-            .map(|file| file.0.clone())
+        let workbench = world.bedtime();
+        workbench
+            .document_ids()
+            .into_iter()
+            .filter_map(|id| workbench.document_file(id))
             .collect()
     } else {
         HashSet::new()

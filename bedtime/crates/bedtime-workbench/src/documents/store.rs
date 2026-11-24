@@ -2,11 +2,15 @@
 //! the editing session, and the single source task (read or save) in flight.
 use super::*;
 use crate::ManagedTask;
-use bedtime_document::History;
+use bedtime_document::{History, SourceChanged, SourceWatch};
+use bedtime_ui::UiWaker;
 use std::{
     any::Any,
-    sync::{Arc, mpsc::TryRecvError},
-    time::{Duration, Instant},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::TryRecvError,
+    },
 };
 
 const HISTORY_LIMIT: usize = 100;
@@ -17,6 +21,7 @@ pub(super) trait Store: Send + Sync {
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn source_id(&self) -> SourceId;
     fn title(&self) -> String;
+    fn name(&self) -> Option<bedtime_document::SourceName>;
     fn info(&self) -> StoreInfo;
     fn reading(&self) -> bool;
     fn undo(&mut self, redo: bool) -> Result<u64, DocumentError>;
@@ -28,14 +33,22 @@ pub(super) trait Store: Send + Sync {
     fn end_group(&mut self, group: DocumentUndoGroup) -> Result<(), DocumentError>;
     fn detach_viewer(&mut self, viewer: Entity);
     fn start_save(&mut self, work: &mut ManagedWork, owner: Entity) -> Result<(), DocumentError>;
+    /// Settle a conflict without knowing the model: keep this content (the
+    /// next save writes over what came in), or take what came in.
+    fn settle_conflict(&mut self, keep: bool) -> Result<u64, DocumentError>;
     fn refresh(&mut self);
-    /// Accept a finished task and start a read if one is due and allowed.
-    /// Returns the outcome of a save that just finished.
+    /// Check a watched source for changes the watch may have missed (the
+    /// app was in the background).
+    fn recheck(&mut self);
+    /// Start watching the source, accept a finished task, and start a read
+    /// if one is due and allowed. Returns the outcome of a save that just
+    /// finished.
     fn poll(
         &mut self,
         work: &mut ManagedWork,
         owner: Entity,
         may_read: bool,
+        waker: &UiWaker,
     ) -> Option<Result<(), String>>;
 
     // Siblings: documents of one source held by different models, passing
@@ -60,6 +73,11 @@ pub(super) trait Store: Send + Sync {
     fn adopt_save(&mut self, version: Option<SourceVersion>);
     /// The version of what was last loaded or saved.
     fn saved_version(&self) -> Option<SourceVersion>;
+    /// Take back unsaved content kept from an earlier session (as bytes),
+    /// as one undoable step. `base` is the version it was made from: if the
+    /// source holds another now, that's a conflict.
+    #[cfg(feature = "persistence")]
+    fn restore_unsaved(&mut self, bytes: &[u8], base: Option<SourceVersion>) -> Result<(), String>;
 }
 
 /// How a model becomes bytes and back (`ByteModel`), kept without the bound.
@@ -100,7 +118,13 @@ pub(super) struct Typed<M: DocumentModel> {
     task: Option<Task<M>>,
     /// A full read was asked for (initially, by `refresh`, or after a failed save).
     refresh: bool,
-    next_check: Instant,
+    /// The source may have changed: read it again if its version did.
+    check: bool,
+    /// Watching the source, once started (`None` if it can't watch).
+    watch: Option<SourceWatch>,
+    watching: bool,
+    /// Set by the watch, from any thread.
+    changed: Arc<AtomicBool>,
     /// What the next save expects to find, after the source was replaced
     /// (`None`: nothing there).
     next_expected: Option<Option<SourceVersion>>,
@@ -108,6 +132,9 @@ pub(super) struct Typed<M: DocumentModel> {
     codec: Option<Codec<M>>,
     /// The revision it had when content last passed to or from a sibling.
     synced: Option<u64>,
+    /// A source that saves every change: the revision whose save failed,
+    /// not tried again until there's another change.
+    failed: Option<u64>,
 }
 
 enum State<M: DocumentModel> {
@@ -154,10 +181,14 @@ impl<M: DocumentModel> Typed<M> {
             state: State::Loading,
             task: None,
             refresh: true,
-            next_check: Instant::now(),
+            check: false,
+            watch: None,
+            watching: false,
+            changed: Arc::default(),
             next_expected: None,
             codec: None,
             synced: None,
+            failed: None,
         }
     }
 
@@ -184,6 +215,9 @@ impl<M: DocumentModel> Typed<M> {
         session.error = None;
         self.source = source;
         self.next_expected = Some(expected);
+        // Watch the new source instead.
+        self.watch = None;
+        self.watching = false;
         Ok(())
     }
 
@@ -207,29 +241,34 @@ impl<M: DocumentModel> Typed<M> {
         matches!(self.task, Some(Task::Save { .. }))
     }
 
+    /// A source that saves every change has one to save, and can.
+    fn save_due(&self) -> bool {
+        let State::Ready(session) = &self.state else {
+            return false;
+        };
+        self.source.saves_every_change()
+            && self.source.writable()
+            && session.dirty()
+            && session.incoming.is_none()
+            && self.failed != Some(session.history.revision())
+    }
+
     fn read_due(&self) -> bool {
         match &self.state {
             State::Loading | State::Failed(_) => self.refresh,
-            State::Ready(_) => {
-                self.refresh
-                    || (self.source.check_interval().is_some() && Instant::now() >= self.next_check)
-            }
+            State::Ready(_) => self.refresh || self.check,
         }
     }
 
     fn start_read(&mut self, work: &mut ManagedWork, owner: Entity) {
-        // A periodic check first asks for the version, and skips the load if unchanged.
+        // A check first asks for the version, and skips the load if unchanged.
         let check_only = !self.refresh && matches!(self.state, State::Ready(_));
         let known = match &self.state {
             State::Ready(session) => session.saved.as_ref().and_then(|s| s.version.clone()),
             _ => None,
         };
         self.refresh = false;
-        self.next_check = Instant::now()
-            + self
-                .source
-                .check_interval()
-                .unwrap_or(Duration::from_secs(1));
+        self.check = false;
         let source = self.source.clone();
         let task = work.spawn_task(Some(owner), "Read document", move |_| {
             if check_only
@@ -281,6 +320,7 @@ impl<M: DocumentModel> Typed<M> {
             Err(error) => {
                 // Find out what the source holds now; if it changed, that's a conflict.
                 self.refresh = true;
+                self.failed = Some(session.history.revision());
                 let error = format!("Couldn't save: {error}");
                 session.error = Some(error.clone());
                 Err(error)
@@ -306,13 +346,18 @@ impl<M: DocumentModel> Store for Typed<M> {
         self.source.title()
     }
 
+    fn name(&self) -> Option<bedtime_document::SourceName> {
+        self.source.name()
+    }
+
     fn info(&self) -> StoreInfo {
         let writable = self.source.writable();
         let mut info = StoreInfo {
             status: DocumentStatus::Loading,
             revision: 0,
             dirty: false,
-            saving: self.saving(),
+            // Saving, or about to (every change is).
+            saving: self.saving() || self.save_due(),
             conflict: false,
             missing: false,
             writable,
@@ -326,7 +371,8 @@ impl<M: DocumentModel> Store for Typed<M> {
             State::Ready(session) => {
                 info.status = DocumentStatus::Ready;
                 info.revision = session.history.revision();
-                info.dirty = session.dirty();
+                // Every change is saved: never unsaved.
+                info.dirty = session.dirty() && !self.source.saves_every_change();
                 info.conflict = session.incoming.is_some();
                 info.missing = session.missing;
                 info.error = session.error.clone();
@@ -397,9 +443,6 @@ impl<M: DocumentModel> Store for Typed<M> {
         if !writable {
             return Err(DocumentError::ReadOnly);
         }
-        if session.missing {
-            return Err(DocumentError::Missing);
-        }
         if session.incoming.is_some() {
             return Err(DocumentError::Conflict);
         }
@@ -410,7 +453,12 @@ impl<M: DocumentModel> Store for Typed<M> {
             .and_then(|saved| saved.version.clone());
         session.group = None;
         session.error = None;
-        let expected = self.next_expected.take().unwrap_or(saved_version);
+        // Gone from the source: saving puts it back, expecting nothing there.
+        let missing = session.missing;
+        let expected =
+            self.next_expected
+                .take()
+                .unwrap_or(if missing { None } else { saved_version });
         let source = self.source.clone();
         let model = snapshot.clone();
         let task = work
@@ -433,12 +481,45 @@ impl<M: DocumentModel> Store for Typed<M> {
         self.refresh = true;
     }
 
+    fn settle_conflict(&mut self, keep: bool) -> Result<u64, DocumentError> {
+        let session = self.session_mut()?;
+        let revision = session.history.revision();
+        session.resolve(
+            revision,
+            if keep {
+                DocumentConflictResolution::KeepLocal
+            } else {
+                DocumentConflictResolution::AcceptIncoming
+            },
+        )
+    }
+
+    fn recheck(&mut self) {
+        if self.watch.is_some() {
+            self.check = true;
+        }
+    }
+
     fn poll(
         &mut self,
         work: &mut ManagedWork,
         owner: Entity,
         may_read: bool,
+        waker: &UiWaker,
     ) -> Option<Result<(), String>> {
+        // Watch before the first read, so nothing between the two is missed.
+        if !self.watching {
+            self.watching = true;
+            let changed = self.changed.clone();
+            let waker = waker.clone();
+            self.watch = self.source.watch(SourceChanged::new(move || {
+                changed.store(true, Ordering::Release);
+                waker.wake();
+            }));
+        }
+        if self.changed.swap(false, Ordering::AcqRel) {
+            self.check = true;
+        }
         let mut finished = None;
         match self.task.take() {
             Some(Task::Read(task)) => match task.try_recv() {
@@ -458,7 +539,9 @@ impl<M: DocumentModel> Store for Typed<M> {
             },
             None => {}
         }
-        if may_read && self.task.is_none() && self.read_due() {
+        if self.task.is_none() && self.save_due() {
+            let _ = self.start_save(work, owner);
+        } else if may_read && self.task.is_none() && self.read_due() {
             self.start_read(work, owner);
         }
         finished
@@ -520,6 +603,25 @@ impl<M: DocumentModel> Store for Typed<M> {
             session.incoming = None;
             session.missing = false;
         }
+    }
+
+    #[cfg(feature = "persistence")]
+    fn restore_unsaved(&mut self, bytes: &[u8], base: Option<SourceVersion>) -> Result<(), String> {
+        let decode = self.codec.as_ref().ok_or("It has no byte form")?.decode;
+        let model = decode(bytes)?;
+        let session = self.session_mut().map_err(|e| e.to_string())?;
+        session.group = None;
+        if *session.history.content() != model {
+            session.history.replace(model, "Unsaved Changes");
+        }
+        // Changed since: the source's content comes in as a conflict.
+        if let Some(saved) = &session.saved
+            && saved.version != base
+            && session.dirty()
+        {
+            session.incoming = Some(saved.clone());
+        }
+        Ok(())
     }
 
     fn saved_version(&self) -> Option<SourceVersion> {

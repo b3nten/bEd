@@ -1,24 +1,36 @@
 //! Notes: personal plain-text notes for a workspace, in a panel with the list
 //! down the side and the selected note's editor beside it.
 //!
-//! The notes (`Notes`) are kept in the workspace's store (`notes.ron`), not as
-//! files in its folder, so they never end up in the project or its
-//! repository. Each panel remembers which note it shows.
+//! The notes (`Notes`) are a document kept in the workspace's store
+//! (`notes.ron`), not as files in its folder, so they never end up in the
+//! project or its repository. Every change is saved as it's made, can be
+//! undone, and the notes are read again if `notes.ron` is changed elsewhere.
+//! Each panel remembers which note it shows.
 //!
 //! Drawing reads the notes and returns what was asked (`Intent`s); `apply`
-//! does it, right after drawing.
+//! makes them changes to the document, right after drawing.
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
 use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
-    Panel,
-    persistence::{Persisted, PersistenceAppExt, ReflectPersist, WorkbenchStore},
+    BedtimeWorldExt, ByteModel, DocumentHandle, DocumentModel, DocumentReference, DocumentStatus,
+    DocumentUndoGroup, EditOptions, Panel,
+    persistence::{ReflectPersist, WorkbenchStore},
 };
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::{
+    ops::Range,
+    time::{Duration, Instant},
+};
 
 impl bedtime_workbench::ShowPanel for NotesPanel {
     const SHOW: &'static str = "notes.show";
 }
+
+/// The store entry the notes are kept in.
+const ENTRY: &str = "notes";
+/// Typing after a pause this long is a new undo step.
+const TYPING_PAUSE: Duration = Duration::from_secs(1);
 
 pub struct NotesPlugin;
 
@@ -26,14 +38,7 @@ impl Plugin for NotesPlugin {
     fn build(&self, app: &mut App) {
         app.register_type::<NotesPanel>()
             .add_panel::<NotesPanel>()
-            .init_resource::<Notes>()
-            .persist::<Notes, WorkbenchStore>()
-            // The notes are the workspace's; the next workspace's are loaded
-            // after this.
-            .add_systems(
-                bedtime_workbench::OnWorkspaceClose,
-                |mut commands: Commands| commands.insert_resource(Notes::default()),
-            );
+            .add_systems(Update, attach_documents);
     }
 }
 
@@ -63,9 +68,9 @@ impl Note {
     }
 }
 
-/// The workspace's notes, newest first unless moved. Saved in its store.
-#[derive(Resource, Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, Persisted)]
-#[persisted(key = "notes")]
+/// The workspace's notes, newest first unless moved: a document, kept in
+/// the workspace's store.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Notes {
     #[serde(default)]
     pub notes: Vec<Note>,
@@ -74,58 +79,178 @@ pub struct Notes {
     pub next_id: u64,
 }
 
+/// A change to the notes. Each returns its inverse, so it can be undone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NoteChange {
+    /// Put `note` at `at` in the list (or last, if that's past the end).
+    Insert {
+        at: usize,
+        note: Note,
+    },
+    Remove {
+        id: u64,
+    },
+    SetTitle {
+        id: u64,
+        title: String,
+    },
+    /// Replace `range` (in bytes) of a note's text with `text`.
+    EditText {
+        id: u64,
+        range: Range<usize>,
+        text: String,
+    },
+}
+
+impl DocumentModel for Notes {
+    type Change = NoteChange;
+    type OpenState = ();
+
+    fn apply(&mut self, change: &NoteChange) -> Result<NoteChange, String> {
+        match change {
+            NoteChange::Insert { at, note } => {
+                if self.get(note.id).is_some() {
+                    return Err(format!("There's already a note {}", note.id));
+                }
+                self.notes.insert((*at).min(self.notes.len()), note.clone());
+                self.next_id = self.next_id.max(note.id + 1);
+                Ok(NoteChange::Remove { id: note.id })
+            }
+            NoteChange::Remove { id } => {
+                let at = self.index(*id)?;
+                let note = self.notes.remove(at);
+                Ok(NoteChange::Insert { at, note })
+            }
+            NoteChange::SetTitle { id, title } => {
+                let at = self.index(*id)?;
+                let old = std::mem::replace(&mut self.notes[at].title, title.clone());
+                Ok(NoteChange::SetTitle {
+                    id: *id,
+                    title: old,
+                })
+            }
+            NoteChange::EditText { id, range, text } => {
+                let at = self.index(*id)?;
+                let note = &mut self.notes[at].text;
+                if range.start > range.end
+                    || range.end > note.len()
+                    || !note.is_char_boundary(range.start)
+                    || !note.is_char_boundary(range.end)
+                {
+                    return Err("That range isn't in the note".into());
+                }
+                let old = note[range.clone()].to_owned();
+                note.replace_range(range.clone(), text);
+                Ok(NoteChange::EditText {
+                    id: *id,
+                    range: range.start..range.start + text.len(),
+                    text: old,
+                })
+            }
+        }
+    }
+}
+
+/// Kept as RON (`notes.ron`). Nothing there yet is no notes.
+impl ByteModel for Notes {
+    fn decode(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            return Ok(Self::default());
+        }
+        ron::de::from_bytes(bytes).map_err(|e| e.to_string())
+    }
+
+    fn encode(&self, out: &mut dyn std::io::Write) -> std::io::Result<()> {
+        let text = ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+            .map_err(std::io::Error::other)?;
+        out.write_all(text.as_bytes())
+    }
+}
+
 impl Notes {
     pub fn get(&self, id: u64) -> Option<&Note> {
         self.notes.iter().find(|note| note.id == id)
     }
 
-    pub fn get_mut(&mut self, id: u64) -> Option<&mut Note> {
-        self.notes.iter_mut().find(|note| note.id == id)
-    }
-
-    fn fresh_id(&mut self) -> u64 {
-        // Never reuse an id, even if `next_id` was lost or edited by hand.
-        let id = self
-            .next_id
-            .max(self.notes.iter().map(|note| note.id + 1).max().unwrap_or(0));
-        self.next_id = id + 1;
-        id
-    }
-
-    /// A new note at the top of the list. Returns its id.
-    pub fn add(&mut self, title: impl Into<String>, text: impl Into<String>) -> u64 {
-        let id = self.fresh_id();
-        self.notes.insert(
-            0,
-            Note {
-                id,
-                title: title.into(),
-                text: text.into(),
-            },
-        );
-        id
-    }
-
-    /// A copy of note `id`, just below it. Returns the copy's id.
-    pub fn duplicate(&mut self, id: u64) -> Option<u64> {
-        let at = self.notes.iter().position(|note| note.id == id)?;
-        let mut copy = self.notes[at].clone();
-        copy.id = self.fresh_id();
-        copy.title = format!("{} copy", self.notes[at].label());
-        let copied = copy.id;
-        self.notes.insert(at + 1, copy);
-        Some(copied)
-    }
-
-    /// Remove note `id`. Returns the note to show instead: the one that took
-    /// its place in the list, else the one before.
-    pub fn remove(&mut self, id: u64) -> Option<u64> {
-        let at = self.notes.iter().position(|note| note.id == id)?;
-        self.notes.remove(at);
+    fn index(&self, id: u64) -> Result<usize, String> {
         self.notes
-            .get(at)
+            .iter()
+            .position(|note| note.id == id)
+            .ok_or_else(|| format!("There's no note {id}"))
+    }
+
+    /// The id a new note gets: never one in use, even if `next_id` was lost
+    /// or edited by hand.
+    fn fresh_id(&self) -> u64 {
+        self.next_id
+            .max(self.notes.iter().map(|note| note.id + 1).max().unwrap_or(0))
+    }
+
+    /// A new note at the top of the list: its id, and the change.
+    pub fn new_note(&self, title: impl Into<String>, text: impl Into<String>) -> (u64, NoteChange) {
+        let id = self.fresh_id();
+        let note = Note {
+            id,
+            title: title.into(),
+            text: text.into(),
+        };
+        (id, NoteChange::Insert { at: 0, note })
+    }
+
+    /// A copy of note `id`, just below it: the copy's id, and the change.
+    pub fn copy_note(&self, id: u64) -> Option<(u64, NoteChange)> {
+        let at = self.index(id).ok()?;
+        let original = &self.notes[at];
+        let copy = self.fresh_id();
+        let note = Note {
+            id: copy,
+            title: format!("{} copy", original.label()),
+            text: original.text.clone(),
+        };
+        Some((copy, NoteChange::Insert { at: at + 1, note }))
+    }
+
+    /// The note to show once `id` is removed: the one that takes its place
+    /// in the list, else the one before.
+    pub fn shown_after_removing(&self, id: u64) -> Option<u64> {
+        let at = self.index(id).ok()?;
+        self.notes
+            .get(at + 1)
             .or_else(|| self.notes.get(at.wrapping_sub(1)))
             .map(|note| note.id)
+    }
+
+    /// The edit that turns note `id`'s text into `text`: the part between
+    /// what they start and end with.
+    pub fn text_change(&self, id: u64, text: &str) -> Option<NoteChange> {
+        let old = &self.get(id)?.text;
+        if old == text {
+            return None;
+        }
+        let mut start = old
+            .bytes()
+            .zip(text.bytes())
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !old.is_char_boundary(start) || !text.is_char_boundary(start) {
+            start -= 1;
+        }
+        let mut end = old.len().min(text.len()) - start;
+        end = old.as_bytes()[start..]
+            .iter()
+            .rev()
+            .zip(text.as_bytes()[start..].iter().rev())
+            .take(end)
+            .take_while(|(a, b)| a == b)
+            .count();
+        while !old.is_char_boundary(old.len() - end) || !text.is_char_boundary(text.len() - end) {
+            end -= 1;
+        }
+        Some(NoteChange::EditText {
+            id,
+            range: start..old.len() - end,
+            text: text[start..text.len() - end].to_owned(),
+        })
     }
 }
 
@@ -154,6 +279,16 @@ pub struct NotesView {
     focus: Option<Field>,
     /// Only notes whose label or text has this are listed.
     filter: String,
+    /// Typing in a note's title or text: one undo step until a pause, or
+    /// something else is done.
+    typing: Option<Typing>,
+}
+
+struct Typing {
+    note: u64,
+    field: Field,
+    group: DocumentUndoGroup,
+    last: Instant,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,46 +310,96 @@ pub enum Intent {
     HideList(bool),
 }
 
-/// Do what panel `panel` asked.
+/// The notes document `panel` shows, if it has one.
+fn document(world: &World, panel: Entity) -> Option<DocumentHandle<Notes>> {
+    let id = world.get::<DocumentReference>(panel)?.document();
+    world.bedtime().cast_document(id).ok()
+}
+
+/// Give Notes panels the workspace's notes: restored, opened, or after
+/// switching workspace.
+fn attach_documents(world: &mut World) {
+    let panels: Vec<Entity> = world
+        .query_filtered::<Entity, (With<NotesPanel>, Without<DocumentReference>)>()
+        .iter(world)
+        .collect();
+    for panel in panels {
+        attach(world, panel);
+    }
+}
+
+fn attach(world: &mut World, panel: Entity) {
+    match world
+        .bedtime_mut()
+        .store_document::<Notes, WorkbenchStore>(ENTRY, "Notes")
+    {
+        Ok(notes) => {
+            world.entity_mut(panel).insert(DocumentReference::of(notes));
+        }
+        Err(error) => warn!("The notes couldn't be opened: {error}"),
+    }
+}
+
+/// Do what panel `panel` asked: changes to the notes, made one at a time.
 pub fn apply(world: &mut World, panel: Entity, intents: Vec<Intent>) {
     for intent in intents {
-        let select = {
-            let mut notes = world.resource_mut::<Notes>();
-            match intent {
-                Intent::HideList(hidden) => {
-                    if let Some(mut shown) = world.get_mut::<NotesPanel>(panel)
-                        && shown.list_hidden != hidden
-                    {
-                        shown.list_hidden = hidden;
-                    }
-                    continue;
-                }
-                Intent::New => Some((Some(notes.add("", "")), Some(Field::Title))),
-                Intent::Select(id) => Some((Some(id), None)),
-                Intent::Rename(id, title) => {
-                    if let Some(note) = notes.get_mut(id)
-                        && note.title != title
-                    {
-                        note.title = title;
-                    }
-                    None
-                }
-                Intent::SetText(id, text) => {
-                    if let Some(note) = notes.get_mut(id)
-                        && note.text != text
-                    {
-                        note.text = text;
-                    }
-                    None
-                }
-                Intent::Duplicate(id) => notes.duplicate(id).map(|copy| (Some(copy), None)),
-                Intent::Delete(id) => {
-                    let next = notes.remove(id);
-                    let shown = world.get::<NotesPanel>(panel).and_then(|p| p.selected);
-                    (shown == Some(id)).then_some((next, None))
-                }
+        if let Intent::HideList(hidden) = intent {
+            if let Some(mut shown) = world.get_mut::<NotesPanel>(panel)
+                && shown.list_hidden != hidden
+            {
+                shown.list_hidden = hidden;
+            }
+            continue;
+        }
+        let Some(handle) = document(world, panel) else {
+            return;
+        };
+        let Ok(notes) = world.bedtime().read_document(handle) else {
+            return;
+        };
+        let shown = world.get::<NotesPanel>(panel).and_then(|p| p.selected);
+        // The change, its label, typing in which field, and what to select.
+        let (change, label, typing, select) = match intent {
+            Intent::HideList(_) => unreachable!(),
+            Intent::New => {
+                let (id, change) = notes.new_note("", "");
+                (
+                    Some(change),
+                    "New Note",
+                    None,
+                    Some((Some(id), Some(Field::Title))),
+                )
+            }
+            Intent::Select(id) => (None, "", None, Some((Some(id), None))),
+            Intent::Rename(id, title) => {
+                let changed = notes.get(id).is_some_and(|note| note.title != title);
+                let change = changed.then_some(NoteChange::SetTitle { id, title });
+                (change, "Rename Note", Some((id, Field::Title)), None)
+            }
+            Intent::SetText(id, text) => {
+                let change = notes.text_change(id, &text);
+                (change, "Typing", Some((id, Field::Text)), None)
+            }
+            Intent::Duplicate(id) => match notes.copy_note(id) {
+                Some((copy, change)) => (
+                    Some(change),
+                    "Duplicate Note",
+                    None,
+                    Some((Some(copy), None)),
+                ),
+                None => (None, "", None, None),
+            },
+            Intent::Delete(id) => {
+                let next = notes.shown_after_removing(id);
+                let select = (shown == Some(id)).then_some((next, None));
+                (Some(NoteChange::Remove { id }), "Delete Note", None, select)
             }
         };
+        if let Some(change) = change
+            && let Err(error) = edit(world, panel, handle, change, label, typing)
+        {
+            warn!("The notes couldn't be changed: {error}");
+        }
         if let Some((selected, focus)) = select {
             if let Some(mut shown) = world.get_mut::<NotesPanel>(panel)
                 && shown.selected != selected
@@ -227,6 +412,76 @@ pub fn apply(world: &mut World, panel: Entity, intents: Vec<Intent>) {
             }
         }
     }
+}
+
+/// Make `change`. Typing in the same field of the same note, without a
+/// pause, joins the last undo step; anything else starts a new one.
+fn edit(
+    world: &mut World,
+    panel: Entity,
+    handle: DocumentHandle<Notes>,
+    change: NoteChange,
+    label: &str,
+    typing: Option<(u64, Field)>,
+) -> Result<(), String> {
+    let id = handle.id();
+    let revision = world
+        .bedtime()
+        .inspect_document(id)
+        .map_err(|e| e.to_string())?
+        .revision;
+    let now = Instant::now();
+    let joined = world.get::<NotesView>(panel).and_then(|view| {
+        let current = view.typing.as_ref()?;
+        let (note, field) = typing?;
+        (current.note == note && current.field == field && now - current.last < TYPING_PAUSE)
+            .then_some(current.group)
+    });
+    let options = match (joined, typing) {
+        (Some(group), _) => EditOptions::grouped(label, group),
+        (None, Some((note, field))) => {
+            let group = world
+                .bedtime_mut()
+                .begin_document_undo_group(id, panel)
+                .map_err(|e| e.to_string())?;
+            if let Some(mut view) = world.get_mut::<NotesView>(panel) {
+                view.typing = Some(Typing {
+                    note,
+                    field,
+                    group,
+                    last: now,
+                });
+            }
+            EditOptions::grouped(label, group)
+        }
+        (None, None) => {
+            if let Some(mut view) = world.get_mut::<NotesView>(panel) {
+                view.typing = None;
+            }
+            EditOptions::new(label)
+        }
+    };
+    match world
+        .bedtime_mut()
+        .edit_document(handle, revision, change.clone(), options)
+    {
+        Ok(_) => {}
+        // Something else changed the notes since (an undo): start a new step.
+        Err(bedtime_workbench::DocumentError::StaleUndoGroup) if joined.is_some() => {
+            if let Some(mut view) = world.get_mut::<NotesView>(panel) {
+                view.typing = None;
+            }
+            return edit(world, panel, handle, change, label, typing);
+        }
+        Err(error) => return Err(error.to_string()),
+    }
+    if let Some(typing) = world
+        .get_mut::<NotesView>(panel)
+        .and_then(|view| view.into_inner().typing.as_mut())
+    {
+        typing.last = now;
+    }
+    Ok(())
 }
 
 /// Whether `note` is listed while filtering by `filter`.
@@ -248,7 +503,24 @@ impl Panel for NotesPanel {
             world.entity_mut(panel).insert(shown);
             return;
         };
-        let notes = world.resource::<Notes>();
+        let loaded = document(world, panel).and_then(|handle| {
+            let info = world.bedtime().inspect_document(handle.id()).ok()?;
+            match info.status {
+                DocumentStatus::Ready => world.bedtime().read_document(handle).ok(),
+                DocumentStatus::Loading => {
+                    ui.centered_and_justified(|ui| ui.spinner());
+                    None
+                }
+                DocumentStatus::Failed(error) => {
+                    ui.weak(format!("The notes can't be read: {error}"));
+                    None
+                }
+            }
+        });
+        let Some(notes) = loaded else {
+            world.entity_mut(panel).insert((shown, view));
+            return;
+        };
         // A note deleted elsewhere (or none chosen yet): show the first.
         if shown.selected.is_none_or(|id| notes.get(id).is_none()) {
             shown.selected = notes.notes.first().map(|note| note.id);

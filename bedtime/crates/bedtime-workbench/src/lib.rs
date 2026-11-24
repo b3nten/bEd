@@ -160,7 +160,11 @@ impl Plugin for DocumentsPlugin {
     fn build(&self, app: &mut App) {
         lifecycle::install_documents(app);
         #[cfg(feature = "ui")]
-        app.add_modal(crate::dialogs::draw_close_prompt);
+        {
+            app.add_modal(crate::dialogs::draw_close_prompt)
+                .add_modal(crate::dialogs::draw_overwrite_question)
+                .add_panel_header(crate::dialogs::document_header);
+        }
     }
     fn finish(&self, app: &mut App) {
         assert!(

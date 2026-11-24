@@ -413,7 +413,12 @@ fn attach(world: &mut World, panel: Entity) {
     let existing = diff.staged_text.clone();
     let has_document = world.get::<DocumentReference>(panel).is_some();
     let result: Result<(), String> = if !staged && loaded.exists {
-        if has_document && world.get::<ViewerFile>(panel).is_some_and(|f| f.0 == file) {
+        if has_document
+            && world
+                .bedtime()
+                .holder_file(panel)
+                .is_some_and(|f| f == file)
+        {
             Ok(())
         } else {
             open_file(world, panel, &file)
@@ -440,7 +445,6 @@ fn attach(world: &mut World, panel: Entity) {
                     .load_document::<TextBuffer>(Staged(source.clone()))
                     .map_err(|e| e.to_string())
                     .map(|document| {
-                        world.entity_mut(panel).remove::<ViewerFile>();
                         world
                             .entity_mut(panel)
                             .insert(DocumentReference::new(document.id()));
@@ -459,14 +463,13 @@ fn open_file(world: &mut World, panel: Entity, file: &Path) -> Result<(), String
     let source = bedtime_filesystem::Filesystem::local()
         .document_source(file)
         .map_err(|e| e.to_string())?;
-    let canonical = source.path();
     let document = world
         .bedtime_mut()
         .load_document::<TextBuffer>(source)
         .map_err(|e| e.to_string())?;
     world
         .entity_mut(panel)
-        .insert((DocumentReference::new(document.id()), ViewerFile(canonical)));
+        .insert(DocumentReference::new(document.id()));
     Ok(())
 }
 

@@ -1,0 +1,101 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -142), text: "Documents: one entity per file and model, shown by any number of panels. Reading and saving run on\nbackground threads; edits are atomic, undoable transactions. Green: what a plugin writes for a new kind of file.", size: 16), stroke: Muted),
+        (id: "r-parts", shape: Rectangle(x: -30, y: -60, w: 2960, h: 300), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (-14, -50), text: "the parts", size: 16), stroke: Muted),
+        (id: "r-open", shape: Rectangle(x: -30, y: 270, w: 2960, h: 300), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (-14, 280), text: "opening a file", size: 16), stroke: Muted),
+        (id: "r-edit", shape: Rectangle(x: -30, y: 600, w: 2960, h: 300), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (-14, 610), text: "editing", size: 16), stroke: Muted),
+        (id: "r-save", shape: Rectangle(x: -30, y: 930, w: 2960, h: 300), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (-14, 940), text: "saving, and changes on disk", size: 16), stroke: Muted),
+        (id: "r-close", shape: Rectangle(x: -30, y: 1260, w: 2960, h: 300), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (-14, 1270), text: "closing, and quitting", size: 16), stroke: Muted),
+        (id: "source", shape: Group, label: "a source", children: [
+            (shape: Text(at: (16, 44), text: "DocumentSource: load, save(expected\nversion), version, writable\nFsDocumentSource: one per canonical\npath, shared by everything that opens it", size: 14)),
+        ]),
+        (id: "document", shape: Group, label: "a document: an entity", children: [
+            (shape: Text(at: (474, 44), text: "Document { store: Typed<M> }\n  Loading | Failed | Ready(Session)\nSession: history, saved (what the\nfile holds), incoming (a conflict),\nmissing, error", size: 14)),
+        ]),
+        (id: "history", shape: Group, label: "History<M>", children: [
+            (shape: Text(at: (890, 44), text: "content (the model) and its revision\nundo and redo: inverse changes, labelled\na journal of recent changes, for viewers\nthat update incrementally", size: 14)),
+        ]),
+        (id: "panels", shape: Group, label: "its panels", children: [
+            (shape: Text(at: (1348, 44), text: "DocumentReference(doc) on each\nthey all draw the same content\na hex view of a text file is a sibling:\nanother model of the same source,\nkept in step", size: 14)),
+        ]),
+        (id: "model", shape: Group, label: "a kind of file", stroke: Green, children: [
+            (shape: Text(at: (2456, 44), text: "impl DocumentModel for M {\n    type Change;  // apply returns its inverse\n}\nimpl ByteModel for M { decode, encode }\nimpl FileModel for M {}  // MAX_LEN, EXTENSION\napp.register_format(Format::new(CSV)\n    .extensions([\"csv\"]).conforms_to([TEXT]))\napp.register_viewer::<M, P>(\"Table\")\n    .formats([CSV])", size: 14)),
+        ]),
+        (id: "o-path", shape: Group, label: "open_path(path, options)", children: [
+            (shape: Text(at: (16, 374), text: "from the file tree, search, Git,\na terminal's +open, a drop", size: 14)),
+        ]),
+        (id: "o-format", shape: Group, label: "its format", children: [
+            (shape: Text(at: (386.8, 374), text: "the file's name, its extension,\ndetectors, then its first 4 KiB:\ntext or data", size: 14)),
+        ]),
+        (id: "o-viewer", shape: Group, label: "a viewer", children: [
+            (shape: Text(at: (757.6, 374), text: "the one asked for (Open As),\nthe format's default, else the\nnearest by conforms_to", size: 14)),
+        ]),
+        (id: "o-doc", shape: Group, label: "load_document", children: [
+            (shape: Text(at: (1111.6, 374), text: "this source and model already\nopen: that document; else a new\none, Loading", size: 14)),
+        ]),
+        (id: "o-panel", shape: Group, label: "a panel", children: [
+            (shape: Text(at: (1474, 374), text: "one already showing it, else a new\none; a preview (one click) takes\nthe place of the last preview", size: 14)),
+        ]),
+        (id: "o-read", shape: Group, label: "poll_documents", children: [
+            (shape: Text(at: (1861.6, 374), text: "a background read: load, decode\n→ Ready, or Failed (\"can't be\nopened\": shown in the panel)", size: 14)),
+        ]),
+        (id: "e-draw", shape: Group, label: "the panel draws", children: [
+            (shape: Text(at: (16, 704), text: "viewer_document::<M>(ui, world, panel)\n→ the model and its revision; a\nspinner while it loads", size: 14)),
+        ]),
+        (id: "e-edit", shape: Group, label: "edit_document_transaction", children: [
+            (shape: Text(at: (437.2, 704), text: "(handle, revision, changes,\nEditOptions { label, group })\nthe revision isn't current: refused", size: 14)),
+        ]),
+        (id: "e-history", shape: Group, label: "History::edit", children: [
+            (shape: Text(at: (833.2, 704), text: "all the changes or none; their\ninverses are one undo step; typing\nmerges into its group's step", size: 14)),
+        ]),
+        (id: "e-dirty", shape: Group, label: "unsaved", children: [
+            (shape: Text(at: (1220.8, 704), text: "content differs from what the file\nholds: worked out when asked, so\nundoing back to it is saved again", size: 14)),
+        ]),
+        (id: "s-save", shape: Group, label: "Save (Cmd+S)", children: [
+            (shape: Text(at: (16, 1034), text: "request_save; untitled, or Save As\n(Cmd+Shift+S): the app asks where\nautosave: off, after 1 s idle, or\non leaving the panel", size: 14)),
+        ]),
+        (id: "s-task", shape: Group, label: "a background save", children: [
+            (shape: Text(at: (395.2, 1034), text: "encode → a temporary file beside it\n→ fsync → rename over it, only if the\nfile is still what was last read", size: 14)),
+        ]),
+        (id: "s-done", shape: Group, label: "saved", children: [
+            (shape: Text(at: (808, 1034), text: "saved = what was written; edits\nmade meanwhile stay unsaved; a\nfailure is shown, and kept", size: 14)),
+        ]),
+        (id: "c-poll", shape: Group, label: "the source says it changed", children: [
+            (shape: Text(at: (1716, 1034), text: "files: the watcher (and focus back);\nits version changed → read it", size: 14)),
+        ]),
+        (id: "c-offer", shape: Group, label: "what was read", children: [
+            (shape: Text(at: (2086.8, 1034), text: "no unsaved edits: it replaces the\ncontent (\"Outside change\", undoable)\nunsaved edits: a conflict, shown on\nthe panel: Keep Mine or Reload; Save\nasks before writing over it\ngone: kept, and Save puts it back", size: 14)),
+        ]),
+        (id: "x-close", shape: Group, label: "a panel closes", children: [
+            (shape: Text(at: (16, 1364), text: "the unsaved documents only it held:\nthe prompt: Save, Discard or Cancel\n(autosave on: they're saved instead)", size: 14)),
+        ]),
+        (id: "x-release", shape: Group, label: "no panels left", children: [
+            (shape: Text(at: (420.4, 1364), text: "the document goes, unless it's\nunsaved: then it's shown again in a\nnew panel, never out of sight", size: 14)),
+        ]),
+        (id: "x-quit", shape: Group, label: "quitting, or switching folders", children: [
+            (shape: Text(at: (782.8, 1364), text: "unsaved documents are kept in the\nworkspace's store (unsaved.ron), and come\nback unsaved when reopened; it asks only\nabout any it can't keep, and waits for saves", size: 14)),
+        ]),
+        (shape: Arrow(from: "document", to: "source", from_side: Left, to_side: Right), label: "reads, writes"),
+        (shape: Arrow(from: "document", to: "history", from_side: Right, to_side: Left), label: "has"),
+        (shape: Arrow(from: "panels", to: "history", from_side: Left, to_side: Right), label: "draw"),
+        (shape: Arrow(from: "o-path", to: "o-format", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "o-format", to: "o-viewer", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "o-viewer", to: "o-doc", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "o-doc", to: "o-panel", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "o-panel", to: "o-read", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "e-draw", to: "e-edit", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "e-edit", to: "e-history", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "e-history", to: "e-dirty", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "s-save", to: "s-task", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "s-task", to: "s-done", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "c-poll", to: "c-offer", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "x-close", to: "x-release", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "x-release", to: "x-quit", from_side: Right, to_side: Left)),
+    ],
+)

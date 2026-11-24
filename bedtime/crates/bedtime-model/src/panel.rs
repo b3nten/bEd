@@ -11,7 +11,7 @@ use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui};
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
     ActionHandler, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentReference,
-    DocumentStatus, Handler, ManagedTask, ManagedWork, Panel, PanelInstance, ResetZoom, ViewerFile,
+    DocumentStatus, Handler, ManagedTask, ManagedWork, Panel, PanelInstance, ResetZoom,
     ViewersAppExt, ZoomIn, ZoomOut, viewer_document,
 };
 use bevy::prelude::*;
@@ -105,10 +105,13 @@ type Preparing = ManagedTask<Result<Arc<PreparedModel>, String>>;
 
 /// Prepare each panel's model when its document changes, on a worker.
 fn prepare_models(world: &mut World) {
-    let panels: Vec<(Entity, Option<std::path::PathBuf>)> = world
-        .query_filtered::<(Entity, Option<&ViewerFile>), With<ModelPanel>>()
+    let panels: Vec<Entity> = world
+        .query_filtered::<Entity, With<ModelPanel>>()
         .iter(world)
-        .map(|(panel, file)| (panel, file.map(|file| file.0.clone())))
+        .collect();
+    let panels: Vec<(Entity, Option<std::path::PathBuf>)> = panels
+        .into_iter()
+        .map(|panel| (panel, world.bedtime().holder_file(panel)))
         .collect();
     for (panel, path) in panels {
         // A finished preparation.

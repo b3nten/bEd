@@ -1,7 +1,7 @@
 //! The HTTP client in the status bar (`add_panel_status::<HttpClientPanel>`):
 //! the selected request's method and host, and how its last exchange went.
 use crate::{
-    Exchange, Exchanges, HttpClientPanel, HttpRequests, Method, Received,
+    Exchange, Exchanges, HttpClientPanel, Method, Received,
     panel::{duration, size},
 };
 use bedtime_workbench::status::{PanelStatus, Tone};
@@ -35,9 +35,8 @@ pub fn item(world: &World, panel: Entity, status: &mut PanelStatus) {
     let Some(id) = world.get::<HttpClientPanel>(panel).and_then(|p| p.selected) else {
         return;
     };
-    let Some(request) = world
-        .get_resource::<HttpRequests>()
-        .and_then(|requests| requests.0.get(id))
+    let Some(request) =
+        crate::requests::collection(world, panel).and_then(|requests| requests.get(id))
     else {
         return;
     };

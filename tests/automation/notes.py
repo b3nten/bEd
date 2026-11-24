@@ -1,6 +1,7 @@
 """Notes: + makes a note whose title and text are typed; the list shows it;
 the note is saved in the workspace's store, not in the folder; renaming and
-deleting go through the list's context menu."""
+deleting go through the list's context menu; Undo brings a deleted note
+back; and the notes follow their file being changed elsewhere."""
 import tempfile
 import time
 from pathlib import Path
@@ -69,5 +70,18 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: "Big ideas" not in store(bed), "the deletion is saved")
         until(bed, lambda: bed.exists(contains="milk and eggs"), "the other note shows")
         bed.screenshot("notes_deleted")
+
+        # Undo (out of the text, in the list) brings it back, and saves that.
+        bed.click("Shopping")
+        bed.wait(3)
+        bed.key("Primary+Z")
+        until(bed, lambda: bed.exists("Big ideas"), "Undo brings the note back")
+        until(bed, lambda: "Big ideas" in store(bed), "and that's saved")
+
+        # The notes file changed elsewhere (by hand): the panel follows.
+        path = list(Path(bed.config).glob("workspaces/*/notes.ron"))[0]
+        path.write_text(store(bed).replace("Big ideas", "Edited by hand"))
+        until(bed, lambda: bed.exists("Edited by hand"), "the change on disk shows")
+        bed.screenshot("notes_outside_change")
 
 print("ok")

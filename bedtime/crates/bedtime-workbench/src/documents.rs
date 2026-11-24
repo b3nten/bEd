@@ -5,12 +5,18 @@
 //! task at a time, a read or a save, so saving and outside changes never race:
 //!
 //! - A save writes a snapshot. Edits made meanwhile stay unsaved.
-//! - Reads happen on `refresh_document`, or periodically when the source can
-//!   cheaply tell it changed. A read never starts during a save, and a read
-//!   still running when a save starts is dropped.
+//! - Reads happen on `refresh_document`, and when a source that can watch
+//!   (`DocumentSource::watch`, files with the filesystem's watcher) says it
+//!   may have changed: then only if its version did. Watched sources are
+//!   checked again when the app's window regains focus, in case a change
+//!   was missed. A read never starts during a save, and a read still running
+//!   when a save starts is dropped.
 //! - An outside change to a document without unsaved changes is applied as an
-//!   undoable edit. With unsaved changes it becomes a conflict, which blocks
-//!   saving until resolved.
+//!   undoable edit. With unsaved changes it becomes a conflict: its panels
+//!   say so, offering Reload (take theirs) or Keep mine
+//!   (`settle_document_conflict`), and the Save action asks whether to
+//!   overwrite. `save_document` itself refuses until it's settled.
+//! - A document whose source has gone is kept, and saving it puts it back.
 //! - A failed save keeps everything and schedules a read, so a save refused
 //!   because the source changed turns into a conflict.
 //!
@@ -45,8 +51,9 @@ use std::{
 };
 
 pub use bedtime_document::{
-    BufferEdit, DocumentCommit, DocumentModel, DocumentSource, MemorySource, SourceError, SourceId,
-    SourceLoad, SourceVersion, TextBuffer,
+    BufferEdit, ByteModel, DocumentCommit, DocumentModel, DocumentSource, MemorySource,
+    SourceChanged, SourceError, SourceId, SourceLoad, SourceName, SourceVersion, SourceWatch,
+    TextBuffer,
 };
 
 #[path = "documents/autosave.rs"]
@@ -55,9 +62,17 @@ mod autosave;
 mod siblings;
 #[path = "documents/store.rs"]
 mod store;
+#[cfg(feature = "persistence")]
+#[path = "documents/store_source.rs"]
+mod store_source;
 #[cfg(test)]
 #[path = "documents/tests.rs"]
 pub(crate) mod tests;
+#[cfg(feature = "persistence")]
+#[path = "documents/unsaved.rs"]
+pub(crate) mod unsaved;
+#[cfg(feature = "persistence")]
+pub use store_source::StoreSource;
 
 pub(crate) use autosave::autosave;
 #[cfg(feature = "persistence")]
@@ -202,7 +217,7 @@ pub struct DocumentInfo {
     /// The source changed while there were unsaved changes. Saving is blocked
     /// until `resolve_document_conflict`.
     pub conflict: bool,
-    /// The source no longer exists. Saving is refused; the content is kept.
+    /// The source no longer exists. The content is kept; saving puts it back.
     pub missing: bool,
     pub writable: bool,
     /// The last failed save or read, cleared by the next success.
@@ -235,7 +250,6 @@ pub enum DocumentError {
     NothingToUndo,
     NothingToRedo,
     ReadOnly,
-    Missing,
     Saving,
     Conflict,
     NoConflict,
@@ -271,7 +285,6 @@ impl fmt::Display for DocumentError {
             Self::NothingToUndo => f.write_str("Nothing to undo"),
             Self::NothingToRedo => f.write_str("Nothing to redo"),
             Self::ReadOnly => f.write_str("The document is read-only"),
-            Self::Missing => f.write_str("The document's source no longer exists"),
             Self::Saving => f.write_str("The document is being saved"),
             Self::Conflict => f.write_str("The document was changed elsewhere; resolve that first"),
             Self::NoConflict => f.write_str("The document has no conflict to resolve"),
@@ -340,6 +353,16 @@ pub struct DocumentConflict<M: DocumentModel> {
     pub incoming: M,
 }
 
+/// How to settle a conflict, without the model's type
+/// (`settle_document_conflict`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConflictChoice {
+    /// Take the outside change (an undoable step).
+    Reload,
+    /// Keep this content; the next save writes over the outside change.
+    KeepMine,
+}
+
 #[derive(Clone, Debug)]
 pub enum DocumentConflictResolution<M: DocumentModel> {
     AcceptIncoming,
@@ -371,6 +394,43 @@ impl BedtimeRef {
         Ok(session::<M>(world, handle.id)?.history.content())
     }
 
+    /// Where the document is kept, by a name that lasts across runs
+    /// (`file:///…`, `untitled:Untitled 2`); `None` if it can't be found
+    /// again.
+    pub fn document_name(&self, id: DocumentId) -> Option<SourceName> {
+        let world = &self.world;
+        if let Some(untitled) = world.get::<crate::Untitled>(id.0) {
+            return Some(SourceName::new("untitled", &untitled.name));
+        }
+        get_document(world, id).ok()?.store.name()
+    }
+
+    /// The file the document is kept in, if it's one.
+    pub fn document_file(&self, id: DocumentId) -> Option<std::path::PathBuf> {
+        self.document_name(id)?.to_file()
+    }
+
+    /// The file the document `holder` (a panel) references is kept in.
+    pub fn holder_file(&self, holder: Entity) -> Option<std::path::PathBuf> {
+        let document = self.world.get::<DocumentReference>(holder)?.document();
+        self.document_file(document)
+    }
+
+    /// The open document of model `M` kept in the file at `path`.
+    pub fn document_for_file<M: DocumentModel>(
+        &self,
+        path: &std::path::Path,
+    ) -> Option<DocumentHandle<M>> {
+        let name = SourceName::file(path)?;
+        let world = &self.world;
+        let mut query = world.try_query::<(Entity, &Document)>()?;
+        query
+            .iter(world)
+            .filter(|(_, document)| document.model_type == TypeId::of::<M>())
+            .find(|(_, document)| document.store.name().as_ref() == Some(&name))
+            .map(|(entity, _)| DocumentHandle::new(DocumentId(entity)))
+    }
+
     pub fn document_ids(&self) -> Vec<DocumentId> {
         let world = &self.world;
         let Some(mut query) = world.try_query_filtered::<Entity, With<Document>>() else {
@@ -392,10 +452,7 @@ impl BedtimeRef {
             status: info.status,
             revision: info.revision,
             dirty: info.dirty,
-            saving: info.saving
-                || world
-                    .get::<crate::Untitled>(id.0)
-                    .is_some_and(|untitled| untitled.choosing),
+            saving: info.saving || world.get::<crate::untitled::ChoosingWhere>(id.0).is_some(),
             conflict: info.conflict,
             missing: info.missing,
             writable: info.writable,
@@ -582,7 +639,7 @@ impl Bedtime {
         let world = &mut self.world;
         validate_session(world)?;
         if world.get::<crate::Untitled>(id.0).is_some() {
-            return crate::untitled::ask_where(world, id);
+            return world.bedtime_mut().save_document_as(id);
         }
         reject_drafts(world, id)?;
         world.resource_scope(|world, mut work: Mut<ManagedWork>| {
@@ -608,6 +665,20 @@ impl Bedtime {
         let world = &mut self.world;
         validate_session(world)?;
         session_mut::<M>(world, handle.id)?.resolve(expected_revision, resolution)
+    }
+
+    /// Settle a conflict for whoever doesn't know the model (a panel's
+    /// header, an action): keep this content, so the next save writes over
+    /// the outside change, or reload it, taking the outside change (undoable).
+    pub fn settle_document_conflict(
+        &mut self,
+        id: DocumentId,
+        choice: ConflictChoice,
+    ) -> Result<u64, DocumentError> {
+        let world = &mut self.world;
+        validate_session(world)?;
+        reject_drafts(world, id)?;
+        store_mut(world, id)?.settle_conflict(choice == ConflictChoice::KeepMine)
     }
 
     /// Close a document and the panels showing it. Refused with unsaved changes.
@@ -678,14 +749,22 @@ pub(crate) fn validate_documents(world: &mut World) -> Result<(), String> {
 }
 
 pub(crate) fn install(app: &mut App) {
+    // Documents are the workspace's: switching workspace closes them (after
+    // keeping or asking about unsaved ones).
+    app.register_required_components::<Document, crate::InWorkspace>();
     app.add_message::<DocumentSaveFinished>()
+        // Heard for `recheck_on_focus`; the window plugin adds it too.
+        .add_message::<bevy::window::WindowFocused>()
         .add_observer(mark_referenced)
         .add_observer(release_reference)
         .add_systems(
             PreUpdate,
             poll_documents.before(crate::SessionSystems::Prepare),
         )
+        .add_systems(PreUpdate, recheck_on_focus.before(poll_documents))
         .add_systems(Update, (title_document_panels, siblings::sync_siblings));
+    #[cfg(feature = "persistence")]
+    unsaved::install(app);
 }
 
 /// A panel showing a document is titled after it, including when the file
@@ -738,7 +817,24 @@ fn release_reference(
     }
 }
 
-/// Accept finished reads and saves, and start reads that are due.
+/// The app's window regained focus: check watched sources, in case a change
+/// happened that their watch missed.
+fn recheck_on_focus(
+    world: &mut World,
+    mut cursor: Local<bevy::ecs::message::MessageCursor<bevy::window::WindowFocused>>,
+) {
+    let Some(messages) = world.get_resource::<Messages<bevy::window::WindowFocused>>() else {
+        return;
+    };
+    if !cursor.read(messages).any(|focus| focus.focused) {
+        return;
+    }
+    for mut document in world.query::<&mut Document>().iter_mut(world) {
+        document.store.recheck();
+    }
+}
+
+/// Watch sources, accept finished reads and saves, and start reads that are due.
 fn poll_documents(world: &mut World) {
     let drafted: HashSet<_> = world
         .query_filtered::<&DocumentReference, With<DocumentDraft>>()
@@ -746,6 +842,10 @@ fn poll_documents(world: &mut World) {
         .map(DocumentReference::document)
         .collect();
     let mut finished = Vec::new();
+    let waker = world
+        .get_resource::<bedtime_ui::UiWaker>()
+        .cloned()
+        .unwrap_or_default();
     world.resource_scope(|world, mut work: Mut<ManagedWork>| {
         let mut documents = world.query::<(Entity, &mut Document)>();
         let mut reads = documents
@@ -757,7 +857,7 @@ fn poll_documents(world: &mut World) {
             let id = DocumentId(entity);
             let may_read = !closing && reads < MAX_READS && !drafted.contains(&id);
             let was_reading = document.store.reading();
-            if let Some(result) = document.store.poll(&mut work, entity, may_read) {
+            if let Some(result) = document.store.poll(&mut work, entity, may_read, &waker) {
                 finished.push(DocumentSaveFinished {
                     document: id,
                     result,

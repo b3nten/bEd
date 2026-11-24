@@ -9,7 +9,7 @@ use crate::editor::EditorPanel;
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentId,
     DocumentReference, DocumentSaveFinished, Handler, ManagedTask, ManagedWork, Notification,
-    PathOptions, Root, ViewerFile, WorkStatus,
+    PathOptions, Root, WorkStatus,
 };
 use bevy::{ecs::message::MessageCursor, prelude::*};
 use std::{
@@ -370,10 +370,14 @@ fn next_key(document: Entity) -> DocumentKey {
 
 /// A document's file and language, from an editor showing it.
 fn shown_files(world: &mut World) -> HashMap<Entity, (PathBuf, &'static str)> {
-    let shown: Vec<_> = world
-        .query_filtered::<(&DocumentReference, &ViewerFile), With<EditorPanel>>()
+    let documents: Vec<_> = world
+        .query_filtered::<&DocumentReference, With<EditorPanel>>()
         .iter(world)
-        .map(|(reference, file)| (reference.document(), file.0.clone()))
+        .map(DocumentReference::document)
+        .collect();
+    let shown: Vec<_> = documents
+        .into_iter()
+        .filter_map(|document| Some((document, world.bedtime().document_file(document)?)))
         .collect();
     shown
         .into_iter()

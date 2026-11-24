@@ -2,10 +2,11 @@
 //! selected one's editor (method, URL, params, headers, body) and its last
 //! response (status, time, size, body and headers).
 //!
-//! The requests (`HttpRequests`) are saved in the workspace's store. Responses
-//! (`Exchanges`) live only in memory. Drawing edits a copy of the requests,
-//! written back if it changed; adding, deleting and sending are intents,
-//! applied in `Update`.
+//! The requests (`HttpRequests`) are a document kept in the workspace's
+//! store (see `requests`). Responses (`Exchanges`) live only in memory.
+//! Drawing edits a copy of the requests, whose changes are made to the
+//! document; adding, deleting and sending are intents, applied in `Update`.
+use crate::requests::{Editing, attach_documents, collection, edit};
 use crate::{
     Collection, Error, Field, Method, Options, Response, SavedRequest,
     content::{self, Content, Kind},
@@ -21,11 +22,9 @@ use bedtime_ui::{
 };
 use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
-    ManagedTask, ManagedWork, Panel, PanelPresentation, WorkStatus,
-    persistence::{Persisted, PersistenceAppExt, ReflectPersist, WorkbenchStore},
+    ManagedTask, ManagedWork, Panel, PanelPresentation, WorkStatus, persistence::ReflectPersist,
 };
 use bevy::prelude::*;
-use serde::{Deserialize, Serialize};
 use std::{
     collections::HashMap,
     sync::{
@@ -47,25 +46,19 @@ impl Plugin for HttpClientPlugin {
         use bedtime_workbench::status::StatusAppExt;
         app.register_type::<HttpClientPanel>()
             .add_panel::<HttpClientPanel>()
-            .init_resource::<HttpRequests>()
-            .persist::<HttpRequests, WorkbenchStore>()
             .init_resource::<Exchanges>()
             .init_resource::<Intents>()
             .add_panel_status::<HttpClientPanel>(crate::status::item)
             .add_systems(
                 Update,
-                (apply_intents, collect_responses)
+                (attach_documents, apply_intents, collect_responses)
                     .chain()
                     .in_set(HttpClientSystems),
             )
-            // The requests are the workspace's (saved in its store); the next
-            // workspace's are loaded after this.
+            // Responses are the workspace's requests'.
             .add_systems(
                 bedtime_workbench::OnWorkspaceClose,
-                |mut commands: Commands| {
-                    commands.insert_resource(HttpRequests::default());
-                    commands.insert_resource(Exchanges::default());
-                },
+                |mut commands: Commands| commands.insert_resource(Exchanges::default()),
             );
     }
 }
@@ -74,18 +67,11 @@ impl Plugin for HttpClientPlugin {
 #[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HttpClientSystems;
 
-/// The workspace's requests and variables, saved in its store
-/// (`http_requests.ron`).
-#[derive(Resource, Clone, Debug, Default, PartialEq, Serialize, Deserialize, Persisted)]
-#[persisted(key = "http_requests")]
-#[serde(transparent)]
-pub struct HttpRequests(pub Collection);
-
 /// The HTTP client panel. Which request it shows is saved with it.
 #[bedtime_ui::panel]
 #[derive(Reflect, Default)]
 #[reflect(Component, Default, Persist)]
-#[require(HttpClientView)]
+#[require(HttpClientView, Editing)]
 pub struct HttpClientPanel {
     /// The request shown, by id.
     pub selected: Option<u64>,
@@ -252,25 +238,33 @@ struct Intents(Vec<(Entity, Intent)>);
 
 fn apply_intents(world: &mut World) {
     let intents = std::mem::take(&mut world.resource_mut::<Intents>().0);
+    let mut waiting = Vec::new();
     for (panel, intent) in intents {
+        let Some(mut requests) = collection(world, panel).cloned() else {
+            // Still being read: wait for it (a panel without one is gone).
+            if world.get_entity(panel).is_ok() {
+                waiting.push((panel, intent));
+            }
+            continue;
+        };
         match intent {
             Intent::New => {
-                let id = world
-                    .resource_mut::<HttpRequests>()
-                    .0
-                    .add(SavedRequest::default());
+                let id = requests.add(SavedRequest::default());
+                change(world, panel, &requests, "New Request");
                 select(world, panel, id);
                 if let Some(mut view) = world.get_mut::<HttpClientView>(panel) {
                     view.focus_url = true;
                 }
             }
             Intent::Duplicate(id) => {
-                if let Some(copy) = world.resource_mut::<HttpRequests>().0.duplicate(id) {
+                if let Some(copy) = requests.duplicate(id) {
+                    change(world, panel, &requests, "Duplicate Request");
                     select(world, panel, copy);
                 }
             }
             Intent::Delete(id) => {
-                let next = world.resource_mut::<HttpRequests>().0.remove(id);
+                let next = requests.remove(id);
+                change(world, panel, &requests, "Delete Request");
                 cancel(world, id);
                 world.resource_mut::<Exchanges>().0.remove(&id);
                 let mut panels = world.query::<&mut HttpClientPanel>();
@@ -283,6 +277,14 @@ fn apply_intents(world: &mut World) {
             Intent::Send(id) => start(world, panel, id),
             Intent::Cancel(id) => cancel(world, id),
         }
+    }
+    world.resource_mut::<Intents>().0.extend(waiting);
+}
+
+/// Make what `requests` changed, as its own undo step.
+fn change(world: &mut World, panel: Entity, requests: &Collection, label: &str) {
+    if let Err(error) = edit(world, panel, requests, label, false) {
+        warn!("The requests couldn't be changed: {error}");
     }
 }
 
@@ -297,7 +299,10 @@ fn select(world: &mut World, panel: Entity, id: u64) {
 /// `panel`.
 fn start(world: &mut World, panel: Entity, id: u64) {
     cancel(world, id);
-    let exchange = match world.resource::<HttpRequests>().0.resolve(id) {
+    let resolved = collection(world, panel)
+        .ok_or_else(|| "The requests aren't read yet".to_owned())
+        .and_then(|requests| requests.resolve(id));
+    let exchange = match resolved {
         Err(why) => Exchange::Done(Err(Error::Invalid(why))),
         Ok(request) => {
             let label = format!("{} {}", request.method, request.url);
@@ -382,7 +387,11 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         world.entity_mut(panel).insert(shown);
         return;
     };
-    let mut collection = world.resource::<HttpRequests>().0.clone();
+    let Some(mut collection) = crate::requests::collection(world, panel).cloned() else {
+        world.entity_mut(panel).insert((shown, view));
+        ui.centered_and_justified(|ui| ui.spinner());
+        return;
+    };
     let exchanges = world.resource::<Exchanges>();
     let mut intents = Vec::new();
 
@@ -446,10 +455,10 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             }
         });
 
-    if collection != world.resource::<HttpRequests>().0 {
-        world.resource_mut::<HttpRequests>().0 = collection;
-    }
     world.entity_mut(panel).insert((shown, view));
+    if let Err(error) = edit(world, panel, &collection, "Edit Request", true) {
+        warn!("The requests couldn't be changed: {error}");
+    }
     world
         .resource_mut::<Intents>()
         .0

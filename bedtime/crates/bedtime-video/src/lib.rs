@@ -12,7 +12,7 @@ use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::ViewersAppExt;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
-use bedtime_workbench::{Panel, PanelPresentation, ViewerFile, viewer_document};
+use bedtime_workbench::{BedtimeWorldExt, Panel, PanelPresentation, viewer_document};
 use bevy::{platform::collections::HashMap, prelude::*};
 use std::path::PathBuf;
 
@@ -133,7 +133,7 @@ impl Panel for VideoPanel {
         let Some(document) = viewer_document::<VideoFile>(ui, world, panel) else {
             return;
         };
-        let Some(file) = world.get::<ViewerFile>(panel).map(|file| file.0.clone()) else {
+        let Some(file) = world.bedtime().holder_file(panel) else {
             return;
         };
         let focused = world

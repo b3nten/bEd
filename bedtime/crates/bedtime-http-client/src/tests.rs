@@ -1,5 +1,4 @@
 use crate::*;
-use bedtime_workbench::BedtimeWorldExt as _;
 use std::{
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -421,7 +420,11 @@ fn json_is_indented_keeping_order_and_strings() {
 mod panel {
     use super::*;
     use crate::panel::tests::{TestIntent, intend, settle};
-    use bedtime_persistence::{MemoryStore, read_persisted, write_persisted};
+    use bedtime_persistence::MemoryStore;
+    use bedtime_workbench::{
+        BedtimeWorldExt, ByteModel, DocumentHandle, DocumentStatus, EditOptions,
+        persistence::WorkbenchStore,
+    };
     use bedtime_workbench::{InArea, WorkbenchCorePlugins};
     use bevy::prelude::*;
 
@@ -432,11 +435,54 @@ mod panel {
         app
     }
 
+    /// The workspace's requests document, once read.
+    fn requests(app: &mut App) -> DocumentHandle<HttpRequests> {
+        let handle = app
+            .world_mut()
+            .bedtime_mut()
+            .store_document::<HttpRequests, WorkbenchStore>(crate::requests::ENTRY, "HTTP Requests")
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while app
+            .world()
+            .bedtime()
+            .inspect_document(handle.id())
+            .unwrap()
+            .status
+            != DocumentStatus::Ready
+        {
+            assert!(Instant::now() < deadline);
+            app.update();
+        }
+        handle
+    }
+
+    /// Change the requests as `change` does to a copy of them.
+    fn edit_requests<T>(app: &mut App, change: impl FnOnce(&mut Collection) -> T) -> T {
+        let handle = requests(app);
+        let world = app.world_mut();
+        let old = world.bedtime().read_document(handle).unwrap().0.clone();
+        let mut new = old.clone();
+        let out = change(&mut new);
+        let revision = world
+            .bedtime()
+            .inspect_document(handle.id())
+            .unwrap()
+            .revision;
+        world
+            .bedtime_mut()
+            .edit_document_transaction(
+                handle,
+                revision,
+                crate::changes(&old, &new),
+                EditOptions::new("Test"),
+            )
+            .unwrap();
+        out
+    }
+
     fn add(app: &mut App, request: SavedRequest) -> u64 {
-        app.world_mut()
-            .resource_mut::<HttpRequests>()
-            .0
-            .add(request)
+        edit_requests(app, |requests| requests.add(request))
     }
 
     /// A panel in a layout of its own.
@@ -454,6 +500,37 @@ mod panel {
     }
 
     #[test]
+    fn the_changes_between_two_collections_make_one_the_other_and_undo() {
+        use bedtime_workbench::DocumentModel;
+        let mut old = Collection::default();
+        let a = old.add(SavedRequest {
+            name: "a".into(),
+            ..Default::default()
+        });
+        let b = old.add(SavedRequest {
+            name: "b".into(),
+            ..Default::default()
+        });
+        let mut new = old.clone();
+        new.remove(a);
+        new.get_mut(b).unwrap().url = "https://example.com".into();
+        new.duplicate(b);
+        new.add(SavedRequest::default());
+        new.variables = variables();
+
+        let mut document = HttpRequests(old.clone());
+        let mut inverses = Vec::new();
+        for change in crate::changes(&old, &new) {
+            inverses.push(document.apply(&change).unwrap());
+        }
+        assert_eq!(document.0, new);
+        for inverse in inverses.iter().rev() {
+            document.apply(inverse).unwrap();
+        }
+        assert_eq!(document.0, old);
+    }
+
+    #[test]
     fn requests_round_trip_through_the_store() {
         let store = MemoryStore::default();
         let mut requests = HttpRequests::default();
@@ -465,9 +542,12 @@ mod panel {
             ..Default::default()
         });
         requests.0.variables = variables();
-        write_persisted(&store, &requests).unwrap();
+        let mut bytes = Vec::new();
+        requests.encode(&mut bytes).unwrap();
+        bedtime_persistence::StoreBackend::write(&store, crate::requests::ENTRY, &bytes).unwrap();
         assert!(store.text("http_requests").unwrap().contains("Users"));
-        let read: HttpRequests = read_persisted(&store).unwrap().unwrap();
+        let read = HttpRequests::decode(&store.text(crate::requests::ENTRY).unwrap().into_bytes())
+            .unwrap();
         assert_eq!(read, requests);
     }
 
@@ -479,8 +559,9 @@ mod panel {
             br#"{"b":1,"a":2}"#,
         )]);
         let mut app = app();
-        app.world_mut().resource_mut::<HttpRequests>().0.variables =
-            vec![Field::new("base", &address)];
+        edit_requests(&mut app, |requests| {
+            requests.variables = vec![Field::new("base", &address)];
+        });
         let id = add(
             &mut app,
             SavedRequest {
@@ -643,6 +724,9 @@ mod panel {
         let mut app = app();
         let panel = panel(&mut app);
         let selected = |app: &App| app.world().get::<HttpClientPanel>(panel).unwrap().selected;
+        // Its requests, read.
+        requests(&mut app);
+        app.update();
         intend(&mut app, panel, TestIntent::New);
         app.update();
         let first = selected(&app).unwrap();
@@ -653,6 +737,35 @@ mod panel {
         intend(&mut app, panel, TestIntent::Delete(copy));
         app.update();
         assert_eq!(selected(&app), Some(first));
-        assert_eq!(app.world().resource::<HttpRequests>().0.requests.len(), 1);
+        // Undone, the copy is back.
+        let handle = requests(&mut app);
+        app.world_mut()
+            .bedtime_mut()
+            .undo_document(handle.id())
+            .unwrap();
+        assert!(
+            app.world()
+                .bedtime()
+                .read_document(handle)
+                .unwrap()
+                .0
+                .get(copy)
+                .is_some()
+        );
+        app.world_mut()
+            .bedtime_mut()
+            .redo_document(handle.id())
+            .unwrap();
+        let handle = requests(&mut app);
+        assert_eq!(
+            app.world()
+                .bedtime()
+                .read_document(handle)
+                .unwrap()
+                .0
+                .requests
+                .len(),
+            1
+        );
     }
 }

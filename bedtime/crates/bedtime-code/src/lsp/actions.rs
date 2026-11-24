@@ -13,7 +13,6 @@ use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentId,
     DocumentReference, EditOptions, Handler, Notification, Panel, PathOptions, Place, Root,
-    ViewerFile,
 };
 use bevy::prelude::*;
 use std::{
@@ -438,10 +437,9 @@ fn document_for(world: &mut World, path: &Path) -> Option<DocumentId> {
         return Some(DocumentId(entity));
     }
     world
-        .query_filtered::<(&ViewerFile, &DocumentReference), With<EditorPanel>>()
-        .iter(world)
-        .find(|(file, _)| file.0 == path)
-        .map(|(_, reference)| reference.document())
+        .bedtime()
+        .document_for_file::<TextBuffer>(path)
+        .map(|handle| handle.id())
 }
 
 /// Edits converted to byte ranges in `text`, last first (so each applies to

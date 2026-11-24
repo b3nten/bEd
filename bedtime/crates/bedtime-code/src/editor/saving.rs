@@ -58,8 +58,11 @@ fn handle_save(add: On<Add<EditorPanel>>, mut commands: Commands) {
         .entity(add.entity)
         .insert(ActionHandler::<SaveDocument>::new(
             Handler::new(save).available_when(|world, panel| {
-                info(world, panel)
-                    .is_some_and(|i| (i.dirty || i.untitled) && i.writable && !i.saving)
+                panel
+                    .and_then(|panel| world.get::<DocumentReference>(panel))
+                    .is_some_and(|reference| {
+                        world.bedtime().can_save_document(reference.document())
+                    })
             }),
         ));
 }
@@ -171,7 +174,7 @@ fn finish(world: &mut World, document: DocumentId) -> ActionResult {
     let _ = tidy(world, document);
     world
         .bedtime_mut()
-        .save_document(document)
+        .request_save(document)
         .map(|_| ())
         .map_err(|error| error.to_string())
 }

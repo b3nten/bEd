@@ -150,7 +150,6 @@ impl FileViewer {
                 let source = bedtime_filesystem::Filesystem::local()
                     .document_source(path)
                     .map_err(|e| e.to_string())?;
-                let file = source.path();
                 let state = match (options.line, options.select_to) {
                     (Some(from), Some(to)) => M::state_selecting(from, to),
                     (Some((line, column)), None) => M::state_at_line(line, column),
@@ -166,6 +165,9 @@ impl FileViewer {
                         .bedtime_mut()
                         .set_byte_codec(handle)
                         .map_err(|e| e.to_string())?;
+                    world
+                        .entity_mut(handle.id().entity())
+                        .insert(crate::untitled::FileDocument::of::<M>());
                 }
                 let panel = world.bedtime_mut().open_document_handle(
                     handle,
@@ -178,7 +180,6 @@ impl FileViewer {
                         preview: options.preview,
                     },
                 )?;
-                world.entity_mut(panel).insert(ViewerFile(file));
                 if let Some(document) = world.get::<DocumentReference>(panel).map(|r| r.document())
                 {
                     world
@@ -200,6 +201,9 @@ impl FileViewer {
                         .bedtime_mut()
                         .set_byte_codec(document)
                         .map_err(|e| e.to_string())?;
+                    world
+                        .entity_mut(document.id().entity())
+                        .insert(crate::untitled::FileDocument::of::<M>());
                 }
                 world
                     .entity_mut(panel)
@@ -210,24 +214,80 @@ impl FileViewer {
     }
 }
 
-/// The file a viewer panel shows, saved with the panel: restoring the panel
-/// opens the file again, with the viewer the panel is.
+/// Where a viewer panel's document is kept (`document_name`), saved with
+/// the panel: restoring the panel opens it again, with the viewer the panel
+/// is. Kept in step with the document as it moves (Save As, a rename).
+#[derive(Component, Reflect, Clone, Debug, PartialEq, Eq)]
+#[reflect(Component)]
+#[cfg_attr(feature = "persistence", reflect(crate::persistence::Persist))]
+pub struct ViewerSource(pub String);
+
+/// What earlier versions saved in place of `ViewerSource`: read when a
+/// session is restored, and replaced by it.
 #[cfg(feature = "files")]
 #[derive(Component, Reflect, Clone, Debug, PartialEq, Eq)]
 #[reflect(Component)]
 #[cfg_attr(feature = "persistence", reflect(crate::persistence::Persist))]
 pub struct ViewerFile(pub std::path::PathBuf);
 
-/// Give restored viewer panels their files back. One that can't be opened is
-/// closed, with a notification.
-#[cfg(feature = "files")]
-pub(crate) fn reopen_viewers(world: &mut World) {
-    let restored: Vec<(Entity, std::path::PathBuf)> = world
-        .query_filtered::<(Entity, &ViewerFile), Without<DocumentReference>>()
+/// Keep viewer panels' `ViewerSource` in step with their documents.
+pub(crate) fn name_viewer_sources(world: &mut World) {
+    let Some(viewers) = world.get_resource::<Viewers>() else {
+        return;
+    };
+    let kinds: Vec<TypeId> = viewers.viewers.iter().map(|viewer| viewer.id.0).collect();
+    let panels: Vec<(Entity, DocumentId, Option<String>)> = world
+        .query::<(
+            Entity,
+            &PanelInstance,
+            &DocumentReference,
+            Option<&ViewerSource>,
+        )>()
         .iter(world)
-        .map(|(panel, file)| (panel, file.0.clone()))
+        .filter(|(_, instance, _, _)| instance.kind.is_some_and(|kind| kinds.contains(&kind)))
+        .map(|(panel, _, reference, source)| {
+            (panel, reference.document(), source.map(|s| s.0.clone()))
+        })
         .collect();
-    for (panel, path) in restored {
+    for (panel, document, saved) in panels {
+        let name = world
+            .bedtime()
+            .document_name(document)
+            .map(|name| name.as_str().to_owned());
+        if name == saved {
+            continue;
+        }
+        match name {
+            Some(name) => world.entity_mut(panel).insert(ViewerSource(name)),
+            None => world.entity_mut(panel).remove::<ViewerSource>(),
+        };
+    }
+}
+
+/// Give restored viewer panels their documents back. One that can't be
+/// reopened is closed, with a notification.
+pub(crate) fn reopen_viewers(world: &mut World) {
+    #[cfg(feature = "files")]
+    {
+        let legacy: Vec<(Entity, std::path::PathBuf)> = world
+            .query::<(Entity, &ViewerFile)>()
+            .iter(world)
+            .map(|(panel, file)| (panel, file.0.clone()))
+            .collect();
+        for (panel, path) in legacy {
+            let mut entity = world.entity_mut(panel);
+            entity.remove::<ViewerFile>();
+            if let Some(name) = SourceName::file(&path) {
+                entity.insert(ViewerSource(name.as_str().to_owned()));
+            }
+        }
+    }
+    let restored: Vec<(Entity, String)> = world
+        .query_filtered::<(Entity, &ViewerSource), Without<DocumentReference>>()
+        .iter(world)
+        .map(|(panel, source)| (panel, source.0.clone()))
+        .collect();
+    for (panel, name) in restored {
         let Some(viewers) = world.get_resource::<Viewers>() else {
             return;
         };
@@ -236,19 +296,63 @@ pub(crate) fn reopen_viewers(world: &mut World) {
         let Some(viewer) = viewers.of_panel(world, panel) else {
             continue;
         };
-        let result = match viewer.files.as_ref().map(|files| files.reopen) {
-            Some(reopen) => reopen(world, panel, &path),
-            None => Err("nothing here opens it".into()),
+        #[cfg(feature = "files")]
+        let files = viewer.files.as_ref().map(|files| files.reopen);
+        #[cfg(feature = "files")]
+        let viewer_model = viewer.model;
+        let result = match SourceName::parse(name.clone()) {
+            #[cfg(feature = "files")]
+            Some(source) if source.scheme() == "file" => match (files, source.to_file()) {
+                (Some(reopen), Some(path)) => reopen(world, panel, &path),
+                _ => Err("nothing here opens it".into()),
+            },
+            #[cfg(feature = "files")]
+            Some(source) if source.scheme() == "untitled" => {
+                reopen_untitled(world, panel, viewer_model, source.rest().to_owned())
+            }
+            _ => Err("nothing here opens it".into()),
         };
         if let Err(error) = result {
-            world.entity_mut(panel).remove::<ViewerFile>();
+            world.entity_mut(panel).remove::<ViewerSource>();
             let _ = world.bedtime_mut().layouts_mut().close_panel(panel);
-            let name = path.file_name().unwrap_or(path.as_os_str()).display();
+            let shown = SourceName::parse(name.clone())
+                .and_then(|name| name.to_file())
+                .and_then(|path| path.file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or(name);
             world.bedtime_mut().notify(Notification::warning(format!(
-                "Couldn't reopen {name}: {error}"
+                "Couldn't reopen {shown}: {error}"
             )));
         }
     }
+}
+
+/// An untitled document called `name` of the viewer's model, for a
+/// restored panel (its unsaved content comes back with it, if it had any).
+#[cfg(feature = "files")]
+fn reopen_untitled(
+    world: &mut World,
+    panel: Entity,
+    model: TypeId,
+    name: String,
+) -> Result<(), String> {
+    let make = world
+        .get_resource::<crate::untitled::UntitledModels>()
+        .and_then(|models| models.0.get(&model).copied())
+        .ok_or("nothing here makes it")?;
+    // Already open (another panel of it was restored first).
+    let existing = world
+        .query::<(Entity, &crate::Untitled)>()
+        .iter(world)
+        .find(|(_, untitled)| untitled.name == name)
+        .map(|(entity, _)| DocumentId(entity));
+    let document = match existing {
+        Some(document) => document,
+        None => make(world, name)?,
+    };
+    world
+        .entity_mut(panel)
+        .insert(DocumentReference::new(document));
+    Ok(())
 }
 
 #[cfg(feature = "files")]
@@ -783,6 +887,24 @@ fn new_panel<M: DocumentModel>(
     Ok(panel)
 }
 
+/// Show document `id` in a new panel of its model's default viewer, without
+/// taking focus: for one that would otherwise be out of sight.
+pub(crate) fn show_document(world: &mut World, id: DocumentId) -> Result<Entity, String> {
+    let model = world
+        .get::<Document>(id.0)
+        .ok_or("The document is unavailable")?
+        .model_type();
+    let create = world
+        .get_resource::<Viewers>()
+        .and_then(|viewers| viewers.for_model(model, None))
+        .map(|viewer| viewer.create)
+        .ok_or("Nothing shows it")?;
+    let panel = create(world, id, Place::at(Placement::default()).focus(false))?;
+    world.flush();
+    show(world, panel, true)?;
+    Ok(panel)
+}
+
 /// Select `panel`'s tab, and focus it unless `keep_focus`.
 fn show(world: &mut World, panel: Entity, keep_focus: bool) -> Result<(), String> {
     if keep_focus {
@@ -1279,7 +1401,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         world
             .bedtime_mut()
-            .save_untitled_to(document, &path)
+            .save_document_to(document, &path)
             .unwrap();
         assert!(world.get::<Untitled>(document.0).is_none());
         update_until(&mut app, |world| {
@@ -1294,7 +1416,76 @@ mod tests {
             world.bedtime().inspect_document(document).unwrap().title,
             "notes.md"
         );
-        assert!(world.get::<ViewerFile>(panel).is_some());
+        // Its viewer is saved with its new name.
+        let name = SourceName::file(&path.canonicalize().unwrap()).unwrap();
+        assert_eq!(world.get::<ViewerSource>(panel).unwrap().0, name.as_str());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
+
+    #[cfg(feature = "files")]
+    #[test]
+    fn save_as_keeps_a_files_document_in_another_file() {
+        use crate::documents::tests::{type_text, update_until};
+        #[derive(Resource, Default)]
+        struct Asked(Vec<DocumentId>);
+        let mut app = App::new();
+        app.add_plugins(WorkbenchCorePlugins)
+            .register_viewer::<TextBuffer, TextView>("Text")
+            .formats([TEXT]);
+        layout(app.world_mut());
+        app.init_resource::<Asked>();
+        let folder = std::env::temp_dir().join(format!("bedtime-save-as-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let old = folder.join("a.txt");
+        let new = folder.join("b.txt");
+        std::fs::write(&old, "hello").unwrap();
+        let _ = std::fs::remove_file(&new);
+        let world = app.world_mut();
+        world
+            .bedtime_mut()
+            .set_save_as(|world, id| world.resource_mut::<Asked>().0.push(id));
+        let panel = world.bedtime_mut().open_path(&old, default()).unwrap();
+        let document = world.get::<DocumentReference>(panel).unwrap().document();
+        update_until(&mut app, |world| {
+            world
+                .bedtime()
+                .inspect_document(document)
+                .is_ok_and(|info| info.status == DocumentStatus::Ready)
+        });
+        let world = app.world_mut();
+        let handle = world
+            .bedtime()
+            .cast_document::<TextBuffer>(document)
+            .unwrap();
+        type_text(world, handle, 5, " there");
+        assert!(world.bedtime().can_save_document_as(document));
+        world.bedtime_mut().save_document_as(document).unwrap();
+        assert_eq!(world.resource::<Asked>().0, [document]);
+        assert!(world.bedtime().inspect_document(document).unwrap().saving);
+        world
+            .bedtime_mut()
+            .save_document_to(document, &new)
+            .unwrap();
+        update_until(&mut app, |world| {
+            world
+                .bedtime()
+                .inspect_document(document)
+                .is_ok_and(|info| !info.dirty && !info.saving)
+        });
+        // The new file has the edits; the old one is as it was.
+        assert_eq!(std::fs::read_to_string(&new).unwrap(), "hello there");
+        assert_eq!(std::fs::read_to_string(&old).unwrap(), "hello");
+        let world = app.world();
+        assert_eq!(
+            world.bedtime().inspect_document(document).unwrap().title,
+            "b.txt"
+        );
+        let new = new.canonicalize().unwrap();
+        assert_eq!(world.bedtime().document_file(document), Some(new.clone()));
+        assert_eq!(
+            world.get::<ViewerSource>(panel).unwrap().0,
+            SourceName::file(&new).unwrap().as_str()
+        );
         std::fs::remove_dir_all(folder).unwrap();
     }
 
@@ -1428,10 +1619,11 @@ mod tests {
         let document = world.get::<DocumentReference>(as_text).unwrap().document();
         assert_eq!(world.bedtime().document_format(document), Some(TEXT));
 
-        // A restored viewer has its file but not its document: it gets it back.
+        // A restored viewer has its document's name but not its document:
+        // it gets it back. (Saved by an earlier version, as a file.)
         assert_eq!(
-            world.get::<ViewerFile>(panel),
-            Some(&ViewerFile(notes.canonicalize().unwrap()))
+            world.bedtime().holder_file(panel),
+            Some(notes.canonicalize().unwrap())
         );
         let area = world.get::<InArea>(panel).unwrap().0;
         let restored = world
@@ -1448,7 +1640,12 @@ mod tests {
         let gone = world
             .spawn((
                 TextView,
-                ViewerFile(directory.join("gone.txt")),
+                ViewerSource(
+                    SourceName::file(&directory.join("gone.txt"))
+                        .unwrap()
+                        .as_str()
+                        .to_owned(),
+                ),
                 InArea(area),
             ))
             .id();

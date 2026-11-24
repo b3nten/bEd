@@ -1,0 +1,61 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -142), text: "One frame of a bedtime app, in order. The UI is one egui pass in PreUpdate, drawn by a single system that\nhas the whole World; what the pass leaves (layout gestures, keys, queued actions) is applied right after it.", size: 16), stroke: Muted),
+        (id: "PreUpdate", shape: Rectangle(x: 0, y: 0, w: 649.6, h: 1006.54), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 10), text: "PreUpdate", size: 16), stroke: Muted),
+        (id: "Update", shape: Rectangle(x: 0, y: 1066.54, w: 649.6, h: 195.86), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 1076.54), text: "Update", size: 16), stroke: Muted),
+        (id: "PostUpdate", shape: Rectangle(x: 0, y: 1322.4, w: 649.6, h: 158.62), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 1332.4), text: "PostUpdate", size: 16), stroke: Muted),
+        (id: "Last", shape: Rectangle(x: 0, y: 1541.02, w: 649.6, h: 233.1), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (16, 1551.02), text: "Last", size: 16), stroke: Muted),
+        (id: "input", shape: Group, label: "input", children: [
+            (shape: Text(at: (56, 94), text: "bevy_egui reads the window's input\npoll_documents: reads and saves started and finished", size: 14)),
+        ]),
+        (id: "prepare", shape: Group, label: "the session, the native menu", children: [
+            (shape: Text(at: (56, 241.24), text: "SessionSystems::Prepare\na click in macOS's menu: an action request", size: 14)),
+        ]),
+        (id: "claim", shape: Group, label: "ActionSystems::Claim", children: [
+            (shape: Text(at: (56, 388.48), text: "a key the focused panel itself handles is taken\nfrom egui's input and its action runs now", size: 14)),
+        ]),
+        (id: "draw", shape: Group, label: "UiSystems::Draw: runtime::draw", children: [
+            (shape: Text(at: (56, 535.72), text: "one exclusive system, the whole World, one egui pass:\n  the backdrop\n  error dialogs, then modals (the unsaved-changes prompt)\n  the titlebar (the app's), then the areas and their tabs\n  each area's selected panel: Panel::draw(ui, world, ctx, panel)\n  the status bar\nthen UiCapture: what egui took (keyboard, pointer, text)", size: 14)),
+        ]),
+        (id: "apply", shape: Group, label: "LayoutSystems::Apply", children: [
+            (shape: Text(at: (56, 776.06), text: "the gestures' LayoutEdits (PendingEdits) applied;\nclosing a panel asks its CloseHooks first", size: 14)),
+        ]),
+        (id: "keys", shape: Group, label: "CollectInput → Shortcuts → Dispatch", children: [
+            (shape: Text(at: (56, 923.3), text: "the keys egui's widgets left become action requests;\nevery queued request runs; failures are notifications", size: 14)),
+        ]),
+        (id: "update", shape: Group, label: "plugins' systems", children: [
+            (shape: Text(at: (56, 1160.54), text: "intents panels left (search), polling their tasks,\nthe status bar following the focus, siblings in step,\nexit gates advancing, autosave", size: 14)),
+        ]),
+        (id: "render", shape: Group, label: "render", children: [
+            (shape: Text(at: (56, 1416.4), text: "bevy_egui turns egui's output into meshes; Bevy renders", size: 14)),
+        ]),
+        (id: "last", shape: Group, label: "WorkSystems::Poll, then saving", children: [
+            (shape: Text(at: (56, 1635.02), text: "background threads that finished are joined; work whose\nowner entity is gone is cancelled\nstores::save, save_layers: at most once a second (at once\non exit), writing only what changed\nreload_changed_layers: a settings.ron changed on disk", size: 14)),
+        ]),
+        (id: "n-draw", shape: Group, label: "while a panel draws, it may", stroke: Green, children: [
+            (shape: Text(at: (785.6, 495.72), text: "read anything in the World, and ask things of it:\n  edit its document (edit_document_transaction)\n  notify, start background work, change settings\nbut not change the layout: layouts().drawing() is true,\nand its own gestures wait for Apply\nUiContext: view (the panel), surface (the window),\ntheme, metrics, motion", size: 14)),
+        ]),
+        (id: "n-claim", shape: Group, label: "why keys go twice", children: [
+            (shape: Text(at: (785.6, 328.48), text: "before the draw: so a panel's key (an editor's\nAlt+Up) beats a text field, and this frame shows it\nafter the draw: so a text field typing keeps its keys,\nand the rest go to whoever handles them", size: 14)),
+        ]),
+        (id: "n-when", shape: Group, label: "when there's a frame at all", children: [
+            (shape: Text(at: (785.6, 1376.4), text: "bEd is reactive (WinitSettings::desktop_app): a frame\ncomes on input, or when something asks: egui's\nrequest_repaint(_after), a gesture or animation, or\nUiWaker from another thread (a terminal's output).\nEffects and scripts make it continuous.", size: 14)),
+        ]),
+        (shape: Arrow(from: "input", to: "prepare", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "prepare", to: "claim", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "claim", to: "draw", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "draw", to: "apply", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "apply", to: "keys", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "keys", to: "update", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "update", to: "render", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "render", to: "last", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "n-draw", to: "draw", from_side: Left, to_side: Right), stroke: Muted, dash: Dashed),
+        (shape: Arrow(from: "n-claim", to: "claim", from_side: Left, to_side: Right), stroke: Muted, dash: Dashed),
+        (shape: Arrow(from: "n-when", to: "render", from_side: Left, to_side: Right), stroke: Muted, dash: Dashed),
+    ],
+)

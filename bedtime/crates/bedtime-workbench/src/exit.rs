@@ -1,18 +1,27 @@
 //! Ending the session: quitting, or an app's own exit (switching workspace).
 //!
-//! An exit settles what would be lost, finishes background work, then runs
-//! its last step: `AppExit` for a quit. A restart (`restart_session`,
-//! switching workspace) runs `OnWorkspaceClosing`, finishes only the
-//! workspace's work (tasks with no owner, or owned by an `InWorkspace`
-//! entity), runs its step, then the session goes on: work is accepted again.
+//! An exit settles what would be lost, stops background work, then runs its
+//! last step: `AppExit` for a quit. A restart (`restart_session`, switching
+//! workspace) runs `OnWorkspaceClosing`, stops only the workspace's work
+//! (tasks with no owner, or owned by an `InWorkspace` entity), runs its
+//! step, then the session goes on: work is accepted again.
+//!
+//! Stopping work cancels it and gives it a moment (`STOP_WAIT`) to end; the
+//! exit doesn't wait longer. Nothing a task holds is the session's to lose:
+//! saves are settled before (by the documents' gate), and files are written
+//! by renaming a finished temporary file over them.
 //!
 //! What would be lost is the business of [`ExitGate`]s, which hold an exit
 //! until they're settled, or cancel it. Documents add one (unsaved documents
-//! are saved or asked about); an app without them has none, and exits once
-//! its work is done.
+//! are kept for next time, or asked about if they can't be); an app without
+//! them has none.
 use crate::*;
 use crate::{Bedtime, BedtimeRef};
 use bevy::prelude::*;
+use std::time::{Duration, Instant};
+
+/// How long an exit waits for cancelled background work to end.
+const STOP_WAIT: Duration = Duration::from_millis(500);
 
 /// What a gate says of an exit, each frame it's asked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,13 +37,10 @@ pub enum Gate {
 /// Something that may hold an exit: unsaved work, say.
 #[derive(Clone, Copy)]
 pub struct ExitGate {
-    /// Whether an exit may start at all; an error says why not ("Finish
-    /// typing in … first").
-    pub may_start: fn(&World) -> Result<(), String>,
     /// An exit called `name` ("Quit", "Switch workspace") has started: begin
     /// settling what's in its way.
     pub begin: fn(&mut World, &str),
-    /// Asked each frame until every gate is open, and again before
+    /// Asked each frame until every gate is open, and once more before
     /// background work is stopped.
     pub poll: fn(&mut World) -> Gate,
 }
@@ -79,6 +85,8 @@ struct Exit {
     then: Option<ExitStep>,
     /// The session goes on after `then`.
     restart: bool,
+    /// When background work was told to stop.
+    stopping: Option<Instant>,
 }
 
 pub(crate) fn install(app: &mut App) {
@@ -130,8 +138,7 @@ impl Bedtime {
     /// prompt, "Quit" or "Switch workspace"), background work finishes, then
     /// `then` runs. Quitting's `then` sends `AppExit`. If the user cancels,
     /// nothing happens and the session goes on. Refused while another exit is
-    /// under way, or while a gate says it can't start (an editor has
-    /// uncommitted input).
+    /// under way.
     pub fn request_exit(
         &mut self,
         name: impl Into<String>,
@@ -157,12 +164,10 @@ impl Bedtime {
             return Err("Already exiting".into());
         }
         let gates = gates(world);
-        for gate in &gates {
-            (gate.may_start)(world)?;
-        }
         world.resource_mut::<PendingExit>().0 = Some(Exit {
             then: Some(then),
             restart,
+            stopping: None,
         });
         for gate in &gates {
             (gate.begin)(world, &name);
@@ -172,13 +177,9 @@ impl Bedtime {
 
     /// Stop background work now, without an exit: for headless hosts and
     /// tests. Refused while a gate has something to settle (a save in
-    /// flight, uncommitted input), which stopping would lose; an exit waits
-    /// for those.
+    /// flight), which stopping would lose; an exit waits for those.
     pub fn shutdown_work(&mut self) -> Result<(), String> {
         let world = &mut self.world;
-        for gate in gates(world) {
-            (gate.may_start)(world)?;
-        }
         if poll(world) != Gate::Open {
             return Err("Work is still being saved".into());
         }
@@ -209,7 +210,7 @@ fn advance(world: &mut World) {
     let Some(mut exit) = world.resource_mut::<PendingExit>().0.take() else {
         return;
     };
-    if !world.resource::<ManagedWork>().is_closing() {
+    if exit.stopping.is_none() {
         // Its gates: asked until they're open, and once more now that they
         // are (a save may have started since).
         match poll(world) {
@@ -233,11 +234,12 @@ fn advance(world: &mut World) {
         } else {
             world.resource_mut::<ManagedWork>().shutdown();
         }
+        exit.stopping = Some(Instant::now());
     }
-    if world.resource::<ManagedWork>().is_closing()
-        && world.resource::<ManagedWork>().is_finished()
-        && let Some(then) = exit.then.take()
-    {
+    // Cancelled work has ended, or had its moment: go on without it.
+    let stopped = world.resource::<ManagedWork>().is_finished()
+        || exit.stopping.is_some_and(|at| at.elapsed() >= STOP_WAIT);
+    if stopped && let Some(then) = exit.then.take() {
         then(world);
         if exit.restart {
             world.resource_mut::<ManagedWork>().reopen();
@@ -288,6 +290,31 @@ mod tests {
         );
     }
 
+    /// Work that doesn't stop when cancelled doesn't hold a quit up for
+    /// more than a moment.
+    #[test]
+    fn quitting_doesnt_wait_long_for_work_that_wont_stop() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, crate::AppCorePlugins));
+        app.update();
+        let task = app
+            .world_mut()
+            .resource_mut::<ManagedWork>()
+            .spawn_task(None, "Stubborn", |_| {
+                std::thread::sleep(std::time::Duration::from_secs(30))
+            })
+            .unwrap();
+        let started = std::time::Instant::now();
+        app.world_mut()
+            .write_message(CloseRequested { window: None });
+        while !exited(&app) {
+            assert!(started.elapsed() < std::time::Duration::from_secs(5));
+            app.update();
+        }
+        assert!(started.elapsed() >= STOP_WAIT);
+        assert!(task.status() != WorkStatus::Finished);
+    }
+
     /// What the test's gate says: 0 open, 1 waiting, 2 cancelled.
     static GATE: AtomicU8 = AtomicU8::new(0);
 
@@ -296,7 +323,6 @@ mod tests {
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, crate::AppCorePlugins))
             .add_exit_gate(ExitGate {
-                may_start: |_| Ok(()),
                 begin: |_, _| {},
                 poll: |_| match GATE.load(Ordering::Relaxed) {
                     0 => Gate::Open,

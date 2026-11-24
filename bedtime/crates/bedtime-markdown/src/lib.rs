@@ -24,7 +24,7 @@ use bedtime_ui::{
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
     BedtimeWorldExt, DocumentReference, Format, FormatId, FormatsAppExt, Notification, Panel,
-    PathOptions, TEXT, ViewerFile, ViewersAppExt, viewer_document,
+    PathOptions, TEXT, ViewersAppExt, viewer_document,
 };
 use bevy::prelude::*;
 use std::{path::PathBuf, time::Duration};
@@ -106,8 +106,9 @@ impl Panel for MarkdownPanel {
             .and_then(|syntax| syntax.at(document.revision))
             .cloned();
         let base = world
-            .get::<ViewerFile>(panel)
-            .and_then(|file| file.0.parent().map(PathBuf::from));
+            .bedtime()
+            .holder_file(panel)
+            .and_then(|file| file.parent().map(PathBuf::from));
         let Some(mut preview) = world.get_mut::<MarkdownPanel>(panel) else {
             return;
         };
@@ -175,9 +176,9 @@ fn follow(world: &mut World, panel: Entity, link: &str) {
     } else {
         let file = link.split('#').next().unwrap_or(link);
         let file = percent_decode(file);
-        match world.get::<ViewerFile>(panel) {
+        match world.bedtime().holder_file(panel) {
             Some(viewer) => {
-                let base = viewer.0.parent().unwrap_or(std::path::Path::new(""));
+                let base = viewer.parent().unwrap_or(std::path::Path::new(""));
                 let path = base.join(&file);
                 world
                     .bedtime_mut()

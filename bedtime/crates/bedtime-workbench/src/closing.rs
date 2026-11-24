@@ -3,9 +3,10 @@
 //! A referenced document lives while something holds a `DocumentReference` to it.
 //! Closing panels that would release an unsaved document either saves it first
 //! (autosave on) or asks the user: Save, Discard or Cancel. An exit (`exit`:
-//! quitting, or an application's own exit such as switching workspace) asks
-//! the same about every unsaved document, as one of its gates, and goes on
-//! once they're settled and no save is running.
+//! quitting, or an application's own exit such as switching workspace)
+//! keeps unsaved documents for the next session (`documents::unsaved`, hot
+//! exit), and asks the same only about those it can't keep, as one of its
+//! gates; it goes on once they're settled and no save is running.
 //! A failed save never closes anything; the prompt shows the error instead.
 //!
 //! The flow is driven headlessly through `close_prompt` and `resolve_close`;
@@ -75,6 +76,10 @@ enum Stage {
 #[derive(Component)]
 struct Discarded;
 
+/// An unsaved document nothing could show when it was let go.
+#[derive(Component)]
+struct Unshowable;
+
 pub(crate) fn install(app: &mut App) {
     app.init_resource::<PendingClose>()
         .init_resource::<DocumentAutosave>()
@@ -91,24 +96,9 @@ pub(crate) fn install(app: &mut App) {
         )
         .add_systems(Last, release_unviewed.before(SessionSystems::Close))
         .add_exit_gate(ExitGate {
-            may_start: exit_may_start,
             begin: exit_begins,
             poll: exit_gate,
         });
-}
-
-/// An exit can't start while an editor has uncommitted input.
-fn exit_may_start(world: &World) -> Result<(), String> {
-    let drafting = world
-        .bedtime()
-        .document_ids()
-        .into_iter()
-        .filter_map(|id| world.bedtime().inspect_document(id).ok())
-        .find(|info| info.has_drafts);
-    match drafting {
-        Some(info) => Err(format!("Finish typing in {:?} first.", info.title)),
-        None => Ok(()),
-    }
 }
 
 /// An exit has started: save or ask about every unsaved document.
@@ -121,6 +111,18 @@ fn exit_begins(world: &mut World, name: &str) {
         .into_iter()
         .filter(|&id| needs_decision(world, id))
         .collect();
+    // Hot exit: what's unsaved is kept for next time; ask only about what
+    // couldn't be.
+    #[cfg(feature = "persistence")]
+    let documents = if crate::documents::unsaved::hot_exit(world) {
+        let unkept = crate::documents::unsaved::back_up_now(world);
+        documents
+            .into_iter()
+            .filter(|id| unkept.contains(id))
+            .collect()
+    } else {
+        documents
+    };
     if !documents.is_empty() {
         begin(world, Target::Exit { name: name.into() }, documents);
     }
@@ -369,9 +371,14 @@ fn advance(world: &mut World) {
 
 /// Drop documents whose last reference went away this frame (or earlier). Running
 /// at the end of the frame lets a viewer be replaced without reloading its document.
-/// Unsaved documents are only dropped once saved or discarded; otherwise they
-/// stay until quit, which asks about them.
+/// Unsaved documents are only dropped once saved or discarded; one let go
+/// otherwise (by code, not the close prompt) is shown again in a new panel,
+/// so unsaved work is never out of sight.
 fn release_unviewed(world: &mut World) {
+    // An exit is settling, or has settled, every document.
+    if world.bedtime().is_exiting() {
+        return;
+    }
     let candidates: Vec<_> = world
         .query_filtered::<(Entity, Option<&DocumentReferences>), (With<Document>, With<crate::documents::Referenced>)>()
         .iter(world)
@@ -385,6 +392,14 @@ fn release_unviewed(world: &mut World) {
         let discarded = world.get::<Discarded>(id.0).is_some();
         if !info.saving && (discarded || !(info.dirty || info.conflict)) {
             world.despawn(id.0);
+        } else if !discarded
+            && (info.dirty || info.conflict)
+            && world.get::<Unshowable>(id.0).is_none()
+            && let Err(error) = crate::opening::show_document(world, id)
+        {
+            // Kept, as nothing can show it; it's kept for next time with the rest.
+            warn!("An unsaved document couldn't be shown: {error}");
+            world.entity_mut(id.0).insert(Unshowable);
         }
     }
 }
@@ -549,6 +564,40 @@ mod tests {
         close(&mut app, viewer);
         assert!(!exists(&app, viewed.id().entity()));
         assert!(exists(&app, unviewed.id().entity()));
+    }
+
+    #[test]
+    fn an_unsaved_document_let_go_by_code_is_shown_again() {
+        let mut app = app();
+        crate::documents::tests::register_test_viewer(&mut app);
+        let (document, viewer) = unsaved(&mut app, true);
+        // Not closed by the user (who'd be asked): its reference just goes.
+        app.world_mut()
+            .entity_mut(viewer)
+            .remove::<DocumentReference>();
+        app.update();
+        let world = app.world();
+        assert!(exists(&app, document.id().entity()));
+        let holders = world
+            .get::<DocumentReferences>(document.id().entity())
+            .unwrap()
+            .holders();
+        assert_eq!(holders.len(), 1);
+        assert!(world.get::<PanelInstance>(holders[0]).is_some());
+    }
+
+    #[test]
+    fn drafts_dont_hold_up_quitting() {
+        let mut app = app();
+        let document = clean(&mut app, "a");
+        let world = app.world_mut();
+        let viewer = panel(world);
+        world
+            .entity_mut(viewer)
+            .insert((DocumentReference::new(document.id()), DocumentDraft));
+        app.world_mut()
+            .write_message(CloseRequested { window: None });
+        update_until(&mut app, |app| app.should_exit().is_some());
     }
 
     #[test]

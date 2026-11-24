@@ -8,9 +8,7 @@ use crate::{ExplorerView, Folders};
 use bedtime_filesystem::operations::{
     Change, Operation, OperationRequest, OperationResult, execute,
 };
-use bedtime_workbench::{
-    BedtimeWorldExt, ManagedTask, ManagedWork, Notification, PathOptions, ViewerFile,
-};
+use bedtime_workbench::{BedtimeWorldExt, ManagedTask, ManagedWork, Notification, PathOptions};
 use bevy::prelude::*;
 use std::path::{Path, PathBuf};
 
@@ -149,7 +147,6 @@ pub(crate) fn finish_operations(world: &mut World) {
         });
     for (result, panel, open_created) in finished {
         world.resource_mut::<Folders>().refresh();
-        follow_moves(world, &result.completed);
         if let Some(error) = result.errors.first() {
             let name = error
                 .path
@@ -188,37 +185,6 @@ pub(crate) fn finish_operations(world: &mut World) {
                 ..default()
             };
             let _ = world.bedtime_mut().open_path(&path, options);
-        }
-    }
-}
-
-/// Viewers of moved files reopen them where they went (their documents
-/// already follow, in `bedtime-filesystem`).
-fn follow_moves(world: &mut World, changes: &[Change]) {
-    let moves: Vec<(&Path, &Path)> = changes
-        .iter()
-        .filter_map(|change| match change {
-            Change::Moved {
-                source,
-                destination,
-            } => Some((source.as_path(), destination.as_path())),
-            _ => None,
-        })
-        .collect();
-    if moves.is_empty() {
-        return;
-    }
-    let mut viewers = world.query::<&mut ViewerFile>();
-    for mut file in viewers.iter_mut(world) {
-        for &(source, destination) in &moves {
-            if let Ok(rest) = file.0.strip_prefix(source) {
-                file.0 = if rest.as_os_str().is_empty() {
-                    destination.to_owned()
-                } else {
-                    destination.join(rest)
-                };
-                break;
-            }
         }
     }
 }

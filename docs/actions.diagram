@@ -1,0 +1,68 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -142), text: "Actions: a key, a menu, the palette, a script or code asks for one; one queue, one dispatch, once a frame\n(PreUpdate), to the focused panel's handler or the app's. Green: what a plugin writes.", size: 16), stroke: Muted),
+        (id: "declares", shape: Rectangle(x: 2170, y: -60, w: 560, h: 1240), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (2186, -50), text: "what a plugin declares", size: 16), stroke: Muted),
+        (id: "key", shape: Group, label: "a key", children: [
+            (shape: Text(at: (16, 44), text: "pressed in the focused window\n(two passes, below)", size: 14)),
+        ]),
+        (id: "menu", shape: Group, label: "a menu item", children: [
+            (shape: Text(at: (351.6, 44), text: "the menu bar drawn in the window,\na context menu, or macOS's own\n(rebuilt when what it shows changes)", size: 14)),
+        ]),
+        (id: "palette", shape: Group, label: "the command palette", children: [
+            (shape: Text(at: (746, 44), text: "a row chosen (Cmd+Shift+P in bEd)", size: 14)),
+        ]),
+        (id: "script", shape: Group, label: "a script", children: [
+            (shape: Text(at: (1115.2, 44), text: "bedtime.invoke { command: \"<KEY>\" }\nover the Bevy Remote Protocol", size: 14)),
+        ]),
+        (id: "code", shape: Group, label: "code", children: [
+            (shape: Text(at: (1501.2, 44), text: "world.bedtime_mut().actions_mut()\n    .invoke::<A>()", size: 14)),
+        ]),
+        (id: "claim", shape: Group, label: "claim: before panels draw", children: [
+            (shape: Text(at: (16, 284), text: "if the focused panel has its own\nActionHandler<A> for the chord, and it's\navailable: take the key from egui (text\nfields never see it) and run it at once,\nso this frame draws what it did\n(an editor's Alt+Up, over a text field)", size: 14)),
+        ]),
+        (id: "collect", shape: Group, label: "collect: after panels draw", children: [
+            (shape: Text(at: (16, 525.72), text: "what egui's widgets left. While a text field\nhas the keyboard, chords that type are\nskipped: Cmd+S works there, Cmd+Z doesn't.\nchord_target picks the action: the focused\npanel's own, else one with an app handler;\ntwo or more: a BindingConflict, and none", size: 14)),
+        ]),
+        (id: "queue", shape: Group, label: "ActionRequests: a queue", children: [
+            (shape: Text(at: (776, 525.72), text: "ActionRequest { action, context, source }\ncontext: Focused, Global or Entity(e)\nsource: the menu item it came from, if any", size: 14)),
+        ]),
+        (id: "dispatch", shape: Group, label: "dispatch, then resolve", children: [
+            (shape: Text(at: (776, 787.44), text: "Focused means the focused panel, then:\n  active layout → its focused area → that tab\nthe handler: that panel's ActionHandler<A>,\n  else the action's app handler\nnot available now (available_when): an error,\n  and a panel's handler doesn't fall back", size: 14)),
+        ]),
+        (id: "panel-handler", shape: Group, label: "a panel's handler", stroke: Green, children: [
+            (shape: Text(at: (446, 1049.16), text: "#[require(ActionHandler<ZoomIn> =\n    ActionHandler::new(Handler::new(zoom)))]\non the panel's component: it runs only\nwhile that panel has the focus", size: 14)),
+        ]),
+        (id: "app-handler", shape: Group, label: "the app's handler", stroke: Green, children: [
+            (shape: Text(at: (907.6, 1049.16), text: "app.add_action_handler::<A>(\n    Handler::new(run).available_when(f))\nrun(&mut World, ActionInvocation {\n    action, entity: the focused panel, source })", size: 14)),
+        ]),
+        (id: "finished", shape: Group, label: "ActionFinished", children: [
+            (shape: Text(at: (776, 1273.64), text: "Result<(), String>: an Err is a notification\n(\"Save: the disk is full\"); not available\nis said only where it was asked for", size: 14)),
+        ]),
+        (id: "action", shape: Group, label: "an action", stroke: Green, children: [
+            (shape: Text(at: (2216, 44), text: "struct Save;\nimpl Action for Save {\n    const KEY: &str = \"document.save\";\n    const LABEL: &str = \"Save\";\n    const DEFAULT_KEYS: &[KeyChord] =\n        &[KeyChord::primary(KeyCode::KeyS)];\n}\napp.register_action::<Save>()", size: 14)),
+        ]),
+        (id: "keys", shape: Group, label: "its keys: the last of these wins", children: [
+            (shape: Text(at: (2216, 322.96), text: "1. the action's DEFAULT_KEYS\n2. the app's keymaps: add_keymap(VSCODE), then\n   bEd's own (a later keymap wins)\n3. Settings: \"keys.<KEY>\" in each layer;\n   an empty list unbinds\none table, Keybindings, that keys, menus and\nSettings all read; a chord is modifiers and\none key (\"Primary+Shift+Z\")", size: 14)),
+        ]),
+        (id: "menus", shape: Group, label: "its menu item", stroke: Green, children: [
+            (shape: Text(at: (2216, 601.92), text: "app.add_menu_item::<Save>(StandardMenu::File, \"save\")\nlaid out at startup: App, File, Edit, View, the\napp's own menus, Window, Help; in each, its\ngroups, then items in the order plugins add them\neach time it's shown: enabled if the action is\navailable, with the key that would run it", size: 14)),
+        ]),
+        (id: "palette-list", shape: Group, label: "in the palette", children: [
+            (shape: Text(at: (2216, 843.64), text: "every action available as it opens, named by\nits menu (\"File: Save\"), the recent first;\nfuzzy search; it runs on the panel that had\nthe focus before the palette opened", size: 14)),
+        ]),
+        (shape: Arrow(from: "key", to: "claim", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "claim", to: "dispatch", from_side: Left, to_side: Left, via: [(-80, 325.86), (-80, 829.3)]), label: "at once"),
+        (shape: Arrow(from: "collect", to: "queue", from_side: Right, to_side: Left)),
+        (shape: Arrow(from: "menu", to: "queue", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "palette", to: "queue", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "script", to: "queue", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "code", to: "queue", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "queue", to: "dispatch", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "dispatch", to: "panel-handler", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "dispatch", to: "app-handler", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "panel-handler", to: "finished", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "app-handler", to: "finished", from_side: Bottom, to_side: Top)),
+    ],
+)

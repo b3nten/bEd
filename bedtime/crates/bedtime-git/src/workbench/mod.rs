@@ -234,22 +234,19 @@ fn git_job(
     }
 }
 
-/// The file a document shows, from its viewers' `ViewerFile`.
+/// The file a document is kept in.
 fn source_path(world: &mut World, id: DocumentId) -> Option<PathBuf> {
-    world
-        .query::<(&DocumentReference, &ViewerFile)>()
-        .iter(world)
-        .find(|(reference, _)| reference.document() == id)
-        .map(|(_, file)| file.0.clone())
+    world.bedtime().document_file(id)
 }
 
 /// Open documents of files under `root`, and their files.
 fn source_infos(world: &mut World, root: &Path) -> Vec<(DocumentInfo, PathBuf)> {
-    let files: Vec<(DocumentId, PathBuf)> = world
-        .query::<(&DocumentReference, &ViewerFile)>()
-        .iter(world)
-        .filter(|(_, file)| file.0.starts_with(root))
-        .map(|(reference, file)| (reference.document(), file.0.clone()))
+    let workbench = world.bedtime();
+    let files: Vec<(DocumentId, PathBuf)> = workbench
+        .document_ids()
+        .into_iter()
+        .filter_map(|id| Some((id, workbench.document_file(id)?)))
+        .filter(|(_, file)| file.starts_with(root))
         .collect();
     let mut seen = std::collections::HashSet::new();
     files

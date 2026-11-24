@@ -10,6 +10,8 @@ mod json;
 #[cfg(feature = "workbench")]
 mod panel;
 #[cfg(feature = "workbench")]
+mod requests;
+#[cfg(feature = "workbench")]
 mod status;
 
 pub use collection::*;
@@ -18,8 +20,10 @@ pub use json::pretty as pretty_json;
 #[cfg(feature = "workbench")]
 pub use panel::{
     Exchange, Exchanges, HttpClientPanel, HttpClientPlugin, HttpClientSystems, HttpClientView,
-    HttpRequests, Received, Shown,
+    Received, Shown,
 };
+#[cfg(feature = "workbench")]
+pub use requests::{HttpRequests, RequestChange, changes};
 
 #[cfg(test)]
 mod tests;

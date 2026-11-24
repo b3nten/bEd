@@ -741,6 +741,7 @@ dependencies = [
  "bedtime-workbench",
  "bevy",
  "encoding_rs",
+ "ron",
  "serde",
  "serde_json",
  "ureq",

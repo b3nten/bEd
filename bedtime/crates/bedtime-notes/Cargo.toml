@@ -12,6 +12,4 @@ bedtime-ui.workspace = true
 bedtime-workbench = { workspace = true, features = ["persistence"] }
 bedtime-persistence.workspace = true
 serde = { workspace = true, features = ["derive"] }
-
-[dev-dependencies]
 ron = "0.12.2"

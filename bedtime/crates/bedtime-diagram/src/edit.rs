@@ -2,8 +2,8 @@
 //! box encloses, elements moved, resized and made by dragging, and lines
 //! kept on the outlines of the elements they're bound to.
 use crate::model::{
-    Change, Color, Dash, Diagram, Element, ElementId, GROUP_LABEL_ROOM, GROUP_PADDING, Head, Point,
-    Rect, STROKE_WIDTH, Shape, Side, TEXT_SIZE, is_made_name,
+    Change, Color, Dash, Diagram, Element, ElementId, GROUP_LABEL_ROOM, GROUP_LABEL_SIZE,
+    GROUP_PADDING, Head, Point, Rect, STROKE_WIDTH, Shape, Side, TEXT_SIZE, is_made_name,
 };
 use bedtime_document::{ByteModel, DocumentModel};
 use std::collections::{HashMap, HashSet};
@@ -644,6 +644,16 @@ pub fn group_box(diagram: &Diagram, group: &Element, extent: Extent<'_>) -> Opti
     if !group.label.is_empty() {
         around.y -= GROUP_LABEL_ROOM;
         around.h += GROUP_LABEL_ROOM;
+        // Wide enough for its label, which is 8 in from its left.
+        let label = Element::new(
+            group.id,
+            Shape::Text {
+                at: Point::new(around.x, around.y),
+                text: group.label.clone(),
+                size: GROUP_LABEL_SIZE,
+            },
+        );
+        around.w = around.w.max(extent(&label).w + 16.0);
     }
     Some(around)
 }

@@ -1684,6 +1684,7 @@ fn draw(
                                 world.get::<PanelInstance>(panel).and_then(|p| p.draw)
                             {
                                 let context = content_frame.context();
+                                super::headers::draw(content_frame.ui, world, &context, panel);
                                 let zoom = PanelZoom::of(world, panel);
                                 if zoom == 1.0 {
                                     draw(content_frame.ui, world, &context, panel);

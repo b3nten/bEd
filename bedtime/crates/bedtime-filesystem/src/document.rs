@@ -20,6 +20,15 @@ pub(crate) struct FileDocumentState {
     generation: AtomicU64,
     deleted: std::sync::atomic::AtomicBool,
 }
+impl FileDocumentState {
+    pub(crate) fn is_deleted(&self) -> bool {
+        self.deleted.load(Ordering::Acquire)
+    }
+    pub(crate) fn path(&self) -> PathBuf {
+        self.path.read().unwrap().clone()
+    }
+}
+
 #[derive(Clone)]
 pub struct FsDocumentSource {
     filesystem: Filesystem,
@@ -99,6 +108,8 @@ impl Filesystem {
             state.generation.fetch_add(1, Ordering::AcqRel);
             sources.insert(new, Arc::downgrade(&state));
         }
+        drop(sources);
+        crate::file_watch::moved();
     }
 }
 impl Filesystem {
@@ -115,12 +126,14 @@ impl Filesystem {
                 source.generation.fetch_add(1, Ordering::AcqRel);
             }
         }
+        drop(sources);
+        crate::file_watch::moved();
     }
 }
 
 impl FsDocumentSource {
     pub fn is_deleted(&self) -> bool {
-        self.state.deleted.load(Ordering::Acquire)
+        self.state.is_deleted()
     }
     pub fn location_generation(&self) -> u64 {
         self.state.generation.load(Ordering::Acquire)
@@ -129,10 +142,20 @@ impl FsDocumentSource {
         self.state.id
     }
     pub fn path(&self) -> PathBuf {
-        self.state.path.read().unwrap().clone()
+        self.state.path()
     }
     pub fn bytes(&self) -> FileSource {
         self.filesystem.source(self.path())
+    }
+    /// Watch the file (local files only), telling `changed` until the watch
+    /// is dropped: what `DocumentSource::watch` does, for any model. Keep
+    /// this source as long as the watch: the watch follows it, and stops
+    /// once it's gone.
+    pub fn watch_changes(&self, changed: SourceChanged) -> Option<SourceWatch> {
+        if !self.filesystem.is_local() {
+            return None;
+        }
+        crate::file_watch::watch(&self.state, changed)
     }
 }
 
@@ -193,11 +216,19 @@ impl<M: FileModel> DocumentSource<M> for FsDocumentSource {
             .to_string_lossy()
             .into_owned()
     }
+    /// Local files only: others' paths aren't the disk's.
+    fn name(&self) -> Option<SourceName> {
+        self.filesystem
+            .is_local()
+            .then(|| SourceName::file(&self.path()))
+            .flatten()
+    }
     fn writable(&self) -> bool {
         !WriteAccess::local().blocks(&self.path())
     }
-    fn check_interval(&self) -> Option<std::time::Duration> {
-        Some(std::time::Duration::from_millis(500))
+    /// Files on the local disk are watched; others aren't.
+    fn watch(&self, changed: SourceChanged) -> Option<SourceWatch> {
+        self.watch_changes(changed)
     }
     fn version(&self) -> Result<Option<SourceVersion>, SourceError> {
         if self.is_deleted() {

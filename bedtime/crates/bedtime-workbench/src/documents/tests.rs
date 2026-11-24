@@ -96,7 +96,10 @@ struct Control {
     fail_saves: Option<String>,
     held_save: Option<mpsc::Receiver<()>>,
     held_read: Option<(mpsc::Sender<()>, mpsc::Receiver<()>)>,
-    check_interval: Option<Duration>,
+    /// Its watch is passed on to the memory source.
+    watched: bool,
+    /// The watch hears nothing, as if it missed a change.
+    muted: bool,
     read_only: bool,
 }
 
@@ -164,8 +167,16 @@ impl DocumentSource<TextBuffer> for TestSource {
     fn version(&self) -> Result<Option<SourceVersion>, SourceError> {
         self.memory.version()
     }
-    fn check_interval(&self) -> Option<Duration> {
-        self.control.lock().unwrap().check_interval
+    fn watch(&self, changed: SourceChanged) -> Option<SourceWatch> {
+        if !self.control.lock().unwrap().watched {
+            return None;
+        }
+        let control = self.control.clone();
+        self.memory.watch(SourceChanged::new(move || {
+            if !control.lock().unwrap().muted {
+                changed.notify();
+            }
+        }))
     }
 }
 
@@ -577,7 +588,7 @@ fn a_read_still_running_when_a_save_starts_is_dropped() {
 }
 
 #[test]
-fn a_missing_source_keeps_the_content_and_refuses_saves() {
+fn a_missing_source_keeps_the_content_and_saving_puts_it_back() {
     let mut app = app();
     let source = MemorySource::new("a", TextBuffer::from("text"));
     let document = open(&mut app, source.clone());
@@ -586,23 +597,87 @@ fn a_missing_source_keeps_the_content_and_refuses_saves() {
     assert!(info(app.world(), document.id()).missing);
     assert_eq!(content(app.world(), document), "text");
     type_text(app.world_mut(), document, 0, "more ");
-    assert_eq!(
-        app.world_mut().bedtime_mut().save_document(document.id()),
-        Err(DocumentError::Missing)
-    );
-
-    source.set(TextBuffer::from("text"));
-    refresh_and_wait(&mut app, document.id());
+    save_and_wait(&mut app, document.id()).unwrap();
     assert!(!info(app.world(), document.id()).missing);
+    assert_eq!(source.get().unwrap().to_string(), "more text");
 }
 
 #[test]
-fn sources_that_can_tell_they_changed_are_checked_periodically() {
+fn a_conflict_is_settled_by_keeping_mine_or_reloading_without_the_model() {
+    for choice in [ConflictChoice::KeepMine, ConflictChoice::Reload] {
+        let mut app = app();
+        let source = MemorySource::new("a", TextBuffer::from("base"));
+        let document = open(&mut app, source.clone());
+        type_text(app.world_mut(), document, 4, " mine");
+        source.set(TextBuffer::from("base theirs"));
+        refresh_and_wait(&mut app, document.id());
+        assert!(info(app.world(), document.id()).conflict);
+        app.world_mut()
+            .bedtime_mut()
+            .settle_document_conflict(document.id(), choice)
+            .unwrap();
+        assert!(!info(app.world(), document.id()).conflict);
+        match choice {
+            ConflictChoice::KeepMine => {
+                // Saving now writes over theirs.
+                save_and_wait(&mut app, document.id()).unwrap();
+                assert_eq!(source.get().unwrap().to_string(), "base mine");
+            }
+            ConflictChoice::Reload => {
+                assert_eq!(content(app.world(), document), "base theirs");
+                assert!(!info(app.world(), document.id()).dirty);
+                // Undoable: mine comes back.
+                app.world_mut()
+                    .bedtime_mut()
+                    .undo_document(document.id())
+                    .unwrap();
+                assert_eq!(content(app.world(), document), "base mine");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_watched_source_is_read_again_when_it_changes() {
     let mut app = app();
     let source = TestSource::new("mine");
-    source.control.lock().unwrap().check_interval = Some(Duration::from_millis(1));
+    source.control.lock().unwrap().watched = true;
     let document = open(&mut app, source.clone());
     source.memory.set(TextBuffer::from("theirs"));
+    update_until(&mut app, |world| content(world, document) == "theirs");
+}
+
+#[test]
+fn an_unwatched_source_is_read_again_only_when_asked() {
+    let mut app = app();
+    let source = TestSource::new("mine");
+    let document = open(&mut app, source.clone());
+    source.memory.set(TextBuffer::from("theirs"));
+    for _ in 0..20 {
+        app.update();
+    }
+    assert_eq!(content(app.world(), document), "mine");
+    refresh_and_wait(&mut app, document.id());
+    assert_eq!(content(app.world(), document), "theirs");
+}
+
+#[test]
+fn regaining_focus_checks_watched_sources_again() {
+    let mut app = app();
+    let source = TestSource::new("mine");
+    source.control.lock().unwrap().watched = true;
+    let document = open(&mut app, source.clone());
+    // A change the watch didn't hear about.
+    source.control.lock().unwrap().muted = true;
+    source.memory.set(TextBuffer::from("theirs"));
+    for _ in 0..20 {
+        app.update();
+    }
+    assert_eq!(content(app.world(), document), "mine");
+    app.world_mut().write_message(bevy::window::WindowFocused {
+        window: Entity::PLACEHOLDER,
+        focused: true,
+    });
     update_until(&mut app, |world| content(world, document) == "theirs");
 }
 
@@ -702,4 +777,19 @@ fn shutting_down_waits_for_saves_in_flight() {
         app.world_mut().bedtime_mut().save_document(document.id()),
         Err(DocumentError::SessionClosing)
     );
+}
+
+#[bedtime_ui::panel]
+#[derive(Default)]
+struct TestViewer;
+impl crate::Panel for TestViewer {
+    const LABEL: &'static str = "Test Viewer";
+    #[cfg(feature = "ui")]
+    fn draw(_: &mut bedtime_ui::egui::Ui, _: &mut World, _: &bedtime_ui::UiContext<'_>, _: Entity) {
+    }
+}
+
+/// A viewer of text, so documents can be shown.
+pub(crate) fn register_test_viewer(app: &mut App) {
+    crate::ViewersAppExt::register_viewer::<TextBuffer, TestViewer>(app, "Test Viewer");
 }

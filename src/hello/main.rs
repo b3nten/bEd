@@ -44,7 +44,11 @@ impl Plugin for CounterPlugin {
         app.add_panel::<Counter>()
             .register_setting::<Step>()
             .add_global_status(total)
-            .add_systems(OnWorkspaceOpen, first_layout);
+            .add_systems(OnWorkspaceOpen, |world: &mut World| {
+                if world.bedtime().layouts().active().is_none() {
+                    world.bedtime_mut().open_panel(Counter::default());
+                }
+            });
     }
 }
 
@@ -95,11 +99,4 @@ fn total(world: &World, status: &mut GlobalStatus) {
     };
     let total: i32 = counters.iter(world).map(|counter| counter.count).sum();
     status.text(format!("Total {total}"));
-}
-
-/// With nothing saved, start with a counter.
-fn first_layout(world: &mut World) {
-    if world.bedtime().layouts().active().is_none() {
-        world.bedtime_mut().open_panel(Counter::default());
-    }
 }

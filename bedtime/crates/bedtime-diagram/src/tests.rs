@@ -3015,3 +3015,17 @@ fn copies_of_written_names_take_a_number() {
     let after = made_and_undone(&diagram, &edit::insertions(&diagram, copies));
     assert_eq!(after.get(ElementId(4)).unwrap().name, "rect-2");
 }
+
+#[test]
+fn a_group_is_as_wide_as_its_label() {
+    let mut diagram = grouped();
+    let mut group = diagram.get(ElementId(9)).unwrap().clone();
+    group.label = "a label much wider than the two boxes in this group are".into();
+    diagram.apply(&Change::Replace { element: group }).unwrap();
+    let diagram = edit::settled(&diagram, &Element::bounds);
+    let around = diagram.get(ElementId(9)).unwrap().bounds();
+    let label = 55.0 * GROUP_LABEL_SIZE * 0.6;
+    assert!(around.w >= label + 16.0, "{around:?}");
+    // It grows to the right: its left side stays with what's in it.
+    assert_eq!(around.x, 100.0 - GROUP_PADDING);
+}

@@ -13,7 +13,8 @@ use bedtime_ui::{BuiltinIcon, CodeView, UiContext, egui, theme, tree};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
-    ManagedTask, ManagedWork, Panel, PanelPresentation, ViewerFile, ViewersAppExt, viewer_document,
+    BedtimeWorldExt, ManagedTask, ManagedWork, Panel, PanelPresentation, ViewersAppExt,
+    viewer_document,
 };
 use bevy::prelude::*;
 use std::{
@@ -255,7 +256,7 @@ impl Panel for SqlitePanel {
         if viewer_document::<DatabaseFile>(ui, world, panel).is_none() {
             return;
         }
-        let Some(file) = world.get::<ViewerFile>(panel).map(|file| file.0.clone()) else {
+        let Some(file) = world.bedtime().holder_file(panel) else {
             return;
         };
         update_query(world, panel);

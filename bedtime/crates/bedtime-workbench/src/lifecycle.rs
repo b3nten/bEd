@@ -85,8 +85,10 @@ pub(crate) fn install_documents(app: &mut App) {
         .add_observer(opening::check_viewer_model)
         .add_systems(Update, opening::pin_edited_previews);
     #[cfg(feature = "files")]
-    app.register_type::<ViewerFile>()
-        .add_systems(Update, opening::reopen_viewers);
+    app.register_type::<ViewerFile>();
+    app.register_type::<ViewerSource>()
+        .add_systems(Update, opening::reopen_viewers)
+        .add_systems(PostUpdate, opening::name_viewer_sources);
     closing::install(app);
     document_actions::install(app);
 }

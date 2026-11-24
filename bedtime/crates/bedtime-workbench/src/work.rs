@@ -331,6 +331,12 @@ mod tests {
         ));
         assert_eq!(unowned.status(), WorkStatus::Running);
 
+        // Finished before the shutdown, so its value is delivered.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while done.status() != WorkStatus::Finished {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
         app.world_mut().resource_mut::<ManagedWork>().shutdown();
         assert!(
             app.world_mut()

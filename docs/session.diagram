@@ -1,0 +1,73 @@
+(
+    version: 1,
+    elements: [
+        (shape: Text(at: (0, -142), text: "A session: starting, switching to another folder, and quitting. A session is the app's run of one workspace;\nits store (WorkbenchStore) holds world.ron (layouts, panels) and the workspace's settings.ron.", size: 16), stroke: Muted),
+        (id: "start", shape: Rectangle(x: -30, y: -60, w: 419.6, h: 1007.92), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (-14, -50), text: "starting", size: 16), stroke: Muted),
+        (id: "switch", shape: Rectangle(x: 690, y: -60, w: 419.6, h: 1007.92), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (706, -50), text: "switching to another folder", size: 16), stroke: Muted),
+        (id: "quit", shape: Rectangle(x: 1410, y: -60, w: 419.6, h: 1007.92), stroke: Muted, dash: Dashed, rounded: true),
+        (shape: Text(at: (1426, -50), text: "quitting", size: 16), stroke: Muted),
+        (id: "s-build", shape: Group, label: "building the App", children: [
+            (shape: Text(at: (16, 44), text: "plugins register settings, persisted\nresources and stores\nWorkspacesPlugin chooses the folder:\nthe command line's, else the last one\n(if reopening it), else the default;\nlocks its store, remembers it in recent", size: 14)),
+        ]),
+        (id: "s-settings", shape: Group, label: "PreStartup: load_layers", children: [
+            (shape: Text(at: (16, 275.72), text: "every settings.ron read; every\nsetting's apply runs once", size: 14)),
+        ]),
+        (id: "s-load", shape: Group, label: "PreStartup: stores::load", children: [
+            (shape: Text(at: (16, 432.96), text: "persisted resources inserted;\nworld.ron restored: layouts, areas,\npanels (fresh entities, references\nremapped); viewers reopen their files\ncan't restore: an error, and it's\nnever saved over", size: 14)),
+        ]),
+        (id: "s-open", shape: Group, label: "PostStartup: OnWorkspaceOpen", children: [
+            (shape: Text(at: (16, 664.68), text: "a layout is made active (bEd: slot 1,\nfrom its template if there's none)", size: 14)),
+        ]),
+        (id: "s-frames", shape: Group, label: "frames", children: [
+            (shape: Text(at: (16, 821.92), text: "see frame.diagram", size: 14)),
+        ]),
+        (id: "w-ask", shape: Group, label: "open_workspace(folder)", children: [
+            (shape: Text(at: (736, 44), text: "not the current one, not locked by\nanother window: restart_session", size: 14)),
+        ]),
+        (id: "w-gates", shape: Group, label: "ExitGates", children: [
+            (shape: Text(at: (736, 191.24), text: "documents: unsaved ones are kept for\nnext time (hot exit); it asks only about\nany it can't keep; saves finish", size: 14)),
+        ]),
+        (id: "w-closing", shape: Group, label: "OnWorkspaceClosing", children: [
+            (shape: Text(at: (736, 357.1), text: "the workspace's background work\ncancelled; waits at most 0.5 s", size: 14)),
+        ]),
+        (id: "w-switch", shape: Group, label: "switch_now", children: [
+            (shape: Text(at: (736, 504.34), text: "both stores saved; OnWorkspaceClose\nevery layout and InWorkspace entity\ndespawned; the new folder locked\nWorkbenchStore pointed at its store\nthe workspace settings layer replaced,\nand what changed applied", size: 14)),
+        ]),
+        (id: "w-load", shape: Group, label: "load_store(WorkbenchStore)", children: [
+            (shape: Text(at: (736, 726.06), text: "its world.ron restored, as at start", size: 14)),
+        ]),
+        (id: "w-open", shape: Group, label: "OnWorkspaceOpen", children: [
+            (shape: Text(at: (736, 854.68), text: "the same App, the same global settings;\nonly the workspace's part is new", size: 14)),
+        ]),
+        (id: "q-ask", shape: Group, label: "Quit (Cmd+Q), or the window closed", children: [
+            (shape: Text(at: (1456, 44), text: "request_exit(\"Quit\", …)", size: 14)),
+        ]),
+        (id: "q-gates", shape: Group, label: "ExitGates", children: [
+            (shape: Text(at: (1456, 172.62), text: "the same as switching: unsaved work\nis kept; nothing else holds it up", size: 14)),
+        ]),
+        (id: "q-work", shape: Group, label: "background work", children: [
+            (shape: Text(at: (1456, 319.86), text: "ManagedWork::shutdown(): cancelled;\nwaits at most 0.5 s for it to end", size: 14)),
+        ]),
+        (id: "q-exit", shape: Group, label: "AppExit", children: [
+            (shape: Text(at: (1456, 467.1), text: "written in Update", size: 14)),
+        ]),
+        (id: "q-save", shape: Group, label: "the same frame's Last", children: [
+            (shape: Text(at: (1456, 595.72), text: "stores::save and save_layers see the\nexit: everything that changed is\nwritten at once (world.ron, persisted\nresources, settings.ron)", size: 14)),
+        ]),
+        (shape: Arrow(from: "s-build", to: "s-settings", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "s-settings", to: "s-load", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "s-load", to: "s-open", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "s-open", to: "s-frames", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "w-ask", to: "w-gates", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "w-gates", to: "w-closing", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "w-closing", to: "w-switch", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "w-switch", to: "w-load", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "w-load", to: "w-open", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "q-ask", to: "q-gates", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "q-gates", to: "q-work", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "q-work", to: "q-exit", from_side: Bottom, to_side: Top)),
+        (shape: Arrow(from: "q-exit", to: "q-save", from_side: Bottom, to_side: Top)),
+    ],
+)
