@@ -14,7 +14,7 @@ use bedtime::{
     AppPlugins,
     automation::AutomationPlugin,
     persistence::ReflectPersist,
-    ui::{UiContext, egui, layouts::Panel},
+    ui::{UiContext, layouts::Panel, prelude::*},
     workbench::{
         OnWorkspaceOpen, PanelsAppExt, ShowPanel,
         settings::{SettingsAppExt, settings},
@@ -78,18 +78,26 @@ struct Counter {
 impl Panel for Counter {
     const LABEL: &'static str = "Counter";
 
-    fn draw(ui: &mut egui::Ui, world: &mut World, _: &UiContext<'_>, panel: Entity) {
-        let step = world.bedtime().settings().get::<Step>();
-        let Some(mut counter) = world.get_mut::<Counter>(panel) else {
-            return;
-        };
-        egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
-            ui.heading(counter.count.to_string());
-            if ui.button(format!("Add {step}")).clicked() {
-                counter.count += step;
-            }
-        });
+    fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+        draw::with_system(ui, world, context, panel, counter);
     }
+}
+
+/// The counter, drawn: a system that reads, and queues what a click changes.
+fn counter(
+    PanelUi {
+        ui, entity, state, ..
+    }: PanelUi<Counter>,
+) {
+    let step = draw::world(ui).bedtime().settings().get::<Step>();
+    Column::new().padding(Space::Lg).show(ui, |ui| {
+        ui.add(Text::heading(state.count.to_string()));
+        if ui.add(Button::new(format!("Add {step}"))).clicked() {
+            draw::update(ui, entity, move |counter: &mut Counter| {
+                counter.count += step;
+            });
+        }
+    });
 }
 
 /// The status bar's item: every counter's count, added up.

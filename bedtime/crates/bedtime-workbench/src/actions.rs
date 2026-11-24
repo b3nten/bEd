@@ -22,7 +22,7 @@ mod chord;
 #[cfg(feature = "persistence")]
 mod keys;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 #[cfg(feature = "ui")]
 pub mod ui;
 

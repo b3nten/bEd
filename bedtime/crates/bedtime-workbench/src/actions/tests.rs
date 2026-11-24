@@ -463,3 +463,78 @@ fn requests_made_while_drawing_run_in_the_same_frame() {
     app.update();
     assert_eq!(calls(&mut app).len(), 1);
 }
+
+/// Draw `widget` with the world shared, as a panel does: once to place it,
+/// then (with `click`) pressed and released on it. Returns its last response.
+#[cfg(feature = "ui")]
+pub(crate) fn draw_bound<W: bedtime_ui::egui::Widget>(
+    ctx: &bedtime_ui::egui::Context,
+    world: &mut World,
+    click: bool,
+    widget: impl Fn() -> W,
+) -> bedtime_ui::egui::Response {
+    use bedtime_ui::{draw, egui};
+    let mut pass = |events: Vec<egui::Event>| {
+        let mut response = None;
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            response = Some(draw::with_world(ui, world, |ui| ui.add(widget())));
+        });
+        output.textures_delta.clear();
+        response.unwrap()
+    };
+    let mut response = pass(Vec::new());
+    if click {
+        let pos = response.rect.center();
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        pass(vec![egui::Event::PointerMoved(pos)]);
+        pass(vec![button(true)]);
+        response = pass(vec![button(false)]);
+    }
+    response
+}
+
+#[cfg(feature = "ui")]
+#[test]
+fn an_action_button_is_the_action_and_a_click_runs_it() {
+    use crate::bound::ActionButton;
+    let mut app = app();
+    app.update();
+    let ctx = bedtime_ui::egui::Context::default();
+
+    // Zoom has a handler: its button is on, and a click asks for it.
+    let button = draw_bound(&ctx, app.world_mut(), true, ActionButton::<Zoom>::new);
+    assert!(button.enabled() && button.clicked());
+    assert!(
+        calls(&mut app).is_empty(),
+        "it runs with the other actions, next frame"
+    );
+    app.update();
+    assert_eq!(calls(&mut app), [("zoom", "global", None)]);
+
+    // Nothing handles Find here: its button is off, and a click does nothing.
+    let ctx = bedtime_ui::egui::Context::default();
+    let button = draw_bound(&ctx, app.world_mut(), true, ActionButton::<Find>::new);
+    assert!(!button.enabled());
+    app.update();
+    assert!(calls(&mut app).is_empty());
+
+    // With a panel that handles it focused, it's on, and runs for that panel.
+    let entity = panel(&mut app);
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(ActionHandler::<Find>::new(Handler::new(find_in_panel)));
+    let ctx = bedtime_ui::egui::Context::default();
+    let button = draw_bound(&ctx, app.world_mut(), true, ActionButton::<Find>::new);
+    assert!(button.enabled());
+    app.update();
+    assert_eq!(calls(&mut app), [("find", "panel", Some(entity))]);
+}

@@ -19,7 +19,12 @@ use bedtime::{
         prelude::*,
         stories::{self, Knobs, Story},
     },
-    workbench::{OnWorkspaceOpen, PanelsAppExt, ShowPanel},
+    workbench::{
+        OnWorkspaceOpen, PanelsAppExt, Show, ShowCommandPalette, ShowPanel,
+        appearance::RainbowInk,
+        bound::{ActionButton, SettingToggle},
+        settings::SettingsPanel,
+    },
 };
 use bevy::prelude::*;
 
@@ -37,7 +42,15 @@ struct PlaygroundPlugin;
 
 impl Plugin for PlaygroundPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Playground::new(stories::builtin()))
+        // bedtime-ui's stories, and one of this app's own: widgets bound to
+        // the world need an app's actions and settings to show.
+        let mut all = stories::builtin();
+        all.push(Story {
+            group: "Bound to the world",
+            name: "Actions and Settings",
+            draw: bound,
+        });
+        app.insert_resource(Playground::new(all))
             .add_panel::<Stories>()
             .add_panel::<Canvas>()
             .add_panel::<Controls>()
@@ -105,36 +118,39 @@ impl ShowPanel for Stories {
 impl Panel for Stories {
     const LABEL: &'static str = "Stories";
 
-    fn draw(ui: &mut Ui, world: &mut World, _: &UiContext<'_>, _: Entity) {
-        let mut playground = world.resource_mut::<Playground>();
-        let mut selected = playground.selected;
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            Column::new()
-                .gap(Space::Xs)
-                .padding(Space::Sm)
-                .show(ui, |ui| {
-                    let mut group = "";
-                    for (index, story) in playground.stories.iter().enumerate() {
-                        if story.group != group {
-                            group = story.group;
-                            if index > 0 {
-                                ui.add_space(Space::Sm.px(ui));
-                            }
-                            ui.add(Text::caption(group).muted());
-                        }
-                        let row = Button::new(story.name)
-                            .ghost()
-                            .fill_width()
-                            .align(egui::Align::Min)
-                            .selected(index == selected);
-                        if ui.add(row).clicked() {
-                            selected = index;
-                        }
-                    }
-                });
-        });
-        playground.selected = selected;
+    fn draw(ui: &mut Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+        draw::with_system(ui, world, context, panel, stories_panel);
     }
+}
+
+fn stories_panel(
+    PanelUi { ui, .. }: PanelUi<Stories>,
+    playground: Res<Playground>,
+    mut commands: Commands,
+) {
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        Column::new()
+            .gap(Space::Xs)
+            .padding(Space::Sm)
+            .show(ui, |ui| {
+                let mut group = "";
+                for (index, story) in playground.stories.iter().enumerate() {
+                    if story.group != group {
+                        group = story.group;
+                        if index > 0 {
+                            ui.add_space(Space::Sm.px(ui));
+                        }
+                        ui.add(Text::caption(group).muted());
+                    }
+                    let row = ListRow::new(story.name).selected(index == playground.selected);
+                    if ui.add(row).clicked() {
+                        commands.queue(move |world: &mut World| {
+                            world.resource_mut::<Playground>().selected = index;
+                        });
+                    }
+                }
+            });
+    });
 }
 
 /// The chosen story.
@@ -150,24 +166,39 @@ impl ShowPanel for Canvas {
 impl Panel for Canvas {
     const LABEL: &'static str = "Canvas";
 
-    fn draw(ui: &mut Ui, world: &mut World, _: &UiContext<'_>, _: Entity) {
-        let mut playground = world.resource_mut::<Playground>();
-        let selected = playground.selected;
-        let Some(story) = playground.stories.get(selected).copied() else {
-            return;
-        };
-        let knobs = &mut playground.knobs[selected];
-        knobs.begin();
-        egui::ScrollArea::both().show(ui, |ui| {
-            Column::new()
-                .gap(Space::Xl)
-                .padding(Space::Xl)
-                .show(ui, |ui| {
-                    ui.add(Text::heading(story.name));
-                    (story.draw)(ui, knobs);
-                });
-        });
+    fn draw(ui: &mut Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+        draw::with_system(ui, world, context, panel, canvas);
     }
+}
+
+/// A story asks for its knobs as it draws, so it draws with a copy of them,
+/// kept when the draw is done.
+fn canvas(
+    PanelUi { ui, .. }: PanelUi<Canvas>,
+    playground: Res<Playground>,
+    mut commands: Commands,
+) {
+    let selected = playground.selected;
+    let (Some(story), Some(knobs)) = (
+        playground.stories.get(selected).copied(),
+        playground.knobs.get(selected),
+    ) else {
+        return;
+    };
+    let mut knobs = knobs.clone();
+    knobs.begin();
+    egui::ScrollArea::both().show(ui, |ui| {
+        Column::new()
+            .gap(Space::Xl)
+            .padding(Space::Xl)
+            .show(ui, |ui| {
+                ui.add(Text::heading(story.name));
+                (story.draw)(ui, &mut knobs);
+            });
+    });
+    commands.queue(move |world: &mut World| {
+        world.resource_mut::<Playground>().knobs[selected] = knobs;
+    });
 }
 
 /// The chosen story's controls.
@@ -183,16 +214,48 @@ impl ShowPanel for Controls {
 impl Panel for Controls {
     const LABEL: &'static str = "Controls";
 
-    fn draw(ui: &mut Ui, world: &mut World, _: &UiContext<'_>, _: Entity) {
-        let mut playground = world.resource_mut::<Playground>();
-        let selected = playground.selected;
-        let Some(knobs) = playground.knobs.get_mut(selected) else {
-            return;
-        };
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            Column::new()
-                .padding(Space::Lg)
-                .show(ui, |ui| knobs.controls(ui));
-        });
+    fn draw(ui: &mut Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+        draw::with_system(ui, world, context, panel, controls);
     }
+}
+
+fn controls(
+    PanelUi { ui, .. }: PanelUi<Controls>,
+    playground: Res<Playground>,
+    mut commands: Commands,
+) {
+    let selected = playground.selected;
+    let Some(knobs) = playground.knobs.get(selected) else {
+        return;
+    };
+    let mut knobs = knobs.clone();
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        Column::new()
+            .padding(Space::Lg)
+            .show(ui, |ui| knobs.controls(ui));
+    });
+    commands.queue(move |world: &mut World| {
+        world.resource_mut::<Playground>().knobs[selected] = knobs;
+    });
+}
+
+/// Widgets that are an action or a setting: nothing is passed to them and
+/// nothing is done with what they return. They read the world the story is
+/// drawn in and ask for the change themselves.
+fn bound(ui: &mut Ui, _: &mut Knobs) {
+    Column::new().gap(Space::Xl).show(ui, |ui| {
+        Column::new().gap(Space::Sm).show(ui, |ui| {
+            ui.add(Text::caption("ActionButton: the action's label, whether it can run, its keys on hover").muted());
+            Row::new().show(ui, |ui| {
+                ui.add(ActionButton::<Show<SettingsPanel>>::new());
+                ui.add(ActionButton::<ShowCommandPalette>::new().ghost());
+                ui.add(ActionButton::<Show<Controls>>::new().text("Another Controls panel").ghost());
+            });
+        });
+        Column::new().gap(Space::Sm).show(ui, |ui| {
+            ui.add(Text::caption("SettingToggle: the setting's value, set when it's flipped (see it change in Settings)").muted());
+            ui.add(SettingToggle::<RainbowInk>::new());
+            ui.add(SettingToggle::<RainbowInk>::new().checkbox().label("The same setting, as a checkbox"));
+        });
+    });
 }

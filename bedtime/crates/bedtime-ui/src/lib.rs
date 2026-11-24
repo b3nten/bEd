@@ -11,6 +11,7 @@ mod combo_box;
 mod component;
 #[cfg(feature = "data")]
 pub mod data;
+pub mod draw;
 mod embedded;
 mod floating;
 pub mod fonts;
@@ -35,6 +36,7 @@ pub mod tokens;
 pub mod widgets;
 /// What a panel or a component is written with.
 pub mod prelude {
+    pub use crate::draw::{self, PanelUi};
     pub use crate::tokens::{Radius, Size, Space, TextRole, Tone};
     pub use crate::widgets::{
         Button, Checkbox, Column, ListRow, MenuItem, Row, Section, Segmented, Select, Separator,
@@ -50,6 +52,7 @@ use bevy::prelude::*;
 pub use code::CodeView;
 pub use combo_box::ComboBox;
 pub use component::{UiComponent, UiContext, UiDraw};
+pub use draw::PanelUi;
 pub use egui;
 pub use embedded::{EmbeddedRenderPlugin, ViewportHostPlugin, ViewportOutput};
 pub use floating::Floating;

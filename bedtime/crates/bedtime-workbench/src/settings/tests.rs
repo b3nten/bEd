@@ -460,3 +460,44 @@ mod ui {
         assert_eq!(settings.below(workspace()), Some(global()));
     }
 }
+
+#[cfg(feature = "ui")]
+#[test]
+fn a_setting_toggle_shows_the_setting_and_a_click_sets_it() {
+    use crate::actions::tests::draw_bound;
+    use crate::bound::SettingToggle;
+    let mut app = app(&MemoryStore::default(), &MemoryStore::default());
+    let ctx = bedtime_ui::egui::Context::default();
+    let settings = |app: &App| app.world().bedtime().settings().get::<RestoreLast>();
+    assert!(settings(&app));
+
+    // Drawn, it changes nothing; clicked, the setting is off, in the lowest
+    // layer (it was the default).
+    draw_bound(
+        &ctx,
+        app.world_mut(),
+        false,
+        SettingToggle::<RestoreLast>::new,
+    );
+    assert!(settings(&app));
+    let toggle = draw_bound(
+        &ctx,
+        app.world_mut(),
+        true,
+        SettingToggle::<RestoreLast>::new,
+    );
+    assert!(toggle.changed());
+    assert!(!settings(&app));
+    let source = app.world().bedtime().settings().source::<RestoreLast>();
+    assert_eq!(source, Some(global()));
+
+    // As a checkbox, and back on.
+    let ctx = bedtime_ui::egui::Context::default();
+    let checkbox = || {
+        SettingToggle::<RestoreLast>::new()
+            .checkbox()
+            .label("Restore")
+    };
+    draw_bound(&ctx, app.world_mut(), true, checkbox);
+    assert!(settings(&app));
+}

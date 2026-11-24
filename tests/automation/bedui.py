@@ -61,6 +61,20 @@ try:
         bed.key("Enter")
         until(bed, lambda: bed.exists("Chosen: TypeScript"), "Enter chooses the match")
 
+        # Widgets bound to the world: a toggle that is a setting (both of
+        # its forms follow it), and a button that is an action.
+        bed.click("Actions and Settings")
+        until(bed, lambda: bed.exists("Rainbow caret"), "the bound story draws")
+        both = lambda on: all(w["toggled"] == str(on) for w in bed.find_all(role="CheckBox")
+                              if w["label"] in ("Rainbow caret", "The same setting, as a checkbox"))
+        assert both(True), "the setting starts on"
+        bed.click("Rainbow caret")
+        until(bed, lambda: both(False), "flipping one changes the setting, and so the other")
+        bed.screenshot("bedui-bound")
+        bed.click("Settings")
+        until(bed, lambda: bed.exists("Appearance"), "the action button opens Settings")
+        bed.click("Canvas")
+
         # A checkbox ticks.
         bed.click("Checkbox and Toggle")
         until(bed, lambda: bed.exists("Show hidden files"), "the Checkbox story draws")

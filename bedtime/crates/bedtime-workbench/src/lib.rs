@@ -4,6 +4,8 @@ pub mod actions;
 mod app;
 #[cfg(all(feature = "ui", feature = "persistence"))]
 pub mod appearance;
+#[cfg(feature = "ui")]
+pub mod bound;
 #[cfg(feature = "documents")]
 mod closing;
 #[cfg(feature = "documents")]
