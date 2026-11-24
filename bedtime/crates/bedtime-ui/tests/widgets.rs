@@ -98,3 +98,125 @@ fn every_story_draws() {
         }
     }
 }
+
+/// Draw `draw` in `ctx`, with a click at `at` (press on one pass, release on
+/// the next) if there is one.
+fn passes(ctx: &egui::Context, at: Option<egui::Pos2>, mut draw: impl FnMut(&mut Ui)) {
+    let pointer = |pressed| {
+        at.map(|pos| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        })
+    };
+    let steps = [
+        at.map(egui::Event::PointerMoved).into_iter().collect(),
+        pointer(true).into_iter().collect(),
+        pointer(false).into_iter().collect(),
+        Vec::new(),
+    ];
+    for events in steps {
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| draw(ui));
+        output.textures_delta.clear();
+    }
+}
+
+#[test]
+fn a_click_ticks_a_checkbox_and_flips_a_toggle() {
+    let ctx = egui::Context::default();
+    let (mut ticked, mut on) = (false, false);
+    let mut centers = [egui::Pos2::ZERO; 2];
+    passes(&ctx, None, |ui| {
+        centers[0] = ui.add(Checkbox::new(&mut ticked, "Wrap")).rect.center();
+        centers[1] = ui.add(Toggle::new(&mut on, "Autosave")).rect.center();
+    });
+    let mut changes = 0;
+    for (index, expected) in [(0, (true, false)), (1, (true, true)), (0, (false, true))] {
+        passes(&ctx, Some(centers[index]), |ui| {
+            changes += usize::from(ui.add(Checkbox::new(&mut ticked, "Wrap")).changed());
+            changes += usize::from(ui.add(Toggle::new(&mut on, "Autosave")).changed());
+        });
+        assert_eq!((ticked, on), expected);
+    }
+    assert_eq!(changes, 3, "each click is one change");
+}
+
+#[test]
+fn a_text_field_is_one_control_tall_and_as_wide_as_asked() {
+    pass(|ui| {
+        let mut text = String::from("hello");
+        for size in Size::ALL {
+            let top = ui.cursor().top();
+            ui.add(TextField::new(&mut text).size(size).width(200.0));
+            let spacing = ui.spacing().item_spacing.y;
+            assert_eq!(ui.cursor().top() - top - spacing, size.height(ui));
+        }
+        let before = ui.min_rect().width();
+        ui.add(TextField::new(&mut text).fill_width());
+        assert!(ui.min_rect().width() >= before);
+        assert_eq!(text, "hello", "drawing doesn't change the text");
+    });
+}
+
+#[test]
+fn edit_returns_a_new_value_only_when_the_control_changed_it() {
+    pass(|ui| {
+        let state = String::from("read-only");
+        assert_eq!(
+            ui.edit(&state, |ui, text| ui.add(TextField::new(text))),
+            None
+        );
+        let edited = ui.edit(&state, |_, text| text.push('!'));
+        assert_eq!(edited.as_deref(), Some("read-only!"));
+        assert_eq!(state, "read-only");
+    });
+}
+
+#[test]
+fn a_select_opens_on_a_click_and_the_keys_choose_an_option() {
+    const OPTIONS: [&str; 3] = ["GET", "POST", "DELETE"];
+    let ctx = egui::Context::default();
+    let mut value = "GET";
+    let mut center = egui::Pos2::ZERO;
+    let mut height = 0.0;
+    passes(&ctx, None, |ui| {
+        let rect = ui.add(Select::new(&mut value, &OPTIONS)).rect;
+        (center, height) = (rect.center(), rect.height());
+    });
+    assert_eq!(height, {
+        let mut expected = 0.0;
+        pass(|ui| expected = Size::Md.height(ui));
+        expected
+    });
+    // A click opens it.
+    passes(&ctx, Some(center), |ui| {
+        ui.add(Select::new(&mut value, &OPTIONS));
+    });
+    assert!(egui::Popup::is_any_open(&ctx), "a click opens the list");
+    // Down twice from GET, then Enter.
+    let mut changed = false;
+    for key in [egui::Key::ArrowDown, egui::Key::ArrowDown, egui::Key::Enter] {
+        let input = egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Default::default(),
+            }],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            changed |= ui.add(Select::new(&mut value, &OPTIONS)).changed();
+        });
+        output.textures_delta.clear();
+    }
+    assert_eq!(value, "DELETE");
+    assert!(changed);
+    assert!(!egui::Popup::is_any_open(&ctx), "choosing closes the list");
+}

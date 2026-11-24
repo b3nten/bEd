@@ -32,6 +32,21 @@ pub fn builtin() -> Vec<Story> {
             draw: text,
         },
         Story {
+            group: "Components",
+            name: "Checkbox and Toggle",
+            draw: checks,
+        },
+        Story {
+            group: "Components",
+            name: "Text Field",
+            draw: text_field,
+        },
+        Story {
+            group: "Components",
+            name: "Select",
+            draw: select,
+        },
+        Story {
             group: "Layout",
             name: "Row and Column",
             draw: stacks,
@@ -103,13 +118,12 @@ impl Knobs {
                     continue;
                 };
                 Column::new().gap(Space::Xs).show(ui, |ui| match value {
-                    // Checkbox and TextField aren't components yet.
                     Value::Toggle(on) => {
-                        ui.checkbox(on, *name);
+                        ui.add(Checkbox::new(on, *name));
                     }
                     Value::Text(text) => {
                         ui.add(Text::caption(*name).muted());
-                        ui.add(egui::TextEdit::singleline(text).desired_width(f32::INFINITY));
+                        ui.add(TextField::new(text).label(*name).fill_width());
                     }
                     Value::Choice(chosen) => {
                         ui.add(Text::caption(*name).muted());
@@ -136,6 +150,217 @@ fn section(ui: &mut egui::Ui, title: &str, content: impl FnOnce(&mut egui::Ui)) 
         ui.add(Text::caption(title).muted());
         content(ui);
     });
+}
+
+/// A story's own state (what its controls edit), kept by egui between frames.
+fn stateful<T: Clone + Send + Sync + 'static>(
+    ui: &mut egui::Ui,
+    name: &'static str,
+    initial: impl FnOnce() -> T,
+    content: impl FnOnce(&mut egui::Ui, &mut T),
+) {
+    let id = egui::Id::new(("bedtime-story", name));
+    let mut state = ui
+        .data(|data| data.get_temp::<T>(id))
+        .unwrap_or_else(initial);
+    content(ui, &mut state);
+    ui.data_mut(|data| data.insert_temp(id, state));
+}
+
+fn checks(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let label = knobs.text("Label", "Wrap long lines");
+    let size = knobs.choice("Size", &[Size::Md, Size::Sm, Size::Lg]);
+    let disabled = knobs.toggle("Disabled", false);
+
+    stateful(
+        ui,
+        "checks",
+        || [true, false, true, false],
+        |ui, values| {
+            Column::new().gap(Space::Xl).show(ui, |ui| {
+                section(ui, "Checkbox", |ui| {
+                    ui.add_enabled(!disabled, Checkbox::new(&mut values[0], &label).size(size));
+                    ui.add_enabled(
+                        !disabled,
+                        Checkbox::new(&mut values[1], "Show hidden files").size(size),
+                    );
+                    let (all, any) = (values[0] && values[1], values[0] || values[1]);
+                    let mut both = all;
+                    let some = Checkbox::new(&mut both, "Both of the above")
+                        .size(size)
+                        .indeterminate(any && !all);
+                    if ui.add_enabled(!disabled, some).changed() {
+                        (values[0], values[1]) = (both, both);
+                    }
+                });
+                section(ui, "Toggle", |ui| {
+                    ui.add_enabled(
+                        !disabled,
+                        Toggle::new(&mut values[2], "Autosave").size(size),
+                    );
+                    ui.add_enabled(
+                        !disabled,
+                        Toggle::new(&mut values[3], "Reduce motion").size(size),
+                    );
+                });
+                section(ui, "Every size", |ui| {
+                    Row::new().gap(Space::Lg).show(ui, |ui| {
+                        for size in Size::ALL {
+                            ui.add(Checkbox::new(&mut values[0], format!("{size:?}")).size(size));
+                            ui.add(Toggle::new(&mut values[2], format!("{size:?}")).size(size));
+                        }
+                    });
+                });
+            });
+        },
+    );
+}
+
+fn text_field(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let hint = knobs.text("Hint", "Search files");
+    let size = knobs.choice("Size", &[Size::Md, Size::Sm, Size::Lg]);
+    let icon = knobs.toggle("Icon", true);
+    let clearable = knobs.toggle("Clearable", true);
+    let fill = knobs.toggle("Fill width", false);
+    let invalid = knobs.toggle("Invalid", false);
+    let disabled = knobs.toggle("Disabled", false);
+
+    let initial = || {
+        [
+            String::new(),
+            "https://example.com".to_owned(),
+            "hunter2".to_owned(),
+            "Read from the panel".to_owned(),
+        ]
+    };
+    stateful(ui, "text-field", initial, |ui, values| {
+        Column::new().gap(Space::Xl).show(ui, |ui| {
+            section(ui, "With the controls", |ui| {
+                let mut field = TextField::new(&mut values[0])
+                    .hint(&hint)
+                    .size(size)
+                    .invalid(invalid);
+                if icon {
+                    field = field.icon(BuiltinIcon::Search);
+                }
+                if clearable {
+                    field = field.clearable();
+                }
+                if fill {
+                    field = field.fill_width();
+                }
+                ui.add_enabled(!disabled, field);
+            });
+            section(ui, "Every size", |ui| {
+                Row::new().gap(Space::Sm).show(ui, |ui| {
+                    for size in Size::ALL {
+                        ui.add(
+                            TextField::new(&mut values[1])
+                                .label("Address")
+                                .size(size)
+                                .width(180.0),
+                        );
+                    }
+                });
+            });
+            section(ui, "Beside a button", |ui| {
+                Row::new().gap(Space::Sm).show(ui, |ui| {
+                    ui.add(TextField::new(&mut values[1]).label("Address").width(260.0));
+                    ui.add(Button::new("Send").primary());
+                });
+            });
+            section(ui, "Password", |ui| {
+                ui.add(TextField::new(&mut values[2]).label("Password").password());
+            });
+            section(ui, "Editing what's only read (ui.edit)", |ui| {
+                // As a panel does: draw from a value it can't change, and
+                // act on the new one.
+                let read_only: &String = &values[3].clone();
+                if let Some(edited) = ui.edit(read_only, |ui, text| {
+                    ui.add(TextField::new(text).label("Read-only state"))
+                }) {
+                    values[3] = edited;
+                }
+                ui.add(Text::caption(format!("The state is \"{}\"", values[3])).muted());
+            });
+        });
+    });
+}
+
+const METHODS: [&str; 5] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+const LANGUAGES: [&str; 24] = [
+    "Bash",
+    "C",
+    "C++",
+    "CSS",
+    "Dart",
+    "Elixir",
+    "Go",
+    "Haskell",
+    "HTML",
+    "Java",
+    "JavaScript",
+    "JSON",
+    "Kotlin",
+    "Lua",
+    "Markdown",
+    "OCaml",
+    "Python",
+    "Ruby",
+    "Rust",
+    "Swift",
+    "TOML",
+    "TypeScript",
+    "YAML",
+    "Zig",
+];
+
+fn select(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let size = knobs.choice("Size", &[Size::Md, Size::Sm, Size::Lg]);
+    let fill = knobs.toggle("Fill width", false);
+    let disabled = knobs.toggle("Disabled", false);
+
+    stateful(
+        ui,
+        "select",
+        || ("GET", "Rust", "Nothing"),
+        |ui, values| {
+            Column::new().gap(Space::Xl).show(ui, |ui| {
+                section(ui, "With the controls", |ui| {
+                    let mut select = Select::new(&mut values.0, &METHODS).size(size);
+                    if fill {
+                        select = select.fill_width();
+                    }
+                    ui.add_enabled(!disabled, select);
+                    ui.add(Text::caption(format!("Chosen: {}", values.0)).muted());
+                });
+                section(
+                    ui,
+                    "Searchable (type to narrow, arrows and Enter to choose)",
+                    |ui| {
+                        ui.add_enabled(
+                            !disabled,
+                            Select::new(&mut values.1, &LANGUAGES)
+                                .size(size)
+                                .searchable(),
+                        );
+                        ui.add(Text::caption(format!("Chosen: {}", values.1)).muted());
+                    },
+                );
+                section(ui, "Nothing chosen yet", |ui| {
+                    ui.add(Select::new(&mut values.2, &METHODS).placeholder("Choose a method…"));
+                });
+                section(ui, "In a row", |ui| {
+                    Row::new().gap(Space::Sm).show(ui, |ui| {
+                        ui.add(Select::new(&mut values.0, &METHODS));
+                        let mut address = "https://example.com".to_owned();
+                        ui.add(TextField::new(&mut address).label("Address").width(240.0));
+                        ui.add(Button::new("Send").primary());
+                    });
+                });
+            });
+        },
+    );
 }
 
 fn button(ui: &mut egui::Ui, knobs: &mut Knobs) {

@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from bed import Bed
 
-STORIES = ["Tokens", "Button", "Text", "Row and Column"]
+STORIES = ["Tokens", "Button", "Text", "Checkbox and Toggle", "Text Field", "Select", "Row and Column"]
 
 
 def until(bed, check, what):
@@ -38,6 +38,33 @@ try:
         bed.click("Disabled")
         bed.wait(20)
         bed.screenshot("bedui-button-disabled")
+
+        # A select opens, and a click on an option chooses it.
+        bed.click("Select")
+        until(bed, lambda: bed.exists("Chosen: GET"), "the Select story draws")
+        bed.click("GET", role="ComboBox")
+        until(bed, lambda: bed.exists("DELETE"), "the options show")
+        bed.wait(150)  # the list fades in
+        bed.screenshot("bedui-select-open")
+        bed.click("DELETE")
+        until(bed, lambda: bed.exists("Chosen: DELETE"), "the option is chosen")
+
+        # A searchable one narrows as you type, and Enter chooses the best match.
+        bed.click("Rust", role="ComboBox")
+        until(bed, lambda: bed.exists("Search"), "the search field shows")
+        bed.type("type")
+        until(bed, lambda: bed.exists("TypeScript") and not bed.exists("Haskell"), "the list narrows")
+        bed.wait(150)
+        bed.screenshot("bedui-select-search")
+        bed.key("Enter")
+        until(bed, lambda: bed.exists("Chosen: TypeScript"), "Enter chooses the match")
+
+        # A checkbox ticks.
+        bed.click("Checkbox and Toggle")
+        until(bed, lambda: bed.exists("Show hidden files"), "the Checkbox story draws")
+        bed.click("Show hidden files")
+        bed.wait(20)
+        bed.screenshot("bedui-checkbox-ticked")
 
     # bedtime-ui's own light theme, chosen as any app without a themes folder can.
     with Bed(app="bedui", settings={"appearance.theme": '"everforest-light-medium"'}) as bed:
