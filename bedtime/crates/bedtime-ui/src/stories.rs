@@ -279,6 +279,20 @@ fn text_field(ui: &mut egui::Ui, knobs: &mut Knobs) {
                     ui.add(Button::new("Send").primary());
                 });
             });
+            section(
+                ui,
+                "Plain (a title edited in place) and muted (not in use)",
+                |ui| {
+                    ui.add(
+                        TextField::new(&mut values[1])
+                            .label("Title")
+                            .size(Size::Lg)
+                            .plain()
+                            .width(320.0),
+                    );
+                    ui.add(TextField::new(&mut values[1]).label("Unused").muted(true));
+                },
+            );
             section(ui, "Password", |ui| {
                 ui.add(TextField::new(&mut values[2]).label("Password").password());
             });

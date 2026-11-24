@@ -21,6 +21,7 @@ pub struct Select<'a, T> {
     fill_width: bool,
     searchable: bool,
     dividers: Vec<usize>,
+    color: Option<egui::Color32>,
 }
 
 /// What's typed and highlighted in an open list.
@@ -55,6 +56,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             fill_width: false,
             searchable: false,
             dividers: Vec::new(),
+            color: None,
         }
     }
 
@@ -75,6 +77,12 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
     /// As wide as the space it's in.
     pub fn fill_width(mut self) -> Self {
         self.fill_width = true;
+        self
+    }
+    /// The chosen option's text in a colour of the caller's own (a kind's,
+    /// a status's).
+    pub fn color(mut self, color: egui::Color32) -> Self {
+        self.color = Some(color);
         self
     }
     /// A line before each of these options (by index), to group the list.
@@ -173,20 +181,17 @@ impl<T: PartialEq + Clone> egui::Widget for Select<'_, T> {
                 );
             }
             let ink = if current.is_some() { p.text } else { p.muted };
+            let ink = self.color.unwrap_or(theme::color(ink));
             let text_width = rect.width() - 2.0 * padding.x - gap - chevron;
             let galley = ui.painter().layout_job(egui::text::LayoutJob {
                 wrap: egui::text::TextWrapping::truncate_at_width(text_width.max(0.0)),
-                ..egui::text::LayoutJob::simple_singleline(
-                    shown.clone(),
-                    font.clone(),
-                    theme::color(ink),
-                )
+                ..egui::text::LayoutJob::simple_singleline(shown.clone(), font.clone(), ink)
             });
             let at = egui::pos2(
                 rect.left() + padding.x,
                 rect.center().y - galley.size().y / 2.0,
             );
-            painter.galley(at, galley, theme::color(ink));
+            painter.galley(at, galley, ink);
             crate::paint_chevron(
                 painter,
                 egui::pos2(rect.right() - padding.x - chevron / 2.0, rect.center().y),
@@ -228,6 +233,7 @@ impl<T: PartialEq + Clone> egui::Widget for Select<'_, T> {
                 let field = ui.add(
                     TextField::new(&mut state.query)
                         .hint("Search")
+                        .label("Search")
                         .size(size)
                         .fill_width()
                         .focus(!state.focused),

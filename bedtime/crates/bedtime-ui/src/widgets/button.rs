@@ -36,6 +36,7 @@ pub struct Button {
     selected: bool,
     italic: bool,
     strikethrough: bool,
+    min_width: f32,
 }
 
 impl Button {
@@ -51,6 +52,7 @@ impl Button {
             selected: false,
             italic: false,
             strikethrough: false,
+            min_width: 0.0,
         }
     }
 
@@ -99,6 +101,39 @@ impl Button {
     pub fn fill_width(mut self) -> Self {
         self.fill_width = true;
         self
+    }
+
+    /// At least this wide, in points: buttons that take each other's place
+    /// (Send, Cancel) at one width.
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
+        self
+    }
+
+    /// The width it would have in `ui`, to leave room for it beside
+    /// something that takes the rest.
+    pub fn width_in(&self, ui: &egui::Ui) -> f32 {
+        let font_size = self.size.font(ui);
+        let text = if self.text.is_empty() {
+            0.0
+        } else {
+            ui.painter()
+                .layout_no_wrap(
+                    self.text.clone(),
+                    egui::FontId::proportional(font_size),
+                    egui::Color32::PLACEHOLDER,
+                )
+                .size()
+                .x
+        };
+        let width = match (&self.icon, text > 0.0) {
+            (_, false) => self.size.height(ui),
+            (Some(_), true) => {
+                font_size + (font_size * 0.4).round() + text + 2.0 * self.size.padding(ui).x
+            }
+            (None, true) => text + 2.0 * self.size.padding(ui).x,
+        };
+        width.max(self.min_width)
     }
 
     /// Where its content sits when it's wider than that (centred, unless set).
@@ -162,6 +197,7 @@ impl egui::Widget for Button {
         } else {
             egui::vec2(content + 2.0 * padding.x, height)
         };
+        size.x = size.x.max(self.min_width);
         if self.fill_width {
             size.x = size.x.max(ui.available_width());
         }
@@ -187,10 +223,8 @@ impl egui::Widget for Button {
                 services.motion,
             )
         };
-        let hover = animate(
-            "hover",
-            response.hovered() || response.has_focus() || self.selected,
-        );
+        let hover = animate("hover", response.hovered() || response.has_focus());
+        let chosen = animate("selected", self.selected);
         let press = animate("press", response.is_pointer_button_down_on());
 
         let p = &services.theme.palette;
@@ -203,14 +237,24 @@ impl egui::Widget for Button {
         let (fill, ink, border) = match self.variant {
             Variant::Primary => (filled(p.accent), on_fill, false),
             Variant::Danger => (filled(p.error), on_fill, false),
+            // Selected, these are filled with the selection colour, as a
+            // selected row is.
             Variant::Secondary => (
-                theme::mix(surface, p.accent, 0.2 * hover + 0.15 * press),
+                theme::mix(
+                    theme::mix(surface, p.accent, 0.2 * hover + 0.15 * press),
+                    p.selection,
+                    chosen,
+                ),
                 p.text,
                 true,
             ),
             Variant::Ghost => {
-                let mut fill = theme::mix(surface, p.accent, 0.2 * press);
-                fill[3] *= hover.max(press);
+                let mut fill = theme::mix(
+                    theme::mix(surface, p.accent, 0.2 * press),
+                    p.selection,
+                    chosen,
+                );
+                fill[3] *= hover.max(press).max(chosen);
                 (fill, p.text, false)
             }
         };

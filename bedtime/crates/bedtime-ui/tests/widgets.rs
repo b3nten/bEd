@@ -294,3 +294,51 @@ fn a_separator_lies_across_a_column_and_stands_in_a_row() {
         });
     });
 }
+
+#[test]
+fn a_button_says_how_wide_it_will_be() {
+    pass(|ui| {
+        for button in [
+            || Button::new("Cancel"),
+            || Button::new("Send").primary().min_width(120.0),
+            || {
+                Button::new("New file")
+                    .icon(bedtime_ui::BuiltinIcon::Plus)
+                    .small()
+            },
+            || Button::icon_only(bedtime_ui::BuiltinIcon::Close, "Remove"),
+        ] {
+            let expected = button().width_in(ui);
+            // egui snaps what it places to pixels.
+            assert!((ui.add(button()).rect.width() - expected).abs() < 0.5);
+        }
+    });
+}
+
+#[test]
+fn a_named_text_field_keeps_its_text_for_scripts() {
+    // What bed's automation reads: a field is found by its label, or with
+    // none by its text.
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut text = String::from("127.0.0.1/users");
+    let mut output = ctx.run_ui(Default::default(), |ui| {
+        ui.add(TextField::new(&mut text).hint("https://example.com"));
+        ui.add(TextField::new(&mut text).hint("Search").label("Address"));
+    });
+    output.textures_delta.clear();
+    let update = output.platform_output.accesskit_update.expect("a tree");
+    let fields: Vec<_> = update
+        .nodes
+        .iter()
+        .filter(|(_, node)| node.value() == Some("127.0.0.1/users"))
+        .map(|(_, node)| node.label().map(str::to_owned))
+        .collect();
+    assert!(fields.len() >= 2, "both keep their text");
+    assert!(fields.contains(&Some("Address".to_owned())));
+    assert!(
+        fields
+            .iter()
+            .any(|label| label.as_deref() != Some("Address"))
+    );
+}

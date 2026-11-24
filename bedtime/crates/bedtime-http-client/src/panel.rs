@@ -13,7 +13,8 @@ use crate::{
     json, send,
 };
 use bedtime_ui::{
-    BuiltinIcon, CodeView, UiContext,
+    BuiltinIcon, Button, Checkbox, CodeView, Row, Segmented, Select, Separator, Size, Space, Text,
+    TextField, Tone, UiContext,
     data::{DataTree, Value},
     egui,
     hex::HexViewer,
@@ -447,8 +448,8 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             }
             (false, None) => {
                 egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
-                    ui.weak("No requests yet.");
-                    if ui.button("New Request").clicked() {
+                    ui.add(Text::new("No requests yet.").muted());
+                    if ui.add(Button::new("New Request")).clicked() {
                         d.intents.push(Intent::New);
                     }
                 });
@@ -466,20 +467,16 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
 }
 
 fn sidebar(ui: &mut egui::Ui, d: &mut Draw) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Requests").strong());
+    Row::new().show(ui, |ui| {
+        ui.add(Text::new("Requests").strong());
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if d.context
-                .frame(ui)
-                .icon_button(BuiltinIcon::Plus)
-                .on_hover_text("New Request")
-                .clicked()
-            {
+            let new = Button::icon_only(BuiltinIcon::Plus, "New Request").ghost();
+            if ui.add(new).on_hover_text("New Request").clicked() {
                 d.intents.push(Intent::New);
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(Space::Xs.px(ui));
     // The variables, kept at the bottom.
     egui::Panel::bottom(egui::Id::new((d.panel, "http-variables-row")))
         .resizable(false)
@@ -527,13 +524,13 @@ fn sidebar(ui: &mut egui::Ui, d: &mut Draw) {
                     }
                 });
                 if d.view.confirm_delete == Some(id) {
-                    ui.horizontal(|ui| {
-                        ui.weak("Delete?");
-                        if ui.small_button("Delete").clicked() {
+                    Row::new().gap(Space::Xs).show(ui, |ui| {
+                        ui.add(Text::new("Delete?").muted());
+                        if ui.add(Button::new("Delete").small().danger()).clicked() {
                             d.intents.push(Intent::Delete(id));
                             d.view.confirm_delete = None;
                         }
-                        if ui.small_button("Cancel").clicked() {
+                        if ui.add(Button::new("Cancel").small()).clicked() {
                             d.view.confirm_delete = None;
                         }
                     });
@@ -625,31 +622,28 @@ fn request(ui: &mut egui::Ui, d: &mut Draw, id: u64) {
         return;
     };
     ui.add(
-        egui::TextEdit::singleline(&mut request.name)
-            .hint_text("Untitled")
-            .font(egui::FontId::proportional(context.metrics.font_size * 1.1))
-            .frame(egui::Frame::NONE)
-            .desired_width(f32::INFINITY),
+        TextField::new(&mut request.name)
+            .hint("Untitled")
+            .size(Size::Lg)
+            .plain()
+            .fill_width(),
     );
-    ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt((d.panel, "method"))
-            .selected_text(
-                egui::RichText::new(request.method.as_str())
-                    .monospace()
-                    .color(method_color(context, request.method)),
-            )
-            .width(84.0)
-            .show_ui(ui, |ui| {
-                for method in Method::ALL {
-                    ui.selectable_value(&mut request.method, method, method.as_str());
-                }
-            });
-        let button = 72.0;
+    Row::new().show(ui, |ui| {
+        let color = method_color(context, request.method);
+        ui.add(
+            Select::with(&mut request.method, &Method::ALL, |method| {
+                method.as_str().into()
+            })
+            .color(color),
+        );
+        // Send and Cancel take each other's place, at one width.
+        let cancel = Button::new("Cancel");
+        let width = cancel.width_in(ui);
+        let room = ui.available_width() - width - ui.spacing().item_spacing.x;
         let url = ui.add(
-            egui::TextEdit::singleline(&mut request.url)
-                .hint_text("https://example.com/path  or  {{base}}/path")
-                .font(egui::TextStyle::Monospace)
-                .desired_width(ui.available_width() - button - ui.spacing().item_spacing.x),
+            TextField::new(&mut request.url)
+                .hint("https://example.com/path  or  {{base}}/path")
+                .width(room),
         );
         if d.view.focus_url {
             url.request_focus();
@@ -657,49 +651,45 @@ fn request(ui: &mut egui::Ui, d: &mut Draw, id: u64) {
         }
         let entered = url.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if sending {
-            if ui
-                .add_sized([button, url.rect.height()], egui::Button::new("Cancel"))
-                .clicked()
-            {
+            if ui.add(cancel).clicked() {
                 d.intents.push(Intent::Cancel(id));
             }
-        } else if context.frame(ui).primary_button("Send").clicked() || entered {
+        } else if ui
+            .add(Button::new("Send").primary().min_width(width))
+            .clicked()
+            || entered
+        {
             d.intents.push(Intent::Send(id));
         }
     });
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        let params = counted("Params", &request.params);
-        let headers = counted("Headers", &request.headers);
-        let body = if request.body.is_empty() {
-            "Body".to_owned()
-        } else {
-            "Body •".to_owned()
-        };
-        ui.selectable_value(&mut d.view.request_tab, RequestTab::Params, params);
-        ui.selectable_value(&mut d.view.request_tab, RequestTab::Headers, headers);
-        ui.selectable_value(&mut d.view.request_tab, RequestTab::Body, body);
-    });
-    ui.add_space(2.0);
+    let params = counted("Params", &request.params);
+    let headers = counted("Headers", &request.headers);
+    let body = if request.body.is_empty() {
+        "Body".to_owned()
+    } else {
+        "Body •".to_owned()
+    };
+    ui.add(Segmented::with(
+        &mut d.view.request_tab,
+        &[RequestTab::Params, RequestTab::Headers, RequestTab::Body],
+        |tab| match tab {
+            RequestTab::Params => params.clone(),
+            RequestTab::Headers => headers.clone(),
+            RequestTab::Body => body.clone(),
+        },
+    ));
     egui::ScrollArea::vertical()
         .id_salt("request")
         .auto_shrink([false, false])
         .show(ui, |ui| match d.view.request_tab {
-            RequestTab::Params => fields(
-                ui,
-                context,
-                &mut request.params,
-                ["Name", "Value"],
-                "Add Parameter",
-            ),
-            RequestTab::Headers => fields(
-                ui,
-                context,
-                &mut request.headers,
-                ["Header", "Value"],
-                "Add Header",
-            ),
+            RequestTab::Params => {
+                fields(ui, &mut request.params, ["Name", "Value"], "Add Parameter")
+            }
+            RequestTab::Headers => {
+                fields(ui, &mut request.headers, ["Header", "Value"], "Add Header")
+            }
             RequestTab::Body => {
+                // bedtime-ui has no multi-line field yet.
                 ui.add(
                     egui::TextEdit::multiline(&mut request.body)
                         .code_editor()
@@ -724,47 +714,31 @@ fn counted(name: &str, fields: &[Field]) -> String {
 }
 
 /// Editable name/value rows, each with a switch and a remove button.
-fn fields(
-    ui: &mut egui::Ui,
-    context: &UiContext<'_>,
-    fields: &mut Vec<Field>,
-    hints: [&str; 2],
-    add: &str,
-) {
+fn fields(ui: &mut egui::Ui, fields: &mut Vec<Field>, hints: [&str; 2], add: &str) {
     let mut remove = None;
     for (index, field) in fields.iter_mut().enumerate() {
         ui.push_id(index, |ui| {
-            ui.horizontal(|ui| {
-                ui.checkbox(&mut field.enabled, "")
+            Row::new().show(ui, |ui| {
+                ui.add(Checkbox::new(&mut field.enabled, ""))
                     .on_hover_text("Include it");
+                let remove_button = Button::icon_only(BuiltinIcon::Close, "Remove").ghost();
                 let spacing = ui.spacing().item_spacing.x;
-                let remove_width = context.metrics.font_size + ui.spacing().button_padding.x * 2.0;
-                let room = (ui.available_width() - remove_width - spacing * 2.0).max(80.0);
-                let ink = if field.enabled {
-                    None
-                } else {
-                    Some(theme::color(context.theme.palette.muted))
-                };
-                let mut name = egui::TextEdit::singleline(&mut field.name)
-                    .hint_text(hints[0])
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(room * 0.4);
-                let mut value = egui::TextEdit::singleline(&mut field.value)
-                    .hint_text(hints[1])
-                    .font(egui::TextStyle::Monospace)
-                    .desired_width(room * 0.6);
-                if let Some(ink) = ink {
-                    name = name.text_color(ink);
-                    value = value.text_color(ink);
-                }
-                ui.add(name);
-                ui.add(value);
-                if context
-                    .frame(ui)
-                    .icon_button(BuiltinIcon::Close)
-                    .on_hover_text("Remove")
-                    .clicked()
-                {
+                let room =
+                    (ui.available_width() - remove_button.width_in(ui) - spacing * 2.0).max(80.0);
+                let unused = !field.enabled;
+                ui.add(
+                    TextField::new(&mut field.name)
+                        .hint(hints[0])
+                        .muted(unused)
+                        .width(room * 0.4),
+                );
+                ui.add(
+                    TextField::new(&mut field.value)
+                        .hint(hints[1])
+                        .muted(unused)
+                        .width(room * 0.6),
+                );
+                if ui.add(remove_button).on_hover_text("Remove").clicked() {
                     remove = Some(index);
                 }
             });
@@ -773,24 +747,26 @@ fn fields(
     if let Some(index) = remove {
         fields.remove(index);
     }
-    if ui.button(add).clicked() {
+    if ui.add(Button::new(add)).clicked() {
         fields.push(Field::default());
     }
 }
 
 fn variables(ui: &mut egui::Ui, d: &mut Draw) {
-    ui.label(egui::RichText::new("Variables").strong());
-    ui.weak(
-        "Write {{name}} in a request's URL, params, headers or body to use a variable's value.",
+    ui.add(Text::new("Variables").strong());
+    ui.add(
+        Text::new(
+            "Write {{name}} in a request's URL, params, headers or body to use a variable's value.",
+        )
+        .muted(),
     );
-    ui.add_space(6.0);
+    ui.add_space(Space::Xs.px(ui));
     egui::ScrollArea::vertical()
         .id_salt("variables")
         .auto_shrink([false, false])
         .show(ui, |ui| {
             fields(
                 ui,
-                d.context,
                 &mut d.collection.variables,
                 ["Name", "Value"],
                 "Add Variable",
@@ -800,7 +776,6 @@ fn variables(ui: &mut egui::Ui, d: &mut Draw) {
 
 /// Request `id`'s last exchange: sending, failed, or its response.
 fn exchange(ui: &mut egui::Ui, d: &mut Draw, id: u64) {
-    let p = &d.context.theme.palette;
     match d.exchanges.get(id) {
         None => {
             let keys = if cfg!(target_os = "macos") {
@@ -808,28 +783,28 @@ fn exchange(ui: &mut egui::Ui, d: &mut Draw, id: u64) {
             } else {
                 "Ctrl+Enter"
             };
-            ui.weak(format!("Send the request ({keys}) to see its response."));
+            ui.add(Text::new(format!("Send the request ({keys}) to see its response.")).muted());
         }
         Some(Exchange::Sending { started, .. }) => {
-            ui.horizontal(|ui| {
+            Row::new().show(ui, |ui| {
+                // bedtime-ui has no spinner yet.
                 ui.spinner();
-                ui.label(format!("Sending… {:.1} s", started.elapsed().as_secs_f32()));
+                ui.add(Text::new(format!(
+                    "Sending… {:.1} s",
+                    started.elapsed().as_secs_f32()
+                )));
             });
         }
         Some(Exchange::Done(Err(error))) => {
-            let (title, color) = match error {
-                Error::Cancelled => ("Cancelled", p.muted),
-                Error::TimedOut => ("Timed out", p.error),
-                Error::Invalid(_) => ("Couldn't send the request", p.error),
-                Error::Failed(_) => ("The request failed", p.error),
+            let title = match error {
+                Error::Cancelled => Text::new("Cancelled").muted(),
+                Error::TimedOut => Text::new("Timed out").tone(Tone::Error),
+                Error::Invalid(_) => Text::new("Couldn't send the request").tone(Tone::Error),
+                Error::Failed(_) => Text::new("The request failed").tone(Tone::Error),
             };
-            ui.label(
-                egui::RichText::new(title)
-                    .strong()
-                    .color(theme::color(color)),
-            );
+            ui.add(title.strong());
             if let Error::Invalid(why) | Error::Failed(why) = error {
-                ui.label(why);
+                ui.add(Text::new(why));
             }
         }
         Some(Exchange::Done(Ok(received))) => response(ui, d, received),
@@ -837,47 +812,51 @@ fn exchange(ui: &mut egui::Ui, d: &mut Draw, id: u64) {
 }
 
 fn response(ui: &mut egui::Ui, d: &mut Draw, received: &Received) {
-    let p = &d.context.theme.palette;
     let response = &received.response;
     let status = match response.status {
-        200..=299 => p.success,
-        300..=399 => p.accent,
-        400..=499 => p.warning,
-        _ => p.error,
+        200..=299 => Tone::Success,
+        300..=399 => Tone::Accent,
+        400..=499 => Tone::Warning,
+        _ => Tone::Error,
     };
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(format!(
+    Row::new().show(ui, |ui| {
+        ui.add(
+            Text::new(format!(
                 "{} {}",
                 response.status,
                 response.reason.unwrap_or("")
             ))
             .strong()
-            .color(theme::color(status)),
+            .tone(status),
         );
-        ui.weak(format!(
-            "{} · {}",
-            duration(response.elapsed),
-            size(response.body.len())
-        ));
+        ui.add(
+            Text::new(format!(
+                "{} · {}",
+                duration(response.elapsed),
+                size(response.body.len())
+            ))
+            .muted(),
+        );
         if response.truncated {
-            ui.label(egui::RichText::new("Body cut short").color(theme::color(p.warning)))
+            ui.add(Text::new("Body cut short").tone(Tone::Warning))
                 .on_hover_text("The body was longer than the client reads (16 MB).");
         }
     });
-    ui.add(egui::Label::new(egui::RichText::new(&response.url).small().weak()).truncate());
-    ui.add_space(2.0);
-    ui.horizontal(|ui| {
-        ui.selectable_value(&mut d.view.response_tab, ResponseTab::Body, "Body");
-        ui.selectable_value(
+    ui.add(Text::caption(&response.url).muted().truncate());
+    Row::new().show(ui, |ui| {
+        let headers = format!("Headers ({})", response.headers.len());
+        ui.add(Segmented::with(
             &mut d.view.response_tab,
-            ResponseTab::Headers,
-            format!("Headers ({})", response.headers.len()),
-        );
+            &[ResponseTab::Body, ResponseTab::Headers],
+            |tab| match tab {
+                ResponseTab::Body => "Body".to_owned(),
+                ResponseTab::Headers => headers.clone(),
+            },
+        ));
         if d.view.response_tab == ResponseTab::Body && received.text.is_some() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button("Copy")
+                    .add(Button::new("Copy").small())
                     .on_hover_text("Copy the body shown")
                     .clicked()
                 {
@@ -892,23 +871,36 @@ fn response(ui: &mut egui::Ui, d: &mut Draw, received: &Received) {
                 }
                 let tree = d.view.json == JsonMode::Tree && received.tree.is_some();
                 if !tree {
-                    let mut wrap = !d.view.no_wrap;
-                    ui.toggle_value(&mut wrap, "Wrap")
-                        .on_hover_text("Wrap long lines");
-                    d.view.no_wrap = !wrap;
+                    let wrap = Button::new("Wrap")
+                        .small()
+                        .ghost()
+                        .selected(!d.view.no_wrap);
+                    if ui.add(wrap).on_hover_text("Wrap long lines").clicked() {
+                        d.view.no_wrap = !d.view.no_wrap;
+                    }
                 }
                 if received.pretty.is_some() {
-                    ui.separator();
-                    ui.selectable_value(&mut d.view.json, JsonMode::Raw, "Raw");
-                    ui.selectable_value(&mut d.view.json, JsonMode::Indented, "JSON");
+                    ui.add(Separator::new());
+                    // Right to left, so the options read Raw, JSON, Tree.
+                    let mut modes = vec![JsonMode::Raw, JsonMode::Indented];
                     if received.tree.is_some() {
-                        ui.selectable_value(&mut d.view.json, JsonMode::Tree, "Tree");
+                        modes.push(JsonMode::Tree);
                     }
+                    ui.add(
+                        Segmented::with(&mut d.view.json, &modes, |mode| {
+                            match mode {
+                                JsonMode::Raw => "Raw",
+                                JsonMode::Indented => "JSON",
+                                JsonMode::Tree => "Tree",
+                            }
+                            .into()
+                        })
+                        .size(Size::Sm),
+                    );
                 }
             });
         }
     });
-    ui.add_space(2.0);
     match d.view.response_tab {
         ResponseTab::Body => body(ui, d, received),
         ResponseTab::Headers => {
@@ -922,10 +914,8 @@ fn response(ui: &mut egui::Ui, d: &mut Draw, received: &Received) {
                         .spacing([16.0, 4.0])
                         .show(ui, |ui| {
                             for (name, value) in &response.headers {
-                                ui.label(egui::RichText::new(name).monospace().strong());
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(value).monospace()).wrap(),
-                                );
+                                ui.add(Text::new(name).strong());
+                                ui.add(Text::new(value).wrap());
                                 ui.end_row();
                             }
                         });
@@ -936,9 +926,8 @@ fn response(ui: &mut egui::Ui, d: &mut Draw, received: &Received) {
 
 fn body(ui: &mut egui::Ui, d: &mut Draw, received: &Received) {
     let response = &received.response;
-    let p = &d.context.theme.palette;
     if response.body.is_empty() {
-        ui.weak("No body");
+        ui.add(Text::new("No body").muted());
         return;
     }
     if d.view.json == JsonMode::Tree
@@ -990,7 +979,7 @@ fn body(ui: &mut egui::Ui, d: &mut Draw, received: &Received) {
                 .media_type
                 .as_deref()
                 .unwrap_or("unknown type");
-            ui.weak(format!("{kind}: {} ({media})", size(response.body.len())));
+            ui.add(Text::new(format!("{kind}: {} ({media})", size(response.body.len()))).muted());
             let current = d
                 .view
                 .hex
@@ -1007,20 +996,26 @@ fn body(ui: &mut egui::Ui, d: &mut Draw, received: &Received) {
             return;
         }
     };
-    let note = |ui: &mut egui::Ui, text: String, color| {
-        ui.label(egui::RichText::new(text).small().color(theme::color(color)));
+    // A warning, or (without) a muted remark.
+    let note = |ui: &mut egui::Ui, text: String, warning: bool| {
+        let text = Text::caption(text);
+        ui.add(if warning {
+            text.tone(Tone::Warning)
+        } else {
+            text.muted()
+        });
     };
     if shown.clipped {
-        note(ui, format!("Showing the first {}", size(SHOWN)), p.warning);
+        note(ui, format!("Showing the first {}", size(SHOWN)), true);
     }
     if let Some(charset) = received.content.charset {
-        note(ui, format!("Decoded from {charset}"), p.muted);
+        note(ui, format!("Decoded from {charset}"), false);
     }
     if received.content.replaced {
         note(
             ui,
             "Some bytes weren't valid in its charset and show as \u{fffd}".into(),
-            p.warning,
+            true,
         );
     }
     let language = if pretty {
