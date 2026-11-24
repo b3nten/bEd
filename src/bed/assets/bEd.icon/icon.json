@@ -2,7 +2,7 @@
   "fill" : {
     "linear-gradient" : [
       "display-p3:0.15833,0.42653,0.26642,1.00000",
-      "display-p3:0.18557,0.42214,0.56593,1.00000"
+      "display-p3:0.18557,0.56593,0.53337,1.00000"
     ]
   },
   "groups" : [
@@ -11,6 +11,9 @@
       "layers" : [
         {
           "blend-mode" : "screen",
+          "fill" : {
+            "solid" : "srgb:0.00000,1.00000,0.43000,1.00000"
+          },
           "glass" : true,
           "image-name" : "bed 2.svg",
           "name" : "bed 2"

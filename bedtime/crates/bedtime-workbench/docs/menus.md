@@ -32,8 +32,13 @@ world.spawn((MenuItem::action::<Quit>(), InMenu(file)));
 `ui::draw_menu_bar(&mut frame, world, root, inset)` draws an egui menu bar
 with a bottom border, `inset` points from each side. Attach a
 `bedtime_ui::UiView` to the `MenuBar` entity to draw controls after its menus
-(icon buttons, say); it receives the menu root as its view. The bar draws
-nothing while the native menu bar shows that root.
+(icon buttons, say); it receives the menu root as its view.
+`ui::draw_menu_button(&mut frame, world, root, button)` folds the bar into one
+button instead: `button` draws it and returns its response, and a click shows
+every menu as a submenu.
+Both draw whenever they're called. `ui::native_menu_shown(world, root)` says
+whether the native menu bar is showing that root, for an app that then leaves
+the menus out of its window (or keeps them, as a setting says).
 `ui::draw_popup_menu(&mut frame, world, &response, root, context)` shows a menu
 as an egui response's context menu. Entries record where they were drawn
 (`MenuPresentation`), for tests and automation.
@@ -41,8 +46,8 @@ as an egui response's context menu. Entries record where they were drawn
 ## `native`
 
 `NativeMenuPlugin` shows the `MenuBar` marked `NativeMenuBar` as the operating
-system's menu bar (on macOS; elsewhere nothing is installed). Removing the
-marker returns to the egui bar. Native clicks and supported accelerators send
+system's menu bar (on macOS; elsewhere nothing is installed). Without the
+marker `native_menu_shown` is false. Native clicks and supported accelerators send
 the same revalidated action requests; unsupported key mappings keep a text
 hint and the ordinary shortcut route. Only one root may be marked; problems
 are `NativeMenuError` messages.

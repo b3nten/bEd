@@ -2,7 +2,9 @@
 //! panels with the status bar under them; and what bEd arranges of what the
 //! plugins share: its own keys and the dock menu.
 use crate::titlebar;
-use bedtime::workbench::{AreaBackground, LayoutSurface, TabBarVisibility, Titlebar};
+use bedtime::workbench::{
+    AreaBackground, LayoutSurface, TabBarVisibility, Titlebar, settings::SettingsAppExt as _,
+};
 use bevy::{prelude::*, window::PrimaryWindow};
 
 /// bEd's own keys for actions that have none (VS Code's, where it has them).
@@ -22,7 +24,12 @@ pub struct BedWindowPlugin;
 
 impl Plugin for BedWindowPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup);
+        app.init_resource::<titlebar::MenuIcon>()
+            .register_setting::<titlebar::WindowMenu>()
+            .register_setting::<titlebar::CompactMenu>()
+            .add_systems(Startup, setup)
+            // The native menu bar is installed (or not) after startup.
+            .add_systems(Update, titlebar::fit);
         // The code actions' keys, as VS Code has them, and bEd's own.
         bedtime::workbench::ActionAppExt::add_keymap(app, bedtime::code::keymap::VSCODE);
         bedtime::workbench::ActionAppExt::add_keymap(app, KEYS);
@@ -49,8 +56,13 @@ pub fn window() -> Window {
         titlebar_transparent: true,
         fullsize_content_view: true,
         transparent: true,
+        // wgpu resolves `Auto` to opaque, so a transparent window names its
+        // mode: Linux keeps the premultiplied alpha the UI writes (where the
+        // surface offers it, as Wayland's do; otherwise the window is opaque).
         composite_alpha_mode: if cfg!(target_os = "macos") {
             bevy::window::CompositeAlphaMode::PostMultiplied
+        } else if cfg!(target_os = "linux") {
+            bevy::window::CompositeAlphaMode::PreMultiplied
         } else {
             bevy::window::CompositeAlphaMode::Auto
         },
@@ -70,11 +82,8 @@ fn setup(mut commands: Commands, window: Single<Entity, With<PrimaryWindow>>) {
             ..default()
         },
         Titlebar {
-            height: if cfg!(target_os = "macos") {
-                18.0
-            } else {
-                40.0
-            },
+            // `titlebar::fit` keeps it as tall as the menu needs.
+            height: titlebar::height(None),
             draw: titlebar::draw,
         },
     ));

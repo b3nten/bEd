@@ -1,4 +1,5 @@
-//! Drawing menus with egui: a menu bar, or a context menu.
+//! Drawing menus with egui: a menu bar, the bar folded into one button, or a
+//! context menu.
 use crate::BedtimeWorldExt as _;
 use crate::actions::ActionRequests;
 use crate::menus::*;
@@ -22,20 +23,29 @@ fn observe_item(world: &mut World, entity: Entity, response: &egui::Response) {
     });
 }
 
+/// Whether the operating system's menu bar is showing `root` (it's marked
+/// `NativeMenuBar` and installed): an app can then leave the menus out of its
+/// window. Never without the `native` feature.
+pub fn native_menu_shown(world: &World, root: Entity) -> bool {
+    #[cfg(feature = "native")]
+    return world.get::<NativeMenuBar>(root).is_some() && native::installed(world, root);
+    #[cfg(not(feature = "native"))]
+    {
+        let _ = (world, root);
+        false
+    }
+}
+
 /// Draw a menu bar's entries, followed by optional application content from a
 /// `UiView` on the `MenuBar` entity (which it receives as its view), with
-/// `inset` points of space at each side. Draws nothing while the native menu
-/// bar shows this root.
+/// `inset` points of space at each side. The caller decides whether to, while
+/// the native menu bar shows this root too (`native_menu_shown`).
 pub fn draw_menu_bar(
     frame: &mut UiFrame,
     world: &mut World,
     root: Entity,
     inset: f32,
 ) -> Result<(), String> {
-    #[cfg(feature = "native")]
-    if world.get::<NativeMenuBar>(root).is_some() && native::installed(world, root) {
-        return Ok(());
-    }
     let menu = world
         .bedtime()
         .menus()
@@ -64,6 +74,23 @@ pub fn draw_menu_bar(
         [bounds.left_bottom(), bounds.right_bottom()],
         egui::Stroke::new(1.0, bedtime_ui::theme::color(frame.theme.palette.border)),
     );
+    Ok(())
+}
+
+/// Draw the whole menu bar as one button, `button` drawing it: a click shows
+/// every menu as a submenu.
+pub fn draw_menu_button(
+    frame: &mut UiFrame,
+    world: &mut World,
+    root: Entity,
+    button: impl FnOnce(&mut UiFrame) -> egui::Response,
+) -> Result<(), String> {
+    let menu = world
+        .bedtime()
+        .menus()
+        .snapshot(root, InvocationContext::Focused)?;
+    let response = button(frame);
+    egui::Popup::menu(&response).show(|ui| draw_entries(ui, world, &menu.entries));
     Ok(())
 }
 

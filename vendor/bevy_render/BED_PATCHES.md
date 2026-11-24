@@ -18,3 +18,14 @@ The native `bedtime-automation2` example `screenshot_without_drawable` deliberat
 removes the drawable after rendering and verifies colored and fully transparent
 captures. Run it alongside the strict Hex/Filetree smokes when upgrading this fork;
 remove the fork when the published renderer includes equivalent handling.
+
+## Unsupported composite alpha modes fall back to `Auto`
+
+A window that asks for a `CompositeAlphaMode` its surface doesn't offer is
+configured with `Auto` instead, with a warning. wgpu treats an unsupported
+explicit mode as a configuration error, and `Auto` itself only ever chooses
+`Opaque` or `Inherit`, so a transparent window has to name its mode. bEd asks for
+`PreMultiplied` on Linux (2026-11-23): Wayland surfaces offer it, while X11
+surfaces commonly offer only `Opaque`/`Inherit`, where the window then stays
+opaque rather than failing to open. Not yet exercised on a Linux machine; check
+both a Wayland and an X11 session when upgrading this fork.

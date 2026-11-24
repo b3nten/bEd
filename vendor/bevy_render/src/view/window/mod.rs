@@ -416,6 +416,26 @@ pub fn create_surfaces(
             } else {
                 None
             };
+            let requested_alpha_mode = match window.alpha_mode {
+                CompositeAlphaMode::Auto => wgpu::CompositeAlphaMode::Auto,
+                CompositeAlphaMode::Opaque => wgpu::CompositeAlphaMode::Opaque,
+                CompositeAlphaMode::PreMultiplied => wgpu::CompositeAlphaMode::PreMultiplied,
+                CompositeAlphaMode::PostMultiplied => wgpu::CompositeAlphaMode::PostMultiplied,
+                CompositeAlphaMode::Inherit => wgpu::CompositeAlphaMode::Inherit,
+            };
+            // bEd: configuring a surface with a mode it doesn't offer is an
+            // error; fall back to `Auto` (opaque) instead. See BED_PATCHES.md.
+            let alpha_mode = if requested_alpha_mode == wgpu::CompositeAlphaMode::Auto
+                || caps.alpha_modes.contains(&requested_alpha_mode)
+            {
+                requested_alpha_mode
+            } else {
+                warn!(
+                    "The window surface doesn't support {:?} alpha (it offers {:?}); using Auto",
+                    requested_alpha_mode, caps.alpha_modes
+                );
+                wgpu::CompositeAlphaMode::Auto
+            };
             let configuration = SurfaceConfiguration {
                 format,
                 width: window.physical_width,
@@ -426,13 +446,7 @@ pub fn create_surfaces(
                     .desired_maximum_frame_latency
                     .map(NonZero::<u32>::get)
                     .unwrap_or(DEFAULT_DESIRED_MAXIMUM_FRAME_LATENCY),
-                alpha_mode: match window.alpha_mode {
-                    CompositeAlphaMode::Auto => wgpu::CompositeAlphaMode::Auto,
-                    CompositeAlphaMode::Opaque => wgpu::CompositeAlphaMode::Opaque,
-                    CompositeAlphaMode::PreMultiplied => wgpu::CompositeAlphaMode::PreMultiplied,
-                    CompositeAlphaMode::PostMultiplied => wgpu::CompositeAlphaMode::PostMultiplied,
-                    CompositeAlphaMode::Inherit => wgpu::CompositeAlphaMode::Inherit,
-                },
+                alpha_mode,
                 view_formats: match texture_view_format {
                     Some(format) => vec![format],
                     None => vec![],

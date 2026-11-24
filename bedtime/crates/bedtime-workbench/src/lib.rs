@@ -93,7 +93,9 @@ mod dialogs;
 mod ui_plugin;
 use bevy::{app::PluginGroupBuilder, prelude::*};
 #[cfg(feature = "ui")]
-pub use menus::ui::{MenuPresentation, draw_menu_bar, draw_popup_menu};
+pub use menus::ui::{
+    MenuPresentation, draw_menu_bar, draw_menu_button, draw_popup_menu, native_menu_shown,
+};
 #[cfg(feature = "ui")]
 pub use palette::{CommandPalette, CommandPalettePlugin, ShowCommandPalette};
 #[cfg(feature = "ui")]
