@@ -34,6 +34,8 @@ pub struct Button {
     fill_width: bool,
     align: egui::Align,
     selected: bool,
+    italic: bool,
+    strikethrough: bool,
 }
 
 impl Button {
@@ -47,6 +49,8 @@ impl Button {
             fill_width: false,
             align: egui::Align::Center,
             selected: false,
+            italic: false,
+            strikethrough: false,
         }
     }
 
@@ -103,6 +107,16 @@ impl Button {
         self
     }
 
+    pub fn italic(mut self, italic: bool) -> Self {
+        self.italic = italic;
+        self
+    }
+    /// Its text struck through: what it stands for is gone, hidden or done.
+    pub fn strikethrough(mut self, strikethrough: bool) -> Self {
+        self.strikethrough = strikethrough;
+        self
+    }
+
     /// Drawn as the chosen one of several (a list's current row, a tool
     /// that's on).
     pub fn selected(mut self, selected: bool) -> Self {
@@ -118,11 +132,22 @@ impl egui::Widget for Button {
         let padding = self.size.padding(ui);
         let height = self.size.height(ui);
         let galley = (!self.text.is_empty()).then(|| {
-            ui.painter().layout_no_wrap(
-                self.text.clone(),
-                egui::FontId::proportional(font_size),
-                egui::Color32::PLACEHOLDER,
-            )
+            let line = if self.strikethrough {
+                egui::Stroke::new(1.0, ui.visuals().text_color())
+            } else {
+                egui::Stroke::NONE
+            };
+            ui.painter()
+                .layout_job(egui::text::LayoutJob::single_section(
+                    self.text.clone(),
+                    egui::TextFormat {
+                        font_id: egui::FontId::proportional(font_size),
+                        color: egui::Color32::PLACEHOLDER,
+                        italics: self.italic,
+                        strikethrough: line,
+                        ..Default::default()
+                    },
+                ))
         });
         let icon_side = font_size;
         let gap = (font_size * 0.4).round();

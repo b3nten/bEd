@@ -5,6 +5,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
+use bedtime_ui::Text;
 use bedtime_ui::egui::{
     self, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Sense, Shape, Stroke,
     StrokeKind, TextStyle, epaint::CubicBezierShape, pos2, vec2,
@@ -685,10 +686,10 @@ fn tooltip(
     match graph.input.nodes[node].id {
         NodeRef::System(s) => {
             let system = &schedule.systems[s as usize];
-            ui.monospace(&system.name);
+            ui.add(Text::new(&system.name));
             let sets = named_sets(schedule, system);
             if !sets.is_empty() {
-                ui.colored_label(style::filter(), format!("sets: {}", sets.join(", ")));
+                ui.add(Text::new(format!("sets: {}", sets.join(", "))).color(style::filter()));
             }
             let mut writes = Vec::new();
             let mut reads = Vec::new();
@@ -704,13 +705,13 @@ fn tooltip(
                 }
             }
             if !writes.is_empty() {
-                ui.colored_label(style::write(), format!("writes: {}", writes.join(", ")));
+                ui.add(Text::new(format!("writes: {}", writes.join(", "))).color(style::write()));
             }
             if !reads.is_empty() {
-                ui.colored_label(style::read(), format!("reads: {}", reads.join(", ")));
+                ui.add(Text::new(format!("reads: {}", reads.join(", "))).color(style::read()));
             }
             if system.flags.exclusive {
-                ui.colored_label(style::exclusive(), "exclusive (&mut World)");
+                ui.add(Text::new("exclusive (&mut World)").color(style::exclusive()));
             }
             if !system.conditions.is_empty() {
                 let names: Vec<&str> = system
@@ -718,21 +719,24 @@ fn tooltip(
                     .iter()
                     .map(|c| c.short_name.as_str())
                     .collect();
-                ui.colored_label(style::warn(), format!("run_if: {}", names.join(", ")));
+                ui.add(Text::new(format!("run_if: {}", names.join(", "))).color(style::warn()));
             }
-            ui.colored_label(style::filter(), "click: details · right-click: hide");
+            ui.add(Text::new("click: details · right-click: hide").color(style::filter()));
         }
         NodeRef::Set(set) => {
-            ui.label(format!("set {}", schedule.sets[set as usize].name));
+            ui.add(Text::new(format!(
+                "set {}",
+                schedule.sets[set as usize].name
+            )));
             let members = &graph.members[node];
-            ui.colored_label(style::filter(), format!("{} systems", members.len()));
+            ui.add(Text::new(format!("{} systems", members.len())).color(style::filter()));
             for s in members.iter().take(12) {
-                ui.label(&schedule.systems[*s as usize].short_name);
+                ui.add(Text::new(&schedule.systems[*s as usize].short_name));
             }
             if members.len() > 12 {
-                ui.label("…");
+                ui.add(Text::new("…"));
             }
-            ui.colored_label(style::filter(), "double-click: expand · right-click: hide");
+            ui.add(Text::new("double-click: expand · right-click: hide").color(style::filter()));
         }
     }
 }

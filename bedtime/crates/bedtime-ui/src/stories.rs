@@ -47,6 +47,16 @@ pub fn builtin() -> Vec<Story> {
             draw: select,
         },
         Story {
+            group: "Components",
+            name: "Segmented",
+            draw: segmented,
+        },
+        Story {
+            group: "Layout",
+            name: "Section and Separator",
+            draw: sections,
+        },
+        Story {
             group: "Layout",
             name: "Row and Column",
             draw: stacks,
@@ -356,6 +366,92 @@ fn select(ui: &mut egui::Ui, knobs: &mut Knobs) {
                         let mut address = "https://example.com".to_owned();
                         ui.add(TextField::new(&mut address).label("Address").width(240.0));
                         ui.add(Button::new("Send").primary());
+                    });
+                });
+            });
+        },
+    );
+}
+
+const VIEWS: [&str; 6] = ["Graph", "Lanes", "Arcs", "Timeline", "Flame", "List"];
+
+fn segmented(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let size = knobs.choice("Size", &[Size::Md, Size::Sm, Size::Lg]);
+    let disabled = knobs.toggle("Disabled", false);
+
+    stateful(
+        ui,
+        "segmented",
+        || ("Graph", "Week", false),
+        |ui, values| {
+            Column::new().gap(Space::Xl).show(ui, |ui| {
+                section(ui, "With the controls", |ui| {
+                    ui.add_enabled(!disabled, Segmented::new(&mut values.0, &VIEWS).size(size));
+                    ui.add(Text::caption(format!("Chosen: {}", values.0)).muted());
+                });
+                section(ui, "Every size", |ui| {
+                    for size in Size::ALL {
+                        ui.add(Segmented::new(&mut values.1, &["Day", "Week", "Month"]).size(size));
+                    }
+                });
+                section(ui, "Two options, named by a function", |ui| {
+                    ui.add(Segmented::with(&mut values.2, &[false, true], |slowest| {
+                        if *slowest { "slowest" } else { "latest" }.into()
+                    }));
+                });
+                section(ui, "Too narrow for a row: the segments wrap", |ui| {
+                    ui.scope(|ui| {
+                        ui.set_max_width(220.0);
+                        ui.add(Segmented::new(&mut values.0, &VIEWS));
+                    });
+                });
+            });
+        },
+    );
+}
+
+fn sections(ui: &mut egui::Ui, _: &mut Knobs) {
+    stateful(
+        ui,
+        "sections",
+        || [true, false, true, true],
+        |ui, values| {
+            Column::new().gap(Space::Xl).show(ui, |ui| {
+                section(ui, "Section", |ui| {
+                    ui.scope(|ui| {
+                        ui.set_max_width(320.0);
+                        Section::new("Show").open().show(ui, |ui| {
+                            ui.add(Checkbox::new(&mut values[0], "Internal systems"));
+                            ui.add(Checkbox::new(&mut values[1], "Sync points"));
+                        });
+                        Section::new("Edges").show(ui, |ui| {
+                            ui.add(Checkbox::new(&mut values[2], "Ordering"));
+                            ui.add(Checkbox::new(&mut values[3], "Data flow"));
+                        });
+                        Section::new("One inside another").show(ui, |ui| {
+                            ui.add(Text::new("Sections nest."));
+                            Section::new("Inner").open().show(ui, |ui| {
+                                ui.add(Text::new("As deep as it's useful.").muted());
+                            });
+                        });
+                    });
+                });
+                section(ui, "Separator, in a column", |ui| {
+                    ui.scope(|ui| {
+                        ui.set_max_width(320.0);
+                        ui.add(Text::new("71 systems"));
+                        ui.add(Separator::new());
+                        ui.add(Text::new("6 sets"));
+                        ui.add(Separator::new().space(Space::Xl));
+                        ui.add(Text::new("26 ordering edges").muted());
+                    });
+                });
+                section(ui, "Separator, in a row", |ui| {
+                    Row::new().show(ui, |ui| {
+                        ui.add(Button::new("Cut").ghost());
+                        ui.add(Button::new("Copy").ghost());
+                        ui.add(Separator::new());
+                        ui.add(Button::new("Paste").ghost());
                     });
                 });
             });

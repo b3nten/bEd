@@ -20,6 +20,7 @@ pub struct Select<'a, T> {
     width: Option<f32>,
     fill_width: bool,
     searchable: bool,
+    dividers: Vec<usize>,
 }
 
 /// What's typed and highlighted in an open list.
@@ -53,6 +54,7 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
             width: None,
             fill_width: false,
             searchable: false,
+            dividers: Vec::new(),
         }
     }
 
@@ -73,6 +75,11 @@ impl<'a, T: PartialEq + Clone> Select<'a, T> {
     /// As wide as the space it's in.
     pub fn fill_width(mut self) -> Self {
         self.fill_width = true;
+        self
+    }
+    /// A line before each of these options (by index), to group the list.
+    pub fn dividers(mut self, before: impl IntoIterator<Item = usize>) -> Self {
+        self.dividers = before.into_iter().collect();
         self
     }
     /// A field over the list that narrows it to what's typed.
@@ -197,6 +204,7 @@ impl<T: PartialEq + Clone> egui::Widget for Select<'_, T> {
         });
         let mut chosen = None;
         let (labels, searchable, size) = (&self.labels, self.searchable, self.size);
+        let dividers = &self.dividers;
         popup.show(|ui| {
             let Some(state) = state.as_mut() else {
                 return;
@@ -261,7 +269,11 @@ impl<T: PartialEq + Clone> egui::Widget for Select<'_, T> {
                 .max_height(size.height(ui) * 9.5)
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
+                    let grouped = state.query.is_empty();
                     for row in rows {
+                        if grouped && row > 0 && dividers.contains(&row) {
+                            ui.add(super::Separator::new().space(Space::Xs));
+                        }
                         let button = Button::new(&labels[row])
                             .size(size)
                             .ghost()

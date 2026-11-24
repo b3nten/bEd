@@ -37,7 +37,8 @@ pub mod widgets;
 pub mod prelude {
     pub use crate::tokens::{Radius, Size, Space, TextRole, Tone};
     pub use crate::widgets::{
-        Button, Checkbox, Column, Row, Select, Text, TextField, Toggle, UiEdit, Variant,
+        Button, Checkbox, Column, Row, Section, Segmented, Select, Separator, Text, TextField,
+        Toggle, UiEdit, Variant,
     };
     pub use egui::{self, Response, Ui, Widget};
 }
@@ -61,7 +62,8 @@ pub use theme::{Metrics, Theme};
 pub use tokens::{Radius, Size, Space, TextRole, Tone};
 pub use viewport::{UiViewport, free_layer, viewport_image};
 pub use widgets::{
-    Button, Checkbox, Column, Row, Select, Text, TextField, Toggle, UiEdit, Variant,
+    Button, Checkbox, Column, Row, Section, Segmented, Select, Separator, Text, TextField, Toggle,
+    UiEdit, Variant,
 };
 
 /// While this resource exists, each frame's AccessKit tree (every widget's

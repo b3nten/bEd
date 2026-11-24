@@ -220,3 +220,77 @@ fn a_select_opens_on_a_click_and_the_keys_choose_an_option() {
     assert!(changed);
     assert!(!egui::Popup::is_any_open(&ctx), "choosing closes the list");
 }
+
+#[test]
+fn a_click_on_a_segment_chooses_it() {
+    const OPTIONS: [&str; 3] = ["Day", "Week", "Month"];
+    let ctx = egui::Context::default();
+    let mut value = "Day";
+    let mut rect = egui::Rect::NOTHING;
+    passes(&ctx, None, |ui| {
+        rect = ui.add(Segmented::new(&mut value, &OPTIONS)).rect;
+    });
+    let mut height = 0.0;
+    pass(|ui| height = Size::Md.height(ui));
+    assert_eq!(rect.height(), height, "one control tall");
+    // The last segment is at the right end.
+    let mut changes = 0;
+    passes(
+        &ctx,
+        Some(rect.right_center() - egui::vec2(10.0, 0.0)),
+        |ui| {
+            changes += usize::from(ui.add(Segmented::new(&mut value, &OPTIONS)).changed());
+        },
+    );
+    assert_eq!((value, changes), ("Month", 1));
+}
+
+#[test]
+fn segments_wrap_when_they_do_not_fit() {
+    const OPTIONS: [&str; 6] = ["Graph", "Lanes", "Arcs", "Timeline", "Flame", "List"];
+    pass(|ui| {
+        let mut value = "Graph";
+        let one_row = ui.add(Segmented::new(&mut value, &OPTIONS)).rect;
+        ui.scope(|ui| {
+            ui.set_max_width(one_row.width() / 2.0);
+            let wrapped = ui.add(Segmented::new(&mut value, &OPTIONS)).rect;
+            assert!(wrapped.width() <= one_row.width() / 2.0 + 1.0);
+            assert!(wrapped.height() > one_row.height());
+        });
+    });
+}
+
+#[test]
+fn a_section_shows_its_content_only_while_open_and_a_click_toggles_it() {
+    use std::cell::Cell;
+    let ctx = egui::Context::default();
+    let (header, shown) = (Cell::new(egui::Pos2::ZERO), Cell::new(false));
+    let draw = |ui: &mut Ui| {
+        header.set(ui.cursor().left_top() + egui::vec2(20.0, 10.0));
+        let body = Section::new("Edges").show(ui, |ui| ui.add(Text::new("Ordering")));
+        shown.set(body.is_some());
+    };
+    passes(&ctx, None, draw);
+    assert!(!shown.get(), "closed until it's opened");
+    passes(&ctx, Some(header.get()), draw);
+    assert!(shown.get(), "a click on its header opens it");
+
+    let mut open = false;
+    pass(|ui| {
+        open = Section::new("Frame").open().show(ui, |_| ()).is_some();
+    });
+    assert!(open, "open() starts open");
+}
+
+#[test]
+fn a_separator_lies_across_a_column_and_stands_in_a_row() {
+    pass(|ui| {
+        let across = ui.add(Separator::new()).rect;
+        assert!(across.width() > across.height());
+        Row::new().show(ui, |ui| {
+            ui.add(Button::new("Cut"));
+            let upright = ui.add(Separator::new()).rect;
+            assert!(upright.height() > upright.width());
+        });
+    });
+}

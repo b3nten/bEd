@@ -4,9 +4,10 @@
 //! symbol on the canvas.
 
 use bedtime_ui::egui::{
-    self, Color32, CornerRadius, Painter, Pos2, Rect, RichText, Sense, Shape, Stroke,
+    self, Color32, CornerRadius, Painter, Pos2, Rect, Sense, Shape, Stroke,
     epaint::QuadraticBezierShape, pos2, vec2,
 };
+use bedtime_ui::{Button, Row, Text};
 
 use super::{Mode, frame_view::mark_shape, style};
 use crate::frame::MarkKind;
@@ -35,7 +36,7 @@ pub(super) fn overlay(ui: &mut egui::Ui, mode: Mode, area: Rect, show: &mut bool
             .constrain_to(area)
             .show(&ctx, |ui| {
                 if ui
-                    .small_button("legend")
+                    .add(Button::new("legend").small())
                     .on_hover_text("what the symbols and colours mean")
                     .clicked()
                 {
@@ -216,33 +217,33 @@ fn header_entries(ui: &mut egui::Ui) {
 // ------------------------------------------------------------------------------------------------
 
 fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(4.0);
-    ui.label(RichText::new(text).strong().color(style::filter()));
+    ui.add_space(bedtime_ui::Space::Xs.px(ui));
+    ui.add(Text::new(text).strong().color(style::filter()));
 }
 
 fn row(ui: &mut egui::Ui, text: &str, draw: impl FnOnce(&Painter, Pos2)) {
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(ICON, Sense::hover());
         if ui.is_rect_visible(rect) {
             draw(ui.painter(), rect.center());
         }
-        ui.add(egui::Label::new(text).wrap());
+        ui.add(Text::new(text).wrap());
     });
 }
 
 /// A row whose "symbol" is itself a piece of coloured text.
 fn text_row(ui: &mut egui::Ui, symbol: &str, color: Color32, text: &str) {
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         ui.scope(|ui| {
             ui.set_min_width(ICON.x);
-            ui.colored_label(color, symbol);
+            ui.add(Text::new(symbol).color(color));
         });
-        ui.add(egui::Label::new(text).wrap());
+        ui.add(Text::new(text).wrap());
     });
 }
 
 fn note(ui: &mut egui::Ui, text: &str) {
-    ui.add(egui::Label::new(RichText::new(text).color(style::node_text_dim())).wrap());
+    ui.add(Text::new(text).color(style::node_text_dim()).wrap());
 }
 
 fn arrow_head(p: &Painter, tip: Pos2, dir: egui::Vec2, color: Color32, size: f32) {

@@ -5,7 +5,8 @@ import shutil
 import tempfile
 from bed import Bed
 
-STORIES = ["Tokens", "Button", "Text", "Checkbox and Toggle", "Text Field", "Select", "Row and Column"]
+STORIES = ["Tokens", "Button", "Text", "Checkbox and Toggle", "Text Field", "Select", "Segmented",
+           "Section and Separator", "Row and Column"]
 
 
 def until(bed, check, what):

@@ -1,6 +1,7 @@
 //! Plain list of a schedule's systems in executor order.
 
 use bedtime_ui::egui;
+use bedtime_ui::{Button, Row, Section, Text};
 
 use super::{ViewState, details::access_line, named_sets, search_matches, style};
 use crate::snapshot::{AppSnapshot, NodeRef, OrderKind, ScheduleSnapshot, SysIx, SystemSnapshot};
@@ -16,7 +17,7 @@ pub fn system_list(
         .iter()
         .filter(|e| e.kind == OrderKind::SyncPoint)
         .count();
-    ui.label(format!(
+    ui.add(Text::new(format!(
         "{} systems · {} sets · {} ordering edges ({} via sync points) · {}",
         schedule.systems.len(),
         schedule.sets.iter().filter(|s| s.is_named()).count(),
@@ -27,7 +28,7 @@ pub fn system_list(
         } else {
             "ambiguities unavailable".to_string()
         }
-    ));
+    )));
     let order: Vec<SysIx> = if schedule.exec_order.is_empty() {
         (0..schedule.systems.len() as SysIx).collect()
     } else {
@@ -81,53 +82,54 @@ fn system_entry(
         header.push_str("  [run_if]");
     }
     let mut clicked = false;
-    egui::CollapsingHeader::new(header)
-        .id_salt(("list", ix))
-        .default_open(selected == Some(NodeRef::System(ix)))
-        .show(ui, |ui| {
-            if ui.small_button("details").clicked() {
-                clicked = true;
-            }
-            ui.monospace(&system.name);
-            let sets = named_sets(schedule, system);
-            if !sets.is_empty() {
-                ui.label(format!("sets: {}", sets.join(", ")));
-            }
-            for condition in &system.conditions {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("run_if");
-                    ui.monospace(&condition.short_name);
-                    access_line(
-                        ui,
-                        snapshot,
-                        &condition.queries,
-                        &condition.resources,
-                        &mut None,
-                    );
-                });
-            }
-            if !system.flags.access_available {
-                ui.colored_label(
-                    style::filter(),
-                    if system.flags.exclusive {
-                        "exclusive: accesses the whole World"
-                    } else {
-                        "access not captured"
-                    },
+    let mut section = Section::new(header).id(("list", ix));
+    if selected == Some(NodeRef::System(ix)) {
+        section = section.open();
+    }
+    section.show(ui, |ui| {
+        if ui.add(Button::new("details").small()).clicked() {
+            clicked = true;
+        }
+        ui.add(Text::new(&system.name));
+        let sets = named_sets(schedule, system);
+        if !sets.is_empty() {
+            ui.add(Text::new(format!("sets: {}", sets.join(", "))));
+        }
+        for condition in &system.conditions {
+            Row::new().wrap().show(ui, |ui| {
+                ui.add(Text::new("run_if"));
+                ui.add(Text::new(&condition.short_name));
+                access_line(
+                    ui,
+                    snapshot,
+                    &condition.queries,
+                    &condition.resources,
+                    &mut None,
                 );
-            }
-            for query in &system.queries {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("query");
-                    access_line(ui, snapshot, std::slice::from_ref(query), &[], &mut None);
-                });
-            }
-            if !system.resources.is_empty() {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label("resources");
-                    access_line(ui, snapshot, &[], &system.resources, &mut None);
-                });
-            }
-        });
+            });
+        }
+        if !system.flags.access_available {
+            ui.add(
+                Text::new(if system.flags.exclusive {
+                    "exclusive: accesses the whole World"
+                } else {
+                    "access not captured"
+                })
+                .color(style::filter()),
+            );
+        }
+        for query in &system.queries {
+            Row::new().wrap().show(ui, |ui| {
+                ui.add(Text::new("query"));
+                access_line(ui, snapshot, std::slice::from_ref(query), &[], &mut None);
+            });
+        }
+        if !system.resources.is_empty() {
+            Row::new().wrap().show(ui, |ui| {
+                ui.add(Text::new("resources"));
+                access_line(ui, snapshot, &[], &system.resources, &mut None);
+            });
+        }
+    });
     clicked
 }

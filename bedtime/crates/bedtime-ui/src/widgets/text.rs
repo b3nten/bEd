@@ -15,6 +15,11 @@ pub struct Text {
     muted: bool,
     strong: Option<bool>,
     truncate: bool,
+    color: Option<egui::Color32>,
+    italic: bool,
+    strikethrough: bool,
+    wrap: bool,
+    clickable: bool,
 }
 
 impl Text {
@@ -26,6 +31,11 @@ impl Text {
             muted: false,
             strong: None,
             truncate: false,
+            color: None,
+            italic: false,
+            strikethrough: false,
+            wrap: false,
+            clickable: false,
         }
     }
     pub fn caption(text: impl Into<String>) -> Self {
@@ -56,6 +66,32 @@ impl Text {
         self.strong = Some(true);
         self
     }
+    /// A colour of the caller's own (a graph's, a chart's), where no `Tone`
+    /// says it.
+    pub fn color(mut self, color: egui::Color32) -> Self {
+        self.color = Some(color);
+        self
+    }
+    pub fn italic(mut self, italic: bool) -> Self {
+        self.italic = italic;
+        self
+    }
+    /// Struck through: gone, hidden or done.
+    pub fn strikethrough(mut self, strikethrough: bool) -> Self {
+        self.strikethrough = strikethrough;
+        self
+    }
+    /// Wrapped at the width it's in, even in a row (where text otherwise
+    /// runs on).
+    pub fn wrap(mut self) -> Self {
+        self.wrap = true;
+        self
+    }
+    /// It can be clicked (`response.clicked()`): a name that goes somewhere.
+    pub fn clickable(mut self) -> Self {
+        self.clickable = true;
+        self
+    }
     /// One line, cut short with an ellipsis, rather than wrapped.
     pub fn truncate(mut self) -> Self {
         self.truncate = true;
@@ -80,14 +116,24 @@ impl egui::Widget for Text {
         } else {
             self.tone.rgba(&theme.palette)
         };
-        let text = egui::RichText::new(self.text)
+        let mut text = egui::RichText::new(self.text)
             .font(font)
-            .color(theme::color(color));
-        let label = egui::Label::new(text);
-        ui.add(if self.truncate {
-            label.truncate()
-        } else {
-            label
-        })
+            .color(self.color.unwrap_or(theme::color(color)));
+        if self.italic {
+            text = text.italics();
+        }
+        if self.strikethrough {
+            text = text.strikethrough();
+        }
+        let mut label = egui::Label::new(text);
+        if self.truncate {
+            label = label.truncate();
+        } else if self.wrap {
+            label = label.wrap();
+        }
+        if self.clickable {
+            label = label.sense(egui::Sense::click());
+        }
+        ui.add(label)
     }
 }

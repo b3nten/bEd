@@ -8,6 +8,7 @@ use bedtime_ui::egui::{
     self, Align2, Color32, CornerRadius, FontId, Painter, Rect, Sense, Shape, Stroke, StrokeKind,
     TextStyle, epaint::CubicBezierShape, pos2, vec2,
 };
+use bedtime_ui::{Button, Checkbox, Row, Text};
 
 use super::{
     ViewState, comp_name, frame_view::ensure_frame, named_sets, scene_text::SceneText,
@@ -651,20 +652,17 @@ fn draw_timeline(
             let schedule = &snapshot.schedules[fs.schedule];
             let system = &schedule.systems[fs.system as usize];
             ui.set_max_width(420.0);
-            ui.monospace(&system.name);
-            ui.colored_label(
-                style::filter(),
-                format!("{} · wave {}", schedule.label, fs.wave),
-            );
+            ui.add(Text::new(&system.name));
+            ui.add(Text::new(format!("{} · wave {}", schedule.label, fs.wave)).color(style::filter()));
             let sets = named_sets(schedule, system);
             if !sets.is_empty() {
-                ui.colored_label(style::filter(), format!("sets: {}", sets.join(" › ")));
+                ui.add(Text::new(format!("sets: {}", sets.join(" › "))).color(style::filter()));
             }
             if critical
                 .get(&fs.schedule)
                 .is_some_and(|c| c.contains(&fs.system))
             {
-                ui.colored_label(style::ambiguity(), "on the critical path of this schedule");
+                ui.add(Text::new("on the critical path of this schedule").color(style::ambiguity()));
             }
             #[cfg(feature = "profile")]
             if let Some(timings) = view.timings.as_ref()
@@ -676,9 +674,7 @@ fn draw_timeline(
                     let last: std::time::Duration =
                         runs.iter().map(|s| s.end.saturating_sub(s.start)).sum();
                     let avg = store.average(&system.name).unwrap_or_default();
-                    ui.colored_label(
-                        style::warn(),
-                        format!(
+                    ui.add(Text::new(format!(
                             "last frame {:.3} ms in {} run{} · avg {:.3} ms over {} frames · thread {}",
                             last.as_secs_f64() * 1000.0,
                             runs.len(),
@@ -686,8 +682,7 @@ fn draw_timeline(
                             avg.as_secs_f64() * 1000.0,
                             store.frames.len(),
                             runs[0].thread
-                        ),
-                    );
+                        )).color(style::warn()));
                 }
             }
         });
@@ -750,16 +745,15 @@ pub fn slowest_list(ui: &mut egui::Ui, snapshot: &AppSnapshot, view: &mut ViewSt
         )
     };
     if frames == 0 {
-        ui.colored_label(style::filter(), "no frames recorded yet");
+        ui.add(Text::new("no frames recorded yet").color(style::filter()));
         return;
     }
-    ui.label(
-        egui::RichText::new(format!(
+    ui.add(
+        Text::caption(format!(
             "frame avg {:.2} ms · max {:.2} ms · {frames} frames",
             frame_avg.as_secs_f64() * 1000.0,
             frame_max.as_secs_f64() * 1000.0
         ))
-        .small()
         .color(style::filter()),
     );
     let frame_us = frame_avg.as_micros().max(1) as f64;
@@ -777,7 +771,14 @@ pub fn slowest_list(ui: &mut egui::Ui, snapshot: &AppSnapshot, view: &mut ViewSt
             stat.average.as_secs_f64() * 1000.0
         );
         if ui
-            .selectable_label(selected, egui::RichText::new(text).monospace().small())
+            .add(
+                Button::new(text)
+                    .small()
+                    .ghost()
+                    .fill_width()
+                    .align(egui::Align::Min)
+                    .selected(selected),
+            )
             .on_hover_text(format!(
                 "{}\nlast {:.3} ms · max {:.3} ms · ran in {} of {frames} frames",
                 stat.name,
@@ -912,15 +913,18 @@ pub fn show_flame(ui: &mut egui::Ui, snapshot: &AppSnapshot, view: &mut ViewStat
     let search = view.search.to_lowercase();
 
     // Breadcrumb / reset.
-    ui.horizontal(|ui| {
-        if ui.small_button("whole frame").clicked() {
+    Row::new().show(ui, |ui| {
+        if ui.add(Button::new("whole frame").small()).clicked() {
             actions.push(Action::Zoom(None));
         }
-        ui.colored_label(
-            style::filter(),
-            format!("{} systems under {}", nodes[root].weight, nodes[root].label),
+        ui.add(
+            Text::new(format!(
+                "{} systems under {}",
+                nodes[root].weight, nodes[root].label
+            ))
+            .color(style::filter()),
         );
-        ui.checkbox(&mut view.flame_show_sets, "show sets");
+        ui.add(Checkbox::new(&mut view.flame_show_sets, "show sets"));
     });
     let area = Rect::from_min_max(pos2(area.min.x, area.min.y + 24.0), area.max);
     let total = nodes[root].weight.max(1) as f32;
@@ -1057,15 +1061,15 @@ pub fn show_flame(ui: &mut egui::Ui, snapshot: &AppSnapshot, view: &mut ViewStat
             match (n.system, n.schedule) {
                 (Some(sys), Some(si)) => {
                     let system = &snapshot.schedules[si].systems[sys as usize];
-                    ui.monospace(&system.name);
-                    ui.colored_label(style::filter(), &snapshot.schedules[si].label);
-                    ui.colored_label(style::filter(), "click: details");
+                    ui.add(Text::new(&system.name));
+                    ui.add(Text::new(&snapshot.schedules[si].label).color(style::filter()));
+                    ui.add(Text::new("click: details").color(style::filter()));
                 }
                 _ => {
-                    ui.label(&n.label);
-                    ui.colored_label(
-                        style::filter(),
-                        format!("{} systems · click to zoom", n.weight),
+                    ui.add(Text::new(&n.label));
+                    ui.add(
+                        Text::new(format!("{} systems · click to zoom", n.weight))
+                            .color(style::filter()),
                     );
                 }
             }

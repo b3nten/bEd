@@ -2,7 +2,8 @@
 
 use std::collections::BTreeMap;
 
-use bedtime_ui::egui::{self, RichText, Sense};
+use bedtime_ui::egui;
+use bedtime_ui::{Button, Row, Separator, Text};
 
 use super::{ViewState, comp_name, named_sets, style};
 use crate::{
@@ -14,8 +15,7 @@ use crate::{
 
 /// A clickable coloured label; returns `true` when clicked.
 fn chip(ui: &mut egui::Ui, text: impl Into<String>, color: egui::Color32) -> bool {
-    ui.add(egui::Label::new(RichText::new(text.into()).color(color)).sense(Sense::click()))
-        .clicked()
+    ui.add(Text::new(text).color(color).clickable()).clicked()
 }
 
 /// Renders the reads/writes/filters of some queries and resources. Clicking a component name
@@ -29,9 +29,9 @@ pub fn access_line(
 ) {
     for query in queries {
         if query.write_all {
-            ui.colored_label(style::warn(), "&mut *");
+            ui.add(Text::new("&mut *").color(style::warn()));
         } else if query.read_all {
-            ui.colored_label(style::warn(), "&*");
+            ui.add(Text::new("&*").color(style::warn()));
         }
         for c in &query.writes {
             if chip(
@@ -58,7 +58,7 @@ pub fn access_line(
         }
         for (i, filter) in query.filters.iter().enumerate() {
             if i > 0 {
-                ui.colored_label(style::filter(), "or");
+                ui.add(Text::new("or").color(style::filter()));
             }
             if !filter.with.is_empty() {
                 let names: Vec<&str> = filter
@@ -66,7 +66,7 @@ pub fn access_line(
                     .iter()
                     .map(|c| comp_name(snapshot, *c))
                     .collect();
-                ui.colored_label(style::filter(), format!("With<{}>", names.join(", ")));
+                ui.add(Text::new(format!("With<{}>", names.join(", "))).color(style::filter()));
             }
             if !filter.without.is_empty() {
                 let names: Vec<&str> = filter
@@ -74,7 +74,7 @@ pub fn access_line(
                     .iter()
                     .map(|c| comp_name(snapshot, *c))
                     .collect();
-                ui.colored_label(style::filter(), format!("Without<{}>", names.join(", ")));
+                ui.add(Text::new(format!("Without<{}>", names.join(", "))).color(style::filter()));
             }
         }
     }
@@ -103,11 +103,13 @@ pub fn details_panel(
     view: &mut ViewState,
 ) {
     if let Some(comp) = view.focus_component {
-        ui.horizontal(|ui| {
-            if ui.button("×").clicked() {
+        Row::new().show(ui, |ui| {
+            if ui.add(Button::new("×")).clicked() {
                 view.focus_component = None;
             }
-            ui.heading(snapshot.components[comp as usize].short_name.clone());
+            ui.add(Text::heading(
+                snapshot.components[comp as usize].short_name.clone(),
+            ));
         });
         if view.focus_component.is_some() {
             let height = if view.selected.is_some() {
@@ -122,7 +124,7 @@ pub fn details_panel(
                 .show(ui, |ui| {
                     super::frame_view::component_explorer(ui, snapshot, view, comp)
                 });
-            ui.separator();
+            ui.add(Separator::new());
         }
     }
     let Some(selected) = view.selected else {
@@ -132,14 +134,14 @@ pub fn details_panel(
     let mut focus: Option<CompIx> = None;
     let mut hide: Option<NodeRef> = None;
     let mut toggle_collapse: Option<String> = None;
-    ui.horizontal(|ui| {
-        if ui.button("×").clicked() {
+    Row::new().show(ui, |ui| {
+        if ui.add(Button::new("×")).clicked() {
             select = Some(None);
         }
-        ui.heading(match selected {
+        ui.add(Text::heading(match selected {
             NodeRef::System(s) => schedule.systems[s as usize].short_name.clone(),
             NodeRef::Set(s) => schedule.sets[s as usize].name.clone(),
-        });
+        }));
     });
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -206,38 +208,38 @@ fn system_details(
     hide: &mut Option<NodeRef>,
 ) {
     let system = &schedule.systems[ix as usize];
-    ui.add(egui::Label::new(RichText::new(&system.name).monospace().small()).wrap());
-    ui.horizontal_wrapped(|ui| {
+    ui.add(Text::caption(&system.name).wrap());
+    Row::new().wrap().show(ui, |ui| {
         let f = &system.flags;
         if f.apply_deferred {
-            ui.colored_label(style::edge_sync(), "sync point");
+            ui.add(Text::new("sync point").color(style::edge_sync()));
         }
         if f.exclusive {
-            ui.colored_label(style::exclusive(), "exclusive");
+            ui.add(Text::new("exclusive").color(style::exclusive()));
         }
         if f.deferred {
-            ui.colored_label(style::filter(), "deferred");
+            ui.add(Text::new("deferred").color(style::filter()));
         }
         if f.non_send {
-            ui.colored_label(style::filter(), "non-send");
+            ui.add(Text::new("non-send").color(style::filter()));
         }
         if f.write_all {
-            ui.colored_label(style::warn(), "writes all");
+            ui.add(Text::new("writes all").color(style::warn()));
         } else if f.read_all {
-            ui.colored_label(style::warn(), "reads all");
+            ui.add(Text::new("reads all").color(style::warn()));
         }
         if !f.access_available && !f.exclusive && !f.apply_deferred {
-            ui.colored_label(style::warn(), "access not captured");
+            ui.add(Text::new("access not captured").color(style::warn()));
         }
-        if ui.small_button("hide").clicked() {
+        if ui.add(Button::new("hide").small()).clicked() {
             *hide = Some(NodeRef::System(ix));
         }
     });
     let sets = named_sets(schedule, system);
     if !sets.is_empty() {
-        ui.separator();
-        ui.label("Sets");
-        ui.horizontal_wrapped(|ui| {
+        ui.add(Separator::new());
+        ui.add(Text::new("Sets"));
+        Row::new().wrap().show(ui, |ui| {
             for (set_ix, set) in schedule.sets.iter().enumerate() {
                 if set.is_named()
                     && sets.contains(&set.name.as_str())
@@ -249,11 +251,11 @@ fn system_details(
         });
     }
     if !system.conditions.is_empty() {
-        ui.separator();
-        ui.label("Run conditions");
+        ui.add(Separator::new());
+        ui.add(Text::new("Run conditions"));
         for condition in &system.conditions {
-            ui.horizontal_wrapped(|ui| {
-                ui.monospace(&condition.short_name);
+            Row::new().wrap().show(ui, |ui| {
+                ui.add(Text::new(&condition.short_name));
                 access_line(
                     ui,
                     snapshot,
@@ -264,26 +266,26 @@ fn system_details(
             });
         }
     }
-    ui.separator();
-    ui.label("Access");
+    ui.add(Separator::new());
+    ui.add(Text::new("Access"));
     if system.queries.is_empty() && system.resources.is_empty() {
-        ui.colored_label(style::filter(), "no component or resource access");
+        ui.add(Text::new("no component or resource access").color(style::filter()));
     }
     for query in &system.queries {
-        ui.horizontal_wrapped(|ui| {
-            ui.colored_label(style::filter(), "query");
+        Row::new().wrap().show(ui, |ui| {
+            ui.add(Text::new("query").color(style::filter()));
             access_line(ui, snapshot, std::slice::from_ref(query), &[], focus);
         });
     }
     if !system.resources.is_empty() {
-        ui.horizontal_wrapped(|ui| {
-            ui.colored_label(style::filter(), "resources");
+        Row::new().wrap().show(ui, |ui| {
+            ui.add(Text::new("resources").color(style::filter()));
             access_line(ui, snapshot, &[], &system.resources, focus);
         });
     }
 
-    ui.separator();
-    ui.label("Ordering");
+    ui.add(Separator::new());
+    ui.add(Text::new("Ordering"));
     let mut after: Vec<SysIx> = schedule
         .flat_edges
         .iter()
@@ -315,13 +317,13 @@ fn system_details(
             }
         }
         if !consumes.is_empty() || !produces.is_empty() {
-            ui.separator();
-            ui.label("Data flow");
+            ui.add(Separator::new());
+            ui.add(Text::new("Data flow"));
         }
         for (title, map) in [("consumes from", consumes), ("produces for", produces)] {
             for (comp, systems) in map {
-                ui.horizontal_wrapped(|ui| {
-                    ui.colored_label(style::filter(), title);
+                Row::new().wrap().show(ui, |ui| {
+                    ui.add(Text::new(title).color(style::filter()));
                     if chip(
                         ui,
                         comp_name(snapshot, comp),
@@ -329,7 +331,7 @@ fn system_details(
                     ) {
                         *focus = Some(comp);
                     }
-                    ui.colored_label(style::filter(), "◀");
+                    ui.add(Text::new("◀").color(style::filter()));
                     let mut systems = systems;
                     systems.sort_unstable();
                     systems.dedup();
@@ -353,14 +355,11 @@ fn system_details(
         .filter(|c| c.a == ix || c.b == ix)
         .collect();
     if !conflicts.is_empty() {
-        ui.separator();
-        ui.colored_label(
-            style::ambiguity(),
-            format!("{} ambiguities", conflicts.len()),
-        );
+        ui.add(Separator::new());
+        ui.add(Text::new(format!("{} ambiguities", conflicts.len())).color(style::ambiguity()));
         for c in conflicts {
             let other = if c.a == ix { c.b } else { c.a };
-            ui.horizontal_wrapped(|ui| {
+            Row::new().wrap().show(ui, |ui| {
                 if chip(
                     ui,
                     &schedule.systems[other as usize].short_name,
@@ -368,9 +367,9 @@ fn system_details(
                 ) {
                     *select = Some(Some(NodeRef::System(other)));
                 }
-                ui.colored_label(style::filter(), "on");
+                ui.add(Text::new("on").color(style::filter()));
                 if c.components.is_empty() {
-                    ui.colored_label(style::warn(), "World");
+                    ui.add(Text::new("World").color(style::warn()));
                 }
                 for comp in &c.components {
                     if chip(ui, comp_name(snapshot, *comp), style::ambiguity()) {
@@ -392,8 +391,8 @@ fn system_links(
     if systems.is_empty() {
         return;
     }
-    ui.horizontal_wrapped(|ui| {
-        ui.colored_label(style::filter(), title);
+    Row::new().wrap().show(ui, |ui| {
+        ui.add(Text::new(title).color(style::filter()));
         for s in systems {
             let system = &schedule.systems[*s as usize];
             let label = if system.flags.apply_deferred {
@@ -422,25 +421,25 @@ fn set_details(
         .per_schedule
         .get(&schedule.label)
         .is_some_and(|s| s.collapsed_sets.contains(&set.name));
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         if ui
-            .small_button(if collapsed { "expand" } else { "collapse" })
+            .add(Button::new(if collapsed { "expand" } else { "collapse" }).small())
             .clicked()
         {
             *toggle_collapse = Some(set.name.clone());
         }
-        if ui.small_button("hide").clicked() {
+        if ui.add(Button::new("hide").small()).clicked() {
             *hide = Some(NodeRef::Set(ix));
         }
     });
     if !set.conditions.is_empty() {
-        ui.separator();
-        ui.label("Run conditions");
+        ui.add(Separator::new());
+        ui.add(Text::new("Run conditions"));
         for condition in &set.conditions {
-            ui.monospace(&condition.short_name);
+            ui.add(Text::new(&condition.short_name));
         }
     }
-    ui.separator();
+    ui.add(Separator::new());
     let members: Vec<SysIx> = schedule
         .systems
         .iter()
@@ -448,7 +447,7 @@ fn set_details(
         .filter(|(_, s)| s.sets.contains(&ix))
         .map(|(i, _)| i as SysIx)
         .collect();
-    ui.label(format!("{} direct members", members.len()));
+    ui.add(Text::new(format!("{} direct members", members.len())));
     for s in members {
         if chip(
             ui,
@@ -469,8 +468,8 @@ fn set_details(
         })
         .collect();
     if !children.is_empty() {
-        ui.separator();
-        ui.label(format!("child sets: {}", children.join(", ")));
+        ui.add(Separator::new());
+        ui.add(Text::new(format!("child sets: {}", children.join(", "))));
     }
     let deps: Vec<String> = schedule
         .dependency
@@ -490,10 +489,10 @@ fn set_details(
         })
         .collect();
     if !deps.is_empty() {
-        ui.separator();
-        ui.label("Configured ordering");
+        ui.add(Separator::new());
+        ui.add(Text::new("Configured ordering"));
         for d in deps {
-            ui.label(d);
+            ui.add(Text::new(d));
         }
     }
 }

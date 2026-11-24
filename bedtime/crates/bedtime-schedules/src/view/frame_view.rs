@@ -11,6 +11,7 @@ use bedtime_ui::egui::{
     self, Align2, Color32, CornerRadius, FontId, Galley, Painter, Pos2, Rect, Sense, Shape, Stroke,
     StrokeKind, TextStyle, epaint::QuadraticBezierShape, pos2, vec2,
 };
+use bedtime_ui::{Row, Separator, Text};
 
 use super::{
     FrameCache, Mode, ViewState, comp_name, legend, scene_text::SceneText, search_matches, style,
@@ -620,11 +621,8 @@ fn column_tooltip(ui: &mut egui::Ui, snapshot: &AppSnapshot, seq: &FrameSequence
     let fs = seq.systems[col];
     let schedule = &snapshot.schedules[fs.schedule];
     let system = &schedule.systems[fs.system as usize];
-    ui.monospace(&system.name);
-    ui.colored_label(
-        style::filter(),
-        format!("{} · wave {}", schedule.label, fs.wave),
-    );
+    ui.add(Text::new(&system.name));
+    ui.add(Text::new(format!("{} · wave {}", schedule.label, fs.wave)).color(style::filter()));
     let mut writes = Vec::new();
     let mut reads = Vec::new();
     for m in seq.marks.iter().filter(|m| m.column == col) {
@@ -636,18 +634,18 @@ fn column_tooltip(ui: &mut egui::Ui, snapshot: &AppSnapshot, seq: &FrameSequence
         }
     }
     if !writes.is_empty() {
-        ui.colored_label(style::write(), format!("writes: {}", writes.join(", ")));
+        ui.add(Text::new(format!("writes: {}", writes.join(", "))).color(style::write()));
     }
     if !reads.is_empty() {
-        ui.colored_label(style::read(), format!("reads: {}", reads.join(", ")));
+        ui.add(Text::new(format!("reads: {}", reads.join(", "))).color(style::read()));
     }
-    ui.colored_label(style::filter(), "click: details");
+    ui.add(Text::new("click: details").color(style::filter()));
 }
 
 fn lane_tooltip(ui: &mut egui::Ui, snapshot: &AppSnapshot, seq: &FrameSequence, comp: CompIx) {
     ui.set_max_width(420.0);
     let c = &snapshot.components[comp as usize];
-    ui.monospace(&c.name);
+    ui.add(Text::new(&c.name));
     let writers = seq
         .marks
         .iter()
@@ -658,18 +656,18 @@ fn lane_tooltip(ui: &mut egui::Ui, snapshot: &AppSnapshot, seq: &FrameSequence, 
         .iter()
         .filter(|m| m.comp == comp && m.kind.is_read())
         .count();
-    ui.colored_label(
-        style::filter(),
-        format!(
+    ui.add(
+        Text::new(format!(
             "{} · {writers} writers · {readers} readers",
             if c.is_resource {
                 "resource"
             } else {
                 "component"
             }
-        ),
+        ))
+        .color(style::filter()),
     );
-    ui.colored_label(style::filter(), "click: focus this lane");
+    ui.add(Text::new("click: focus this lane").color(style::filter()));
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1015,23 +1013,23 @@ pub fn component_explorer(
     };
     let seq = &cache.seq;
     let c = &snapshot.components[comp as usize];
-    ui.add(egui::Label::new(egui::RichText::new(&c.name).monospace().small()).wrap());
-    ui.colored_label(
-        style::filter(),
-        if c.is_resource {
+    ui.add(Text::caption(&c.name).wrap());
+    ui.add(
+        Text::new(if c.is_resource {
             "resource"
         } else {
             "component"
-        },
+        })
+        .color(style::filter()),
     );
     let marks: Vec<&frame::Mark> = seq.marks.iter().filter(|m| m.comp == comp).collect();
     let writers = marks.iter().filter(|m| m.kind.is_write()).count();
     let readers = marks.iter().filter(|m| m.kind.is_read()).count();
-    ui.label(format!(
+    ui.add(Text::new(format!(
         "{writers} writes · {readers} reads · {} hand-offs",
         seq.handoffs.iter().filter(|h| h.comp == comp).count()
-    ));
-    ui.separator();
+    )));
+    ui.add(Separator::new());
     let mut select: Option<(String, SysIx)> = None;
     let mut last_band: Option<usize> = None;
     let band_of = |col: usize| {
@@ -1043,16 +1041,16 @@ pub fn component_explorer(
         let band = band_of(m.column);
         if band != last_band {
             if let Some(b) = band {
-                ui.add_space(4.0);
+                ui.add_space(bedtime_ui::Space::Xs.px(ui));
                 let band = &seq.bands[b];
-                ui.colored_label(band_color(band.kind, &band.label, 255), &band.label);
+                ui.add(Text::new(&band.label).color(band_color(band.kind, &band.label, 255)));
             }
             last_band = band;
         }
         let fs = seq.systems[m.column];
         let schedule = &snapshot.schedules[fs.schedule];
         let system = &schedule.systems[fs.system as usize];
-        ui.horizontal_wrapped(|ui| {
+        Row::new().wrap().show(ui, |ui| {
             let (chip, color) = match m.kind {
                 MarkKind::Write => ("W", style::write()),
                 MarkKind::ConditionWrite => ("W?", style::write()),
@@ -1061,13 +1059,12 @@ pub fn component_explorer(
                 MarkKind::Filter => ("filter", style::filter()),
                 MarkKind::Archetypal => ("Has", style::filter()),
             };
-            ui.colored_label(color, chip);
+            ui.add(Text::new(chip).color(color));
             if ui
                 .add(
-                    egui::Label::new(
-                        egui::RichText::new(&system.short_name).color(style::node_text()),
-                    )
-                    .sense(Sense::click()),
+                    Text::new(&system.short_name)
+                        .color(style::node_text())
+                        .clickable(),
                 )
                 .clicked()
             {
@@ -1102,7 +1099,7 @@ pub fn component_explorer(
                     }
                 }
                 if !parts.is_empty() {
-                    ui.colored_label(style::filter(), parts.join(" "));
+                    ui.add(Text::new(parts.join(" ")).color(style::filter()));
                 }
             }
         });

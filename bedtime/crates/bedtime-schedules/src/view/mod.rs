@@ -12,6 +12,7 @@ pub mod style;
 
 use std::collections::{HashMap, HashSet};
 
+use bedtime_ui::Text;
 use bedtime_ui::egui;
 
 pub use frame_view::{FrameViewOptions, LaneSort};
@@ -267,7 +268,7 @@ pub fn frame(
         .and_then(|label| snapshot.schedule(label))
     else {
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.label("No schedule selected");
+            ui.add(Text::new("No schedule selected"));
         });
         return;
     };
