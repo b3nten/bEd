@@ -4,7 +4,8 @@
 //! it to style surfaces yourself.
 //!
 //! The theme is `ColorTheme`, a theme id looked up in bedtime-ui's
-//! `ThemeFolder` (bedtime's own dark theme without one). Which themes exist
+//! `ThemeFolder` (without one, bedtime-ui's own dark and light themes, the
+//! dark one until another's chosen). Which themes exist
 //! is the app's: `ThemesPlugin` installs its shipped themes into its themes
 //! folder and sets the default. `ThemeEditorPlugin` (opt-in) adds the Theme
 //! Editor panel.
@@ -158,7 +159,7 @@ impl Plugin for AppearancePlugin {
     }
 }
 
-/// An app's themes: `folder` (none: only bedtime's own dark theme; relative:
+/// An app's themes: `folder` (none: bedtime-ui's own dark and light; relative:
 /// under the `PersistenceDirectory`) gets the `shipped` themes it's missing
 /// (edited ones are left alone), and `default` is the theme until one's
 /// chosen.
@@ -219,13 +220,18 @@ fn install(folder: &std::path::Path, shipped: &[(&str, &str)]) -> std::io::Resul
     Ok(())
 }
 
-/// The folder's themes, by name.
+/// The folder's themes, by name; without a folder, bedtime-ui's own.
 fn theme_choices(folder: Option<&ThemeFolder>) -> Vec<(String, String)> {
-    let mut choices: Vec<_> = folder
-        .into_iter()
-        .flat_map(ThemeFolder::themes)
-        .map(|(id, theme)| (id.to_owned(), theme.name.clone()))
-        .collect();
+    let mut choices: Vec<_> = match folder {
+        Some(folder) => folder
+            .themes()
+            .map(|(id, theme)| (id.to_owned(), theme.name.clone()))
+            .collect(),
+        None => bedtime_ui::Theme::built_in()
+            .into_iter()
+            .map(|(id, theme)| (id.to_owned(), theme.name))
+            .collect(),
+    };
     choices.sort_by(|a, b| a.1.cmp(&b.1));
     choices
 }
@@ -243,8 +249,15 @@ fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, laye
     );
     let themes = world.get_resource::<ThemeFolder>();
     let choices = theme_choices(themes);
-    let found = themes.and_then(|themes| themes.get(&chosen));
-    let shown = found.map_or_else(|| chosen.clone(), |theme| theme.name.clone());
+    let found = match themes {
+        Some(themes) => themes.get(&chosen).cloned(),
+        // Nothing chosen yet is the dark one.
+        None => bedtime_ui::Theme::built_in_named(&chosen)
+            .or_else(|| chosen.is_empty().then(bedtime_ui::Theme::dark)),
+    };
+    let shown = found
+        .as_ref()
+        .map_or_else(|| chosen.clone(), |theme| theme.name.clone());
     let broken: Vec<String> = themes
         .into_iter()
         .flat_map(ThemeFolder::errors)
@@ -368,11 +381,12 @@ fn apply_appearance(
         if !appearance.is_changed() && !folder_changed && !style.is_added() {
             continue;
         }
-        let mut theme = folder
-            .as_ref()
-            .and_then(|folder| folder.get(&appearance.theme))
-            .cloned()
-            .unwrap_or_else(bedtime_ui::Theme::dark);
+        let mut theme = match &folder {
+            Some(folder) => folder.get(&appearance.theme).cloned(),
+            // No folder: bedtime-ui's own themes.
+            None => bedtime_ui::Theme::built_in_named(&appearance.theme),
+        }
+        .unwrap_or_else(bedtime_ui::Theme::dark);
         theme.palette.background[3] = appearance.window_opacity;
         theme.palette.panel_background[3] = appearance.panel_opacity;
         let metrics = Metrics {

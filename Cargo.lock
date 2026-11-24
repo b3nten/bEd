@@ -1009,6 +1009,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bedui"
+version = "0.1.0"
+dependencies = [
+ "bedtime",
+ "bevy",
+]
+
+[[package]]
 name = "bevy"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

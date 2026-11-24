@@ -1,6 +1,7 @@
 //! Bed presentation on upstream egui/Bevy integration; the host owns its window and camera.
 // `#[panel]` names `::bedtime_ui`, so it works in this crate too.
 extern crate self as bedtime_ui;
+mod ambient;
 /// `#[bedtime_ui::panel]`: see [`layouts::panel`].
 pub use layouts::panel;
 mod backdrop;
@@ -29,6 +30,15 @@ pub mod markdown;
 mod motion;
 pub mod picker;
 mod runtime;
+pub mod stories;
+pub mod tokens;
+pub mod widgets;
+/// What a panel or a component is written with.
+pub mod prelude {
+    pub use crate::tokens::{Radius, Size, Space, TextRole, Tone};
+    pub use crate::widgets::{Button, Column, Row, Text, Variant};
+    pub use egui::{self, Response, Ui, Widget};
+}
 pub mod theme;
 pub mod tree;
 mod viewport;
@@ -46,7 +56,9 @@ pub use links::{ExternalOpener, LinksWorldExt, open_with_system, request_open_ex
 pub use motion::{MotionPolicy, ease};
 use std::sync::Mutex;
 pub use theme::{Metrics, Theme};
+pub use tokens::{Radius, Size, Space, TextRole, Tone};
 pub use viewport::{UiViewport, free_layer, viewport_image};
+pub use widgets::{Button, Column, Row, Text, Variant};
 
 /// While this resource exists, each frame's AccessKit tree (every widget's
 /// role, label and bounds in points) is recorded in it. egui builds the whole

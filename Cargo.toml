@@ -40,6 +40,7 @@ bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded"
 members = [
     ".",
     "src/hello",
+    "src/bedui",
     "bedtime/crates/bedtime-clipboard",
     "bedtime/crates/bedtime-code",
     "bedtime/crates/bedtime-hex",

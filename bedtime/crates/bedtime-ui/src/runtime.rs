@@ -5,7 +5,9 @@ use std::{collections::HashMap, time::Instant};
 
 #[derive(Resource, Default)]
 pub(crate) struct Runtime {
-    icons: Mutex<icon_cache::IconCache>,
+    icons: std::sync::Arc<Mutex<icon_cache::IconCache>>,
+    /// Each camera's theme, shared with its context (`Theme::of`).
+    shared: HashMap<Entity, std::sync::Arc<Theme>>,
     /// The theme and metrics each camera's context was last styled with.
     themes: HashMap<Entity, (Theme, Metrics)>,
     /// The font family each camera's context has. New contexts get Bedfont, so
@@ -42,6 +44,7 @@ pub(crate) fn remove_camera(
     }
     if let Some(mut runtime) = world.get_resource_mut::<Runtime>() {
         runtime.themes.remove(&entity);
+        runtime.shared.remove(&entity);
         runtime.fonts.remove(&entity);
     }
     world.commands().queue(move |world: &mut World| {
@@ -132,7 +135,7 @@ pub(crate) fn draw(world: &mut World) {
         world
             .resource_mut::<Runtime>()
             .icons
-            .get_mut()
+            .lock()
             .unwrap()
             .clear();
         return;
@@ -160,6 +163,12 @@ pub(crate) fn draw(world: &mut World) {
         }
         theme.apply(&metrics, &ctx);
         runtime.themes.insert(camera, style);
+        runtime
+            .shared
+            .insert(camera, std::sync::Arc::new(theme.clone()));
+    }
+    if let Some(shared) = runtime.shared.get(&camera) {
+        crate::ambient::install(&ctx, shared.clone(), policy, runtime.icons.clone());
     }
     let family = &metrics.font_family;
     if runtime.fonts.get(&camera).unwrap_or(&None) != family
@@ -174,7 +183,7 @@ pub(crate) fn draw(world: &mut World) {
         s.interaction.show_tooltips_only_when_still = false;
     });
     let pixels = (metrics.font_size * ctx.pixels_per_point()).ceil().max(1.0) as u32;
-    let icons_result = runtime.icons.get_mut().unwrap().prepare(
+    let icons_result = runtime.icons.lock().unwrap().prepare(
         &mut ctx.clone(),
         world.resource::<Assets<Icon>>(),
         world.resource::<Assets<IconSet>>(),
@@ -265,7 +274,8 @@ pub(crate) fn draw(world: &mut World) {
         // discarded along with its shapes.
         output.textures_delta.clear();
         runtime.themes.remove(&camera);
-        runtime.icons.get_mut().unwrap().clear();
+        runtime.shared.remove(&camera);
+        runtime.icons.lock().unwrap().clear();
         world.insert_resource(runtime);
         return;
     }
@@ -540,7 +550,7 @@ mod tests {
         world
             .resource_mut::<Runtime>()
             .icons
-            .get_mut()
+            .lock()
             .unwrap()
             .clear();
         let mut output = ctx.run_ui(default(), |_| {});

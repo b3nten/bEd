@@ -106,10 +106,9 @@ class Bed:
     folders for the recent list.
 
     `app` runs another bedtime app instead (a package of the workspace with
-    an `automation` feature, such as `hello`): `settings` and `recent` are
-    bEd's. `config` is a config directory to use and keep, to start an app
-    again with what it saved; without it each run gets its own, removed when
-    it closes."""
+    an `automation` feature, such as `hello`): `recent` is bEd's. `config` is
+    a config directory to use and keep, to start an app again with what it
+    saved; without it each run gets its own, removed when it closes."""
 
     def __init__(self, folder=None, *, settings=None, recent=None, name=None, timeout=30, build_first=True,
                  app="bed", config=None):
@@ -121,9 +120,9 @@ class Bed:
         self.config = Path(config or tempfile.mkdtemp(prefix=f"{app}-automation-"))
         # No cat unless a script asks for it: it stands where it likes, in
         # front of what's there, and keeps the window drawing.
-        values = {"appearance.cat": False, **(settings or {})}
+        values = {**({"appearance.cat": False} if app == "bed" else {}), **(settings or {})}
         global_dir = self.config / "global"
-        if app == "bed" and not self.keep_config:
+        if values and not self.keep_config:
             global_dir.mkdir()
             (global_dir / "settings.ron").write_text(
                 "{\n" + "".join(f"    {json.dumps(k)}: {ron(v)},\n" for k, v in values.items()) + "}\n"

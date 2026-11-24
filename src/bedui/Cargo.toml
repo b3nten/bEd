@@ -1,0 +1,20 @@
+[package]
+name = "bedui"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "The playground for bedtime-ui: every component, with its controls"
+
+[[bin]]
+name = "bedui"
+path = "main.rs"
+
+[features]
+# Let scripts drive the app.
+automation = ["bedtime/automation"]
+
+# All an app depends on: bedtime, and Bevy for its window and renderer.
+[dependencies]
+bedtime.workspace = true
+bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_winit", "bevy_log", "png", "keyboard", "mouse", "x11", "wayland"] }

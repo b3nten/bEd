@@ -15,7 +15,7 @@ pub type Rgba = [f32; 4];
 
 /// Line height over font size for the bundled Bedfont; installed monospace
 /// fonts are shorter. Controls are sized for it so every font's text fits.
-const LINE_HEIGHT: f32 = 1.33;
+pub(crate) const LINE_HEIGHT: f32 = 1.33;
 
 /// The font sizes a theme can use, in points.
 pub const FONT_SIZES: std::ops::RangeInclusive<f32> = 8.0..=72.0;
@@ -185,6 +185,23 @@ impl Theme {
             .expect("bundled theme")
     }
 
+    /// bedtime-ui's own themes, by id: the themes of an app with no
+    /// `ThemeFolder`.
+    pub fn built_in() -> [(&'static str, Self); 2] {
+        [
+            ("everforest-dark-medium", Self::dark()),
+            ("everforest-light-medium", Self::light()),
+        ]
+    }
+
+    /// One of bedtime-ui's own themes, if `id` is one.
+    pub fn built_in_named(id: &str) -> Option<Self> {
+        Self::built_in()
+            .into_iter()
+            .find(|(built_in, _)| *built_in == id)
+            .map(|(_, theme)| theme)
+    }
+
     /// A theme file.
     pub fn from_ron(text: &str) -> Result<Self, String> {
         let theme: Self = ron::from_str(text).map_err(|error| error.to_string())?;
@@ -331,7 +348,7 @@ impl Theme {
 
 /// `color`, or if it's hard to tell from `background`, moved toward `toward`
 /// just far enough to be.
-fn distinct(color: Rgba, background: Rgba, toward: Rgba) -> Rgba {
+pub(crate) fn distinct(color: Rgba, background: Rgba, toward: Rgba) -> Rgba {
     let difference = |a: Rgba, b: Rgba| (0..3).map(|i| (a[i] - b[i]).abs()).sum::<f32>();
     const ENOUGH: f32 = 0.09;
     if difference(color, background) >= ENOUGH {
