@@ -13,8 +13,8 @@ use crate::{
     json, send,
 };
 use bedtime_ui::{
-    BuiltinIcon, Button, Checkbox, CodeView, Row, Segmented, Select, Separator, Size, Space, Text,
-    TextField, Tone, UiContext,
+    BuiltinIcon, Button, Checkbox, CodeView, ListRow, MenuItem, Row, Segmented, Select, Separator,
+    Size, Space, Spinner, Text, TextArea, TextField, Tone, UiContext,
     data::{DataTree, Value},
     egui,
     hex::HexViewer,
@@ -390,7 +390,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
     };
     let Some(mut collection) = crate::requests::collection(world, panel).cloned() else {
         world.entity_mut(panel).insert((shown, view));
-        ui.centered_and_justified(|ui| ui.spinner());
+        ui.centered_and_justified(|ui| ui.add(Spinner::new()));
         return;
     };
     let exchanges = world.resource::<Exchanges>();
@@ -490,7 +490,7 @@ fn sidebar(ui: &mut egui::Ui, d: &mut Draw) {
                 0 => "Variables".to_owned(),
                 n => format!("Variables ({n})"),
             };
-            if row(ui, d.context, d.shown.variables, None, &text, false).clicked() {
+            if row(ui, d.shown.variables, None, &text, false).clicked() {
                 d.shown.variables = true;
             }
         });
@@ -508,19 +508,17 @@ fn sidebar(ui: &mut egui::Ui, d: &mut Draw) {
                     short(request.method),
                     method_color(d.context, request.method),
                 ));
-                let response = row(ui, d.context, selected, tag, request.label(), busy);
+                let response = row(ui, selected, tag, request.label(), busy);
                 if response.clicked() {
                     d.shown.selected = Some(id);
                     d.shown.variables = false;
                 }
                 response.context_menu(|ui| {
-                    if ui.button("Duplicate").clicked() {
+                    if ui.add(MenuItem::new("Duplicate")).clicked() {
                         d.intents.push(Intent::Duplicate(id));
-                        ui.close();
                     }
-                    if ui.button("Delete…").clicked() {
+                    if ui.add(MenuItem::new("Delete…").danger()).clicked() {
                         d.view.confirm_delete = Some(id);
-                        ui.close();
                     }
                 });
                 if d.view.confirm_delete == Some(id) {
@@ -539,79 +537,21 @@ fn sidebar(ui: &mut egui::Ui, d: &mut Draw) {
         });
 }
 
-/// A selectable row of the sidebar: an optional method tag, the text cut to
-/// fit, and a spinner while `busy`.
+/// A row of the sidebar: an optional method tag, the text cut to fit, and a
+/// spinner while `busy`.
 fn row(
     ui: &mut egui::Ui,
-    context: &UiContext<'_>,
     selected: bool,
     tag: Option<(&str, egui::Color32)>,
     text: &str,
     busy: bool,
 ) -> egui::Response {
-    let p = &context.theme.palette;
-    let height = context.metrics.font_size + 10.0;
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), height),
-        egui::Sense::click(),
-    );
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, text)
-    });
-    let painter = ui.painter_at(rect);
-    let fill = if selected {
-        Some(p.selection)
-    } else if response.hovered() {
-        Some(theme::mix(p.panel_background, p.text, 0.08))
-    } else {
-        None
-    };
-    if let Some(fill) = fill {
-        painter.rect_filled(rect, context.metrics.rounding, theme::color(fill));
-    }
-    let ink = theme::color(p.text);
-    let mut x = rect.left() + 6.0;
+    let mut row = ListRow::new(text).selected(selected).busy(busy);
     if let Some((tag, color)) = tag {
-        let font = egui::FontId::monospace(context.metrics.font_size * 0.72);
-        let width = painter
-            .layout_no_wrap("PATCH".into(), font.clone(), color)
-            .size()
-            .x;
-        painter.text(
-            egui::pos2(x, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            tag,
-            font,
-            color,
-        );
-        x += width + 6.0;
+        // The longest method's short name.
+        row = row.tag(tag, color, "PATCH");
     }
-    let spinner = context.metrics.font_size * 0.8;
-    let right = rect.right() - 6.0 - if busy { spinner + 4.0 } else { 0.0 };
-    let mut job = egui::text::LayoutJob::single_section(
-        text.to_owned(),
-        egui::TextFormat::simple(egui::FontId::proportional(context.metrics.font_size), ink),
-    );
-    job.wrap = egui::text::TextWrapping {
-        max_width: (right - x).max(0.0),
-        max_rows: 1,
-        break_anywhere: true,
-        overflow_character: Some('…'),
-    };
-    let galley = painter.layout_job(job);
-    painter.galley(
-        egui::pos2(x, rect.center().y - galley.size().y / 2.0),
-        galley,
-        ink,
-    );
-    if busy {
-        let at = egui::Rect::from_center_size(
-            egui::pos2(rect.right() - 6.0 - spinner / 2.0, rect.center().y),
-            egui::vec2(spinner, spinner),
-        );
-        egui::Spinner::new().size(spinner).paint_at(ui, at);
-    }
-    response
+    ui.add(row)
 }
 
 /// The selected request's editor.
@@ -689,13 +629,11 @@ fn request(ui: &mut egui::Ui, d: &mut Draw, id: u64) {
                 fields(ui, &mut request.headers, ["Header", "Value"], "Add Header")
             }
             RequestTab::Body => {
-                // bedtime-ui has no multi-line field yet.
                 ui.add(
-                    egui::TextEdit::multiline(&mut request.body)
-                        .code_editor()
-                        .hint_text("Request body. Set its Content-Type in Headers.")
-                        .desired_rows(8)
-                        .desired_width(f32::INFINITY),
+                    TextArea::new(&mut request.body)
+                        .hint("Request body. Set its Content-Type in Headers.")
+                        .rows(8)
+                        .fill_width(),
                 );
             }
         });
@@ -787,8 +725,7 @@ fn exchange(ui: &mut egui::Ui, d: &mut Draw, id: u64) {
         }
         Some(Exchange::Sending { started, .. }) => {
             Row::new().show(ui, |ui| {
-                // bedtime-ui has no spinner yet.
-                ui.spinner();
+                ui.add(Spinner::new());
                 ui.add(Text::new(format!(
                     "Sending… {:.1} s",
                     started.elapsed().as_secs_f32()

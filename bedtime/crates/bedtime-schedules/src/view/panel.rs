@@ -196,12 +196,11 @@ pub fn side_panel(ui: &mut egui::Ui, snapshot: &AppSnapshot, view: &mut ViewStat
                         Row::new().show(ui, |ui| {
                             ui.add(Text::new("time zoom"));
                             let old = view.time_zoom;
-                            // bedtime-ui has no slider yet.
                             if ui
                                 .add(
-                                    egui::Slider::new(&mut view.time_zoom, 0.25..=64.0)
-                                        .logarithmic(true)
-                                        .show_value(false),
+                                    Slider::new(&mut view.time_zoom, 0.25..=64.0)
+                                        .logarithmic()
+                                        .label("time zoom"),
                                 )
                                 .changed()
                             {
@@ -322,10 +321,7 @@ pub fn side_panel(ui: &mut egui::Ui, snapshot: &AppSnapshot, view: &mut ViewStat
                         {
                             toggle_collapse.push(set.name.clone());
                         }
-                        let row = Button::new(&set.name)
-                            .ghost()
-                            .fill_width()
-                            .align(egui::Align::Min)
+                        let row = ListRow::new(&set.name)
                             .strikethrough(state.hidden_sets.contains(&set.name))
                             .selected(view.selected == Some(NodeRef::Set(ix)));
                         if ui.add(row).clicked() {
@@ -390,10 +386,8 @@ pub fn side_panel(ui: &mut egui::Ui, snapshot: &AppSnapshot, view: &mut ViewStat
                             continue;
                         }
                         let is_resource = snapshot.components[comp as usize].is_resource;
-                        let row = Button::new(format!("{name}  {writers}w {readers}r"))
-                            .ghost()
-                            .fill_width()
-                            .align(egui::Align::Min)
+                        let row = ListRow::new(name)
+                            .trailing(format!("{writers}w {readers}r"))
                             .italic(is_resource)
                             .selected(view.focus_component == Some(comp));
                         if ui

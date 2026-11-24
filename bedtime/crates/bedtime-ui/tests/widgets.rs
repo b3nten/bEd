@@ -342,3 +342,91 @@ fn a_named_text_field_keeps_its_text_for_scripts() {
             .any(|label| label.as_deref() != Some("Address"))
     );
 }
+
+#[test]
+fn a_slider_follows_a_click_and_stays_in_its_range() {
+    let ctx = egui::Context::default();
+    let mut value = 0.2_f32;
+    let mut rect = egui::Rect::NOTHING;
+    passes(&ctx, None, |ui| {
+        rect = ui.add(Slider::new(&mut value, 0.0..=1.0).width(200.0)).rect;
+    });
+    assert_eq!(value, 0.2, "drawing doesn't change it");
+    let mut changed = false;
+    passes(&ctx, Some(rect.center()), |ui| {
+        changed |= ui
+            .add(Slider::new(&mut value, 0.0..=1.0).width(200.0))
+            .changed();
+    });
+    assert!(
+        changed && (value - 0.5).abs() < 0.02,
+        "the middle is half: {value}"
+    );
+    passes(
+        &ctx,
+        Some(rect.right_center() + egui::vec2(-1.0, 0.0)),
+        |ui| {
+            ui.add(Slider::new(&mut value, 0.0..=1.0).width(200.0));
+        },
+    );
+    assert_eq!(value, 1.0, "the end is the most");
+
+    // Whole numbers stay whole; a logarithmic one's middle is the geometric mean.
+    let (mut whole, mut log) = (1_i32, 1.0_f32);
+    let mut rects = [egui::Rect::NOTHING; 2];
+    let ctx = egui::Context::default();
+    passes(&ctx, None, |ui| {
+        rects[0] = ui.add(Slider::new(&mut whole, 1..=8).width(200.0)).rect;
+        rects[1] = ui
+            .add(
+                Slider::new(&mut log, 0.25..=64.0)
+                    .logarithmic()
+                    .width(200.0),
+            )
+            .rect;
+    });
+    for index in 0..2 {
+        passes(&ctx, Some(rects[index].center()), |ui| {
+            ui.add(Slider::new(&mut whole, 1..=8).width(200.0));
+            ui.add(
+                Slider::new(&mut log, 0.25..=64.0)
+                    .logarithmic()
+                    .width(200.0),
+            );
+        });
+    }
+    assert!((4..=5).contains(&whole));
+    assert!((log - 4.0).abs() < 0.3, "sqrt(0.25 * 64) is 4: {log}");
+}
+
+#[test]
+fn a_list_row_fills_the_width_and_is_clicked() {
+    let ctx = egui::Context::default();
+    let mut rect = egui::Rect::NOTHING;
+    let mut clicks = 0;
+    let mut available = 0.0;
+    passes(&ctx, None, |ui| {
+        available = ui.available_width();
+        rect = ui
+            .add(ListRow::new("Create a user").busy(true).trailing("3"))
+            .rect;
+    });
+    assert_eq!(rect.width(), available);
+    passes(&ctx, Some(rect.center()), |ui| {
+        let row = ListRow::new("Create a user").tag("POST", egui::Color32::RED, "DELETE");
+        clicks += usize::from(ui.add(row).clicked());
+    });
+    assert_eq!(clicks, 1);
+}
+
+#[test]
+fn a_text_area_starts_as_tall_as_its_rows() {
+    pass(|ui| {
+        let mut text = String::new();
+        let short = ui.add(TextArea::new(&mut text).rows(2)).rect.height();
+        let tall = ui.add(TextArea::new(&mut text).rows(8)).rect.height();
+        assert!(tall > short * 2.0);
+        let wide = ui.add(TextArea::new(&mut text).fill_width()).rect.width();
+        assert!((wide - ui.available_width()).abs() < 1.0);
+    });
+}

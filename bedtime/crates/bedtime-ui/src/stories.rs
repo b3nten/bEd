@@ -52,6 +52,26 @@ pub fn builtin() -> Vec<Story> {
             draw: segmented,
         },
         Story {
+            group: "Components",
+            name: "Slider",
+            draw: slider,
+        },
+        Story {
+            group: "Components",
+            name: "Text Area",
+            draw: text_area,
+        },
+        Story {
+            group: "Components",
+            name: "List Row and Menu",
+            draw: lists,
+        },
+        Story {
+            group: "Components",
+            name: "Spinner",
+            draw: spinner,
+        },
+        Story {
             group: "Layout",
             name: "Section and Separator",
             draw: sections,
@@ -471,6 +491,189 @@ fn sections(ui: &mut egui::Ui, _: &mut Knobs) {
             });
         },
     );
+}
+
+fn slider(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let size = knobs.choice("Size", &[Size::Md, Size::Sm, Size::Lg]);
+    let fill = knobs.toggle("Fill width", false);
+    let disabled = knobs.toggle("Disabled", false);
+
+    stateful(
+        ui,
+        "slider",
+        || (0.65_f32, 4_i32, 1.0_f32),
+        |ui, values| {
+            Column::new().gap(Space::Xl).show(ui, |ui| {
+                section(ui, "With the controls", |ui| {
+                    let mut slider = Slider::new(&mut values.0, 0.0..=1.0)
+                        .label("Opacity")
+                        .size(size);
+                    if fill {
+                        slider = slider.fill_width();
+                    }
+                    ui.add_enabled(!disabled, slider);
+                    ui.add(Text::caption(format!("Opacity: {:.2}", values.0)).muted());
+                });
+                section(ui, "Whole numbers", |ui| {
+                    Row::new().show(ui, |ui| {
+                        ui.add(Slider::new(&mut values.1, 1..=8).label("Tab width"));
+                        ui.add(Text::new(format!("{} spaces", values.1)));
+                    });
+                });
+                section(ui, "Logarithmic (0.25 to 64)", |ui| {
+                    Row::new().show(ui, |ui| {
+                        ui.add(
+                            Slider::new(&mut values.2, 0.25..=64.0)
+                                .logarithmic()
+                                .label("Zoom"),
+                        );
+                        ui.add(Text::new(format!("{:.2}×", values.2)));
+                        if ui.add(Button::new("1×").small()).clicked() {
+                            values.2 = 1.0;
+                        }
+                    });
+                });
+            });
+        },
+    );
+}
+
+fn text_area(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let hint = knobs.text("Hint", "Request body");
+    let fill = knobs.toggle("Fill width", false);
+    let invalid = knobs.toggle("Invalid", false);
+    let disabled = knobs.toggle("Disabled", false);
+
+    let initial = || {
+        (
+            String::new(),
+            "{\n  \"name\": \"bed\",\n  \"ok\": true\n}".to_owned(),
+        )
+    };
+    stateful(ui, "text-area", initial, |ui, values| {
+        Column::new().gap(Space::Xl).show(ui, |ui| {
+            section(ui, "With the controls", |ui| {
+                let mut area = TextArea::new(&mut values.0)
+                    .hint(&hint)
+                    .label("Notes")
+                    .invalid(invalid);
+                if fill {
+                    area = area.fill_width();
+                }
+                ui.add_enabled(!disabled, area);
+            });
+            section(ui, "Taller, with text", |ui| {
+                ui.add(
+                    TextArea::new(&mut values.1)
+                        .label("Body")
+                        .rows(6)
+                        .width(360.0),
+                );
+            });
+        });
+    });
+}
+
+fn lists(ui: &mut egui::Ui, _: &mut Knobs) {
+    let theme = Theme::of(ui);
+    let methods = [
+        ("GET", Tone::Success, "List users"),
+        (
+            "POST",
+            Tone::Warning,
+            "Create a user with a rather long name that's cut short",
+        ),
+        ("DELETE", Tone::Error, "Remove a user"),
+    ];
+    stateful(
+        ui,
+        "lists",
+        || (0_usize, String::new()),
+        |ui, values| {
+            Column::new().gap(Space::Xl).show(ui, |ui| {
+                section(
+                    ui,
+                    "Rows: a tag, text cut to fit, a spinner, and a menu on right-click",
+                    |ui| {
+                        ui.scope(|ui| {
+                            ui.set_max_width(320.0);
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            for (index, (method, tone, name)) in methods.iter().enumerate() {
+                                let color = theme::color(tone.rgba(&theme.palette));
+                                let row = ListRow::new(*name)
+                                    .tag(*method, color, "DELETE")
+                                    .selected(values.0 == index)
+                                    .busy(index == 1);
+                                let response = ui.add(row);
+                                if response.clicked() {
+                                    values.0 = index;
+                                }
+                                response.context_menu(|ui| {
+                                    if ui.add(MenuItem::new("Duplicate").shortcut("⌘D")).clicked()
+                                    {
+                                        values.1 = format!("Duplicated {name}");
+                                    }
+                                    if ui.add(MenuItem::new("Delete…").danger()).clicked() {
+                                        values.1 = format!("Deleted {name}");
+                                    }
+                                });
+                            }
+                        });
+                        if !values.1.is_empty() {
+                            ui.add(Text::caption(&values.1).muted());
+                        }
+                    },
+                );
+                section(ui, "Rows: an icon, a count, struck through, italic", |ui| {
+                    ui.scope(|ui| {
+                        ui.set_max_width(320.0);
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        ui.add(ListRow::new("src").icon(BuiltinIcon::Folder).trailing("12"));
+                        ui.add(
+                            ListRow::new("Cargo.toml")
+                                .icon(BuiltinIcon::Config)
+                                .selected(true),
+                        );
+                        ui.add(ListRow::new("A hidden set").strikethrough(true));
+                        ui.add(ListRow::new("A resource").italic(true).trailing("3w 5r"));
+                    });
+                });
+                section(ui, "Menu items, as a menu shows them", |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_width(220.0);
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        let _ = ui.add(
+                            MenuItem::new("New File")
+                                .icon(BuiltinIcon::NewFile)
+                                .shortcut("⌘N"),
+                        );
+                        let _ =
+                            ui.add(MenuItem::new("Save").icon(BuiltinIcon::Save).shortcut("⌘S"));
+                        ui.add(Separator::new().space(Space::Xs));
+                        let _ = ui.add(MenuItem::new("Delete…").icon(BuiltinIcon::Trash).danger());
+                    });
+                });
+            });
+        },
+    );
+}
+
+fn spinner(ui: &mut egui::Ui, _: &mut Knobs) {
+    Column::new().gap(Space::Xl).show(ui, |ui| {
+        section(ui, "Every size", |ui| {
+            Row::new().gap(Space::Lg).show(ui, |ui| {
+                for size in Size::ALL {
+                    ui.add(Spinner::new().size(size));
+                }
+            });
+        });
+        section(ui, "Beside text", |ui| {
+            Row::new().show(ui, |ui| {
+                ui.add(Spinner::new());
+                ui.add(Text::new("Sending… 1.2 s"));
+            });
+        });
+    });
 }
 
 fn button(ui: &mut egui::Ui, knobs: &mut Knobs) {

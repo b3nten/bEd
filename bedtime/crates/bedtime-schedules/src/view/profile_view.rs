@@ -772,11 +772,8 @@ pub fn slowest_list(ui: &mut egui::Ui, snapshot: &AppSnapshot, view: &mut ViewSt
         );
         if ui
             .add(
-                Button::new(text)
-                    .small()
-                    .ghost()
-                    .fill_width()
-                    .align(egui::Align::Min)
+                bedtime_ui::ListRow::new(text)
+                    .size(bedtime_ui::Size::Sm)
                     .selected(selected),
             )
             .on_hover_text(format!(
