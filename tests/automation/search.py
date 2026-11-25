@@ -85,8 +85,8 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: bed.exists("let alpha = 1;"), "a.rs opens again")
 
         # Replace shows on a hovered match without moving the rows below.
-        bed.click("replace")
-        until(bed, lambda: bed.exists("replace-all"), "the replace row")
+        bed.click("Replace")
+        until(bed, lambda: bed.exists("Replace All…"), "the replace row")
         bed.wait(30)
         bed.screenshot("search-replace-row")
         below = bed.find("alpha beta alphabet")["rect"][1]
@@ -96,8 +96,8 @@ with tempfile.TemporaryDirectory() as folder:
         after = bed.find("alpha beta alphabet")["rect"][1]
         assert after == below, f"hovering moved the rows: {below} -> {after}"
         bed.screenshot("search-hover-replace")
-        bed.click("replace")
-        until(bed, lambda: not bed.exists("replace-all"), "the replace row hides")
+        bed.click("Replace")
+        until(bed, lambda: not bed.exists("Replace All…"), "the replace row hides")
 
         # Dragging a match onto the far side of the layout opens it there.
         area_right = bed.status()["window"]["width"] - 30
@@ -172,14 +172,14 @@ with tempfile.TemporaryDirectory() as folder:
         # b.rs on disk. It asks first, and each match shows what it becomes.
         set_query(bed, "alpha\\b")
         until(bed, lambda: status(bed) == "4 results in 3 files", "alpha as a word")
-        bed.click("replace")
-        until(bed, lambda: bed.exists("replace-all"), "the replace row")
+        bed.click("Replace")
+        until(bed, lambda: bed.exists("Replace All…"), "the replace row")
         replace = next(w for w in bed.widgets() if w["role"] == "TextInput" and w["rect"][1] > 105)
         bed.click(replace)
         bed.type("omega")
         bed.wait(10)
         bed.screenshot("search-replace-preview")
-        bed.click("replace-all")
+        bed.click("Replace All…")
         until(bed, lambda: bed.exists("Replace All"), "Replace All asks first")
         assert status(bed) == "Replace 4 matches in 3 files?", status(bed)
         assert bed.exists(contains="changed on disk"), "it says files on disk change"
@@ -187,7 +187,7 @@ with tempfile.TemporaryDirectory() as folder:
         bed.screenshot("search-replace-confirm")
         bed.click("Cancel")
         until(bed, lambda: status(bed) == "4 results in 3 files", "Cancel leaves it")
-        bed.click("replace-all")
+        bed.click("Replace All…")
         until(bed, lambda: bed.exists("Replace All"), "asked again")
         bed.click("Replace All")
         until(bed, lambda: status(bed) == "No results", "everything is replaced")
@@ -218,4 +218,4 @@ with tempfile.TemporaryDirectory() as folder:
         # Cmd+W closes the focused panel: Search.
         bed.click(query_field(bed))
         bed.key("Primary+W")
-        until(bed, lambda: not bed.exists("replace-all"), "Cmd+W closes Search")
+        until(bed, lambda: not bed.exists("Replace All…"), "Cmd+W closes Search")

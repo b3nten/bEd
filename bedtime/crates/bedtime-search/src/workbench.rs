@@ -1405,7 +1405,7 @@ fn fields(
             ui.add_enabled_ui(ready, |ui| {
                 if context
                     .frame(ui)
-                    .floating_button(BuiltinIcon::ReplaceAll, "Replace All")
+                    .floating_button(BuiltinIcon::ReplaceAll, "Replace All…")
                     .clicked()
                 {
                     // Asked first: see `status`.

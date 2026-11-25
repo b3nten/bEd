@@ -2,7 +2,7 @@
 //! video): a small rounded bar at a corner or the middle of an edge. It shows
 //! while the pointer is over the content, or one of its menus is open, and
 //! fades away otherwise, so the content keeps the whole panel.
-use crate::{UiFrame, theme};
+use crate::{Button, Tip, UiFrame, theme};
 use bevy_egui::egui;
 
 /// A bar of controls over `rect`, at `anchor` (`Align2::RIGHT_TOP`,
@@ -99,37 +99,36 @@ impl Floating {
 }
 
 impl UiFrame<'_> {
-    /// An icon button for a floating bar, with a tooltip.
+    /// An icon button for a floating bar, with a tooltip. Its name (for
+    /// scripts and screen readers) is the tooltip without its keys:
+    /// "Fit (Double-Click)" is "Fit".
     pub fn floating_button(
         &mut self,
         icon: impl Into<crate::IconSource>,
         tooltip: &str,
     ) -> egui::Response {
-        let response = self.icon_button(icon);
-        self.tooltip(&response, tooltip);
-        response
+        self.floating_tool(icon, tooltip, false)
     }
 
-    /// A toggled icon button for a floating bar: accent-colored while on.
+    fn floating_tool(
+        &mut self,
+        icon: impl Into<crate::IconSource>,
+        tooltip: &str,
+        on: bool,
+    ) -> egui::Response {
+        let name = tooltip.split(" (").next().unwrap_or(tooltip);
+        let button = Button::icon_only(icon, name).ghost().selected(on);
+        self.ui.add(button).tip(tooltip)
+    }
+
+    /// A toggled icon button for a floating bar: it looks chosen while on.
     pub fn floating_toggle(
         &mut self,
         icon: impl Into<crate::IconSource>,
         tooltip: &str,
         on: bool,
     ) -> egui::Response {
-        let response = self.floating_button(icon, tooltip);
-        if on {
-            let rect = response.rect;
-            let ink = theme::color(self.theme.palette.accent);
-            self.ui.painter().line_segment(
-                [
-                    egui::pos2(rect.center().x - 5.0, rect.bottom() - 1.0),
-                    egui::pos2(rect.center().x + 5.0, rect.bottom() - 1.0),
-                ],
-                egui::Stroke::new(2.0, ink),
-            );
-        }
-        response
+        self.floating_tool(icon, tooltip, on)
     }
 
     /// Small, quiet text in a floating bar ("100%", "0:12 / 1:30").

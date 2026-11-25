@@ -7,7 +7,7 @@ use crate::{Appearance, DisplayMode, Lighting, ModelScene, ModelView, PreparedMo
 use bedtime_document::DocumentModel;
 use bedtime_filesystem::{ByteModel, FileModel};
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui};
-use bedtime_ui::{MenuItem, Separator, Space, Spinner, Submenu, Text};
+use bedtime_ui::{Button, MenuItem, Separator, Space, Spinner, Submenu, Text, Tip};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -258,8 +258,8 @@ impl Panel for ModelPanel {
                 view.camera = None;
             }
             // Hovering shows what's in the model; there's nothing to click.
-            let info = f.icon_button(BuiltinIcon::Info);
-            f.tooltip_ui(&info, |f| info_menu(f.ui, &scene));
+            f.ui.add(Button::icon_only(BuiltinIcon::Info, "Info").ghost())
+                .tip_ui(|ui| info_menu(ui, &scene));
             let appearance = f.floating_button(BuiltinIcon::Sliders, "Appearance");
             egui::Popup::menu(&appearance)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)

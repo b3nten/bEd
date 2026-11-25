@@ -93,7 +93,7 @@ with tempfile.TemporaryDirectory() as folder:
         bed.wait(10)
         zoom = lambda: bed.find(contains="%")["value"]
         before = zoom()
-        bed.click(bed.find("plus"))
+        bed.click(bed.find("Zoom In"))
         until(bed, lambda: zoom() != before,
               "zoom in changes the zoom")
         bed.screenshot("viewers-image")
@@ -101,7 +101,7 @@ with tempfile.TemporaryDirectory() as folder:
 
         # A model fills its panel, with floating controls.
         bed.click(row(bed, "tokyo.glb"))
-        until(bed, lambda: bed.exists("info"), "tokyo.glb shows as a model")
+        until(bed, lambda: bed.exists("Info"), "tokyo.glb shows as a model")
         until(bed, lambda: not bed.exists(contains="Loading model"), "the model loads")
         tab = max(bed.find_all("tokyo.glb"), key=lambda widget: widget["rect"][0])
         x0, y0, x1, y1 = tab["rect"]
@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory() as folder:
         bed.wait(30)
         bed.screenshot("viewers-model")
         # Hovering the info icon tells what's in the model.
-        bed.move(*[(a + b) / 2 for a, b in zip(bed.find("info")["rect"][:2], bed.find("info")["rect"][2:])])
+        bed.move(*[(a + b) / 2 for a, b in zip(bed.find("Info")["rect"][:2], bed.find("Info")["rect"][2:])])
         until(bed, lambda: bed.exists(contains="triangles"), "the model's info shows")
         bed.screenshot("viewers-model-info")
         assert not bed.status()["errors"], bed.status()["errors"]
@@ -122,7 +122,7 @@ with tempfile.TemporaryDirectory() as folder:
         x0, y0, x1, y1 = tab["rect"]
         bed.move(x0 + 300, y1 + 300)
         bed.wait(10)
-        bed.click(bed.find("grid"))
+        bed.click(bed.find("Glyphs"))
         until(bed, lambda: bed.exists("0041"), "the glyphs show")
         bed.click(bed.find("0041"))
         until(bed, lambda: bed.exists(contains="U+0041"), "A is inspected")
@@ -138,10 +138,10 @@ with tempfile.TemporaryDirectory() as folder:
         bed.click((x0 + 20 + (width - 20 - x0 - 40) * 0.6, y1 + 250))
         until(bed, lambda: bed.exists(contains="0:02 / 0:04"), "a click seeks")
         bed.screenshot("viewers-waveform")
-        bed.click(bed.find("layers"))
+        bed.click(bed.find("Spectrogram"))
         bed.wait(10)
         bed.screenshot("viewers-spectrogram")
-        bed.click(bed.find("spectrum"))
+        bed.click(bed.find("Spectrum"))
         bed.wait(10)
         bed.screenshot("viewers-spectrum")
         assert not bed.status()["errors"], bed.status()["errors"]
@@ -151,7 +151,7 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: bed.exists(contains="0:00 / 0:02"), "clip.mp4 shows")
         bed.wait(20)
         bed.screenshot("viewers-video-paused")
-        bed.click(bed.find("play"))
+        bed.click(bed.find("Play"))
         until(bed, lambda: bed.exists(contains="0:01 / 0:02"), "it plays")
         bed.screenshot("viewers-video")
         assert not bed.status()["errors"], bed.status()["errors"]
@@ -176,12 +176,12 @@ with tempfile.TemporaryDirectory() as folder:
         x0, y0, x1, y1 = bed.find("Espoo")["rect"]
         bed.move(x1, y1)
         bed.wait(10)
-        bed.click(bed.find("filter"))
+        bed.click(bed.find("Filter Rows"))
         bed.type("york")
         until(bed, lambda: bed.exists(contains="1 of 6 rows"), "the filter shows one row")
         bed.screenshot("viewers-table")
         assert not bed.status()["errors"], bed.status()["errors"]
-        bed.click([w for w in bed.find_all("close") if w["rect"][0] > 800][0])
+        bed.click("Clear Filter")
 
         # The table is a view of the text: the editor, in its own panel,
         # shows the same document, and the table follows its edits.

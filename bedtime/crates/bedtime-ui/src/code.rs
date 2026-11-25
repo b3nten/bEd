@@ -5,7 +5,7 @@
 //! Colours come from spans the caller gives (`with_spans`), or, with the
 //! `syntax` feature, from `bedtime-syntax` analysing the text on a thread of
 //! its own (`language`). Without either it's plain text.
-use crate::{BuiltinIcon, UiContext, egui, theme::SyntaxPalette, theme::SyntaxRole};
+use crate::{BuiltinIcon, Tip, UiContext, egui, theme::SyntaxPalette, theme::SyntaxRole};
 use egui::text::{LayoutJob, TextFormat};
 use std::{ops::Range, sync::Arc};
 
@@ -137,7 +137,7 @@ impl CodeView {
             self.find(None);
         }
         if let Some(find) = &mut self.find {
-            if !find_bar(ui, context, find) {
+            if !find_bar(ui, find) {
                 self.find = None;
             } else if find.matched != find.query {
                 find.matches = find_all(&self.text, &find.query);
@@ -251,13 +251,13 @@ impl CodeView {
 
 /// The find row: query, count, previous, next and close. Returns false when
 /// closed.
-fn find_bar(ui: &mut egui::Ui, context: &UiContext<'_>, find: &mut Find) -> bool {
+fn find_bar(ui: &mut egui::Ui, find: &mut Find) -> bool {
     let mut open = true;
-    ui.horizontal(|ui| {
+    crate::Row::new().show(ui, |ui| {
         let edit = ui.add(
-            egui::TextEdit::singleline(&mut find.query)
-                .hint_text("Find")
-                .desired_width(180.0),
+            crate::TextField::new(&mut find.query)
+                .hint("Find")
+                .width(180.0),
         );
         if std::mem::take(&mut find.focus) {
             edit.request_focus();
@@ -283,25 +283,25 @@ fn find_bar(ui: &mut egui::Ui, context: &UiContext<'_>, find: &mut Find) -> bool
             MAX_MATCHES => format!("{} of {MAX_MATCHES}+", find.current + 1),
             n => format!("{} of {n}", find.current + 1),
         };
-        ui.weak(label);
-        let mut frame = context.frame(ui);
-        if frame
-            .icon_button(BuiltinIcon::ChevronLeft)
-            .on_hover_text("Previous (Shift+Enter)")
+        ui.add(crate::Text::new(label).muted());
+        let tool = |icon, name: &str| crate::Button::icon_only(icon, name).ghost();
+        if ui
+            .add(tool(BuiltinIcon::ChevronLeft, "Previous"))
+            .tip("Previous (Shift+Enter)")
             .clicked()
         {
             step(find, -1);
         }
-        if frame
-            .icon_button(BuiltinIcon::ChevronRight)
-            .on_hover_text("Next (Enter)")
+        if ui
+            .add(tool(BuiltinIcon::ChevronRight, "Next"))
+            .tip("Next (Enter)")
             .clicked()
         {
             step(find, 1);
         }
-        if frame
-            .icon_button(BuiltinIcon::Close)
-            .on_hover_text("Close (Escape)")
+        if ui
+            .add(tool(BuiltinIcon::Close, "Close"))
+            .tip("Close (Escape)")
             .clicked()
         {
             open = false;
