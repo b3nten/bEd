@@ -9,6 +9,7 @@
 use crate::engine::{FileMatches, MAX_MATCHES, Match, Matcher, OpenFiles, SearchQuery, Summary};
 use bedtime_document::{BufferEdit, TextBuffer};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
+use bedtime_ui::{Button, MenuItem, Row, Separator, Space, Spinner, Text, Toggle};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -1060,7 +1061,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             fields(ui, context, id, &mut search, &mut state, focused);
             status(ui, context, &mut state, &open, &mut intents);
         });
-    ui.separator();
+    ui.add(Separator::new());
     if focused && !ui.ctx().egui_wants_keyboard_input() {
         result_keys(ui, &mut state, &mut intents);
     }
@@ -1335,7 +1336,7 @@ fn fields(
             }
         }
     }
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         let query = field(ui, query_id, &mut search.query.text, "Search", width, inset);
         if state.focus_query && focused {
             query.request_focus();
@@ -1386,7 +1387,7 @@ fn fields(
         }
     });
     if search.replacing {
-        ui.horizontal(|ui| {
+        Row::new().show(ui, |ui| {
             let replacement = field(
                 ui,
                 id.with("replacement"),
@@ -1429,9 +1430,8 @@ fn fields(
             width,
             0.0,
         );
-        let mut frame = context.frame(ui);
-        frame.toggle(&mut search.query.ignored, "Files Git ignores");
-        frame.toggle(&mut search.query.open_only, "Only open files");
+        ui.add(Toggle::new(&mut search.query.ignored, "Files Git ignores"));
+        ui.add(Toggle::new(&mut search.query.open_only, "Only open files"));
     }
 }
 
@@ -1446,13 +1446,13 @@ fn status(
 ) {
     let palette = &context.theme.palette;
     if let Some(error) = &state.error {
-        ui.colored_label(color(palette.error), error);
+        ui.add(Text::new(error).color(color(palette.error)));
         return;
     }
     if state.replacing.is_some() {
-        ui.horizontal(|ui| {
-            ui.weak("Replacing…");
-            ui.spinner();
+        Row::new().show(ui, |ui| {
+            ui.add(Text::new("Replacing…").muted());
+            ui.add(Spinner::new());
         });
         return;
     }
@@ -1460,43 +1460,46 @@ fn status(
         state.confirming = false;
     }
     if state.confirming {
-        ui.label(format!(
+        ui.add(Text::new(format!(
             "Replace {} in {}?",
             count(state.matches, "match", "matches"),
             count(state.files.len(), "file", "files"),
-        ));
+        )));
         let on_disk = state
             .files
             .iter()
             .filter(|file| !open.contains(&file.path))
             .count();
         if on_disk > 0 {
-            ui.weak(format!(
-                "{} changed on disk, which can't be undone.",
-                if on_disk == 1 {
-                    "1 file isn't open: it's".to_owned()
-                } else {
-                    format!("{} files aren't open: they're", number(on_disk))
-                }
-            ));
+            ui.add(
+                Text::new(format!(
+                    "{} changed on disk, which can't be undone.",
+                    if on_disk == 1 {
+                        "1 file isn't open: it's".to_owned()
+                    } else {
+                        format!("{} files aren't open: they're", number(on_disk))
+                    }
+                ))
+                .muted(),
+            );
         }
-        ui.horizontal(|ui| {
+        Row::new().show(ui, |ui| {
             // Not while the results are being searched for again.
             let ready = state.task.is_none();
             let replace = ui.add_enabled_ui(ready, |ui| {
-                context.frame(ui).primary_button("Replace All").clicked()
+                ui.add(Button::new("Replace All").primary()).clicked()
             });
             if replace.inner {
                 intents.push(Intent::ReplaceAll);
                 state.confirming = false;
             }
-            if ui.button("Cancel").clicked() {
+            if ui.add(Button::new("Cancel")).clicked() {
                 state.confirming = false;
             }
         });
         return;
     }
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         let limited = state.summary.as_ref().is_some_and(|s| s.limited);
         let text = if state.shown.is_none() {
             String::new()
@@ -1510,7 +1513,7 @@ fn status(
                 count(state.files.len(), "file", "files"),
             )
         };
-        let label = ui.weak(text);
+        let label = ui.add(Text::new(text).muted());
         if limited {
             context.frame(ui).tooltip(
                 &label,
@@ -1522,7 +1525,7 @@ fn status(
         }
         let skipped = state.summary.as_ref().map_or(0, |s| s.skipped);
         if skipped > 0 {
-            let label = ui.weak(format!("· {} skipped", number(skipped)));
+            let label = ui.add(Text::new(format!("· {} skipped", number(skipped))).muted());
             context.frame(ui).tooltip(
                 &label,
                 "Files over 16 MiB, and files that aren't UTF-8, aren't searched.",
@@ -1530,7 +1533,7 @@ fn status(
         }
         // Not for searching again what's shown: that's as quiet as it can be.
         if state.task.is_some() && state.fresh.is_none() {
-            ui.spinner();
+            ui.add(Spinner::new());
         }
     });
 }
@@ -1550,13 +1553,13 @@ enum Ask {
 
 /// The menu items every row and the space under them share.
 fn shared_menu(ui: &mut egui::Ui, ask: &mut Option<Ask>) {
-    if ui.button("Collapse All").clicked() {
+    if ui.add(MenuItem::new("Collapse All")).clicked() {
         *ask = Some(Ask::CollapseAll);
     }
-    if ui.button("Expand All").clicked() {
+    if ui.add(MenuItem::new("Expand All")).clicked() {
         *ask = Some(Ask::ExpandAll);
     }
-    if ui.button("Search Again").clicked() {
+    if ui.add(MenuItem::new("Search Again")).clicked() {
         *ask = Some(Ask::Refresh);
     }
 }
@@ -1879,16 +1882,16 @@ fn file_row(
         )));
     }
     response.context_menu(|ui| {
-        if ui.button("Copy Path").clicked() {
+        if ui.add(MenuItem::new("Copy Path")).clicked() {
             *ask = Some(Ask::Copy(found.path.display().to_string()));
         }
-        if ui.button("Copy Relative Path").clicked() {
+        if ui.add(MenuItem::new("Copy Relative Path")).clicked() {
             *ask = Some(Ask::Copy(relative.display().to_string()));
         }
-        if ui.button("Dismiss").clicked() {
+        if ui.add(MenuItem::new("Dismiss")).clicked() {
             *ask = Some(Ask::Dismiss((file, None)));
         }
-        ui.separator();
+        ui.add(Separator::new().space(Space::Xs));
         shared_menu(ui, ask);
     });
     tree::tooltip(ui, context, &response, relative.display().to_string());
@@ -2035,19 +2038,19 @@ fn match_row(
         )));
     }
     response.context_menu(|ui| {
-        if ui.button("Copy Line").clicked() {
+        if ui.add(MenuItem::new("Copy Line")).clicked() {
             *ask = Some(Ask::Copy(m.preview.clone()));
         }
-        if ui.button("Copy Path").clicked() {
+        if ui.add(MenuItem::new("Copy Path")).clicked() {
             *ask = Some(Ask::Copy(found.path.display().to_string()));
         }
-        if ui.button("Copy Relative Path").clicked() {
+        if ui.add(MenuItem::new("Copy Relative Path")).clicked() {
             *ask = Some(Ask::Copy(relative(root, &found.path).display().to_string()));
         }
-        if ui.button("Dismiss").clicked() {
+        if ui.add(MenuItem::new("Dismiss")).clicked() {
             *ask = Some(Ask::Dismiss((file, Some(index))));
         }
-        ui.separator();
+        ui.add(Separator::new().space(Space::Xs));
         shared_menu(ui, ask);
     });
     match row_buttons(ui, context, rect, buttons) {

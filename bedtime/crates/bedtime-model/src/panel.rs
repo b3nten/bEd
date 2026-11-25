@@ -7,6 +7,7 @@ use crate::{Appearance, DisplayMode, Lighting, ModelScene, ModelView, PreparedMo
 use bedtime_document::DocumentModel;
 use bedtime_filesystem::{ByteModel, FileModel};
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui};
+use bedtime_ui::{MenuItem, Separator, Space, Spinner, Submenu, Text};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -241,9 +242,9 @@ impl Panel for ModelPanel {
                 .shown(true)
                 .show(&mut frame, |f| {
                     if let Some(error) = scene.error() {
-                        f.ui.label(error.to_owned());
+                        f.ui.add(Text::new(error.to_owned()));
                     } else {
-                        f.ui.spinner();
+                        f.ui.add(Spinner::new());
                         f.floating_label("Loading model…");
                     }
                 });
@@ -265,16 +266,36 @@ impl Panel for ModelPanel {
                 .show(|ui| appearance_menu(ui, &mut view.appearance, ao));
         });
         response.context_menu(|ui| {
-            if ui.button("Frame All").clicked() {
+            if ui.add(MenuItem::new("Frame All")).clicked() {
                 view.camera = None;
             }
-            ui.separator();
+            ui.add(Separator::new().space(Space::Xs));
             choices(ui, &mut view.appearance);
-            ui.separator();
-            ui.checkbox(&mut view.appearance.skybox, "Skybox");
-            ui.checkbox(&mut view.appearance.shadows, "Shadows");
-            ui.separator();
-            if ui.button("Reset Appearance").clicked() {
+            ui.add(Separator::new().space(Space::Xs));
+            {
+                let item = ui.add(
+                    MenuItem::new("Skybox")
+                        .checked(view.appearance.skybox)
+                        .keep_open(),
+                );
+                if item.clicked() {
+                    view.appearance.skybox = !view.appearance.skybox;
+                }
+                item
+            };
+            {
+                let item = ui.add(
+                    MenuItem::new("Shadows")
+                        .checked(view.appearance.shadows)
+                        .keep_open(),
+                );
+                if item.clicked() {
+                    view.appearance.shadows = !view.appearance.shadows;
+                }
+                item
+            };
+            ui.add(Separator::new().space(Space::Xs));
+            if ui.add(MenuItem::new("Reset Appearance")).clicked() {
                 view.appearance = Appearance::default();
             }
         });
@@ -286,56 +307,77 @@ impl Panel for ModelPanel {
 fn info_menu(ui: &mut egui::Ui, scene: &ModelScene) {
     match scene.info() {
         Some(info) => {
-            ui.label(format!(
+            ui.add(Text::new(format!(
                 "{} nodes · {} meshes · {} triangles",
                 info.nodes, info.meshes, info.triangles
-            ));
-            ui.label(format!(
+            )));
+            ui.add(Text::new(format!(
                 "{} textures · {} animations",
                 info.textures, info.animations
-            ));
+            )));
             let size: Vec<String> = (0..3)
                 .map(|axis| format!("{:.3}", info.maximum[axis] - info.minimum[axis]))
                 .collect();
-            ui.label(format!("Size {}", size.join(" × ")));
+            ui.add(Text::new(format!("Size {}", size.join(" × "))));
             if info.draco_primitives > 0 {
-                ui.weak(format!("{} Draco-compressed meshes", info.draco_primitives));
+                ui.add(
+                    Text::new(format!("{} Draco-compressed meshes", info.draco_primitives)).muted(),
+                );
             }
             if info.meshopt_views > 0 {
-                ui.weak(format!("{} meshopt-compressed buffers", info.meshopt_views));
+                ui.add(
+                    Text::new(format!("{} meshopt-compressed buffers", info.meshopt_views)).muted(),
+                );
             }
             if info.posed_meshes > 0 {
-                ui.weak(format!(
-                    "{} meshes in their skeleton's pose",
-                    info.posed_meshes
-                ));
+                ui.add(
+                    Text::new(format!(
+                        "{} meshes in their skeleton's pose",
+                        info.posed_meshes
+                    ))
+                    .muted(),
+                );
             }
         }
         None => {
-            ui.weak("Loading…");
+            ui.add(Text::new("Loading…").muted());
         }
     }
     for warning in scene.warnings() {
-        ui.weak(warning);
+        ui.add(Text::new(warning).muted());
     }
-    ui.separator();
-    ui.weak("Drag to orbit · Right-drag to pan · Scroll to zoom");
+    ui.add(Separator::new());
+    ui.add(Text::new("Drag to orbit · Right-drag to pan · Scroll to zoom").muted());
 }
 
 /// Display and lighting, as submenus.
 fn choices(ui: &mut egui::Ui, appearance: &mut Appearance) {
-    ui.menu_button("Display", |ui| {
+    Submenu::new("Display").show(ui, |ui| {
         for (index, name) in DisplayMode::NAMES.iter().enumerate() {
             let mode = DisplayMode::from_index(index);
-            if ui.radio(appearance.display == mode, *name).clicked() {
+            if ui
+                .add(
+                    MenuItem::new(*name)
+                        .checked(appearance.display == mode)
+                        .keep_open(),
+                )
+                .clicked()
+            {
                 appearance.display = mode;
             }
         }
     });
-    ui.menu_button("Lighting", |ui| {
+    Submenu::new("Lighting").show(ui, |ui| {
         for (index, name) in Lighting::NAMES.iter().enumerate() {
             let lighting = Lighting::from_index(index);
-            if ui.radio(appearance.lighting == lighting, *name).clicked() {
+            if ui
+                .add(
+                    MenuItem::new(*name)
+                        .checked(appearance.lighting == lighting)
+                        .keep_open(),
+                )
+                .clicked()
+            {
                 appearance.lighting = lighting;
             }
         }
@@ -345,23 +387,57 @@ fn choices(ui: &mut egui::Ui, appearance: &mut Appearance) {
 fn appearance_menu(ui: &mut egui::Ui, a: &mut Appearance, ao: bool) {
     ui.set_min_width(220.0);
     choices(ui, a);
-    ui.checkbox(&mut a.normals, "Normal Vectors")
-        .on_hover_text("At most 6,000 are drawn");
+    {
+        let item = ui.add(
+            MenuItem::new("Normal Vectors")
+                .checked(a.normals)
+                .keep_open(),
+        );
+        if item.clicked() {
+            a.normals = !a.normals;
+        }
+        item
+    }
+    .on_hover_text("At most 6,000 are drawn");
     if a.normals {
-        ui.add(egui::Slider::new(&mut a.normal_length, 0.01..=0.3).text("Length"));
+        slider(ui, "Length", &mut a.normal_length, 0.01..=0.3);
     }
-    ui.separator();
-    ui.checkbox(&mut a.skybox, "Skybox");
+    ui.add(Separator::new().space(Space::Xs));
+    {
+        let item = ui.add(MenuItem::new("Skybox").checked(a.skybox).keep_open());
+        if item.clicked() {
+            a.skybox = !a.skybox;
+        }
+        item
+    };
     if a.skybox {
-        ui.add(egui::Slider::new(&mut a.skybox_blur, 0.0..=1.0).text("Blur"));
-        ui.add(egui::Slider::new(&mut a.horizon, -45.0..=45.0).text("Horizon"));
+        slider(ui, "Blur", &mut a.skybox_blur, 0.0..=1.0);
+        slider(ui, "Horizon", &mut a.horizon, -45.0..=45.0);
     }
-    ui.checkbox(&mut a.shadows, "Shadows");
-    ui.add_enabled(ao, egui::Checkbox::new(&mut a.ao, "Ambient Occlusion"))
-        .on_disabled_hover_text("This GPU can't do ambient occlusion here");
-    ui.add(egui::Slider::new(&mut a.exposure, -4.0..=4.0).text("Exposure"));
-    ui.separator();
-    if ui.button("Reset Appearance").clicked() {
+    {
+        let item = ui.add(MenuItem::new("Shadows").checked(a.shadows).keep_open());
+        if item.clicked() {
+            a.shadows = !a.shadows;
+        }
+        item
+    };
+    let occlusion = MenuItem::new("Ambient Occlusion").checked(a.ao).keep_open();
+    let occlusion = ui.add_enabled(ao, occlusion);
+    if occlusion.clicked() {
+        a.ao = !a.ao;
+    }
+    occlusion.on_disabled_hover_text("This GPU can't do ambient occlusion here");
+    slider(ui, "Exposure", &mut a.exposure, -4.0..=4.0);
+    ui.add(Separator::new().space(Space::Xs));
+    if ui.add(MenuItem::new("Reset Appearance")).clicked() {
         *a = Appearance::default();
     }
+}
+
+/// A slider in the appearance menu, its name after it.
+fn slider(ui: &mut egui::Ui, name: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>) {
+    bedtime_ui::Row::new().show(ui, |ui| {
+        ui.add(bedtime_ui::Slider::new(value, range).label(name));
+        ui.add(Text::new(name));
+    });
 }

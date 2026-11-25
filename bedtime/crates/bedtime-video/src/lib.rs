@@ -5,8 +5,9 @@
 //! skip five seconds. Files aren't read into memory: the player reads them.
 use bedtime_document::DocumentModel;
 use bedtime_filesystem::{ByteModel, FileModel};
-#[cfg(target_os = "macos")]
 use bedtime_ui::{BuiltinIcon, Floating, UiFrame, theme};
+#[cfg(target_os = "macos")]
+use bedtime_ui::{Checkbox, MenuItem, Separator, Space};
 use bedtime_ui::{UiContext, egui};
 #[cfg(target_os = "macos")]
 use bedtime_workbench::ViewersAppExt;
@@ -287,7 +288,7 @@ fn draw(
     _: bool,
 ) {
     if let Err(error) = &playing.player {
-        ui.centered_and_justified(|ui| ui.label(error));
+        ui.centered_and_justified(|ui| ui.add(Text::new(error)));
     }
 }
 
@@ -391,20 +392,32 @@ fn draw(
     }
     response.context_menu(|ui| {
         if ui
-            .button(if is_playing { "Pause" } else { "Play" })
+            .add(MenuItem::new(if is_playing { "Pause" } else { "Play" }))
             .clicked()
         {
             toggle = true;
         }
-        if ui.button("Play from Start").clicked() {
+        if ui.add(MenuItem::new("Play from Start")).clicked() {
             seek_to = Some(0.0);
             if !is_playing {
                 toggle = true;
             }
         }
-        ui.separator();
-        ui.checkbox(&mut settings.looping, "Loop");
-        ui.checkbox(&mut settings.muted, "Mute");
+        ui.add(Separator::new().space(Space::Xs));
+        {
+            let item = ui.add(MenuItem::new("Loop").checked(settings.looping).keep_open());
+            if item.clicked() {
+                settings.looping = !settings.looping;
+            }
+            item
+        };
+        {
+            let item = ui.add(MenuItem::new("Mute").checked(settings.muted).keep_open());
+            if item.clicked() {
+                settings.muted = !settings.muted;
+            }
+            item
+        };
     });
 
     // The floating controls: shown while paused, and when pointed at.
@@ -457,7 +470,7 @@ fn draw(
                             .show_value(false)
                             .vertical(),
                     );
-                    ui.checkbox(&mut settings.muted, "Mute");
+                    ui.add(Checkbox::new(&mut settings.muted, "Mute"));
                 });
         });
     if size[0] > 0.0 {

@@ -4,6 +4,7 @@
 //! inspects it: filled, with its outline, points and metrics. The floating
 //! bar switches between them; the right-click menu copies.
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, UiFrame, egui, theme};
+use bedtime_ui::{Button, MenuItem, Row, Spinner, Text};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{Panel, PanelPresentation, ViewersAppExt, viewer_document};
@@ -77,7 +78,7 @@ impl Panel for FontPanel {
             .is_some_and(|presentation| presentation.focused);
         let Some(family) = family(ui.ctx(), &face) else {
             // Registered with egui; usable next frame.
-            ui.centered_and_justified(|ui| ui.spinner());
+            ui.centered_and_justified(|ui| ui.add(Spinner::new()));
             return;
         };
         if let Some(mut font) = world.get_mut::<FontPanel>(panel) {
@@ -172,7 +173,7 @@ fn header(ui: &mut egui::Ui, face: &Face, family: &egui::FontFamily, muted: egui
     if face.faces > 1 {
         facts.push(format!("1 of {} faces", face.faces));
     }
-    ui.label(egui::RichText::new(facts.join(" · ")).color(muted));
+    ui.add(Text::new(facts.join(" · ")).color(muted));
     let mut credits = Vec::new();
     if let Some(version) = &face.version {
         credits.push(version.clone());
@@ -181,11 +182,7 @@ fn header(ui: &mut egui::Ui, face: &Face, family: &egui::FontFamily, muted: egui
         credits.push(designer.clone());
     }
     if !credits.is_empty() {
-        ui.label(
-            egui::RichText::new(credits.join(" · "))
-                .color(muted)
-                .small(),
-        );
+        ui.add(Text::caption(credits.join(" · ")).color(muted));
     }
 }
 
@@ -205,7 +202,7 @@ fn preview(
         .hint_text(SAMPLE);
     let response = ui.add(edit);
     response.context_menu(|ui| {
-        if ui.button("Reset Sample Text").clicked() {
+        if ui.add(Button::new("Reset Sample Text")).clicked() {
             font.sample = SAMPLE.into();
         }
     });
@@ -219,7 +216,7 @@ fn preview(
     // The waterfall.
     for &size in SIZES {
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
+        Row::new().show(ui, |ui| {
             ui.add_sized(
                 egui::vec2(34.0, size),
                 egui::Label::new(
@@ -329,7 +326,7 @@ fn glyphs(
     ui.spacing_mut().item_spacing.y = 0.0;
     for row in first..last {
         let chunk = &characters[row * columns..((row + 1) * columns).min(characters.len())];
-        ui.horizontal(|ui| {
+        Row::new().show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 0.0;
             for &c in chunk {
                 let (rect, response) = ui.allocate_exact_size(CELL, egui::Sense::click());
@@ -367,10 +364,10 @@ fn glyphs(
                     response.request_focus();
                 }
                 response.context_menu(|ui| {
-                    if ui.button("Copy Character").clicked() {
+                    if ui.add(MenuItem::new("Copy Character")).clicked() {
                         ui.ctx().copy_text(c.to_string());
                     }
-                    if ui.button("Copy Code Point").clicked() {
+                    if ui.add(MenuItem::new("Copy Code Point")).clicked() {
                         ui.ctx().copy_text(format!("U+{:04X}", c as u32));
                     }
                 });

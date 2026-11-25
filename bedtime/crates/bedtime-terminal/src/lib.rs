@@ -21,6 +21,7 @@ use crate::{
     terminal::{Terminal, TerminalTheme},
     terminal_pty::{PtyEvent, TerminalCommand, TerminalPty},
 };
+use bedtime_ui::{Button, Row, Text};
 use bedtime_ui::{Theme, UiContext, egui};
 use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::PanelsAppExt as _;
@@ -391,28 +392,31 @@ impl Panel for TerminalPanel {
                 })
                 .show(ui, |ui| {
                     if !accepts_input {
-                        ui.horizontal(|ui| {
+                        Row::new().show(ui, |ui| {
                             match &state.status {
                                 TerminalStatus::Pending | TerminalStatus::Starting => {
-                                    ui.weak("Starting shell…");
+                                    ui.add(Text::new("Starting shell…").muted());
                                 }
                                 TerminalStatus::Running => {
-                                    ui.weak("Input paused: waiting for the terminal worker…");
+                                    ui.add(
+                                        Text::new("Input paused: waiting for the terminal worker…")
+                                            .muted(),
+                                    );
                                 }
                                 TerminalStatus::Stopping => {
-                                    ui.weak("Stopping…");
+                                    ui.add(Text::new("Stopping…").muted());
                                 }
                                 TerminalStatus::Exited(Some(exit)) => {
-                                    ui.weak(format!("Shell exited: {exit}"));
+                                    ui.add(Text::new(format!("Shell exited: {exit}")).muted());
                                 }
                                 TerminalStatus::Exited(None) => {
-                                    ui.weak("Shell stopped");
+                                    ui.add(Text::new("Shell stopped").muted());
                                 }
                                 TerminalStatus::Failed(_) => {
-                                    ui.weak("Terminal unavailable");
+                                    ui.add(Text::new("Terminal unavailable").muted());
                                 }
                                 TerminalStatus::Moved => {
-                                    ui.weak("Shell moved to another terminal");
+                                    ui.add(Text::new("Shell moved to another terminal").muted());
                                 }
                             }
                             if matches!(
@@ -420,16 +424,16 @@ impl Panel for TerminalPanel {
                                 TerminalStatus::Exited(_)
                                     | TerminalStatus::Failed(_)
                                     | TerminalStatus::Moved
-                            ) && ui.small_button("Restart").clicked()
+                            ) && ui.add(Button::new("Restart").small()).clicked()
                             {
                                 state.restart();
                             }
                         });
                     }
                     if let Some(error) = state.error() {
-                        ui.colored_label(
-                            bedtime_ui::theme::color(context.theme.palette.error),
-                            error,
+                        ui.add(
+                            Text::new(error)
+                                .color(bedtime_ui::theme::color(context.theme.palette.error)),
                         );
                     }
                 });

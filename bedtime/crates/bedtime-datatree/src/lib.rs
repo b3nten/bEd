@@ -7,6 +7,7 @@
 //! With", and an editor's `other_viewer`.
 use bedtime_code::EditorPanel;
 use bedtime_document::TextBuffer;
+use bedtime_ui::{Spinner, Text};
 use bedtime_ui::{UiContext, data::DataTree, egui, theme};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -83,7 +84,7 @@ impl Panel for TreePanel {
             .map(|info| info.title)
             .unwrap_or_default();
         let Some(format) = Format::of(&title) else {
-            ui.label(format!("{title} isn't JSON or TOML"));
+            ui.add(Text::new(format!("{title} isn't JSON or TOML")));
             return;
         };
         update(world, panel, format, &document.model, document.revision);
@@ -159,11 +160,11 @@ fn draw(ui: &mut egui::Ui, context: &UiContext<'_>, tree: &mut TreePanel) {
         match &tree.state.error {
             Some((_, error)) => {
                 egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
-                    ui.label(format!("This doesn't parse: {error}"));
+                    ui.add(Text::new(format!("This doesn't parse: {error}")));
                 });
             }
             None => {
-                ui.centered_and_justified(|ui| ui.spinner());
+                ui.centered_and_justified(|ui| ui.add(Spinner::new()));
             }
         }
         return;
@@ -179,10 +180,9 @@ fn draw(ui: &mut egui::Ui, context: &UiContext<'_>, tree: &mut TreePanel) {
             .inner_margin(egui::Margin::symmetric(10, 6))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.label(
-                    egui::RichText::new(format!("Showing the last version that parsed. {error}"))
-                        .color(theme::color(p.text)),
-                );
+                ui.add(Text::new(format!(
+                    "Showing the last version that parsed. {error}"
+                )));
             });
     }
     if view.show(ui, context) {

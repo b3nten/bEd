@@ -4,6 +4,7 @@
 //! Space plays and pauses, Left and Right skip five seconds. The output
 //! device opens the first time something plays.
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
+use bedtime_ui::{MenuItem, Separator, Space};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -333,23 +334,35 @@ fn draw(
         asked.toggle = true;
     }
     response.context_menu(|ui| {
-        if ui.button(if playing { "Pause" } else { "Play" }).clicked() {
+        if ui
+            .add(MenuItem::new(if playing { "Pause" } else { "Play" }))
+            .clicked()
+        {
             asked.toggle = true;
         }
-        if ui.button("Play from Start").clicked() {
+        if ui.add(MenuItem::new("Play from Start")).clicked() {
             asked.seek = Some(Duration::ZERO);
             if !playing {
                 asked.toggle = true;
             }
         }
-        ui.checkbox(&mut audio.looping, "Loop");
-        ui.separator();
+        {
+            let item = ui.add(MenuItem::new("Loop").checked(audio.looping).keep_open());
+            if item.clicked() {
+                audio.looping = !audio.looping;
+            }
+            item
+        };
+        ui.add(Separator::new().space(Space::Xs));
         for (view, label) in [
             (AudioView::Waveform, "Waveform"),
             (AudioView::Spectrum, "Spectrum"),
             (AudioView::Spectrogram, "Spectrogram"),
         ] {
-            if ui.radio(audio.view == view, label).clicked() {
+            if ui
+                .add(MenuItem::new(label).checked(audio.view == view).keep_open())
+                .clicked()
+            {
                 audio.view = view;
             }
         }

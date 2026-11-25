@@ -4,6 +4,7 @@ mod scene;
 mod workbench;
 pub use workbench::{BedPanel, DuckPanel};
 
+use bedtime_ui::{Spinner, Text};
 use bedtime_ui::{UiComponent, UiContext, UiSystems, UiViewport, egui, viewport_image};
 use bedtime_workbench::PanelsAppExt as _;
 use bevy::{
@@ -122,12 +123,12 @@ impl UiComponent for Mascot {
             .get::<MascotScene>(entity)
             .expect("Mascot drawing requires MascotScene");
         if let Some(error) = state.error() {
-            ui.colored_label(ui.visuals().error_fg_color, error);
+            ui.add(Text::new(error).color(ui.visuals().error_fg_color));
             return;
         }
         if world.get::<Scene>(entity).is_none() {
-            ui.spinner();
-            ui.weak("Preparing mascot…");
+            ui.add(Spinner::new());
+            ui.add(Text::new("Preparing mascot…").muted());
             ui.ctx().request_repaint();
             return;
         }

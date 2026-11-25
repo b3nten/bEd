@@ -2651,7 +2651,7 @@ mod tests {
                         )
                         .open_memory(None::<egui::SetOpenCommand>)
                         .show(|ui| {
-                            ui.label("An actual open popup");
+                            ui.add(bedtime_ui::Text::new("An actual open popup"));
                         })
                         .is_some();
                     };

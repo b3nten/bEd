@@ -13,6 +13,7 @@ use bedtime_ui::{
     egui::{self, Color32, Pos2, Stroke, Vec2, epaint},
     theme::{Theme, color},
 };
+use bedtime_ui::{MenuItem, Row, Separator, Space, Submenu};
 
 /// How far the camera zooms out and in.
 pub const ZOOM: std::ops::RangeInclusive<f32> = 0.1..=8.0;
@@ -1956,7 +1957,7 @@ const SIZES: [(f32, &str); 4] = [(16.0, "S"), (20.0, "M"), (28.0, "L"), (36.0, "
 fn style_bar(ui: &mut egui::Ui, theme: &Theme, styles: Styles, style: Style) -> Option<Pick> {
     let mut picked = None;
     let mut pick = |change: Restyle| picked = Some(Pick::Style(change));
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(3.0, 4.0);
         let stroke = chip(ui, theme, "Stroke", Some(style.stroke), true, None);
         choices(&stroke, |ui| {
@@ -2136,7 +2137,7 @@ fn choices(button: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
         .align(egui::RectAlign::TOP_START)
         .gap(6.0)
         .show(|ui| {
-            ui.horizontal(|ui| {
+            Row::new().show(ui, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(3.0, 4.0);
                 add(ui);
             });
@@ -2145,7 +2146,7 @@ fn choices(button: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
 
 /// A row of a bar: its name, then its choices.
 fn row(ui: &mut egui::Ui, theme: &Theme, name: &str, add: &mut dyn FnMut(&mut egui::Ui)) {
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(46.0, 18.0), egui::Sense::hover());
         ui.painter().text(
             rect.left_center(),
@@ -2241,20 +2242,20 @@ fn menu(
     };
     let mut picked = None;
     let mut item = |ui: &mut egui::Ui, label: &str, keys: &str, enabled: bool, pick: Pick| {
-        let mut button = egui::Button::new(label);
+        let mut entry = MenuItem::new(label);
         if !keys.is_empty() {
-            button = button.shortcut_text(keys.replace("Cmd", primary));
+            entry = entry.shortcut(keys.replace("Cmd", primary));
         }
-        if ui.add_enabled(enabled, button).clicked() {
+        if ui.add_enabled(enabled, entry).clicked() {
             picked = Some(pick);
         }
     };
     let Some(styles) = styles else {
         item(ui, "Paste", "Cmd+V", true, Pick::Paste);
         item(ui, "Select All", "Cmd+A", !empty, Pick::SelectAll);
-        ui.separator();
+        ui.add(Separator::new().space(Space::Xs));
         item(ui, "Zoom to Fit", "", !empty, Pick::Fit);
-        ui.separator();
+        ui.add(Separator::new().space(Space::Xs));
         item(
             ui,
             "Copy as Image",
@@ -2263,7 +2264,7 @@ fn menu(
             Pick::Picture(Picture::Clipboard),
         );
         ui.add_enabled_ui(!empty, |ui| {
-            ui.menu_button("Export", |ui| {
+            Submenu::new("Export").show(ui, |ui| {
                 item(ui, "SVG…", "", true, Pick::Picture(Picture::Svg));
                 item(ui, "PNG…", "", true, Pick::Picture(Picture::Png));
             });
@@ -2283,14 +2284,14 @@ fn menu(
         item(ui, "Reverse Direction", "", true, Pick::Reverse);
     }
     if writable || styles.heads.is_some() {
-        ui.separator();
+        ui.add(Separator::new().space(Space::Xs));
     }
     item(ui, "Cut", "Cmd+X", true, Pick::Cut);
     item(ui, "Copy", "Cmd+C", true, Pick::Copy);
     item(ui, "Paste", "Cmd+V", true, Pick::Paste);
     item(ui, "Duplicate", "Cmd+D", true, Pick::Duplicate);
     item(ui, "Delete", "Del", true, Pick::Delete);
-    ui.separator();
+    ui.add(Separator::new().space(Space::Xs));
     item(ui, "Group", "Cmd+G", styles.align, Pick::Group(true));
     item(
         ui,
@@ -2299,8 +2300,8 @@ fn menu(
         styles.grouped,
         Pick::Group(false),
     );
-    ui.separator();
-    ui.menu_button("Order", |ui| {
+    ui.add(Separator::new().space(Space::Xs));
+    Submenu::new("Order").show(ui, |ui| {
         item(
             ui,
             "Bring to Front",
@@ -2331,7 +2332,7 @@ fn menu(
         );
     });
     if styles.align {
-        ui.menu_button("Align", |ui| {
+        Submenu::new("Align").show(ui, |ui| {
             for (to, name) in [
                 (Align::Left, "Left"),
                 (Align::Center, "Centers"),
@@ -2344,7 +2345,7 @@ fn menu(
             }
         });
     }
-    ui.separator();
+    ui.add(Separator::new().space(Space::Xs));
     item(
         ui,
         "Copy Selection as Image",
@@ -2352,7 +2353,7 @@ fn menu(
         true,
         Pick::Picture(Picture::Clipboard),
     );
-    ui.menu_button("Export Selection", |ui| {
+    Submenu::new("Export Selection").show(ui, |ui| {
         item(ui, "SVG…", "", true, Pick::Picture(Picture::Svg));
         item(ui, "PNG…", "", true, Pick::Picture(Picture::Png));
     });

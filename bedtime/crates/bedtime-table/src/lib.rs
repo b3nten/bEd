@@ -9,6 +9,7 @@
 //! and Save work as for any file. Edits change only the text they need to.
 use bedtime_document::TextBuffer;
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
+use bedtime_ui::{MenuItem, Separator, Space, Spinner};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -116,7 +117,7 @@ impl Panel for TablePanel {
             ui.ctx().request_repaint_after(Duration::from_millis(16));
         }
         let Some((read, mut table)) = table_panel.state.table.take() else {
-            ui.centered_and_justified(|ui| ui.spinner());
+            ui.centered_and_justified(|ui| ui.add(Spinner::new()));
             return;
         };
         let edits = draw(ui, context, panel, &mut table_panel, &table, read, focused);
@@ -804,13 +805,13 @@ fn cell_menu(
 ) {
     state.cursor = Some((row, column));
     let blank = vec![String::new(); columns];
-    if ui.button("Edit").clicked() {
+    if ui.add(MenuItem::new("Edit")).clicked() {
         start_editing(state, table, row, column, None);
     }
-    if ui.button("Copy").clicked() {
+    if ui.add(MenuItem::new("Copy")).clicked() {
         ui.ctx().copy_text(table.cell(row, column).to_owned());
     }
-    if ui.button("Clear").clicked() {
+    if ui.add(MenuItem::new("Clear")).clicked() {
         edits.push((
             TableChange::SetCell {
                 row,
@@ -820,8 +821,8 @@ fn cell_menu(
             "Clear Cell",
         ));
     }
-    ui.separator();
-    if ui.button("Insert Row Above").clicked() {
+    ui.add(Separator::new().space(Space::Xs));
+    if ui.add(MenuItem::new("Insert Row Above")).clicked() {
         edits.push((
             TableChange::InsertRow {
                 at: row.max(usize::from(header)),
@@ -830,7 +831,7 @@ fn cell_menu(
             "Insert Row",
         ));
     }
-    if ui.button("Insert Row Below").clicked() {
+    if ui.add(MenuItem::new("Insert Row Below")).clicked() {
         edits.push((
             TableChange::InsertRow {
                 at: row + 1,
@@ -839,42 +840,54 @@ fn cell_menu(
             "Insert Row",
         ));
     }
-    if ui.button("Delete Row").clicked() {
+    if ui.add(MenuItem::new("Delete Row")).clicked() {
         edits.push((TableChange::DeleteRow { at: row }, "Delete Row"));
         state.cursor = None;
     }
-    ui.separator();
+    ui.add(Separator::new().space(Space::Xs));
     column_items(ui, state, column, edits);
-    ui.separator();
+    ui.add(Separator::new().space(Space::Xs));
     header_item(ui, state, header);
 }
 
 /// Whether the first row names the columns.
 fn header_item(ui: &mut egui::Ui, state: &mut State, header: bool) {
     let mut on = header;
-    if ui.checkbox(&mut on, "First Row Is the Header").clicked() {
+    if {
+        let item = ui.add(
+            MenuItem::new("First Row Is the Header")
+                .checked(on)
+                .keep_open(),
+        );
+        if item.clicked() {
+            on = !on;
+        }
+        item
+    }
+    .clicked()
+    {
         state.toggle_header = Some(on);
     }
 }
 
 fn column_items(ui: &mut egui::Ui, state: &mut State, column: usize, edits: &mut Edits) {
-    if ui.button("Sort Ascending").clicked() {
+    if ui.add(MenuItem::new("Sort Ascending")).clicked() {
         state.sort = Some(Sort {
             column,
             descending: false,
         });
     }
-    if ui.button("Sort Descending").clicked() {
+    if ui.add(MenuItem::new("Sort Descending")).clicked() {
         state.sort = Some(Sort {
             column,
             descending: true,
         });
     }
-    if state.sort.is_some() && ui.button("Don't Sort").clicked() {
+    if state.sort.is_some() && ui.add(MenuItem::new("Don't Sort")).clicked() {
         state.sort = None;
     }
-    ui.separator();
-    if ui.button("Insert Column Left").clicked() {
+    ui.add(Separator::new().space(Space::Xs));
+    if ui.add(MenuItem::new("Insert Column Left")).clicked() {
         edits.push((
             TableChange::InsertColumn {
                 at: column,
@@ -883,7 +896,7 @@ fn column_items(ui: &mut egui::Ui, state: &mut State, column: usize, edits: &mut
             "Insert Column",
         ));
     }
-    if ui.button("Insert Column Right").clicked() {
+    if ui.add(MenuItem::new("Insert Column Right")).clicked() {
         edits.push((
             TableChange::InsertColumn {
                 at: column + 1,
@@ -892,7 +905,7 @@ fn column_items(ui: &mut egui::Ui, state: &mut State, column: usize, edits: &mut
             "Insert Column",
         ));
     }
-    if ui.button("Delete Column").clicked() {
+    if ui.add(MenuItem::new("Delete Column")).clicked() {
         edits.push((TableChange::DeleteColumn { at: column }, "Delete Column"));
         if state.sort.is_some_and(|sort| sort.column == column) {
             state.sort = None;
@@ -907,11 +920,11 @@ fn header_menu(
     column: usize,
     edits: &mut Edits,
 ) {
-    if ui.button("Rename Column").clicked() {
+    if ui.add(MenuItem::new("Rename Column")).clicked() {
         start_editing(state, table, 0, column, None);
     }
-    ui.separator();
+    ui.add(Separator::new().space(Space::Xs));
     column_items(ui, state, column, edits);
-    ui.separator();
+    ui.add(Separator::new().space(Space::Xs));
     header_item(ui, state, true);
 }

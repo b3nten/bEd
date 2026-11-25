@@ -10,6 +10,7 @@
 //! Drawing reads the notes and returns what was asked (`Intent`s); `apply`
 //! makes them changes to the document, right after drawing.
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
+use bedtime_ui::{Button, MenuItem, Row, Separator, Size, Space, Spinner, Text, TextField};
 use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
     BedtimeWorldExt, ByteModel, DocumentHandle, DocumentModel, DocumentReference, DocumentStatus,
@@ -508,11 +509,11 @@ impl Panel for NotesPanel {
             match info.status {
                 DocumentStatus::Ready => world.bedtime().read_document(handle).ok(),
                 DocumentStatus::Loading => {
-                    ui.centered_and_justified(|ui| ui.spinner());
+                    ui.centered_and_justified(|ui| ui.add(Spinner::new()));
                     None
                 }
                 DocumentStatus::Failed(error) => {
-                    ui.weak(format!("The notes can't be read: {error}"));
+                    ui.add(Text::new(format!("The notes can't be read: {error}")).muted());
                     None
                 }
             }
@@ -547,9 +548,9 @@ impl Panel for NotesPanel {
                         list_toggle(ui, context, true, &mut intents);
                         ui.add_space(6.0);
                     }
-                    ui.weak("No notes in this workspace yet.");
+                    ui.add(Text::new("No notes in this workspace yet.").muted());
                     ui.add_space(6.0);
-                    if ui.button("New Note").clicked() {
+                    if ui.add(Button::new("New Note")).clicked() {
                         intents.push(Intent::New);
                     }
                 }
@@ -568,29 +569,26 @@ fn sidebar(
     view: &mut NotesView,
     intents: &mut Vec<Intent>,
 ) {
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         list_toggle(ui, context, false, intents);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let mut frame = context.frame(ui);
-            let new = frame.icon_button(BuiltinIcon::Plus);
-            frame.tooltip(&new, "New Note");
-            new.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "New Note")
-            });
+            let new = ui.add(Button::icon_only(BuiltinIcon::Plus, "New Note").ghost());
+            context.frame(ui).tooltip(&new, "New Note");
             if new.clicked() {
                 intents.push(Intent::New);
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(Space::Xs.px(ui));
     if notes.notes.len() > 1 || !view.filter.is_empty() {
-        let field = ui.add(
-            egui::TextEdit::singleline(&mut view.filter)
-                .hint_text("Filter")
-                .desired_width(f32::INFINITY),
+        ui.add(
+            TextField::new(&mut view.filter)
+                .hint("Filter")
+                .label("Filter")
+                .clearable()
+                .fill_width(),
         );
-        field.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Filter"));
-        ui.add_space(4.0);
+        ui.add_space(Space::Xs.px(ui));
     }
     egui::ScrollArea::vertical()
         .id_salt((panel, "notes"))
@@ -620,36 +618,36 @@ fn sidebar(
                     view.focus_rename = true;
                 }
                 response.context_menu(|ui| {
-                    if ui.button("Rename").clicked() {
+                    if ui.add(MenuItem::new("Rename")).clicked() {
                         view.renaming = Some((id, note.title.clone()));
                         view.focus_rename = true;
                         ui.close();
                     }
-                    if ui.button("Duplicate").clicked() {
+                    if ui.add(MenuItem::new("Duplicate")).clicked() {
                         intents.push(Intent::Duplicate(id));
                         ui.close();
                     }
-                    ui.separator();
-                    if ui.button("Delete…").clicked() {
+                    ui.add(Separator::new().space(Space::Xs));
+                    if ui.add(MenuItem::new("Delete…")).clicked() {
                         view.confirm_delete = Some(id);
                         ui.close();
                     }
                 });
                 if view.confirm_delete == Some(id) {
-                    ui.horizontal(|ui| {
-                        ui.weak("Delete?");
-                        if ui.small_button("Delete").clicked() {
+                    Row::new().show(ui, |ui| {
+                        ui.add(Text::new("Delete?").muted());
+                        if ui.add(Button::new("Delete").small()).clicked() {
                             intents.push(Intent::Delete(id));
                             view.confirm_delete = None;
                         }
-                        if ui.small_button("Cancel").clicked() {
+                        if ui.add(Button::new("Cancel").small()).clicked() {
                             view.confirm_delete = None;
                         }
                     });
                 }
             }
             if !any && !notes.notes.is_empty() {
-                ui.weak(format!("Nothing matches “{}”", filter.trim()));
+                ui.add(Text::new(format!("Nothing matches “{}”", filter.trim())).muted());
             }
         });
 }
@@ -667,10 +665,8 @@ fn list_toggle(
     } else {
         "Hide Note List"
     };
-    let mut frame = context.frame(ui);
-    let button = frame.icon_button(BuiltinIcon::PanelLeft);
-    frame.tooltip(&button, label);
-    button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let button = ui.add(Button::icon_only(BuiltinIcon::PanelLeft, label).ghost());
+    context.frame(ui).tooltip(&button, label);
     if button.clicked() {
         intents.push(Intent::HideList(!hidden));
     }
@@ -732,29 +728,23 @@ fn editor(
         .horizontal(|ui| {
             if list_hidden {
                 list_toggle(ui, context, true, intents);
-                let mut frame = context.frame(ui);
-                let new = frame.icon_button(BuiltinIcon::Plus);
-                frame.tooltip(&new, "New Note");
-                new.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "New Note")
-                });
+                let new = ui.add(Button::icon_only(BuiltinIcon::Plus, "New Note").ghost());
+                context.frame(ui).tooltip(&new, "New Note");
                 if new.clicked() {
                     intents.push(Intent::New);
                 }
-                ui.add_space(4.0);
             }
             ui.add(
-                egui::TextEdit::singleline(&mut title)
+                TextField::new(&mut title)
                     .id(title_id)
-                    .hint_text("Untitled")
-                    .font(egui::FontId::proportional(context.metrics.font_size * 1.25))
-                    .frame(egui::Frame::NONE)
-                    .desired_width(f32::INFINITY),
+                    .hint("Untitled")
+                    .label("Title")
+                    .size(Size::Lg)
+                    .plain()
+                    .fill_width(),
             )
         })
         .inner;
-    title_field
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Title"));
     if title != note.title {
         intents.push(Intent::Rename(note.id, title));
     }
@@ -762,9 +752,9 @@ fn editor(
     if title_field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
         view.focus = Some(Field::Text);
     }
-    ui.add_space(4.0);
-    ui.separator();
-    ui.add_space(4.0);
+    ui.add_space(Space::Xs.px(ui));
+    ui.add(Separator::new());
+    ui.add_space(Space::Xs.px(ui));
 
     let mut text = note.text.clone();
     let text_id = egui::Id::new((panel, "notes-text", note.id));

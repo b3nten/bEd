@@ -72,9 +72,9 @@ for name, settings in [("web", {}), ("web_overlay", {"web.draw_pages": False})]:
 
         go(bed, site + "/two")
         until(bed, lambda: bed.exists("second page"), "the second page loads")
-        bed.click("chevron-left")
+        bed.click("Back")
         until(bed, lambda: bed.exists("first page"), "Back returns to the first page")
-        bed.click("chevron-right")
+        bed.click("Forward")
         until(bed, lambda: bed.exists("second page"), "Forward goes on to the second")
         assert not bed.status()["errors"]
 

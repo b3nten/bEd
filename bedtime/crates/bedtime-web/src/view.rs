@@ -13,6 +13,7 @@ use crate::{
     with_scheme,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiWaker, egui};
+use bedtime_ui::{Button, Row, Size, Spinner, TextField};
 use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{Panel, PanelInstance, PanelPresentation};
@@ -216,7 +217,7 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel
     }
     let go = ui
         .scope_builder(egui::UiBuilder::new().max_rect(below), |ui| {
-            address_bar(ui, context, &mut bar, loading)
+            address_bar(ui, &mut bar, loading)
         })
         .inner;
     // An address it was sent to (`open_url`), once its web view exists.
@@ -445,36 +446,29 @@ enum Go {
 }
 
 /// Back, forward, reload and the address.
-fn address_bar(
-    ui: &mut egui::Ui,
-    context: &UiContext<'_>,
-    bar: &mut WebBar,
-    loading: bool,
-) -> Option<Go> {
+fn address_bar(ui: &mut egui::Ui, bar: &mut WebBar, loading: bool) -> Option<Go> {
     let mut go = None;
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(6, 4))
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                {
-                    let mut frame = context.frame(ui);
-                    for (icon, name, action) in [
-                        (BuiltinIcon::ChevronLeft, "Back", Go::Back),
-                        (BuiltinIcon::ChevronRight, "Forward", Go::Forward),
-                        (BuiltinIcon::RefreshCw, "Reload", Go::Reload),
-                    ] {
-                        if frame.icon_button(icon).on_hover_text(name).clicked() {
-                            go = Some(action);
-                        }
+            Row::new().show(ui, |ui| {
+                for (icon, name, action) in [
+                    (BuiltinIcon::ChevronLeft, "Back", Go::Back),
+                    (BuiltinIcon::ChevronRight, "Forward", Go::Forward),
+                    (BuiltinIcon::RefreshCw, "Reload", Go::Reload),
+                ] {
+                    let button = Button::icon_only(icon, name).ghost();
+                    if ui.add(button).on_hover_text(name).clicked() {
+                        go = Some(action);
                     }
                 }
                 if loading {
-                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.add(Spinner::new().size(Size::Sm));
                 }
                 let edit = ui.add(
-                    egui::TextEdit::singleline(&mut bar.address)
-                        .hint_text("Address")
-                        .desired_width(f32::INFINITY),
+                    TextField::new(&mut bar.address)
+                        .hint("Address")
+                        .fill_width(),
                 );
                 if edit.lost_focus()
                     && ui.input(|input| input.key_pressed(egui::Key::Enter))
