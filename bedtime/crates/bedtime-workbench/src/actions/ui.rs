@@ -12,7 +12,7 @@ use crate::settings::ui::{CONTROL_WIDTH, Marks, columns};
 #[cfg(feature = "persistence")]
 use bedtime_persistence::StoreId;
 #[cfg(feature = "persistence")]
-use bedtime_ui::UiContext;
+use bedtime_ui::{Button, Text, UiContext};
 use bedtime_ui::{UiCamera, UiCapture, UiSystems, egui};
 use bevy::prelude::*;
 use bevy_egui::{EguiContext, EguiInput, EguiPreUpdateSet, helpers::bevy_to_egui_physical_key};
@@ -309,10 +309,13 @@ pub fn keybindings_section(
             None,
             |ui| marks.overridden(ui, context),
             |ui| {
-                let size = egui::vec2(CONTROL_WIDTH, 0.0);
                 if recording.as_ref() == Some(&command) {
                     let cancel = ui
-                        .add(egui::Button::new("Press keys…").min_size(size))
+                        .add(
+                            Button::new("Press keys…")
+                                .min_width(CONTROL_WIDTH)
+                                .selected(true),
+                        )
                         .on_hover_text("Escape or click to cancel")
                         .clicked();
                     match pressed_chord(world) {
@@ -332,14 +335,14 @@ pub fn keybindings_section(
                 } else {
                     // The layer's own view, without the layers above it.
                     let keys = world.bedtime().actions().keys_at(&command, layer);
-                    let text = if keys.is_empty() {
-                        egui::RichText::new("Not set").weak()
+                    let labels: Vec<_> = keys.iter().map(|chord| chord.label()).collect();
+                    let button = if keys.is_empty() {
+                        Button::new("Not set").muted(true)
                     } else {
-                        let labels: Vec<_> = keys.iter().map(|chord| chord.label()).collect();
-                        egui::RichText::new(labels.join(", "))
+                        Button::new(labels.join(", "))
                     };
                     let response = ui
-                        .add(egui::Button::new(text).min_size(size))
+                        .add(button.min_width(CONTROL_WIDTH))
                         .on_hover_text("Click, then press the new keys");
                     if response.clicked() {
                         recording = Some(command.clone());
@@ -349,7 +352,7 @@ pub fn keybindings_section(
             |ui| {
                 reset = set_here && marks.reset(ui, context);
                 if let Some(note) = shared {
-                    ui.weak(note);
+                    ui.add(Text::new(note).muted());
                 }
             },
         );

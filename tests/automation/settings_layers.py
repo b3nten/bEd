@@ -43,4 +43,4 @@ with tempfile.TemporaryDirectory() as folder, Bed(folder) as bed:
     bed.click("Global")
     assert not bed.exists("Overridden"), "the same value overrides nothing"
     bed.click(contains="Workspace:")
-    assert not bed.exists("rotate-ccw"), "the workspace holds no value of its own"
+    assert not bed.exists("Reset"), "the workspace holds no value of its own"

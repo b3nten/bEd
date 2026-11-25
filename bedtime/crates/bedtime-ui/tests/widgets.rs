@@ -555,3 +555,76 @@ fn a_separator_takes_no_length_while_its_container_is_measured() {
     });
     assert!(width > 0.0 && width < 400.0, "sized to its items: {width}");
 }
+
+/// Draw `draw` in `ctx` after `events` (keys and text, for what has focus).
+fn typed(ctx: &egui::Context, events: Vec<egui::Event>, mut draw: impl FnMut(&mut Ui)) {
+    let input = egui::RawInput {
+        events,
+        ..Default::default()
+    };
+    let mut output = ctx.run_ui(input, |ui| draw(ui));
+    output.textures_delta.clear();
+}
+
+#[test]
+fn a_number_field_shows_the_value_and_follows_what_is_typed() {
+    let ctx = egui::Context::default();
+    let mut value = 15.5_f32;
+    let mut changes = 0;
+    let mut center = egui::Pos2::ZERO;
+    fn field(value: &mut f32) -> NumberField<'_, f32> {
+        NumberField::new(value)
+            .range(8.0..=72.0)
+            .decimals(1)
+            .suffix(" pt")
+    }
+    // Shown, and clicked into, it doesn't change the value (15.5 exactly).
+    passes(&ctx, None, |ui| {
+        center = ui.add(field(&mut value)).rect.center()
+    });
+    passes(&ctx, Some(center), |ui| {
+        changes += usize::from(ui.add(field(&mut value)).changed());
+    });
+    assert_eq!((value, changes), (15.5, 0));
+
+    // Select all and type: the value follows, inside the range.
+    let select_all = egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    for (events, expected) in [
+        (
+            vec![select_all.clone(), egui::Event::Text("20".into())],
+            20.0,
+        ),
+        (vec![egui::Event::Text(".5".into())], 20.5),
+        (
+            vec![select_all.clone(), egui::Event::Text("abc".into())],
+            20.5,
+        ),
+        (vec![select_all, egui::Event::Text("500".into())], 72.0),
+    ] {
+        typed(&ctx, events, |ui| {
+            changes += usize::from(ui.add(field(&mut value)).changed());
+        });
+        assert_eq!(value, expected);
+    }
+    assert_eq!(changes, 3, "only a new number is a change");
+}
+
+#[test]
+fn a_number_field_does_not_round_a_value_by_showing_it() {
+    let ctx = egui::Context::default();
+    let mut value = 0.123456_f64;
+    let mut center = egui::Pos2::ZERO;
+    passes(&ctx, None, |ui| {
+        center = ui.add(NumberField::new(&mut value)).rect.center();
+    });
+    passes(&ctx, Some(center), |ui| {
+        ui.add(NumberField::new(&mut value));
+    });
+    assert_eq!(value, 0.123456, "shown as 0.12, kept as it was");
+}

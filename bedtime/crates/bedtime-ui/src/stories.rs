@@ -530,6 +530,25 @@ fn slider(ui: &mut egui::Ui, knobs: &mut Knobs) {
                         ui.add(Text::new(format!("{} spaces", values.1)));
                     });
                 });
+                section(ui, "Beside a NumberField: drag it or type it", |ui| {
+                    Row::new().show(ui, |ui| {
+                        ui.add(Slider::new(&mut values.0, 0.0..=1.0).label("Opacity"));
+                        ui.add(
+                            NumberField::new(&mut values.0)
+                                .range(0.0..=1.0)
+                                .label("Opacity"),
+                        );
+                    });
+                    Row::new().show(ui, |ui| {
+                        ui.add(Slider::new(&mut values.1, 1..=8).label("Tab width"));
+                        ui.add(
+                            NumberField::new(&mut values.1)
+                                .range(1..=8)
+                                .suffix(" spaces")
+                                .width(110.0),
+                        );
+                    });
+                });
                 section(ui, "Logarithmic (0.25 to 64)", |ui| {
                     Row::new().show(ui, |ui| {
                         ui.add(

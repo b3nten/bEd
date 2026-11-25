@@ -106,8 +106,9 @@ impl<T: PartialEq + Clone> egui::Widget for Select<'_, T> {
         let font = egui::FontId::proportional(font_size);
         let current = self.options.iter().position(|option| option == self.value);
         let shown = current.map_or(&self.placeholder, |index| &self.labels[index]);
-        let chevron = font_size;
-        let gap = (font_size * 0.4).round();
+        // The arrow's room: it's small, and the text wants the width.
+        let chevron = (font_size * 0.7).round();
+        let gap = (font_size * 0.3).round();
         let available = ui.available_width();
         let width = if self.fill_width {
             available

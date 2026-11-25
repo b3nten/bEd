@@ -12,7 +12,7 @@ use bedtime::workbench::{
     persistence::PersistenceDirectory,
     settings::{
         SettingsAppExt, settings,
-        ui::{combo, row},
+        ui::{row, select},
     },
 };
 use bevy::prelude::*;
@@ -127,29 +127,18 @@ fn backdrop_row(
 ) {
     let names = world.resource::<Backdrops>().names();
     row::<Backdrop>(ui, world, context, layer, None, |ui, chosen| {
-        let before = chosen.clone();
-        let scene = |name: &str| {
+        let mut backdrops = vec![(String::new(), NONE.to_owned())];
+        backdrops.extend(
             scene::SCENES
                 .iter()
-                .find(|(scene, _)| *scene == name)
-                .map(|(_, label)| *label)
-        };
-        let shown = match chosen.as_str() {
-            "" => NONE,
-            name => scene(name).unwrap_or(name),
+                .map(|(name, label)| ((*name).to_owned(), (*label).to_owned())),
+        );
+        backdrops.extend(names.into_iter().map(|name| (name.clone(), name)));
+        // One that's gone still shows as what was chosen.
+        if !backdrops.iter().any(|(name, _)| name == chosen) {
+            backdrops.push((chosen.clone(), chosen.clone()));
         }
-        .to_owned();
-        combo(ui, "backdrop", shown, |ui| {
-            ui.selectable_value(chosen, String::new(), NONE);
-            for (name, label) in scene::SCENES {
-                ui.selectable_value(chosen, (*name).into(), *label);
-            }
-            for name in names {
-                let label = name.clone();
-                ui.selectable_value(chosen, name, label);
-            }
-        });
-        before != *chosen
+        select(ui, chosen, &backdrops)
     });
 }
 

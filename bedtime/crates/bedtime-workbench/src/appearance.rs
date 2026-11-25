@@ -11,12 +11,12 @@
 //! Editor panel.
 use crate::settings::{
     Setting, SettingsAppExt, settings,
-    ui::{CONTROL_WIDTH, Marks, columns, combo, row},
+    ui::{CONTROL_WIDTH, Marks, columns, row, select},
 };
 use crate::*;
 use bedtime_persistence::StoreId;
 use bedtime_ui::{
-    BuiltinIcon, Metrics, MotionPolicy, UiContext, egui,
+    BuiltinIcon, Button, Metrics, MotionPolicy, Select, Text, UiContext, egui,
     fonts::DEFAULT_FAMILY,
     theme::{FONT_SIZES, ThemeFolder},
 };
@@ -276,37 +276,50 @@ fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, laye
         None,
         |ui| marks.overridden(ui, context),
         |ui| {
-            egui::ComboBox::from_id_salt("theme")
-                .width(CONTROL_WIDTH)
-                .selected_text(shown)
-                .show_ui(ui, |ui| {
-                    for (id, name) in &choices {
-                        ui.selectable_value(&mut value, id.clone(), name);
-                    }
-                });
+            // A theme that isn't there shows as what was asked for.
+            let ids: Vec<String> = choices.iter().map(|(id, _)| id.clone()).collect();
+            let name = |id: &String| {
+                choices
+                    .iter()
+                    .find(|(choice, _)| choice == id)
+                    .map_or_else(|| id.clone(), |(_, name)| name.clone())
+            };
+            let themes = Select::with(&mut value, &ids, name)
+                .placeholder(shown)
+                .width(CONTROL_WIDTH);
+            ui.add(if ids.len() > 12 {
+                themes.searchable()
+            } else {
+                themes
+            });
         },
         |ui| {
             reset = set_here && marks.reset(ui, context);
             if editor {
-                let mut frame = context.frame(ui);
-                let button = frame.icon_button_sized(BuiltinIcon::Sliders, 14.0);
-                button.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Edit theme")
-                });
-                frame.tooltip(
+                let button = ui.add(
+                    Button::icon_only(BuiltinIcon::Sliders, "Edit theme")
+                        .small()
+                        .ghost(),
+                );
+                context.frame(ui).tooltip(
                     &button,
                     "Edit this theme's colors, or make your own from it",
                 );
                 edit = button.clicked();
             }
             if folder.is_some() {
-                let mut frame = context.frame(ui);
-                let button = frame.icon_button_sized(BuiltinIcon::FolderOpen, 14.0);
-                frame.tooltip(&button, "Open the themes folder to edit or add themes");
+                let button = ui.add(
+                    Button::icon_only(BuiltinIcon::FolderOpen, "Open themes folder")
+                        .small()
+                        .ghost(),
+                );
+                context
+                    .frame(ui)
+                    .tooltip(&button, "Open the themes folder to edit or add themes");
                 open_folder = button.clicked();
             }
             if !found {
-                ui.weak("Not found");
+                ui.add(Text::new("Not found").muted());
             }
             if !broken.is_empty() {
                 let warning = bedtime_ui::theme::color(context.theme.palette.warning);
@@ -441,16 +454,16 @@ fn font_family_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
     let chosen = world.bedtime().settings().get_at::<FontFamily>(layer);
     let (families, note) = font_choices(world, &chosen);
     row::<FontFamily>(ui, world, context, layer, note, |ui, family| {
-        let before = family.clone();
-        let shown = family.clone().unwrap_or(DEFAULT_FAMILY.into());
-        combo(ui, "font", shown, |ui| {
-            ui.selectable_value(family, None, DEFAULT_FAMILY);
-            for name in families {
-                let label = name.clone();
-                ui.selectable_value(family, Some(name), label);
-            }
-        });
-        before != *family
+        let mut fonts = vec![(None, DEFAULT_FAMILY.to_owned())];
+        fonts.extend(families.into_iter().map(|name| (Some(name.clone()), name)));
+        // One that isn't installed still shows as what was chosen.
+        if let Some(missing) = family
+            .clone()
+            .filter(|chosen| !fonts.iter().any(|(font, _)| font.as_ref() == Some(chosen)))
+        {
+            fonts.push((Some(missing.clone()), missing));
+        }
+        select(ui, family, &fonts)
     });
 }
 

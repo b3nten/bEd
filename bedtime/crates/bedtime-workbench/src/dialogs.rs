@@ -1,6 +1,6 @@
 //! The unsaved-changes prompt, drawn in bedtime-ui's modal layer.
 use crate::*;
-use bedtime_ui::egui;
+use bedtime_ui::{Button, Row, Space, Text, Tone, egui};
 use bevy::prelude::*;
 
 /// Ask what to do with unsaved documents before a close or quit goes ahead.
@@ -30,24 +30,24 @@ pub(crate) fn draw_close_prompt(
     let response =
         egui::Modal::new(egui::Id::new(("workbench-close-prompt", surface))).show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 48.0).clamp(0.0, 460.0));
-            ui.heading(format!(
+            ui.add(Text::heading(format!(
                 "{} with unsaved changes?",
                 prompt.exit.as_deref().unwrap_or("Close")
-            ));
-            ui.label(if failed {
+            )));
+            ui.add(Text::new(if failed {
                 "Some changes couldn't be saved."
             } else if many {
                 "These documents have unsaved changes:"
             } else {
                 "This document has unsaved changes:"
-            });
+            }));
             for document in &prompt.documents {
-                ui.label(egui::RichText::new(&document.title).strong());
+                ui.add(Text::new(&document.title).strong());
                 if let Some(error) = &document.error {
-                    ui.colored_label(ui.visuals().error_fg_color, error);
+                    ui.add(Text::new(error).tone(Tone::Error));
                 }
             }
-            ui.add_space(8.0);
+            ui.add_space(Space::Sm.px(ui));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let save = match (failed, many) {
                     (true, _) => "Retry",
@@ -55,16 +55,16 @@ pub(crate) fn draw_close_prompt(
                     (false, false) => "Save",
                 };
                 let mut choice = None;
-                if ui.button(save).clicked() {
+                if ui.add(Button::new(save).primary()).clicked() {
                     choice = Some(crate::CloseChoice::Save);
                 }
                 if ui
-                    .button(if many { "Discard all" } else { "Discard" })
+                    .add(Button::new(if many { "Discard all" } else { "Discard" }))
                     .clicked()
                 {
                     choice = Some(crate::CloseChoice::Discard);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.add(Button::new("Cancel")).clicked() {
                     choice = Some(crate::CloseChoice::Cancel);
                 }
                 choice
@@ -134,21 +134,21 @@ pub(crate) fn draw_overwrite_question(
     let response =
         egui::Modal::new(egui::Id::new(("workbench-overwrite", surface))).show(ctx, |ui| {
             ui.set_width((ctx.content_rect().width() - 48.0).clamp(0.0, 460.0));
-            ui.heading(format!("{} changed on disk", info.title));
-            ui.label(
+            ui.add(Text::heading(format!("{} changed on disk", info.title)));
+            ui.add(Text::new(
                 "Something else changed it since it was opened here. Saving writes \
              your version over those changes.",
-            );
-            ui.add_space(8.0);
+            ));
+            ui.add_space(Space::Sm.px(ui));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let mut answer = None;
-                if ui.button("Overwrite").clicked() {
+                if ui.add(Button::new("Overwrite")).clicked() {
                     answer = Some(Answer::Overwrite);
                 }
-                if ui.button("Reload Theirs").clicked() {
+                if ui.add(Button::new("Reload Theirs")).clicked() {
                     answer = Some(Answer::Reload);
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.add(Button::new("Cancel")).clicked() {
                     answer = Some(Answer::Cancel);
                 }
                 answer
@@ -237,11 +237,11 @@ pub(crate) fn document_header(
         .inner_margin(egui::Margin::symmetric(10, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.colored_label(bedtime_ui::theme::color(palette.warning), message);
+            Row::new().show(ui, |ui| {
+                ui.add(Text::new(message).tone(Tone::Warning));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     for (label, action) in actions.iter().rev() {
-                        if ui.small_button(*label).clicked() {
+                        if ui.add(Button::new(*label).small()).clicked() {
                             clicked = Some(*action);
                         }
                     }

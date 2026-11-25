@@ -212,15 +212,13 @@ impl egui::Widget for Toggle<'_> {
                 egui::StrokeKind::Inside,
             );
         }
-        let mut knob = p.panel_background;
-        knob[3] = 1.0;
         painter.circle_filled(
             egui::pos2(
                 track.left() + track_size.y / 2.0 + travel * (track_size.x - track_size.y),
                 track.center().y,
             ),
             track_size.y / 2.0 - 3.0,
-            theme::color(theme::mix(p.text, knob, travel)),
+            theme::color(p.text),
         );
         if let Some(galley) = galley {
             let at = egui::pos2(track.right() + gap, rect.center().y - galley.size().y / 2.0);

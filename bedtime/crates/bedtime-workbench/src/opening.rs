@@ -935,12 +935,14 @@ pub fn viewer_document<M: DocumentModel>(
     let info = workbench.inspect_document(document).ok()?;
     match info.status {
         DocumentStatus::Loading => {
-            ui.centered_and_justified(|ui| ui.spinner());
+            ui.centered_and_justified(|ui| ui.add(bedtime_ui::Spinner::new()));
             None
         }
         DocumentStatus::Failed(error) => {
             egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
-                ui.label(format!("This file can't be opened: {error}"));
+                ui.add(bedtime_ui::Text::new(format!(
+                    "This file can't be opened: {error}"
+                )));
             });
             None
         }

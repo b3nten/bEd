@@ -9,7 +9,10 @@
 use crate::BedtimeWorldExt as _;
 use crate::settings::{Setting, Settings, SettingsError};
 use bedtime_persistence::StoreId;
-use bedtime_ui::{BuiltinIcon, UiContext, egui};
+use bedtime_ui::{
+    BuiltinIcon, Button, NumberField, Row, Segmented, Select, Space, Text, TextField, TextRole,
+    Toggle, UiContext, egui,
+};
 use bevy::prelude::*;
 use std::{ops::RangeInclusive, sync::Arc};
 
@@ -51,18 +54,17 @@ pub mod editors {
     };
 
     pub fn toggle() -> SettingUi<bool> {
-        SettingUi::editor(|ui, context, value| context.frame(ui).toggle(value, "").changed())
+        SettingUi::editor(|ui, _, value| ui.add(Toggle::new(value, "")).changed())
     }
 
     pub fn text() -> SettingUi<String> {
         SettingUi::editor(|ui, _, value| {
-            ui.add(egui::TextEdit::singleline(value).desired_width(CONTROL_WIDTH))
-                .changed()
+            ui.add(TextField::new(value).width(CONTROL_WIDTH)).changed()
         })
     }
 
     pub fn drag<N: egui::emath::Numeric + Send + Sync + 'static>() -> SettingUi<N> {
-        SettingUi::editor(|ui, _, value| ui.add(egui::DragValue::new(value)).changed())
+        SettingUi::editor(|ui, _, value| ui.add(NumberField::new(value)).changed())
     }
 
     /// A slider over `range`, showing its value to two decimals by default.
@@ -86,11 +88,12 @@ pub mod editors {
             };
             let current = current.variant_name().to_owned();
             let mut chosen = current.clone();
-            combo(ui, std::any::type_name::<V>(), words(&current), |ui| {
-                for name in info.variant_names() {
-                    ui.selectable_value(&mut chosen, (*name).to_owned(), words(name));
-                }
-            });
+            let variants: Vec<_> = info
+                .variant_names()
+                .iter()
+                .map(|name| ((*name).to_owned(), words(name)))
+                .collect();
+            select(ui, &mut chosen, &variants);
             if chosen == current {
                 return false;
             }
@@ -308,7 +311,7 @@ pub(crate) fn register<S: Setting>(app: &mut App) {
         None => Arc::new(
             |ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer| {
                 self::row::<S>(ui, world, context, layer, None, |ui, _| {
-                    ui.weak("Edit in the settings file");
+                    ui.add(Text::new("Edit in the settings file").muted());
                     false
                 })
             },
@@ -347,12 +350,10 @@ pub fn layer_tabs(
     if layers.len() > 1 {
         // Wrap rather than overflow: an overflowing row would widen everything
         // after it, and the panel would stop scrolling sideways.
-        ui.horizontal_wrapped(|ui| {
-            for &layer in &layers {
-                let label = settings.label(layer).unwrap_or_default();
-                ui.selectable_value(&mut chosen, layer, text(layer, label));
-            }
-        });
+        // (When they don't fit, the segments wrap.)
+        ui.add(Segmented::with(&mut chosen, &layers, |layer| {
+            text(*layer, settings.label(*layer).unwrap_or_default())
+        }));
     }
     ui.data_mut(|data| data.insert_temp(id, chosen));
     Some(chosen)
@@ -364,8 +365,6 @@ pub fn sections(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, l
         return;
     };
     let sections = registry.sections();
-    // Leaves room for the value box beside each slider.
-    ui.spacing_mut().slider_width = CONTROL_WIDTH - 76.0;
     for (section, rows) in sections {
         let shown: Vec<_> = rows.iter().filter(|row| row.shown(world, layer)).collect();
         if shown.is_empty() {
@@ -380,9 +379,9 @@ pub fn sections(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, l
 
 /// A section's heading.
 pub fn heading(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(14.0);
-    ui.heading(title);
-    ui.add_space(2.0);
+    ui.add_space(Space::Lg.px(ui));
+    ui.add(Text::new(title).role(TextRole::Heading));
+    ui.add_space(Space::Xs.px(ui) / 2.0);
 }
 
 /// One row: a label (then `marker`, such as an override warning), a control
@@ -407,7 +406,7 @@ pub fn columns<R>(
             // Leave room for the marker after a long label.
             ui.scope(|ui| {
                 ui.set_max_width(LABEL_WIDTH - 28.0);
-                let label = ui.add(egui::Label::new(label).truncate());
+                let label = ui.add(Text::new(label).truncate());
                 if let Some(description) = description {
                     label.on_hover_text(description);
                 }
@@ -453,7 +452,7 @@ pub fn row<S: Setting>(
         |ui| {
             reset = set_here && marks.reset(ui, context);
             if let Some(note) = note {
-                ui.weak(note);
+                ui.add(Text::new(note).muted());
             }
         },
     );
@@ -511,16 +510,17 @@ impl Marks {
             Some(below) => format!("Use the {} value", below.to_lowercase()),
             None => "Reset to default".to_owned(),
         };
-        let mut frame = context.frame(ui);
-        let response = frame.icon_button_sized(BuiltinIcon::RotateCcw, 14.0);
-        frame.tooltip(&response, hint);
+        let reset = Button::icon_only(BuiltinIcon::RotateCcw, "Reset")
+            .small()
+            .ghost();
+        let response = ui.add(reset);
+        context.frame(ui).tooltip(&response, hint);
         response.clicked()
     }
 }
 
-/// A slider with its value shown to `decimals` places. Only the text is
-/// rounded: egui writes a slider's value back every frame, and rounding it
-/// there would change a setting just by showing it.
+/// A slider with its value beside it, to `decimals` places, where it can be
+/// typed. Only the text is rounded: showing a setting doesn't change it.
 pub fn slider<N: egui::emath::Numeric>(
     ui: &mut egui::Ui,
     value: &mut N,
@@ -528,23 +528,47 @@ pub fn slider<N: egui::emath::Numeric>(
     suffix: &str,
     decimals: usize,
 ) -> bool {
-    let slider = egui::Slider::new(value, range)
-        .suffix(suffix)
-        .custom_formatter(move |value, _| format!("{value:.decimals$}"));
-    ui.add(slider).changed()
+    /// The box the value is typed in.
+    const VALUE_WIDTH: f32 = 84.0;
+    Row::new()
+        .show(ui, |ui| {
+            let track = CONTROL_WIDTH - VALUE_WIDTH - ui.spacing().item_spacing.x;
+            let dragged = ui
+                .add(bedtime_ui::Slider::new(value, range.clone()).width(track))
+                .changed();
+            let typed = ui
+                .add(
+                    NumberField::new(value)
+                        .range(range)
+                        .decimals(decimals)
+                        .suffix(suffix)
+                        .width(VALUE_WIDTH),
+                )
+                .changed();
+            dragged || typed
+        })
+        .inner
 }
 
-/// A combo box filling the control column.
-pub fn combo(
+/// A select filling the control column: each option with what it's called.
+/// Returns whether another was chosen.
+pub fn select<T: PartialEq + Clone>(
     ui: &mut egui::Ui,
-    id: impl std::hash::Hash + std::fmt::Debug,
-    selected: impl Into<egui::WidgetText>,
-    options: impl FnOnce(&mut egui::Ui),
-) {
-    egui::ComboBox::from_id_salt(id)
-        .width(CONTROL_WIDTH)
-        .selected_text(selected)
-        .show_ui(ui, options);
+    value: &mut T,
+    options: &[(T, String)],
+) -> bool {
+    let values: Vec<T> = options.iter().map(|(value, _)| value.clone()).collect();
+    let name = |value: &T| {
+        options
+            .iter()
+            .find(|(option, _)| option == value)
+            .map_or_else(String::new, |(_, name)| name.clone())
+    };
+    let mut select = Select::with(value, &values, name).width(CONTROL_WIDTH);
+    if values.len() > 12 {
+        select = select.searchable();
+    }
+    ui.add(select).changed()
 }
 
 /// A type name in words: `FontSize` is "Font size".

@@ -37,6 +37,7 @@ pub struct Button {
     italic: bool,
     strikethrough: bool,
     min_width: f32,
+    muted: bool,
 }
 
 impl Button {
@@ -53,6 +54,7 @@ impl Button {
             italic: false,
             strikethrough: false,
             min_width: 0.0,
+            muted: false,
         }
     }
 
@@ -142,6 +144,11 @@ impl Button {
         self
     }
 
+    /// Its text in the muted colour: it stands for nothing yet ("Not set").
+    pub fn muted(mut self, muted: bool) -> Self {
+        self.muted = muted;
+        self
+    }
     pub fn italic(mut self, italic: bool) -> Self {
         self.italic = italic;
         self
@@ -278,7 +285,7 @@ impl egui::Widget for Button {
             );
         }
 
-        let ink = theme::color(ink);
+        let ink = theme::color(if self.muted { p.muted } else { ink });
         let mut x = match self.align {
             egui::Align::Min => rect.left() + padding.x,
             egui::Align::Center => rect.center().x - content / 2.0,

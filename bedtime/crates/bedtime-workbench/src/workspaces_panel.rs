@@ -4,7 +4,7 @@ use crate::BedtimeWorldExt as _;
 use crate::PanelsAppExt as _;
 use crate::workspaces::{RecentWorkspaces, Workspace, available, delete};
 use crate::{ErrorDialog, Panel, persistence::ReflectPersist};
-use bedtime_ui::{BuiltinIcon, UiContext, egui};
+use bedtime_ui::{BuiltinIcon, Button, Space, Text, UiContext, egui};
 use bevy::prelude::*;
 use std::{
     path::{Path, PathBuf},
@@ -118,17 +118,16 @@ impl Panel for WorkspacesPanel {
         egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(14, 12))
             .show(ui, |ui| {
-                ui.label(egui::RichText::new("Workspaces").strong());
-                ui.label(
-                    egui::RichText::new(if list.is_empty() {
+                ui.add(Text::new("Workspaces").strong());
+                ui.add(
+                    Text::caption(if list.is_empty() {
                         "None yet. Open a folder (File → Open Folder…) to make one."
                     } else {
                         "Click one to open it in this window."
                     })
-                    .small()
-                    .weak(),
+                    .muted(),
                 );
-                ui.add_space(6.0);
+                ui.add_space(Space::Xs.px(ui));
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
@@ -259,31 +258,29 @@ impl Row<'_> {
         // Right to left: actions and status, then the name and path take
         // what's left.
         if self.confirming {
-            if row.button("Cancel").clicked() {
+            if row.add(Button::new("Cancel").small()).clicked() {
                 result = Some(RowAction::Cancel);
             }
-            let delete =
-                egui::RichText::new("Delete").color(bedtime_ui::theme::color(palette.error));
-            if row.button(delete).clicked() {
+            if row.add(Button::new("Delete").small().danger()).clicked() {
                 result = Some(RowAction::Delete);
             }
-            row.weak("Delete its saved layout and settings?");
+            row.add(Text::new("Delete its saved layout and settings?").muted());
         } else {
             let deletable = !self.here && !known.open_elsewhere;
             row.add_enabled_ui(deletable, |ui| {
-                let mut frame = context.frame(ui);
-                let button = frame.icon_button_sized(BuiltinIcon::Trash, 14.0);
-                let label = format!("Delete {name}");
-                button.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, deletable, &label)
-                });
-                frame.tooltip(&button, "Delete this workspace's saved layout and settings");
+                let delete = Button::icon_only(BuiltinIcon::Trash, format!("Delete {name}"))
+                    .small()
+                    .ghost();
+                let button = ui.add(delete);
+                context
+                    .frame(ui)
+                    .tooltip(&button, "Delete this workspace's saved layout and settings");
                 if button.clicked() {
                     result = Some(RowAction::AskToDelete);
                 }
             });
             if let Some(status) = status {
-                row.weak(status);
+                row.add(Text::new(status).muted());
             }
         }
         row.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
@@ -292,12 +289,11 @@ impl Row<'_> {
             context
                 .frame(ui)
                 .icon_at(BuiltinIcon::Folder, [icon.min.x, icon.min.y], side);
-            ui.add_space(4.0);
-            ui.add(egui::Label::new(egui::RichText::new(&name).strong()).selectable(false));
+            ui.add_space(Space::Xs.px(ui));
+            ui.add(Text::new(&name).strong());
             // Where it is; the name is already shown.
             let parent = known.folder.parent().unwrap_or(&known.folder);
-            let path = egui::RichText::new(abbreviate(parent)).small().weak();
-            ui.add(egui::Label::new(path).truncate().selectable(false));
+            ui.add(Text::caption(abbreviate(parent)).muted().truncate());
         });
         result
     }
