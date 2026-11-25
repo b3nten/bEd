@@ -9,6 +9,7 @@ use super::{
 };
 use crate::editor::{EditorOutput, EditorPanel, Indentation, editor_id, word_at};
 use bedtime_document::{BufferEdit, TextBuffer};
+use bedtime_ui::{ListRow, MenuItem, Text, TextField};
 use bedtime_ui::{UiContext, egui};
 use bedtime_workbench::{
     Action, ActionAppExt, ActionInvocation, ActionResult, BedtimeWorldExt, DocumentId,
@@ -577,11 +578,10 @@ fn draw_menu(ui: &mut egui::Ui, world: &mut World, panel: Entity, at: egui::Pos2
             .show(ui, |ui| {
                 for (index, action) in menu.actions.iter().enumerate() {
                     let selected = index == menu.selected;
-                    let mut button = egui::Button::new(&action.title);
-                    if selected {
-                        button = button.fill(ui.visuals().widgets.hovered.weak_bg_fill);
-                    }
-                    let response = ui.add_enabled(action.disabled.is_none(), button);
+                    let row = MenuItem::new(&action.title)
+                        .highlighted(selected)
+                        .keep_open();
+                    let response = ui.add_enabled(action.disabled.is_none(), row);
                     if selected && (down || up) {
                         response.scroll_to_me(None);
                     }
@@ -624,10 +624,10 @@ fn draw_rename(ui: &mut egui::Ui, world: &mut World, panel: Entity, at: egui::Po
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 let response = ui.add(
-                    egui::TextEdit::singleline(&mut rename.name)
+                    TextField::new(&mut rename.name)
                         .id(id)
-                        .hint_text("New name")
-                        .desired_width(240.0),
+                        .hint("New name")
+                        .width(240.0),
                 );
                 if !rename.focused {
                     response.request_focus();
@@ -746,25 +746,23 @@ impl Panel for ReferencesPanel {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 egui::Frame::NONE.inner_margin(8).show(ui, |ui| {
-                    ui.weak(match count {
-                        1 => format!("1 reference to {}", references.of),
-                        n => format!("{n} references to {}", references.of),
-                    });
+                    ui.add(
+                        Text::new(match count {
+                            1 => format!("1 reference to {}", references.of),
+                            n => format!("{n} references to {}", references.of),
+                        })
+                        .muted(),
+                    );
                     for (path, lines) in &references.files {
                         ui.add_space(context.metrics.spacing[0]);
                         let shown = root
                             .as_ref()
                             .and_then(|root| path.strip_prefix(root).ok())
                             .unwrap_or(path);
-                        ui.strong(shown.display().to_string());
+                        ui.add(Text::new(shown.display().to_string()).strong());
                         for reference in lines {
-                            let text = egui::RichText::new(format!(
-                                "{:>5}  {}",
-                                reference.line + 1,
-                                reference.text
-                            ))
-                            .monospace();
-                            if ui.add(egui::Button::selectable(false, text)).clicked() {
+                            let text = format!("{:>5}  {}", reference.line + 1, reference.text);
+                            if ui.add(ListRow::new(text)).clicked() {
                                 open =
                                     Some((panel, path.clone(), reference.line, reference.column));
                             }

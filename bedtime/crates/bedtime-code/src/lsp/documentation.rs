@@ -83,11 +83,11 @@ mod tests {
                             minimum = 6.0 * ui.text_style_height(&egui::TextStyle::Body);
                             height = scroll_area(ui, 320.0)
                                 .show(ui, |ui| {
-                                    ui.label(if long {
+                                    ui.add(bedtime_ui::Text::new(if long {
                                         "Documentation line\n".repeat(12)
                                     } else {
                                         "Short hover".into()
-                                    });
+                                    }));
                                 })
                                 .inner_rect
                                 .height();

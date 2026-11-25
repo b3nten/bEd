@@ -6,6 +6,9 @@ use super::{
     restart, server_states,
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, egui, theme};
+use bedtime_ui::{
+    Button, MenuItem, Row, Section, Space, Table, Text, TextArea, TextField, Toggle, Tone,
+};
 use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
@@ -142,8 +145,8 @@ impl Panel for LanguageServersPanel {
             } else {
                 "Changes here apply to this workspace, over the global ones."
             };
-            ui.add(egui::Label::new(egui::RichText::new(note).small().weak()).wrap());
-            ui.add_space(6.0);
+            ui.add(Text::caption(note).muted().wrap());
+            ui.add_space(Space::Xs.px(ui));
             let entries = resolve(layers(world, Some(layer)).iter());
             let states = server_states(world);
             let Some(mut panel_state) = world
@@ -174,15 +177,14 @@ impl Panel for LanguageServersPanel {
                         );
                     }
                     add_server(frame.ui, &mut panel_state, &mut asked);
-                    frame.ui.add_space(10.0);
-                    egui::CollapsingHeader::new(format!("Not installed ({})", missing.len()))
-                        .id_salt("not-installed")
-                        .default_open(false)
+                    frame.ui.add_space(Space::Md.px(frame.ui));
+                    Section::new(format!("Not installed ({})", missing.len()))
+                        .id("not-installed")
                         .show(frame.ui, |ui| {
                             for entry in &missing {
                                 not_installed(ui, entry);
                             }
-                            if ui.button("Look Again").clicked() {
+                            if ui.add(Button::new("Look Again")).clicked() {
                                 asked.push(Asked::LookAgain);
                             }
                         });
@@ -396,61 +398,52 @@ fn server_card(
                     .ui
                     .allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
                 row.ui.painter().circle_filled(dot.center(), 4.0, light);
-                let title = row.ui.add(
-                    egui::Label::new(egui::RichText::new(&entry.name).strong())
-                        .sense(egui::Sense::click()),
-                );
+                let title = row.ui.add(Text::new(&entry.name).strong().clickable());
                 if title.clicked() {
                     panel.expanded = (!expanded).then(|| entry.name.clone());
                 }
                 menu_targets.push(title);
                 if !entry.languages.is_empty() {
-                    row.ui.weak(entry.languages.join(", "));
+                    row.ui.add(Text::new(entry.languages.join(", ")).muted());
                 }
                 let right =
                     egui::UiBuilder::new().layout(egui::Layout::right_to_left(egui::Align::Center));
-                row.scope(right, |mut buttons| {
+                row.scope(right, |buttons| {
                     let chevron = if expanded {
                         BuiltinIcon::ChevronDown
                     } else {
                         BuiltinIcon::ChevronRight
                     };
-                    let toggle = buttons.icon_button(chevron);
+                    let toggle = buttons
+                        .ui
+                        .add(Button::icon_only(chevron, "Configure").ghost());
                     buttons.tooltip(&toggle, "Configure");
                     if toggle.clicked() {
                         panel.expanded = (!expanded).then(|| entry.name.clone());
                     }
                     if let Some((server, ..)) = running {
-                        let restart = buttons.icon_button(BuiltinIcon::RotateCcw);
+                        let restart = buttons
+                            .ui
+                            .add(Button::icon_only(BuiltinIcon::RotateCcw, "Restart").ghost());
                         buttons.tooltip(&restart, "Restart");
                         if restart.clicked() {
                             asked.push(Asked::Restart(*server));
                         }
                     }
                     let mut enabled = entry.enabled;
-                    if buttons.toggle(&mut enabled, "").changed() {
+                    if buttons.ui.add(Toggle::new(&mut enabled, "")).changed() {
                         asked.push(Asked::Enable(entry.name.clone(), enabled));
                     }
                 });
             });
-            menu_targets.push(
-                inner.ui.add(
-                    egui::Label::new(egui::RichText::new(&text).small().color(light))
-                        .sense(egui::Sense::click()),
-                ),
-            );
+            menu_targets.push(inner.ui.add(Text::caption(&text).color(light).clickable()));
             if let Some(Some(path)) = found {
-                inner.ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(path.display().to_string())
-                            .small()
-                            .weak(),
-                    )
-                    .truncate(),
-                );
+                inner
+                    .ui
+                    .add(Text::caption(path.display().to_string()).muted().truncate());
             }
             if expanded {
-                inner.ui.add_space(6.0);
+                inner.ui.add_space(Space::Xs.px(inner.ui));
                 fields(inner.ui, entry, panel, asked);
             }
         });
@@ -471,7 +464,7 @@ fn card_menu(
 ) {
     {
         if let Some((server, ..)) = running
-            && ui.button("Restart").clicked()
+            && ui.add(MenuItem::new("Restart")).clicked()
         {
             asked.push(Asked::Restart(*server));
         }
@@ -480,11 +473,11 @@ fn card_menu(
         } else {
             "Remove"
         };
-        if ui.button(reset).clicked() {
+        if ui.add(MenuItem::new(reset)).clicked() {
             asked.push(Asked::Reset(entry.name.clone()));
         }
         if let Some(Some(path)) = found
-            && ui.button("Copy Program Path").clicked()
+            && ui.add(MenuItem::new("Copy Program Path")).clicked()
         {
             ui.ctx().copy_text(path.display().to_string());
         }
@@ -494,10 +487,10 @@ fn card_menu(
 /// The configuration of an expanded server: each field keeps what's typed
 /// when Enter is pressed or it loses focus.
 fn fields(ui: &mut egui::Ui, entry: &ServerEntry, panel: &mut PanelState, asked: &mut Vec<Asked>) {
-    egui::Grid::new(("fields", &entry.name))
-        .num_columns(2)
-        .spacing([10.0, 6.0])
-        .show(ui, |ui| {
+    Table::new(("fields", &entry.name))
+        .columns(2)
+        .gap(Space::Md)
+        .show(ui, |table| {
             for (field, label, multiline) in [
                 (Field::Program, "Program", false),
                 (Field::Arguments, "Arguments", false),
@@ -506,7 +499,6 @@ fn fields(ui: &mut egui::Ui, entry: &ServerEntry, panel: &mut PanelState, asked:
                 (Field::Settings, "Settings", true),
                 (Field::InitializationOptions, "Initialization", true),
             ] {
-                ui.label(label);
                 let key = (entry.name.clone(), field);
                 let text = panel
                     .drafts
@@ -519,43 +511,42 @@ fn fields(ui: &mut egui::Ui, entry: &ServerEntry, panel: &mut PanelState, asked:
                     Field::Settings | Field::InitializationOptions => "{ }  (JSON)",
                     Field::Program => "a name on the PATH, or a path",
                 };
-                let edit = if multiline {
-                    egui::TextEdit::multiline(text)
-                        .code_editor()
-                        .desired_rows(2)
-                } else {
-                    egui::TextEdit::singleline(text)
-                };
-                let response = ui.add(edit.hint_text(hint).desired_width(f32::INFINITY));
-                let done = response.lost_focus();
-                if done {
-                    asked.push(Asked::Set(entry.name.clone(), field, text.clone()));
-                } else if !response.has_focus() && *text != shown(entry, field) {
-                    // Changed elsewhere (another layer, the file): show that.
-                    *text = shown(entry, field);
-                }
-                ui.end_row();
+                table.row(|ui| {
+                    ui.add(Text::new(label));
+                    let response = if multiline {
+                        ui.add(TextArea::new(text).hint(hint).rows(2).fill_width())
+                    } else {
+                        ui.add(TextField::new(text).hint(hint).fill_width())
+                    };
+                    if response.lost_focus() {
+                        asked.push(Asked::Set(entry.name.clone(), field, text.clone()));
+                    } else if !response.has_focus() && *text != shown(entry, field) {
+                        // Changed elsewhere (another layer, the file): show that.
+                        *text = shown(entry, field);
+                    }
+                });
                 if let Some(error) = panel.errors.get(&key) {
-                    ui.label("");
-                    ui.colored_label(ui.visuals().error_fg_color, error);
-                    ui.end_row();
+                    table.row(|ui| {
+                        ui.add(Text::new(""));
+                        ui.add(Text::new(error).tone(Tone::Error));
+                    });
                 }
             }
         });
 }
 
 fn add_server(ui: &mut egui::Ui, panel: &mut PanelState, asked: &mut Vec<Asked>) {
-    ui.add_space(4.0);
-    ui.horizontal(|ui| {
+    ui.add_space(Space::Xs.px(ui));
+    Row::new().show(ui, |ui| {
         let response = ui.add(
-            egui::TextEdit::singleline(&mut panel.adding)
-                .hint_text("Another server's name")
-                .desired_width(200.0),
+            TextField::new(&mut panel.adding)
+                .hint("Another server's name")
+                .width(200.0),
         );
         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         let name = panel.adding.trim().to_owned();
         if (ui
-            .add_enabled(!name.is_empty(), egui::Button::new("Add Server"))
+            .add_enabled(!name.is_empty(), Button::new("Add Server"))
             .clicked()
             || enter)
             && !name.is_empty()
@@ -568,9 +559,9 @@ fn add_server(ui: &mut egui::Ui, panel: &mut PanelState, asked: &mut Vec<Asked>)
 }
 
 fn not_installed(ui: &mut egui::Ui, entry: &ServerEntry) {
-    ui.horizontal(|ui| {
-        ui.label(&entry.name);
-        ui.weak(entry.languages.join(", "));
+    Row::new().show(ui, |ui| {
+        ui.add(Text::new(&entry.name));
+        ui.add(Text::new(entry.languages.join(", ")).muted());
         if let Some(known) = entry.known {
             ui.hyperlink_to("Get it", known.home);
         }

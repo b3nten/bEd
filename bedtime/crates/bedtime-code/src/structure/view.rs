@@ -6,6 +6,7 @@ use super::{
 };
 use crate::syntax::{AnalysisStatus, DocumentSyntax, Observation, ObservationKey};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, tree};
+use bedtime_ui::{Button, MenuButton, MenuItem, Separator, Size, Space, Text, TextField};
 use bedtime_workbench::{BedtimeWorldExt, DocumentReference, PanelPresentation};
 use bevy::prelude::*;
 use std::ops::Range;
@@ -201,7 +202,7 @@ pub(super) fn draw(
     let (Some((editor, observation)), Some(arranged)) = (shown, arranged) else {
         let message = empty_message(world, state);
         egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
-            ui.weak(message);
+            ui.add(Text::new(message).muted());
         });
         return intents;
     };
@@ -255,55 +256,76 @@ fn toolbar(
                 egui::vec2(ui.available_width(), height),
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
-                    ui.spacing_mut().button_padding = egui::vec2(3.0, 3.0);
-                    ui.spacing_mut().item_spacing.x = 4.0;
-                    let options = context
-                        .frame(ui)
-                        .icon_button_sized(BuiltinIcon::Sliders, 16.0);
-                    context.frame(ui).tooltip(&options, "Structure options");
-                    egui::Popup::menu(&options)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            ui.set_min_width(220.0);
+                    ui.spacing_mut().item_spacing.x = Space::Xs.px(ui);
+                    let tool = |icon, name: &str| Button::icon_only(icon, name).small().ghost();
+                    let options = MenuButton::new(tool(BuiltinIcon::Sliders, "Structure options"))
+                        .keep_open()
+                        .min_width(220.0)
+                        .show(ui, |ui| {
                             let mut follow = !state.ignore_caret;
-                            ui.checkbox(&mut follow, "Follow the caret");
+                            {
+                                let item = ui.add(
+                                    MenuItem::new("Follow the caret")
+                                        .checked(follow)
+                                        .keep_open(),
+                                );
+                                if item.clicked() {
+                                    follow = !follow;
+                                }
+                                item
+                            };
                             state.ignore_caret = !follow;
-                            ui.separator();
-                            ui.weak("Sort by");
-                            ui.radio_value(&mut state.sort_by_name, false, "Position");
-                            ui.radio_value(&mut state.sort_by_name, true, "Name");
+                            ui.add(Separator::new().space(Space::Xs));
+                            ui.add(Text::caption("Sort by").muted());
+                            {
+                                let item = ui.add(
+                                    MenuItem::new("Position")
+                                        .checked(state.sort_by_name == false)
+                                        .keep_open(),
+                                );
+                                if item.clicked() {
+                                    state.sort_by_name = false;
+                                }
+                                item
+                            };
+                            {
+                                let item = ui.add(
+                                    MenuItem::new("Name")
+                                        .checked(state.sort_by_name == true)
+                                        .keep_open(),
+                                );
+                                if item.clicked() {
+                                    state.sort_by_name = true;
+                                }
+                                item
+                            };
                             if !categories.is_empty() {
-                                ui.separator();
-                                ui.weak("Show");
+                                ui.add(Separator::new().space(Space::Xs));
+                                ui.add(Text::caption("Show").muted());
                                 for category in &categories {
-                                    let mut show = state.hidden & category.bit() == 0;
-                                    if ui.checkbox(&mut show, category.label()).changed() {
+                                    let shown = state.hidden & category.bit() == 0;
+                                    let item =
+                                        MenuItem::new(category.label()).checked(shown).keep_open();
+                                    if ui.add(item).clicked() {
                                         state.hidden ^= category.bit();
                                     }
                                 }
                             }
-                            ui.separator();
-                            if ui.button("Collapse All").clicked() {
+                            ui.add(Separator::new().space(Space::Xs));
+                            if ui.add(MenuItem::new("Collapse All")).clicked() {
                                 collapse = Some(true);
                                 ui.close();
                             }
-                            if ui.button("Expand All").clicked() {
+                            if ui.add(MenuItem::new("Expand All")).clicked() {
                                 collapse = Some(false);
                                 ui.close();
                             }
                         });
 
-                    let pin = context.frame(ui).icon_button_sized(BuiltinIcon::Pin, 16.0);
+                    context.frame(ui).tooltip(&options, "Structure options");
+                    let pinned = pinned_title.is_some();
+                    let pin = ui.add(tool(BuiltinIcon::Pin, "Pin").selected(pinned));
                     if let Some(title) = &pinned_title {
-                        ui.painter().rect_stroke(
-                            pin.rect,
-                            4.0,
-                            egui::Stroke::new(
-                                1.0,
-                                bedtime_ui::theme::color(context.theme.palette.accent),
-                            ),
-                            egui::StrokeKind::Inside,
-                        );
                         context.frame(ui).tooltip(
                             &pin,
                             format!("Showing {title} — click to follow the focused editor"),
@@ -326,29 +348,26 @@ fn toolbar(
                     }
 
                     if !state.filter.is_empty() {
-                        let clear = context
-                            .frame(ui)
-                            .icon_button_sized(BuiltinIcon::Close, 14.0);
+                        let clear = ui.add(tool(BuiltinIcon::Close, "Clear the filter"));
                         context.frame(ui).tooltip(&clear, "Clear the filter");
                         if clear.clicked() {
                             state.filter.clear();
                         }
                     }
-                    let width = ui.available_width();
-                    let field = context.frame(ui).text_edit(
-                        egui::TextEdit::singleline(&mut state.filter)
+                    let field = ui.add(
+                        TextField::new(&mut state.filter)
                             .id(filter_id)
-                            .hint_text("Filter")
-                            .desired_width(width),
+                            .hint("Filter")
+                            .label("Filter")
+                            .size(Size::Sm)
+                            .fill_width(),
                     );
-                    field.response.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Filter")
-                    });
                     if std::mem::take(&mut state.focus_filter) {
-                        field.response.request_focus();
+                        field.request_focus();
                         // Typing started in the list: the caret goes at the end.
                         let end = egui::text::CCursor::new(state.filter.chars().count());
-                        let mut text_state = field.state;
+                        let mut text_state =
+                            egui::TextEdit::load_state(ui.ctx(), filter_id).unwrap_or_default();
                         text_state
                             .cursor
                             .set_char_range(Some(egui::text::CCursorRange::one(end)));
@@ -600,11 +619,13 @@ fn draw_rows(
             if rows.is_empty() {
                 egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
                     if filtering {
-                        ui.weak(format!("Nothing matches “{}”", state.filter.trim()));
+                        ui.add(
+                            Text::new(format!("Nothing matches “{}”", state.filter.trim())).muted(),
+                        );
                     } else if outline.is_empty() {
-                        ui.weak("No declarations");
+                        ui.add(Text::new("No declarations").muted());
                     } else {
-                        ui.weak("Everything here is hidden (see the options)");
+                        ui.add(Text::new("Everything here is hidden (see the options)").muted());
                     }
                 });
             }
@@ -779,26 +800,26 @@ fn row_menu(
     let outline = &observation.outline;
     let node = &outline[index];
     response.context_menu(|ui| {
-        if ui.button("Go to").clicked() {
+        if ui.add(MenuItem::new("Go to")).clicked() {
             intents.list.push(Intent::Reveal(node.id, Reveal::Focus));
             ui.close();
         }
-        if ui.button("Select").clicked() {
+        if ui.add(MenuItem::new("Select")).clicked() {
             intents
                 .list
                 .push(Intent::Reveal(node.id, Reveal::SelectAll));
             ui.close();
         }
-        if ui.button("Fold").clicked() {
+        if ui.add(MenuItem::new("Fold")).clicked() {
             intents.list.push(Intent::Reveal(node.id, Reveal::Fold));
             ui.close();
         }
-        ui.separator();
-        if ui.button("Copy Name").clicked() {
+        ui.add(Separator::new().space(Space::Xs));
+        if ui.add(MenuItem::new("Copy Name")).clicked() {
             ui.ctx().copy_text(node.label.clone());
             ui.close();
         }
-        if ui.button("Copy Path").clicked() {
+        if ui.add(MenuItem::new("Copy Path")).clicked() {
             let mut names: Vec<&str> = symbols::ancestry(outline, index)
                 .map(|at| outline[at].label.as_str())
                 .collect();

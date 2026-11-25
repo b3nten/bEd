@@ -55,17 +55,17 @@ with tempfile.TemporaryDirectory() as folder:
         x0, y0, _, _ = editor["rect"]
         spot = (x0 + 8 + 2 * 9.6, y0 + 6 + 0.5 * 20.5)
         bed.click(spot, button="Right")
-        until(bed, lambda: bed.exists(contains="Select All "), "the context menu opens")
+        until(bed, lambda: bed.exists("Select All"), "the context menu opens")
         bed.screenshot("editor-menu")
-        bed.click(bed.find(contains="Select All "))
+        bed.click(bed.find("Select All"))
         bed.click(spot, button="Right")
-        until(bed, lambda: bed.exists(contains="Cut "), "the menu again")
-        bed.click(bed.find(contains="Cut "))
+        until(bed, lambda: bed.exists("Cut"), "the menu again")
+        bed.click(bed.find("Cut"))
         value = lambda: next(w for w in bed.widgets() if w["role"] == "TextInput").get("value") or ""
         until(bed, lambda: value() == "", "cut leaves nothing")
         bed.click(spot, button="Right")
-        until(bed, lambda: bed.exists(contains="Paste "), "the menu once more")
-        bed.click(bed.find(contains="Paste "))
+        until(bed, lambda: bed.exists("Paste"), "the menu once more")
+        bed.click(bed.find("Paste"))
         until(bed, lambda: "hello first line" in value(), "paste puts it back")
         assert not bed.status()["errors"], bed.status()["errors"]
 

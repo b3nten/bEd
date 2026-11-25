@@ -4,6 +4,7 @@
 use super::*;
 use bedtime_document::{TextOpenState, TextPosition};
 use bedtime_ui::UiContext;
+use bedtime_ui::{MenuItem, Separator, Space, Spinner, Text};
 use bedtime_workbench::PanelsAppExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -357,12 +358,12 @@ fn draw(
     let info = world.bedtime().inspect_document(document).map_err(error)?;
     match info.status {
         DocumentStatus::Loading => {
-            ui.centered_and_justified(|ui| ui.spinner());
+            ui.centered_and_justified(|ui| ui.add(Spinner::new()));
             return Ok(());
         }
         DocumentStatus::Failed(error) => {
             egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
-                ui.label(format!("This file can't be opened: {error}"));
+                ui.add(Text::new(format!("This file can't be opened: {error}")));
             });
             return Ok(());
         }
@@ -561,7 +562,7 @@ fn context_menu(world: &mut World, panel: Entity, response: &egui::Response) {
     response.context_menu(|ui| {
         for (action, label, keys) in &language {
             if ui
-                .add(egui::Button::new(*label).shortcut_text(keys))
+                .add(MenuItem::new(*label).shortcut(keys.to_string()))
                 .clicked()
             {
                 choice = Some(MenuChoice::Action(action.clone()));
@@ -569,12 +570,12 @@ fn context_menu(world: &mut World, panel: Entity, response: &egui::Response) {
             }
         }
         if !language.is_empty() {
-            ui.separator();
+            ui.add(Separator::new().space(Space::Xs));
         }
         let item = |ui: &mut egui::Ui, label: &str, key: &str, enabled: bool| {
             ui.add_enabled(
                 enabled,
-                egui::Button::new(label).shortcut_text(format!("{primary}+{key}")),
+                MenuItem::new(label).shortcut(format!("{primary}+{key}")),
             )
             .clicked()
         };
@@ -590,7 +591,7 @@ fn context_menu(world: &mut World, panel: Entity, response: &egui::Response) {
             choice = Some(MenuChoice::Paste);
             ui.close();
         }
-        ui.separator();
+        ui.add(Separator::new().space(Space::Xs));
         if item(ui, "Select All", "A", true) {
             choice = Some(MenuChoice::Event(egui::Event::Key {
                 key: egui::Key::A,

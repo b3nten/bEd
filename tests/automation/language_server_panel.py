@@ -62,6 +62,6 @@ with tempfile.TemporaryDirectory() as folder:
         until(bed, lambda: (card_status(bed) or "").startswith("Running"), "it runs again", 120)
 
         # Restart, from its button.
-        bed.click(bed.find("rotate-ccw"))
+        bed.click(bed.find("Restart"))
         until(bed, lambda: (card_status(bed) or "").startswith("Running"), "it runs after restarting", 120)
         assert not bed.status()["errors"], bed.status()["errors"]

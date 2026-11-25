@@ -45,10 +45,10 @@ def open_for_good(bed, name):
 
 def menu_item_height(bed, spot):
     bed.click(spot, button="Right")
-    until(bed, lambda: bed.exists(contains="Select All "), "the editor's menu opens")
-    item = height(bed.find(contains="Select All "))
+    until(bed, lambda: bed.exists("Select All"), "the editor's menu opens")
+    item = height(bed.find("Select All"))
     bed.key("Escape")
-    until(bed, lambda: not bed.exists(contains="Select All "), "the menu closes")
+    until(bed, lambda: not bed.exists("Select All"), "the menu closes")
     return item
 
 

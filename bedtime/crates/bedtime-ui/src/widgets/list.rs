@@ -267,6 +267,7 @@ pub struct MenuItem {
     danger: bool,
     checked: Option<bool>,
     keep_open: bool,
+    highlighted: bool,
 }
 
 impl MenuItem {
@@ -278,7 +279,14 @@ impl MenuItem {
             danger: false,
             checked: None,
             keep_open: false,
+            highlighted: false,
         }
+    }
+    /// The one the keyboard is on, in a menu moved through with the arrow
+    /// keys: it looks hovered.
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
+        self
     }
     /// An icon before the text.
     pub fn icon(mut self, icon: impl Into<IconSource>) -> Self {
@@ -364,7 +372,7 @@ impl egui::Widget for MenuItem {
         if !ui.is_rect_visible(rect) {
             return response;
         }
-        let lit = response.hovered() || response.has_focus();
+        let lit = response.hovered() || response.has_focus() || self.highlighted;
         let target = if lit { 1.0 } else { 0.0 };
         let hover = motion::scalar(
             ui.ctx(),

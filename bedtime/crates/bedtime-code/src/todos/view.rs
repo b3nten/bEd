@@ -2,6 +2,9 @@
 //! Opening files comes back as `Intent`s, done by `apply` after drawing.
 use super::{Row, Scan, TodoLayout, TodoPanel, TodoSort, TodoState, scan::TAGS};
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme, tree};
+use bedtime_ui::{
+    Button, MenuButton, MenuItem, Separator, Size, Space, Spinner, Text, TextField, Tone,
+};
 use bedtime_workbench::PanelPresentation;
 use bevy::prelude::*;
 use std::sync::Arc;
@@ -51,12 +54,12 @@ pub(super) fn draw(
             .inner_margin(14)
             .show(ui, |ui| match &state.error {
                 Some(error) => {
-                    ui.colored_label(theme::color(context.theme.palette.error), error);
+                    ui.add(Text::new(error).tone(Tone::Error));
                 }
                 None => {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.weak("Finding TODOs…");
+                    bedtime_ui::Row::new().show(ui, |ui| {
+                        ui.add(Spinner::new());
+                        ui.add(Text::new("Finding TODOs…").muted());
                     });
                 }
             });
@@ -93,17 +96,17 @@ pub(super) fn draw(
             if let Some(error) = &state.error {
                 summary = error.clone();
             }
-            ui.weak(summary);
+            ui.add(Text::new(summary).muted());
         });
 
     if rows.is_empty() {
         egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
             if scan.items.is_empty() {
-                ui.weak("No TODO comments in this workspace");
+                ui.add(Text::new("No TODO comments in this workspace").muted());
             } else if !state.filter.trim().is_empty() {
-                ui.weak(format!("Nothing matches “{}”", state.filter.trim()));
+                ui.add(Text::new(format!("Nothing matches “{}”", state.filter.trim())).muted());
             } else {
-                ui.weak("Every tag is hidden (see the options)");
+                ui.add(Text::new("Every tag is hidden (see the options)").muted());
             }
         });
         return intents;
@@ -133,46 +136,22 @@ fn toolbar(
                 egui::vec2(ui.available_width(), height),
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| {
-                    ui.spacing_mut().button_padding = egui::vec2(3.0, 3.0);
-                    ui.spacing_mut().item_spacing.x = 4.0;
+                    ui.spacing_mut().item_spacing.x = Space::Xs.px(ui);
+                    let tool = |icon, name: &str| Button::icon_only(icon, name).small().ghost();
 
-                    let options = context
-                        .frame(ui)
-                        .icon_button_sized(BuiltinIcon::Sliders, 16.0);
+                    let options = MenuButton::new(tool(BuiltinIcon::Sliders, "TODO options"))
+                        .keep_open()
+                        .show(ui, |ui| options_menu(ui, shown, state));
                     context.frame(ui).tooltip(&options, "TODO options");
-                    options.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "TODO options")
-                    });
-                    egui::Popup::menu(&options)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| options_menu(ui, shown, state));
 
                     let tree_on = shown.layout == TodoLayout::Tree;
-                    let layout = context
-                        .frame(ui)
-                        .icon_button_sized(BuiltinIcon::Folder, 16.0);
-                    if tree_on {
-                        ui.painter().rect_stroke(
-                            layout.rect,
-                            4.0,
-                            egui::Stroke::new(1.0, theme::color(context.theme.palette.accent)),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
+                    let layout = ui.add(tool(BuiltinIcon::Folder, "Tree").selected(tree_on));
                     let label = if tree_on {
                         "Show as a list"
                     } else {
                         "Show as a tree"
                     };
                     context.frame(ui).tooltip(&layout, label);
-                    layout.widget_info(|| {
-                        egui::WidgetInfo::selected(
-                            egui::WidgetType::Checkbox,
-                            true,
-                            tree_on,
-                            "Tree",
-                        )
-                    });
                     if layout.clicked() {
                         shown.layout = if tree_on {
                             TodoLayout::List
@@ -182,30 +161,23 @@ fn toolbar(
                     }
 
                     if scanning {
-                        ui.add(egui::Spinner::new().size(14.0));
+                        ui.add(Spinner::new().size(Size::Sm));
                     } else {
-                        let refresh = context
-                            .frame(ui)
-                            .icon_button_sized(BuiltinIcon::RefreshCw, 16.0);
+                        let refresh = ui.add(tool(BuiltinIcon::RefreshCw, "Refresh"));
                         context.frame(ui).tooltip(&refresh, "Find TODOs again");
-                        refresh.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Refresh")
-                        });
                         if refresh.clicked() {
                             state.refresh();
                         }
                     }
 
-                    let width = ui.available_width();
-                    let field = context.frame(ui).text_edit(
-                        egui::TextEdit::singleline(&mut state.filter)
+                    ui.add(
+                        TextField::new(&mut state.filter)
                             .id(egui::Id::new((panel, "todos-filter")))
-                            .hint_text("Filter")
-                            .desired_width(width),
+                            .hint("Filter")
+                            .label("Filter")
+                            .size(Size::Sm)
+                            .fill_width(),
                     );
-                    field.response.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Filter")
-                    });
                 },
             );
         });
@@ -213,20 +185,68 @@ fn toolbar(
 
 fn options_menu(ui: &mut egui::Ui, shown: &mut TodoPanel, state: &mut TodoState) {
     ui.set_min_width(200.0);
-    ui.weak("Show as");
-    ui.radio_value(&mut shown.layout, TodoLayout::Tree, "Tree");
-    ui.radio_value(&mut shown.layout, TodoLayout::List, "List");
-    ui.separator();
-    ui.weak("Sort by");
+    ui.add(Text::caption("Show as").muted());
+    {
+        let item = ui.add(
+            MenuItem::new("Tree")
+                .checked(shown.layout == TodoLayout::Tree)
+                .keep_open(),
+        );
+        if item.clicked() {
+            shown.layout = TodoLayout::Tree;
+        }
+        item
+    };
+    {
+        let item = ui.add(
+            MenuItem::new("List")
+                .checked(shown.layout == TodoLayout::List)
+                .keep_open(),
+        );
+        if item.clicked() {
+            shown.layout = TodoLayout::List;
+        }
+        item
+    };
+    ui.add(Separator::new().space(Space::Xs));
+    ui.add(Text::caption("Sort by").muted());
     for sort in TodoSort::ALL {
-        ui.radio_value(&mut shown.sort, sort, sort.label());
+        {
+            let item = ui.add(
+                MenuItem::new(sort.label())
+                    .checked(shown.sort == sort)
+                    .keep_open(),
+            );
+            if item.clicked() {
+                shown.sort = sort;
+            }
+            item
+        };
     }
-    ui.checkbox(&mut shown.descending, "Descending");
-    ui.separator();
-    ui.weak("Show");
+    {
+        let item = ui.add(
+            MenuItem::new("Descending")
+                .checked(shown.descending)
+                .keep_open(),
+        );
+        if item.clicked() {
+            shown.descending = !shown.descending;
+        }
+        item
+    };
+    ui.add(Separator::new().space(Space::Xs));
+    ui.add(Text::caption("Show").muted());
     for tag in TAGS {
         let mut show = !shown.hidden_tags.iter().any(|t| t == tag);
-        if ui.checkbox(&mut show, tag).changed() {
+        if {
+            let item = ui.add(MenuItem::new(tag).checked(show).keep_open());
+            if item.clicked() {
+                show = !show;
+            }
+            item
+        }
+        .clicked()
+        {
             if show {
                 shown.hidden_tags.retain(|t| t != tag);
             } else {
@@ -235,8 +255,8 @@ fn options_menu(ui: &mut egui::Ui, shown: &mut TodoPanel, state: &mut TodoState)
         }
     }
     if shown.layout == TodoLayout::Tree {
-        ui.separator();
-        if ui.button("Collapse All").clicked() {
+        ui.add(Separator::new().space(Space::Xs));
+        if ui.add(MenuItem::new("Collapse All")).clicked() {
             if let Some(scan) = &state.scan {
                 let rows = super::arrange(shown, scan, &state.filter);
                 state.collapsed = rows
@@ -249,7 +269,7 @@ fn options_menu(ui: &mut egui::Ui, shown: &mut TodoPanel, state: &mut TodoState)
             }
             ui.close();
         }
-        if ui.button("Expand All").clicked() {
+        if ui.add(MenuItem::new("Expand All")).clicked() {
             state.collapsed.clear();
             ui.close();
         }

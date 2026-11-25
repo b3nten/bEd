@@ -10,6 +10,7 @@ use super::{
 };
 use crate::editor::{EditorOutput, EditorPanel, SymbolHit};
 use bedtime_ui::egui;
+use bedtime_ui::{Separator, Text};
 use bedtime_workbench::{BedtimeWorldExt, DocumentReference, Notification};
 use bevy::prelude::*;
 use std::time::Duration;
@@ -378,8 +379,8 @@ pub(crate) fn draw(
                                 documentation.show(ui, context);
                             }
                             for message in &diagnostics {
-                                ui.separator();
-                                ui.label(message);
+                                ui.add(Separator::new());
+                                ui.add(Text::new(message));
                             }
                         });
                     });
