@@ -27,7 +27,9 @@
 //! becomes an icon, with what's hidden on hover. A fresh warning or error
 //! keeps some of its text until the panel's status has given way.
 use crate::*;
-use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
+use bedtime_ui::{
+    BuiltinIcon, Row, Size, Space, Spinner, Table, Text, Tip, UiContext, egui, theme,
+};
 use bevy::prelude::*;
 use std::{collections::BTreeMap, time::Duration};
 
@@ -1034,31 +1036,25 @@ fn draw_global(
 }
 
 fn global_tooltip(ui: &mut egui::Ui, context: &UiContext<'_>, index: usize, global: &GlobalStatus) {
-    let side = context.metrics.font_size;
-    egui::Grid::new(("status-global-rows", index))
-        .num_columns(2)
-        .spacing([context.metrics.spacing[0] * 3.0, context.metrics.spacing[1]])
-        .show(ui, |ui| {
+    Table::new(("status-global-rows", index))
+        .columns(2)
+        .gap(Space::Md)
+        .show(ui, |table| {
             for line in &global.lines {
                 match line {
-                    GlobalLine::Heading(title) => {
-                        ui.strong(title);
-                        ui.end_row();
-                    }
-                    GlobalLine::Row(row) => {
-                        ui.weak(&row.label);
-                        ui.horizontal(|ui| {
+                    GlobalLine::Heading(title) => table.row(|ui| {
+                        ui.add(Text::new(title).strong());
+                    }),
+                    GlobalLine::Row(row) => table.row(|ui| {
+                        ui.add(Text::new(&row.label).muted());
+                        Row::new().gap(Space::Xs).show(ui, |ui| {
+                            let color = row.tone.color(ui, context);
                             if row.busy {
-                                ui.add(
-                                    egui::Spinner::new()
-                                        .size(side)
-                                        .color(row.tone.color(ui, context)),
-                                );
+                                ui.add(Spinner::new().size(Size::Md).color(color));
                             }
-                            ui.colored_label(row.tone.color(ui, context), &row.value);
+                            ui.add(Text::new(&row.value).color(color));
                         });
-                        ui.end_row();
-                    }
+                    }),
                 }
             }
         });
@@ -1118,7 +1114,7 @@ fn paint(ui: &mut egui::Ui, context: &UiContext<'_>, id: &str, shape: &Shape, re
                 if let Some(tooltip) = &piece.tooltip
                     && shape.tooltip.is_empty()
                 {
-                    context.frame(ui).tooltip(&response, tooltip.clone());
+                    response.tip(tooltip.clone());
                 }
             }
             Bit::Separator => {
@@ -1141,10 +1137,10 @@ fn paint(ui: &mut egui::Ui, context: &UiContext<'_>, id: &str, shape: &Shape, re
         let whole =
             egui::Rect::from_min_max(rect.min, egui::pos2(x.min(rect.right()), rect.bottom()));
         let response = ui.interact(whole, ui.id().with(id), egui::Sense::hover());
-        context.frame(ui).tooltip_ui(&response, |frame| {
+        response.tip_ui(|ui| {
             for piece in &shape.tooltip {
-                let color = piece.tone.color(frame.ui, context);
-                frame.ui.colored_label(color, &piece.text);
+                let color = piece.tone.color(ui, context);
+                ui.add(Text::new(&piece.text).color(color));
             }
         });
     }
@@ -1154,8 +1150,7 @@ fn paint(ui: &mut egui::Ui, context: &UiContext<'_>, id: &str, shape: &Shape, re
 fn paint_bit(ui: &mut egui::Ui, context: &UiContext<'_>, bit: &Bit, rect: egui::Rect) {
     match bit {
         Bit::Spinner(tone) => {
-            egui::Spinner::new()
-                .size(rect.width())
+            Spinner::new()
                 .color(tone.color(ui, context))
                 .paint_at(ui, rect);
         }

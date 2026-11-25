@@ -35,3 +35,13 @@ impl Tip for egui::Response {
         self
     }
 }
+
+/// The same on a borrowed `Response`, for one that's still needed after:
+/// `(&response).tip("…")`, or `response.tip("…")` where it's already a
+/// reference.
+impl Tip for &egui::Response {
+    fn tip_ui(self, draw: impl FnOnce(&mut egui::Ui)) -> Self {
+        let _ = self.clone().tip_ui(draw);
+        self
+    }
+}

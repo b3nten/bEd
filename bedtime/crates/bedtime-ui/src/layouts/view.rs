@@ -4,6 +4,7 @@ use super::{Layouts, LayoutsRef, LayoutsWorldExt};
 use super::{
     geometry, *, {GeometrySnapshot, plan_tab_geometry},
 };
+use crate::Tip;
 use crate::{
     UiContext, UiDraw, UiFrame,
     egui::{self, CursorIcon, Key, PointerButton},
@@ -665,7 +666,7 @@ fn restore_button(
     for (tile, within) in picture_tiles(inner, areas, region) {
         painter.rect_filled(er(tile), 1.0, if within { shown } else { hidden });
     }
-    frame.tooltip(&response, "Restore layout");
+    (&response).tip("Restore layout");
     response.clicked()
 }
 
@@ -1560,7 +1561,7 @@ fn draw(
                 observation.tab_rect = zone;
                 observation.close_rect = close;
             }
-            frame.tooltip(&response, &tab.title);
+            (&response).tip(&tab.title);
             if settings.panel_closure
                 && (close_pressed
                     || (clipped.contains(mouse)

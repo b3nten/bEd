@@ -8,6 +8,7 @@ use crate::model::{
     Change, Color, Dash, Diagram, Element, ElementId, GROUP_LABEL_SIZE, Head, Point, Rect, Shape,
     Side, TEXT_SIZE,
 };
+use bedtime_ui::Tip;
 use bedtime_ui::{
     Floating, UiContext, UiFrame,
     egui::{self, Color32, Pos2, Stroke, Vec2, epaint},
@@ -2602,7 +2603,7 @@ fn tool_button(frame: &mut UiFrame<'_>, tool: Tool, on: bool) -> egui::Response 
             painter.line_segment([at(0.3, 1.0), at(0.7, 1.0)], stroke);
         }
     }
-    frame.tooltip(&response, format!("{} ({})", tool.label(), tool.key()));
+    (&response).tip(format!("{} ({})", tool.label(), tool.key()));
     response
 }
 

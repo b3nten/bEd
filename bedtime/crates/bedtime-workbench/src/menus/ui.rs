@@ -3,7 +3,7 @@
 use crate::BedtimeWorldExt as _;
 use crate::actions::ActionRequests;
 use crate::menus::*;
-use bedtime_ui::{UiFrame, egui};
+use bedtime_ui::{MenuItem, Separator, Space, Submenu, UiFrame, egui};
 
 /// Where an entry was last drawn, for tests and automation. Native menus are
 /// independent.
@@ -118,10 +118,9 @@ fn draw_entries(ui: &mut egui::Ui, world: &mut World, entries: &[MenuNode]) {
             } => {
                 let response = ui
                     .push_id(entity.to_bits(), |ui| {
-                        ui.menu_button(label, |ui| draw_entries(ui, world, entries))
+                        Submenu::new(label).show(ui, |ui| draw_entries(ui, world, entries))
                     })
-                    .inner
-                    .response;
+                    .inner;
                 observe_item(world, *entity, &response);
             }
             MenuNode::Item {
@@ -132,12 +131,12 @@ fn draw_entries(ui: &mut egui::Ui, world: &mut World, entries: &[MenuNode]) {
                 target,
                 context,
             } => {
-                let text = shortcut
-                    .map_or_else(|| label.clone(), |s| format!("{}     {}", label, s.label()));
+                let mut item = MenuItem::new(label);
+                if let Some(shortcut) = shortcut {
+                    item = item.shortcut(shortcut.label());
+                }
                 let response = ui
-                    .push_id(entity.to_bits(), |ui| {
-                        ui.add_enabled(*enabled, egui::Button::new(text))
-                    })
+                    .push_id(entity.to_bits(), |ui| ui.add_enabled(*enabled, item))
                     .inner;
                 observe_item(world, *entity, &response);
                 if response.clicked() {
@@ -147,11 +146,10 @@ fn draw_entries(ui: &mut egui::Ui, world: &mut World, entries: &[MenuNode]) {
                         source: Some(*entity),
                     };
                     world.resource_mut::<ActionRequests>().submit(request);
-                    ui.close();
                 }
             }
             MenuNode::Separator(_) => {
-                ui.separator();
+                ui.add(Separator::new().space(Space::Xs));
             }
         }
     }

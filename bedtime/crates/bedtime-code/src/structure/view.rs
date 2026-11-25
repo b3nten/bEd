@@ -323,18 +323,15 @@ fn toolbar(
                             }
                         });
 
-                    context.frame(ui).tooltip(&options, "Structure options");
+                    (&options).tip("Structure options");
                     let pinned = pinned_title.is_some();
                     let pin = ui.add(tool(BuiltinIcon::Pin, "Pin").selected(pinned));
                     if let Some(title) = &pinned_title {
-                        context.frame(ui).tooltip(
-                            &pin,
-                            format!("Showing {title} — click to follow the focused editor"),
-                        );
+                        (&pin).tip(format!(
+                            "Showing {title} — click to follow the focused editor"
+                        ));
                     } else {
-                        context
-                            .frame(ui)
-                            .tooltip(&pin, "Keep showing this editor's structure");
+                        (&pin).tip("Keep showing this editor's structure");
                     }
                     if pin.clicked() {
                         intents.list.push(Intent::Pin(if state.pinned.is_some() {

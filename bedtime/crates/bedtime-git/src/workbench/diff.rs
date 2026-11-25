@@ -666,7 +666,7 @@ impl Panel for DiffPanel {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let open =
                             ui.add(Button::icon_only(BuiltinIcon::NewFile, "Open File").ghost());
-                        context.frame(ui).tooltip(&open, "Open File");
+                        (&open).tip("Open File");
                         if open.clicked() {
                             asked = Some(Asked::Open);
                         }

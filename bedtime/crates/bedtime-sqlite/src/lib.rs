@@ -583,7 +583,7 @@ fn query_view(
                     ..default()
                 }))
                 .show(ui, |ui| {
-                    Row::new().show(ui, |ui| run_bar(ui, context, query));
+                    Row::new().show(ui, |ui| run_bar(ui, query));
                 });
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
@@ -641,7 +641,7 @@ fn query_view(
 }
 
 /// Under the SQL: Run (or Cancel while it runs), and what the last run came to.
-fn run_bar(ui: &mut egui::Ui, context: &UiContext<'_>, query: &mut Query) {
+fn run_bar(ui: &mut egui::Ui, query: &mut Query) {
     if query.running.is_some() {
         if ui.add(Button::new("Cancel")).clicked()
             && let Some(interrupt) = &query.interrupt
@@ -653,13 +653,12 @@ fn run_bar(ui: &mut egui::Ui, context: &UiContext<'_>, query: &mut Query) {
         return;
     }
     let run = ui.add(Button::new("Run").primary());
-    let frame = context.frame(ui);
     let key = if cfg!(target_os = "macos") {
         "Cmd+Enter"
     } else {
         "Ctrl+Enter"
     };
-    frame.tooltip(&run, format!("Run ({key})"));
+    (&run).tip(format!("Run ({key})"));
     if run.clicked() {
         query.run = true;
     }

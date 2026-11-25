@@ -1297,7 +1297,7 @@ fn option_toggle(
         egui::FontId::monospace(context.metrics.font_size * 0.8),
         color(ink),
     );
-    context.frame(ui).tooltip(&response, tip);
+    (&response).tip(tip);
 }
 
 /// The bar, as Zed's: the query with its options inside it, then Replace and
@@ -1516,13 +1516,10 @@ fn status(
         };
         let label = ui.add(Text::new(text).muted());
         if limited {
-            context.frame(ui).tooltip(
-                &label,
-                format!(
-                    "The search stopped at {} results. Narrow it to see the rest.",
-                    number(MAX_MATCHES)
-                ),
-            );
+            (&label).tip(format!(
+                "The search stopped at {} results. Narrow it to see the rest.",
+                number(MAX_MATCHES)
+            ));
         }
         let skipped = state.summary.as_ref().map_or(0, |s| s.skipped);
         if skipped > 0 {

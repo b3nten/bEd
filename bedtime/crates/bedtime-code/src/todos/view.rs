@@ -152,7 +152,7 @@ fn toolbar(
                     } else {
                         "Show as a tree"
                     };
-                    context.frame(ui).tooltip(&layout, label);
+                    (&layout).tip(label);
                     if layout.clicked() {
                         shown.layout = if tree_on {
                             TodoLayout::List

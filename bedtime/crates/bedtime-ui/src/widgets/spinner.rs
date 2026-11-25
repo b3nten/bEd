@@ -9,6 +9,7 @@ use crate::{Theme, theme, tokens::*};
 #[derive(Clone, Copy, Default)]
 pub struct Spinner {
     size: Size,
+    color: Option<egui::Color32>,
 }
 
 impl Spinner {
@@ -22,15 +23,23 @@ impl Spinner {
         self
     }
 
+    /// In this colour (the muted one, unless set): beside text that's
+    /// coloured, say.
+    pub fn color(mut self, color: egui::Color32) -> Self {
+        self.color = Some(color);
+        self
+    }
+
     /// Draw it in `rect`, taking no room (in a row that's painted by hand).
     pub fn paint_at(self, ui: &egui::Ui, rect: egui::Rect) {
         self.inner(ui).paint_at(ui, rect);
     }
 
     fn inner(self, ui: &egui::Ui) -> egui::Spinner {
-        egui::Spinner::new()
-            .size(self.size.font(ui))
-            .color(theme::color(Theme::of(ui).palette.muted))
+        egui::Spinner::new().size(self.size.font(ui)).color(
+            self.color
+                .unwrap_or_else(|| theme::color(Theme::of(ui).palette.muted)),
+        )
     }
 }
 

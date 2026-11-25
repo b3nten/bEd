@@ -328,7 +328,7 @@ fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, laye
                 icon.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label)
                 });
-                frame.tooltip(&icon, format!("{label}:\n{}", broken.join("\n")));
+                (&icon).tip(format!("{label}:\n{}", broken.join("\n")));
             }
         },
     );

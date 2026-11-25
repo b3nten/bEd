@@ -500,7 +500,7 @@ impl Marks {
         let side = context.metrics.font_size;
         let icon = frame.icon(BuiltinIcon::CircleAlert, side, tint);
         icon.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Overridden"));
-        frame.tooltip(&icon, hint);
+        (&icon).tip(hint);
     }
 
     /// A button that clears the layer's value (back to the default, or to the

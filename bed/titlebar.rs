@@ -2,7 +2,7 @@
 //! `WindowMenu` asks for it too (one button, or the bar, as `CompactMenu`
 //! says), and the tool buttons that open (or drag out) panels.
 use bedtime::file_explorer::FileExplorer;
-use bedtime::ui::{BuiltinIcon, Icon, UiContext, UiFrame, egui};
+use bedtime::ui::{BuiltinIcon, Icon, Tip, UiContext, UiFrame, egui};
 use bedtime::workbench::{
     Action, ActionId, BedtimeWorldExt as _, InvocationContext, LayoutSurface, PanelFactory, Show,
     ShowPanel, StandardMenus, Titlebar, draw_menu_bar, draw_menu_button, native_menu_shown,
@@ -203,7 +203,7 @@ fn tool_for<C: Action>(
             .frame(ui)
             .icon_ink_button(icon, 16.0)
             .interact(egui::Sense::click_and_drag());
-        context.frame(ui).tooltip(&response, tooltip);
+        (&response).tip(tooltip);
         panel_drag_source(&response, factory.clone());
         if response.clicked() {
             // After this frame's drawing.

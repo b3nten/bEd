@@ -78,7 +78,7 @@ impl Panel for GitPanel {
         let mut header = ui.new_child(egui::UiBuilder::new().max_rect(header_rect));
         header.set_clip_rect(header_rect);
         let host = world.get_resource::<GitHost>().copied().unwrap_or_default();
-        draw_header(&mut header, context, &mut session, host, &mut action);
+        draw_header(&mut header, &mut session, host, &mut action);
         let list_rect = egui::Rect::from_min_max(
             egui::pos2(bounds.min.x, header.cursor().min.y + 4.0),
             header_rect.max,
@@ -358,7 +358,6 @@ impl Panel for GitPanel {
 
 fn draw_header(
     ui: &mut egui::Ui,
-    context: &UiContext<'_>,
     session: &mut GitSession,
     host: GitHost,
     action: &mut Option<Action>,
@@ -466,7 +465,7 @@ fn draw_header(
                     *action = Some(Action::Options(options));
                 }
             });
-        context.frame(ui).tooltip(&settings, "Git panel settings");
+        (&settings).tip("Git panel settings");
         for (icon, name, tip, operation) in [
             (
                 BuiltinIcon::CloudDownload,
