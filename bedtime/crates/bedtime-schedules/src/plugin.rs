@@ -1,6 +1,6 @@
 //! The Schedules panel: the viewer in a workbench panel, opened from View.
 use crate::{AppSnapshot, ScheduleExtractPlugin, view};
-use bedtime_ui::{UiContext, egui};
+use bedtime_ui::{Text, UiContext, ViewUi, draw, egui};
 use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{Panel, persistence::ReflectPersist};
 use bevy::prelude::*;
@@ -39,20 +39,29 @@ impl Panel for SchedulesPanel {
     const LABEL: &'static str = "Schedules";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let Some(mut state) = world
-            .get_mut::<SchedulesPanel>(panel)
-            .map(|mut panel| std::mem::take(&mut panel.view))
-        else {
-            return;
-        };
-        match world.get_resource::<AppSnapshot>() {
-            Some(snapshot) => view::frame(ui, context.theme, snapshot, &mut state),
-            None => {
-                ui.label("The schedules aren't being read.");
-            }
-        }
-        if let Some(mut panel) = world.get_mut::<SchedulesPanel>(panel) {
-            panel.view = state;
+        draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |panel: &mut SchedulesPanel| &mut panel.view,
+            schedules,
+        );
+    }
+}
+
+/// The viewer, drawn: a system that reads the schedules as last extracted,
+/// with the panel's view (what's shown, selected and laid out) lent to it.
+fn schedules(
+    ViewUi {
+        ui, view, context, ..
+    }: ViewUi<Box<view::ViewState>>,
+    snapshot: Option<Res<AppSnapshot>>,
+) {
+    match snapshot {
+        Some(snapshot) => view::frame(ui, context.theme, &snapshot, view),
+        None => {
+            ui.add(Text::new("The schedules aren't being read."));
         }
     }
 }

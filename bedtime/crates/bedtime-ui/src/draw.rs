@@ -17,6 +17,11 @@
 //! }
 //! ```
 //!
+//! A panel with a lot of state of its own that drawing changes (what's
+//! selected and hovered, what it has laid out) lends that to its system
+//! instead, as `&mut`: `with_view` and `ViewUi`. The world is shared all the
+//! same.
+//!
 //! The system must be read-only (`Res`, `Query<&T>`, `Commands`; not
 //! `ResMut` or `Query<&mut T>`), which the compiler checks. That is what
 //! lets widgets read the world while it runs (`draw::world(ui)`) and queue
@@ -68,6 +73,24 @@ pub fn update<P: Component<Mutability = bevy::ecs::component::Mutable>>(
             change(&mut state);
         }
     });
+}
+
+/// A draw system's input when the panel lends it its view state (see
+/// `with_view`): the `Ui`, the panel, the view to read and change, and the
+/// surface's `UiContext`.
+pub struct ViewUi<'a, V: 'static> {
+    pub ui: &'a mut egui::Ui,
+    pub entity: Entity,
+    pub view: &'a mut V,
+    pub context: UiContext<'a>,
+}
+
+impl<V: 'static> SystemInput for ViewUi<'_, V> {
+    type Param<'i> = ViewUi<'i, V>;
+    type Inner<'i> = ViewUi<'i, V>;
+    fn wrap(this: Self::Inner<'_>) -> Self::Param<'_> {
+        this
+    }
 }
 
 thread_local! {
@@ -139,6 +162,49 @@ pub fn with_world<R>(
 #[derive(Resource, Default)]
 struct DrawSystems(HashMap<TypeId, Box<dyn Any + Send + Sync>>);
 
+/// `system`, initialised: the one kept from the last draw, or a new one.
+fn take_system<I, M, S>(world: &mut World, system: S) -> BoxedReadOnlySystem<I>
+where
+    I: SystemInput + 'static,
+    S: IntoSystem<I, (), M> + 'static,
+    S::System: ReadOnlySystem,
+{
+    let kept = world
+        .get_resource_or_init::<DrawSystems>()
+        .0
+        .remove(&TypeId::of::<S>())
+        .and_then(|system| system.downcast::<BoxedReadOnlySystem<I>>().ok());
+    match kept {
+        Some(system) => *system,
+        None => {
+            let mut system: BoxedReadOnlySystem<I> = Box::new(IntoSystem::into_system(system));
+            system.initialize(world);
+            system
+        }
+    }
+}
+
+/// After `system` drew: make the changes it and its widgets queued, and keep
+/// it for the next draw.
+fn finish<I, S>(
+    world: &mut World,
+    mut system: BoxedReadOnlySystem<I>,
+    result: Option<Result<(), bevy::ecs::system::RunSystemError>>,
+) where
+    I: SystemInput + 'static,
+    S: 'static,
+{
+    system.apply_deferred(world);
+    QUEUE.take().apply(world);
+    if let Some(Err(error)) = result {
+        warn_once!("A panel couldn't be drawn: {error}");
+    }
+    world
+        .resource_mut::<DrawSystems>()
+        .0
+        .insert(TypeId::of::<S>(), Box::new(system));
+}
+
 /// Draw `panel` with `system`: a `Panel::draw` that's this one call.
 ///
 /// The system runs with the world shared (so it must be read-only), then
@@ -155,25 +221,7 @@ pub fn with_system<P, M, S>(
     S: IntoSystem<PanelUi<'static, P>, (), M> + 'static,
     S::System: ReadOnlySystem,
 {
-    let key = TypeId::of::<S>();
-    let stored = world
-        .get_resource_or_init::<DrawSystems>()
-        .0
-        .remove(&key)
-        .and_then(|system| {
-            system
-                .downcast::<BoxedReadOnlySystem<PanelUi<'static, P>>>()
-                .ok()
-        });
-    let mut system = match stored {
-        Some(system) => *system,
-        None => {
-            let mut system: BoxedReadOnlySystem<PanelUi<'static, P>> =
-                Box::new(IntoSystem::into_system(system));
-            system.initialize(world);
-            system
-        }
-    };
+    let mut system = take_system(world, system);
     let result = {
         let world: &World = world;
         world.get::<P>(panel).map(|state| {
@@ -187,15 +235,53 @@ pub fn with_system<P, M, S>(
             system.run_readonly(input, world)
         })
     };
-    system.apply_deferred(world);
-    QUEUE.take().apply(world);
-    if let Some(Err(error)) = result {
-        warn_once!("A panel couldn't be drawn: {error}");
+    finish::<_, S>(world, system, result);
+}
+
+/// Draw `panel` with `system`, lending it the panel's view state: what
+/// `view` picks out of the panel (`|panel: &mut GraphPanel| &mut panel.view`,
+/// written in the call, where its lifetimes are inferred).
+///
+/// The view is taken out of the panel for the draw (its `Default` stands in)
+/// and put back after, so the system has it as `&mut` while the world, the
+/// panel included, is shared. For a panel whose drawing changes a lot of
+/// state that is only its own; what belongs to the world is still queued.
+pub fn with_view<P, V, M, S>(
+    ui: &mut egui::Ui,
+    world: &mut World,
+    context: &UiContext<'_>,
+    panel: Entity,
+    view: impl Fn(&mut P) -> &mut V,
+    system: S,
+) where
+    P: Component<Mutability = bevy::ecs::component::Mutable>,
+    V: Default + 'static,
+    S: IntoSystem<ViewUi<'static, V>, (), M> + 'static,
+    S::System: ReadOnlySystem,
+{
+    let Some(mut lent) = world
+        .get_mut::<P>(panel)
+        .map(|mut state| std::mem::take(view(&mut state)))
+    else {
+        return;
+    };
+    let mut system = take_system(world, system);
+    let result = {
+        let world: &World = world;
+        let _ambient = Ambient::enter(world);
+        let input = ViewUi {
+            ui,
+            entity: panel,
+            view: &mut lent,
+            context: *context,
+        };
+        system.run_readonly(input, world)
+    };
+    finish::<_, S>(world, system, Some(result));
+    // Back where it was, unless what was queued closed the panel.
+    if let Some(mut state) = world.get_mut::<P>(panel) {
+        *view(&mut state) = lent;
     }
-    world
-        .resource_mut::<DrawSystems>()
-        .0
-        .insert(key, Box::new(system));
 }
 
 #[cfg(test)]
@@ -338,6 +424,81 @@ mod tests {
         world.insert_resource(Absent);
         pass(&mut world, panel, needs_absent);
         assert_eq!(world.resource::<Sent>().0, ["ran"]);
+    }
+
+    #[derive(Component, Default)]
+    struct Graph {
+        view: Box<GraphView>,
+    }
+
+    #[derive(Default)]
+    struct GraphView {
+        hovered: Option<usize>,
+        draws: u32,
+        close: bool,
+    }
+
+    fn graph(
+        ViewUi {
+            ui, entity, view, ..
+        }: ViewUi<Box<GraphView>>,
+        step: Res<Step>,
+        graphs: Query<&Graph>,
+        mut commands: Commands,
+    ) {
+        // The view is the system's to change; the world is read, the panel
+        // too (its view is out, a default in its place).
+        view.draws += 1;
+        view.hovered = Some(step.0 as usize);
+        assert_eq!(graphs.get(entity).unwrap().view.draws, 0);
+        ui.add(StepButton);
+        if view.close {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    #[test]
+    fn a_panel_lends_its_view_to_the_system_and_has_it_back() {
+        let (mut world, _) = world_with_counter();
+        let panel = world.spawn(Graph::default()).id();
+        let draw = |world: &mut World| {
+            let icons = Mutex::new(IconCache::default());
+            let (theme, metrics) = (Theme::dark(), Metrics::default());
+            let mut output = egui::Context::default().run_ui(default(), |ui| {
+                let context = UiContext {
+                    view: panel,
+                    surface: panel,
+                    theme: &theme,
+                    metrics: &metrics,
+                    motion: MotionPolicy::default(),
+                    icons: &icons,
+                };
+                with_view(
+                    ui,
+                    world,
+                    &context,
+                    panel,
+                    |graph: &mut Graph| &mut graph.view,
+                    graph,
+                );
+            });
+            output.textures_delta.clear();
+        };
+        draw(&mut world);
+        draw(&mut world);
+        let view = &world.get::<Graph>(panel).unwrap().view;
+        assert_eq!((view.draws, view.hovered), (2, Some(5)));
+        assert_eq!(
+            world.resource::<Sent>().0.len(),
+            2,
+            "its widgets queued too"
+        );
+
+        // A draw that closes its own panel: nothing to put the view back in.
+        world.get_mut::<Graph>(panel).unwrap().view.close = true;
+        draw(&mut world);
+        assert!(world.get_entity(panel).is_err());
+        draw(&mut world);
     }
 
     #[test]
