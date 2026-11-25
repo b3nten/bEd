@@ -13,7 +13,9 @@ use bedtime_code::{
 use bedtime_document::{
     DocumentSource, MemorySource, SourceError, SourceId, SourceLoad, SourceVersion, TextBuffer,
 };
-use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
+use bedtime_ui::{
+    BuiltinIcon, Button, Segmented, Separator, Size, Spinner, Text, Tone, UiContext, egui,
+};
 use bedtime_workbench::BedtimeWorldExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -617,16 +619,14 @@ impl StageGuard {
 /// Previous / Next Change buttons, for a right-to-left bar (Next is
 /// added first, so it ends up on the right). Returns which was clicked.
 pub(super) fn change_buttons(ui: &mut egui::Ui, context: &UiContext<'_>) -> Option<bool> {
-    ui.separator();
-    let mut frame = context.frame(ui);
+    ui.add(Separator::new());
     let mut clicked = None;
     for (forward, icon, label) in [
         (true, BuiltinIcon::ChevronDown, "Next Change"),
         (false, BuiltinIcon::ChevronUp, "Previous Change"),
     ] {
-        let button = frame.icon_button(icon);
-        frame.tooltip(&button, label);
-        button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        let button = ui.add(Button::icon_only(icon, label).ghost());
+        context.frame(ui).tooltip(&button, label);
         if button.clicked() {
             clicked = Some(forward);
         }
@@ -651,7 +651,6 @@ impl Panel for DiffPanel {
         let Some(diff) = world.get::<DiffPanel>(panel) else {
             return;
         };
-        let p = context.theme.palette.clone();
         let (staged, path, root) = (diff.staged, diff.path.clone(), diff.root.clone());
         let confirm = diff.confirm.clone();
         let error = diff.error.clone();
@@ -662,21 +661,22 @@ impl Panel for DiffPanel {
         egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(12, 6))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&path).strong());
+                bedtime_ui::Row::new().show(ui, |ui| {
+                    ui.add(Text::new(&path).strong());
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let mut frame = context.frame(ui);
-                        let open = frame.icon_button(BuiltinIcon::NewFile);
-                        frame.tooltip(&open, "Open File");
+                        let open =
+                            ui.add(Button::icon_only(BuiltinIcon::NewFile, "Open File").ghost());
+                        context.frame(ui).tooltip(&open, "Open File");
                         if open.clicked() {
                             asked = Some(Asked::Open);
                         }
-                        let ui = frame.ui;
-                        if ui.selectable_label(staged, "Staged").clicked() && !staged {
-                            asked = Some(Asked::Side(true));
-                        }
-                        if ui.selectable_label(!staged, "Changes").clicked() && staged {
-                            asked = Some(Asked::Side(false));
+                        let mut side = staged;
+                        let sides = Segmented::with(&mut side, &[false, true], |staged| {
+                            if *staged { "Staged" } else { "Changes" }.into()
+                        })
+                        .size(Size::Sm);
+                        if ui.add(sides).changed() {
+                            asked = Some(Asked::Side(side));
                         }
                         if comparing && let Some(forward) = change_buttons(ui, context) {
                             asked = Some(Asked::Change(forward));
@@ -684,20 +684,20 @@ impl Panel for DiffPanel {
                     });
                 });
                 if let Some(request) = &confirm {
-                    ui.horizontal(|ui| {
-                        ui.label("Discard this change? It can't be undone here.");
-                        if ui.button("Discard").clicked() {
+                    bedtime_ui::Row::new().show(ui, |ui| {
+                        ui.add(Text::new("Discard this change? It can't be undone here."));
+                        if ui.add(Button::new("Discard").danger()).clicked() {
                             asked = Some(Asked::Discard(request.clone()));
                         }
-                        if ui.button("Keep").clicked() {
+                        if ui.add(Button::new("Keep")).clicked() {
                             asked = Some(Asked::Keep);
                         }
                     });
                 }
                 if let Some(error) = &error {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(theme::color(p.error), error);
-                        if ui.small_button("Dismiss").clicked() {
+                    bedtime_ui::Row::new().show(ui, |ui| {
+                        ui.add(Text::new(error).tone(Tone::Error));
+                        if ui.add(Button::new("Dismiss").small()).clicked() {
                             asked = Some(Asked::Dismiss);
                         }
                     });
@@ -705,23 +705,25 @@ impl Panel for DiffPanel {
             });
         match &loaded {
             None => {
-                ui.centered_and_justified(|ui| ui.spinner());
+                ui.centered_and_justified(|ui| ui.add(Spinner::new()));
             }
             Some(Err(error)) => {
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(12, 6))
-                    .show(ui, |ui| ui.colored_label(theme::color(p.error), error));
+                    .show(ui, |ui| ui.add(Text::new(error).tone(Tone::Error)));
             }
             Some(Ok(loaded)) if loaded.git.binary => {
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::symmetric(12, 6))
-                    .show(ui, |ui| ui.weak("Binary file: no lines to compare."));
+                    .show(ui, |ui| {
+                        ui.add(Text::new("Binary file: no lines to compare.").muted())
+                    });
             }
             Some(Ok(_)) => {
                 if world.get::<DocumentReference>(panel).is_some() {
                     bedtime_code::draw_editor(ui, world, context, panel);
                 } else {
-                    ui.centered_and_justified(|ui| ui.spinner());
+                    ui.centered_and_justified(|ui| ui.add(Spinner::new()));
                 }
             }
         }

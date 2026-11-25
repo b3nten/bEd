@@ -88,7 +88,7 @@ impl egui::Widget for TextArea<'_> {
         let padding = Size::Md.padding(ui);
         let available = ui.available_width();
         let width = if self.fill_width {
-            available
+            super::fill_width(ui, ui.spacing().text_edit_width)
         } else {
             self.width
                 .unwrap_or(ui.spacing().text_edit_width)

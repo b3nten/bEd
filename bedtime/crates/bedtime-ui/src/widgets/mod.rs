@@ -23,7 +23,7 @@ pub use button::{Button, Variant};
 pub use checkbox::{Checkbox, Toggle};
 pub use color_field::{ColorField, from_hex, to_hex};
 pub use edit::UiEdit;
-pub use list::{ListRow, MenuItem, Submenu};
+pub use list::{ListRow, MenuButton, MenuItem, Submenu};
 pub use number_field::NumberField;
 pub use section::{Section, Separator};
 pub use segmented::Segmented;
@@ -35,3 +35,14 @@ pub use table::{Table, TableRows};
 pub use text::Text;
 pub use text_area::TextArea;
 pub use text_field::TextField;
+
+/// The width a widget that fills its space takes: all there is, except while
+/// what it's in is being measured (a menu, a popup), when taking it all
+/// would make that as wide as the window. Then, `otherwise`.
+pub(crate) fn fill_width(ui: &egui::Ui, otherwise: f32) -> f32 {
+    if ui.is_sizing_pass() {
+        otherwise
+    } else {
+        ui.available_width()
+    }
+}

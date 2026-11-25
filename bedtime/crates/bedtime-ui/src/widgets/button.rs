@@ -38,6 +38,8 @@ pub struct Button {
     strikethrough: bool,
     min_width: f32,
     muted: bool,
+    width: Option<f32>,
+    dropdown: bool,
 }
 
 impl Button {
@@ -55,6 +57,8 @@ impl Button {
             strikethrough: false,
             min_width: 0.0,
             muted: false,
+            width: None,
+            dropdown: false,
         }
     }
 
@@ -109,6 +113,19 @@ impl Button {
     /// (Send, Cancel) at one width.
     pub fn min_width(mut self, width: f32) -> Self {
         self.min_width = width;
+        self
+    }
+
+    /// Exactly this wide, in points: its text is cut short with an ellipsis
+    /// when it doesn't fit (a button sharing a row that mustn't grow).
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    /// A small arrow at its end: it opens a menu or a list (see `MenuButton`).
+    pub fn dropdown(mut self) -> Self {
+        self.dropdown = true;
         self
     }
 
@@ -173,40 +190,61 @@ impl egui::Widget for Button {
         let font_size = self.size.font(ui);
         let padding = self.size.padding(ui);
         let height = self.size.height(ui);
+        let icon_side = font_size;
+        let gap = (font_size * 0.4).round();
+        let arrow = if self.dropdown {
+            (font_size * 0.7).round() + gap
+        } else {
+            0.0
+        };
         let galley = (!self.text.is_empty()).then(|| {
             let line = if self.strikethrough {
                 egui::Stroke::new(1.0, ui.visuals().text_color())
             } else {
                 egui::Stroke::NONE
             };
-            ui.painter()
-                .layout_job(egui::text::LayoutJob::single_section(
-                    self.text.clone(),
-                    egui::TextFormat {
-                        font_id: egui::FontId::proportional(font_size),
-                        color: egui::Color32::PLACEHOLDER,
-                        italics: self.italic,
-                        strikethrough: line,
-                        ..Default::default()
-                    },
-                ))
+            let mut job = egui::text::LayoutJob::single_section(
+                self.text.clone(),
+                egui::TextFormat {
+                    font_id: egui::FontId::proportional(font_size),
+                    color: egui::Color32::PLACEHOLDER,
+                    italics: self.italic,
+                    strikethrough: line,
+                    ..Default::default()
+                },
+            );
+            // At a set width, what doesn't fit is cut short.
+            if let Some(width) = self.width {
+                let beside = if self.icon.is_some() {
+                    icon_side + gap
+                } else {
+                    0.0
+                };
+                let room = (width - 2.0 * padding.x - beside - arrow).max(0.0);
+                job.wrap = egui::text::TextWrapping::truncate_at_width(room);
+            }
+            ui.painter().layout_job(job)
         });
-        let icon_side = font_size;
-        let gap = (font_size * 0.4).round();
         let content = match (&self.icon, &galley) {
             (Some(_), Some(galley)) => icon_side + gap + galley.size().x,
             (Some(_), None) => icon_side,
             (None, Some(galley)) => galley.size().x,
             (None, None) => 0.0,
         };
-        let mut size = if galley.is_none() {
+        let mut size = if galley.is_none() && !self.dropdown {
             egui::Vec2::splat(height)
+        } else if galley.is_none() {
+            // An arrow alone, or an icon and an arrow.
+            egui::vec2(height.max(content + arrow - gap + 2.0 * padding.x), height)
         } else {
-            egui::vec2(content + 2.0 * padding.x, height)
+            egui::vec2(content + arrow + 2.0 * padding.x, height)
         };
+        if let Some(width) = self.width {
+            size.x = width;
+        }
         size.x = size.x.max(self.min_width);
         if self.fill_width {
-            size.x = size.x.max(ui.available_width());
+            size.x = size.x.max(super::fill_width(ui, 0.0));
         }
         let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
         let enabled = ui.is_enabled();
@@ -286,7 +324,12 @@ impl egui::Widget for Button {
         }
 
         let ink = theme::color(if self.muted { p.muted } else { ink });
-        let mut x = match self.align {
+        let align = if self.dropdown && content > 0.0 {
+            egui::Align::Min
+        } else {
+            self.align
+        };
+        let mut x = match align {
             egui::Align::Min => rect.left() + padding.x,
             egui::Align::Center => rect.center().x - content / 2.0,
             egui::Align::Max => rect.right() - padding.x - content,
@@ -310,6 +353,15 @@ impl egui::Widget for Button {
         if let Some(galley) = galley {
             let y = rect.center().y - galley.size().y / 2.0;
             painter.galley(egui::pos2(x, y), galley, ink);
+        }
+        if self.dropdown {
+            let side = (font_size * 0.7).round();
+            let center = if content > 0.0 {
+                egui::pos2(rect.right() - padding.x - side / 2.0, rect.center().y)
+            } else {
+                rect.center()
+            };
+            crate::paint_chevron(painter, center, 1.0, ink.gamma_multiply(0.8));
         }
         response
     }

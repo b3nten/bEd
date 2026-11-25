@@ -682,3 +682,56 @@ fn a_colour_field_follows_typed_hex_and_only_then_changes() {
 fn from_rgb(r: u8, g: u8, b: u8) -> [f32; 4] {
     [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
 }
+
+#[test]
+fn a_button_at_a_set_width_is_that_wide_whatever_its_text() {
+    pass(|ui| {
+        let long = ui
+            .add(Button::new("Commit with Signoff, and more").width(120.0))
+            .rect;
+        let short = ui.add(Button::new("Go").width(120.0)).rect;
+        assert_eq!((long.width(), short.width()), (120.0, 120.0));
+        let arrow = ui.add(Button::new("main").dropdown()).rect;
+        let plain = ui.add(Button::new("main")).rect;
+        assert!(arrow.width() > plain.width(), "room for its arrow");
+    });
+}
+
+#[test]
+fn a_menu_button_opens_its_menu_on_a_click() {
+    use std::cell::Cell;
+    let ctx = egui::Context::default();
+    let (center, drawn) = (Cell::new(egui::Pos2::ZERO), Cell::new(0));
+    let draw = |ui: &mut Ui| {
+        let button = MenuButton::new(Button::new("main").dropdown()).show(ui, |ui| {
+            drawn.set(drawn.get() + 1);
+            let _ = ui.add(MenuItem::new("develop"));
+        });
+        center.set(button.rect.center());
+    };
+    passes(&ctx, None, draw);
+    assert_eq!(drawn.get(), 0, "closed until it's clicked");
+    passes(&ctx, Some(center.get()), draw);
+    assert!(drawn.get() > 0 && egui::Popup::is_any_open(&ctx));
+}
+
+#[test]
+fn what_fills_its_width_does_not_stretch_a_popup_being_measured() {
+    let ctx = egui::Context::default();
+    let mut width = 0.0;
+    passes(&ctx, None, |ui| {
+        egui::Area::new(egui::Id::new("popup"))
+            .sizing_pass(true)
+            .show(ui.ctx(), |ui| {
+                let mut text = String::new();
+                ui.add(TextField::new(&mut text).fill_width());
+                ui.add(Button::new("Create and switch").fill_width());
+                ui.add(ListRow::new("develop"));
+                width = ui.min_rect().width();
+            });
+    });
+    assert!(
+        width > 0.0 && width < 400.0,
+        "sized to its content: {width}"
+    );
+}

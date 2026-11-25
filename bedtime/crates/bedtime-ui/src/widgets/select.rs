@@ -111,7 +111,7 @@ impl<T: PartialEq + Clone> egui::Widget for Select<'_, T> {
         let gap = (font_size * 0.3).round();
         let available = ui.available_width();
         let width = if self.fill_width {
-            available
+            super::fill_width(ui, ui.spacing().text_edit_width)
         } else if let Some(width) = self.width {
             width.min(available)
         } else {

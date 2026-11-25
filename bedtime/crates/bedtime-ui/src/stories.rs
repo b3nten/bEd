@@ -693,6 +693,32 @@ fn lists(ui: &mut egui::Ui, _: &mut Knobs) {
                         }
                     },
                 );
+                section(
+                    ui,
+                    "A button that opens a menu (MenuButton), and a row with a detail",
+                    |ui| {
+                        Row::new().show(ui, |ui| {
+                            MenuButton::new(Button::new("main").dropdown()).show(ui, |ui| {
+                                let _ = ui.add(MenuItem::new("develop"));
+                                let _ = ui.add(MenuItem::new("main").checked(true));
+                            });
+                            MenuButton::new(
+                                Button::icon_only(BuiltinIcon::Settings, "Options").ghost(),
+                            )
+                            .keep_open()
+                            .show(ui, |ui| {
+                                ui.add(Text::caption("View as").muted());
+                                let _ = ui.add(MenuItem::new("List").checked(false).keep_open());
+                                let _ = ui.add(MenuItem::new("Tree").checked(true).keep_open());
+                            });
+                            ui.add(Button::new("A long name, cut to fit").width(140.0));
+                        });
+                        ui.scope(|ui| {
+                            ui.set_max_width(320.0);
+                            ui.add(ListRow::new("deep.rs").detail("src/workbench/panel"));
+                        });
+                    },
+                );
                 section(ui, "Rows: an icon, a count, struck through, italic", |ui| {
                     ui.scope(|ui| {
                         ui.set_max_width(320.0);

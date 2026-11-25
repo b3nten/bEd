@@ -10,7 +10,7 @@ use bedtime_code::{EditorComparison, EditorPanel, editor::diff::Comparison};
 use bedtime_document::{
     DocumentSource, MemorySource, SourceError, SourceId, SourceLoad, SourceVersion, TextBuffer,
 };
-use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
+use bedtime_ui::{BuiltinIcon, Button, Space, Spinner, Text, Tone, UiContext, egui, theme};
 use bedtime_workbench::BedtimeWorldExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -800,12 +800,11 @@ fn draw_detail(
     let inner = rect.shrink2(egui::vec2(12.0, 0.0));
     let mut ui = ui.new_child(egui::UiBuilder::new().max_rect(inner));
     ui.set_clip_rect(rect);
-    let palette = &context.theme.palette;
     egui::ScrollArea::vertical()
         .id_salt(("history-detail", panel, &commit.hash))
         .auto_shrink([false; 2])
         .show(&mut ui, |ui| {
-            ui.add_space(10.0);
+            ui.add_space(Space::Md.px(ui));
             ui.horizontal_top(|ui| {
                 let width = (ui.available_width() - 30.0).max(40.0);
                 ui.allocate_ui_with_layout(
@@ -813,35 +812,29 @@ fn draw_detail(
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         ui.set_max_width(width);
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(&commit.subject).strong()).wrap(),
-                        );
+                        ui.add(Text::new(&commit.subject).strong().wrap());
                     },
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    ui.spacing_mut().button_padding = egui::vec2(3.0, 3.0);
-                    let mut frame = context.frame(ui);
-                    let close = frame.icon_button_sized(BuiltinIcon::Close, 14.0);
-                    frame.tooltip(&close, "Close details");
+                    let close = ui.add(
+                        Button::icon_only(BuiltinIcon::Close, "Close details")
+                            .small()
+                            .ghost(),
+                    );
+                    context.frame(ui).tooltip(&close, "Close details");
                     if close.clicked() {
                         *asked = Some(Asked::Select(None));
                     }
                 });
             });
-            ui.horizontal_wrapped(|ui| {
+            bedtime_ui::Row::new().wrap().show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                ui.weak(&commit.author);
-                ui.weak("·");
-                ui.weak(&commit.date);
-                ui.weak("·");
+                ui.add(Text::new(&commit.author).muted());
+                ui.add(Text::new("·").muted());
+                ui.add(Text::new(&commit.date).muted());
+                ui.add(Text::new("·").muted());
                 let hash = ui
-                    .add(
-                        egui::Label::new(
-                            egui::RichText::new(commit.short_hash()).monospace().weak(),
-                        )
-                        .selectable(false)
-                        .sense(egui::Sense::click()),
-                    )
+                    .add(Text::new(commit.short_hash()).muted().clickable())
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .on_hover_text("Copy the full hash");
                 if hash.clicked() {
@@ -851,44 +844,47 @@ fn draw_detail(
             let detail = match &view.detail {
                 Some((hash, detail)) if *hash == commit.hash => detail,
                 _ => {
-                    ui.add_space(8.0);
-                    ui.weak("Reading commit…");
+                    ui.add_space(Space::Sm.px(ui));
+                    ui.add(Text::new("Reading commit…").muted());
                     return;
                 }
             };
             let detail = match detail {
                 Ok(detail) => detail,
                 Err(error) => {
-                    ui.add_space(8.0);
-                    ui.colored_label(theme::color(palette.error), error);
+                    ui.add_space(Space::Sm.px(ui));
+                    ui.add(Text::new(error).tone(Tone::Error));
                     return;
                 }
             };
             if !detail.body.is_empty() {
-                ui.add_space(8.0);
-                ui.add(egui::Label::new(reflow(&detail.body)).wrap());
+                ui.add_space(Space::Sm.px(ui));
+                ui.add(Text::new(reflow(&detail.body)).wrap());
             }
-            ui.add_space(8.0);
+            ui.add_space(Space::Sm.px(ui));
             let (added, removed) = detail
                 .files
                 .iter()
                 .filter_map(|file| file.lines)
                 .fold((0, 0), |sum, lines| (sum.0 + lines.0, sum.1 + lines.1));
-            ui.horizontal(|ui| {
+            bedtime_ui::Row::new().show(ui, |ui| {
                 ui.spacing_mut().item_spacing.x = 8.0;
-                ui.weak(match detail.files.len() {
-                    0 => "No files changed".to_owned(),
-                    1 => "1 file changed".to_owned(),
-                    count => format!("{count} files changed"),
-                });
+                ui.add(
+                    Text::new(match detail.files.len() {
+                        0 => "No files changed".to_owned(),
+                        1 => "1 file changed".to_owned(),
+                        count => format!("{count} files changed"),
+                    })
+                    .muted(),
+                );
                 if added > 0 {
-                    ui.colored_label(theme::color(palette.success), format!("+{added}"));
+                    ui.add(Text::new(format!("+{added}")).tone(Tone::Success));
                 }
                 if removed > 0 {
-                    ui.colored_label(theme::color(palette.error), format!("−{removed}"));
+                    ui.add(Text::new(format!("−{removed}")).tone(Tone::Error));
                 }
             });
-            ui.add_space(4.0);
+            ui.add_space(Space::Xs.px(ui));
             ui.spacing_mut().item_spacing.y = 0.0;
             let height = bedtime_ui::tree::row_height(context);
             for file in detail.files.iter().take(MAX_FILES) {
@@ -908,10 +904,10 @@ fn draw_detail(
                 bedtime_ui::tree::tooltip(ui, context, &response, &tip);
             }
             if detail.files.len() > MAX_FILES {
-                ui.add_space(4.0);
-                ui.weak(format!("and {} more", detail.files.len() - MAX_FILES));
+                ui.add_space(Space::Xs.px(ui));
+                ui.add(Text::new(format!("and {} more", detail.files.len() - MAX_FILES)).muted());
             }
-            ui.add_space(10.0);
+            ui.add_space(Space::Md.px(ui));
         });
 }
 
@@ -939,21 +935,21 @@ impl Panel for HistoryPanel {
         match (&status, view.loaded.clone()) {
             (Some(status), _) if status.root.is_empty() => {
                 says(ui, &|ui| {
-                    ui.weak("This folder isn't in a Git repository.");
+                    ui.add(Text::new("This folder isn't in a Git repository.").muted());
                 });
             }
             (_, None) => match &view.error {
                 Some(error) => says(ui, &|ui| {
-                    ui.colored_label(theme::color(context.theme.palette.error), error);
+                    ui.add(Text::new(error).tone(Tone::Error));
                 }),
                 None => says(ui, &|ui| {
-                    ui.weak("Reading history…");
+                    ui.add(Text::new("Reading history…").muted());
                 }),
             },
             (_, Some(loaded)) if loaded.commits.is_empty() => {
                 says(ui, &|ui| {
-                    ui.label("No commits yet");
-                    ui.weak("The first commit will show here.");
+                    ui.add(Text::new("No commits yet"));
+                    ui.add(Text::new("The first commit will show here.").muted());
                 });
             }
             (_, Some(loaded)) => {
@@ -1291,10 +1287,10 @@ impl Panel for CommitDiffPanel {
         let mut change = None;
         let margin = egui::Margin::symmetric(12, 6);
         egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(&diff.path).strong());
+            bedtime_ui::Row::new().show(ui, |ui| {
+                ui.add(Text::new(&diff.path).strong());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.weak(egui::RichText::new(history::short(&diff.commit)).monospace());
+                    ui.add(Text::new(history::short(&diff.commit)).muted());
                     if comparing {
                         change = super::diff::change_buttons(ui, context);
                     }
@@ -1304,23 +1300,17 @@ impl Panel for CommitDiffPanel {
         if let Some(forward) = change {
             bedtime_code::navigate_change(world, panel, forward);
         }
-        let says = |ui: &mut egui::Ui, text: egui::RichText| {
+        let says = |ui: &mut egui::Ui, text: Text| {
             egui::Frame::NONE
                 .inner_margin(margin)
-                .show(ui, |ui| ui.label(text));
+                .show(ui, |ui| ui.add(text));
         };
         match shown {
             None => {
-                ui.centered_and_justified(|ui| ui.spinner());
+                ui.centered_and_justified(|ui| ui.add(Spinner::new()));
             }
-            Some(Err(error)) => says(
-                ui,
-                egui::RichText::new(error).color(theme::color(context.theme.palette.error)),
-            ),
-            Some(Ok(false)) => says(
-                ui,
-                egui::RichText::new("Binary file: no lines to compare.").weak(),
-            ),
+            Some(Err(error)) => says(ui, Text::new(error).tone(Tone::Error)),
+            Some(Ok(false)) => says(ui, Text::new("Binary file: no lines to compare.").muted()),
             Some(Ok(true)) => bedtime_code::draw_editor(ui, world, context, panel),
         }
     }

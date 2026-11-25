@@ -1,7 +1,10 @@
 mod tree;
 use super::*;
 use crate::{ConflictChoice, RepositoryOperation};
-use bedtime_ui::{BuiltinIcon, UiContext, egui};
+use bedtime_ui::{
+    BuiltinIcon, Button, ListRow, MenuButton, MenuItem, Section, Separator, Size, Space, Text,
+    TextArea, TextField, Tone, UiContext, egui,
+};
 use bedtime_workbench::BedtimeWorldExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -55,7 +58,7 @@ impl Panel for GitPanel {
     const LABEL: &'static str = "Git";
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         let Some(mut session) = world.remove_resource::<GitSession>() else {
-            ui.weak("Loading repository…");
+            ui.add(Text::new("Loading repository…").muted());
             return;
         };
         let mut state = world.entity_mut(panel).take::<Self>().unwrap();
@@ -143,13 +146,13 @@ impl Panel for GitPanel {
         }
         let mut composer = ui.new_child(egui::UiBuilder::new().max_rect(footer));
         composer.set_clip_rect(footer);
-        composer.separator();
+        composer.add(Separator::new());
         let view = session.view.clone();
         let count = view.as_ref().map_or(0, |v| v.staged_count);
-        composer.horizontal(|ui| {
-            ui.label("Commit message");
+        bedtime_ui::Row::new().show(&mut composer, |ui| {
+            ui.add(Text::new("Commit message"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.weak(format!("{count} staged"));
+                ui.add(Text::new(format!("{count} staged")).muted());
             });
         });
         let suggestion = view.as_ref().and_then(|v| v.suggested_message.clone());
@@ -170,7 +173,7 @@ impl Panel for GitPanel {
         } else {
             suggestion.unwrap_or_default()
         };
-        let button_height = height * 1.6;
+        let button_height = Size::Lg.height(&composer);
         let spacing = composer.spacing().item_spacing.y;
         let progress = session.progress();
         // Leave room below the message for the commit row (and progress row).
@@ -179,15 +182,17 @@ impl Panel for GitPanel {
             reserved += spacing + composer.spacing().interact_size.y;
         }
         let input_height = (composer.available_height() - reserved).max(height);
-        composer.add_sized(
-            [composer.available_width(), input_height],
-            // `desired_rows(1)`: the default of 4 rows sets a minimum height that can
-            // exceed `input_height` and push the commit row past the footer clip.
-            egui::TextEdit::multiline(&mut session.draft)
-                .desired_rows(1)
-                .hint_text(hint)
-                .id_salt(("git-commit", panel)),
-        );
+        // The message takes the room that's left above the commit row.
+        composer.allocate_ui(egui::vec2(composer.available_width(), input_height), |ui| {
+            ui.add(
+                TextArea::new(&mut session.draft)
+                    .id(egui::Id::new(("git-commit", panel)))
+                    .hint(hint)
+                    .rows(1)
+                    .fill_width()
+                    .fill_height(),
+            );
+        });
         let can_commit = session.accepts()
             && (amend || !message.trim().is_empty())
             && view.as_ref().is_some_and(|v| {
@@ -201,72 +206,61 @@ impl Panel for GitPanel {
                     }
             });
         let accepts_actions = accepts_user_actions(world);
-        composer.horizontal(|ui| {
-            let menu_width = button_height;
-            let width = (ui.available_width() - menu_width - ui.spacing().item_spacing.x).max(1.0);
-            let label = match session.commit_mode {
-                CommitMode::Commit => "Commit Staged",
-                CommitMode::Amend => "Amend Commit",
-                CommitMode::Signoff => "Commit with Signoff",
-            };
-            let response = ui.add_enabled(
-                can_commit && accepts_actions,
-                egui::Button::new(label)
-                    .left_text(())
-                    .right_text(())
-                    .truncate()
-                    .min_size(egui::vec2(width, button_height)),
-            );
-            if response.clicked() {
-                action = Some(Action::Operation(Operation::Commit {
-                    message: message.clone(),
-                    mode: session.commit_mode,
-                }));
-            }
-            ui.add_enabled_ui(accepts_actions && session.pending.is_none(), |ui| {
-                let (response, _) = egui::containers::menu::MenuButton::from_button(
-                    egui::Button::new(()).min_size(egui::vec2(menu_width, button_height)),
-                )
-                .ui(ui, |ui| {
-                    for (mode, label, tooltip) in [
-                        (
-                            CommitMode::Commit,
-                            "Commit",
-                            "Commit staged changes as a new commit",
-                        ),
-                        (
-                            CommitMode::Amend,
-                            "Amend",
-                            "Replace the last commit using this message and the current index",
-                        ),
-                        (
-                            CommitMode::Signoff,
-                            "Signoff",
-                            "Add a Signed-off-by trailer using your Git identity",
-                        ),
-                    ] {
-                        if ui
-                            .selectable_value(&mut session.commit_mode, mode, label)
-                            .on_hover_text(tooltip)
-                            .clicked()
-                        {
-                            ui.close();
-                        }
-                    }
-                });
-                bedtime_ui::paint_chevron(
-                    ui.painter(),
-                    response.rect.center(),
-                    1.0,
-                    ui.visuals().text_color(),
+        bedtime_ui::Row::new()
+            .gap(Space::Xs)
+            .show(&mut composer, |ui| {
+                let mode = Button::icon_only(BuiltinIcon::ChevronDown, "Commit action").large();
+                let width =
+                    (ui.available_width() - mode.width_in(ui) - ui.spacing().item_spacing.x)
+                        .max(1.0);
+                let label = match session.commit_mode {
+                    CommitMode::Commit => "Commit Staged",
+                    CommitMode::Amend => "Amend Commit",
+                    CommitMode::Signoff => "Commit with Signoff",
+                };
+                let response = ui.add_enabled(
+                    can_commit && accepts_actions,
+                    Button::new(label).large().width(width),
                 );
-                response.on_hover_text("Commit action");
+                if response.clicked() {
+                    action = Some(Action::Operation(Operation::Commit {
+                        message: message.clone(),
+                        mode: session.commit_mode,
+                    }));
+                }
+                ui.add_enabled_ui(accepts_actions && session.pending.is_none(), |ui| {
+                    MenuButton::new(mode)
+                    .show(ui, |ui| {
+                        for (mode, label, tooltip) in [
+                            (
+                                CommitMode::Commit,
+                                "Commit",
+                                "Commit staged changes as a new commit",
+                            ),
+                            (
+                                CommitMode::Amend,
+                                "Amend",
+                                "Replace the last commit using this message and the current index",
+                            ),
+                            (
+                                CommitMode::Signoff,
+                                "Signoff",
+                                "Add a Signed-off-by trailer using your Git identity",
+                            ),
+                        ] {
+                            let item = MenuItem::new(label).checked(session.commit_mode == mode);
+                            if ui.add(item).on_hover_text(tooltip).clicked() {
+                                session.commit_mode = mode;
+                            }
+                        }
+                    })
+                    .on_hover_text("Commit action");
+                });
             });
-        });
         if let Some(progress) = progress {
-            composer.horizontal(|ui| {
-                ui.weak(progress);
-                if ui.small_button("Cancel").clicked() {
+            bedtime_ui::Row::new().show(&mut composer, |ui| {
+                ui.add(Text::new(progress).muted());
+                if ui.add(Button::new("Cancel").small()).clicked() {
                     action = Some(Action::Cancel);
                 }
             });
@@ -377,172 +371,171 @@ fn draw_header(
             &v.status.branch
         }
     });
-    ui.horizontal(|ui| {
-        let button_width = 22.0;
-        let gap = ui.spacing().item_spacing.x.min(4.0);
-        ui.spacing_mut().item_spacing.x = gap;
-        let branch_width = (ui.available_width() - (button_width + gap) * 5.0).max(24.0);
+    bedtime_ui::Row::new().gap(Space::Xs).show(ui, |ui| {
+        let tool = |icon, name: &str| Button::icon_only(icon, name).small().ghost();
+        let gap = ui.spacing().item_spacing.x;
+        let tool_width = tool(BuiltinIcon::Settings, "").width_in(ui);
+        let branch_width = (ui.available_width() - (tool_width + gap) * 5.0).max(24.0);
         ui.add_enabled_ui(enabled, |ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(branch_width, button_width),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    let (response, _) = egui::containers::menu::MenuButton::from_button(
-                        egui::Button::new(branch)
-                            .right_text(())
-                            .truncate()
-                            .min_size(egui::vec2(branch_width, button_width)),
-                    )
-                    .config(
-                        egui::containers::menu::MenuConfig::new()
-                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside),
-                    )
-                    .ui(ui, |ui| {
-                        ui.set_min_width(220.0);
-                        ui.label("Switch branch");
-                        if let Some(view) = &view {
-                            egui::ScrollArea::vertical()
-                                .id_salt("git-branches")
-                                .max_height(160.0)
-                                .show(ui, |ui| {
-                                    for name in &view.status.branches {
-                                        if ui
-                                            .selectable_label(*name == view.status.branch, name)
-                                            .clicked()
-                                            && *name != view.status.branch
-                                        {
-                                            *action =
-                                                Some(Action::Operation(Operation::SwitchBranch {
-                                                    name: name.clone(),
-                                                }));
-                                            ui.close();
-                                        }
+            let button = Button::new(branch).small().width(branch_width).dropdown();
+            MenuButton::new(button)
+                .keep_open()
+                .min_width(220.0)
+                .show(ui, |ui| {
+                    ui.add(Text::caption("Switch branch").muted());
+                    if let Some(view) = &view {
+                        egui::ScrollArea::vertical()
+                            .id_salt("git-branches")
+                            .max_height(160.0)
+                            .show(ui, |ui| {
+                                for name in &view.status.branches {
+                                    let current = *name == view.status.branch;
+                                    let item = MenuItem::new(name).checked(current);
+                                    if ui.add(item).clicked() && !current {
+                                        *action =
+                                            Some(Action::Operation(Operation::SwitchBranch {
+                                                name: name.clone(),
+                                            }));
                                     }
-                                });
-                        }
-                        ui.separator();
-                        ui.label("Create branch");
-                        let response = ui.text_edit_singleline(&mut session.branch_input);
-                        let _ = response;
-                        if ui
-                            .add_enabled(
-                                !session.branch_input.trim().is_empty(),
-                                egui::Button::new("Create and switch"),
-                            )
-                            .clicked()
-                        {
-                            *action = Some(Action::Operation(Operation::CreateBranch {
-                                name: session.branch_input.trim().to_owned(),
-                            }));
-                            ui.close();
-                        }
-                    });
-                    context.frame(ui).icon_at(
-                        BuiltinIcon::ChevronDown,
-                        [response.rect.right() - 16.0, response.rect.center().y - 5.0],
-                        10.0,
-                    );
-                    response.on_hover_text(format!("{branch}\nSwitch or create a branch"));
-                },
-            );
-        });
-        ui.scope(|ui| {
-            ui.spacing_mut().button_padding = egui::vec2(3.0, 3.0);
-            let response = context
-                .frame(ui)
-                .icon_button_sized(BuiltinIcon::Settings, 16.0);
-            context.frame(ui).tooltip(&response, "Git panel settings");
-            egui::Popup::menu(&response)
-                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                .show(|ui| {
-                    let mut options = session.options;
-                    ui.set_min_width(190.0);
-                    ui.weak("View as");
-                    ui.radio_value(&mut options.view, ViewMode::List, "List");
-                    ui.radio_value(&mut options.view, ViewMode::Tree, "Tree");
-                    ui.separator();
-                    ui.weak("Group by");
-                    ui.radio_value(&mut options.group_by, GroupBy::None, "None");
-                    ui.radio_value(
-                        &mut options.group_by,
-                        GroupBy::TrackedUntracked,
-                        "Tracked and untracked",
-                    );
-                    ui.radio_value(
-                        &mut options.group_by,
-                        GroupBy::StagedUnstaged,
-                        "Staged and unstaged",
-                    );
-                    ui.separator();
-                    ui.weak("Stage with");
-                    for (style, label) in [
-                        (StagingStyle::Chip, "Status chips"),
-                        (StagingStyle::Lanes, "Commit lanes"),
-                    ] {
-                        ui.radio_value(&mut options.staging, style, label);
+                                }
+                            });
                     }
-                    if options != session.options {
-                        *action = Some(Action::Options(options));
+                    ui.add(Separator::new().space(Space::Xs));
+                    ui.add(Text::caption("Create branch").muted());
+                    ui.add(
+                        TextField::new(&mut session.branch_input)
+                            .label("New branch")
+                            .fill_width(),
+                    );
+                    let create = ui.add_enabled(
+                        !session.branch_input.trim().is_empty(),
+                        Button::new("Create and switch"),
+                    );
+                    if create.clicked() {
+                        *action = Some(Action::Operation(Operation::CreateBranch {
+                            name: session.branch_input.trim().to_owned(),
+                        }));
+                        ui.close();
                     }
-                });
+                })
+                .on_hover_text(format!("{branch}\nSwitch or create a branch"));
         });
-        for (icon, tip, operation) in [
+        let settings = MenuButton::new(tool(BuiltinIcon::Settings, "Git panel settings"))
+            .keep_open()
+            .min_width(190.0)
+            .show(ui, |ui| {
+                let mut options = session.options;
+                ui.add(Text::caption("View as").muted());
+                for (view, label) in [(ViewMode::List, "List"), (ViewMode::Tree, "Tree")] {
+                    let item = MenuItem::new(label)
+                        .checked(options.view == view)
+                        .keep_open();
+                    if ui.add(item).clicked() {
+                        options.view = view;
+                    }
+                }
+                ui.add(Separator::new().space(Space::Xs));
+                ui.add(Text::caption("Group by").muted());
+                for (group, label) in [
+                    (GroupBy::None, "None"),
+                    (GroupBy::TrackedUntracked, "Tracked and untracked"),
+                    (GroupBy::StagedUnstaged, "Staged and unstaged"),
+                ] {
+                    let item = MenuItem::new(label)
+                        .checked(options.group_by == group)
+                        .keep_open();
+                    if ui.add(item).clicked() {
+                        options.group_by = group;
+                    }
+                }
+                ui.add(Separator::new().space(Space::Xs));
+                ui.add(Text::caption("Stage with").muted());
+                for (style, label) in [
+                    (StagingStyle::Chip, "Status chips"),
+                    (StagingStyle::Lanes, "Commit lanes"),
+                ] {
+                    let item = MenuItem::new(label)
+                        .checked(options.staging == style)
+                        .keep_open();
+                    if ui.add(item).clicked() {
+                        options.staging = style;
+                    }
+                }
+                if options != session.options {
+                    *action = Some(Action::Options(options));
+                }
+            });
+        context.frame(ui).tooltip(&settings, "Git panel settings");
+        for (icon, name, tip, operation) in [
             (
                 BuiltinIcon::CloudDownload,
+                "Fetch",
                 "Fetch changes from the remote",
                 Some(Operation::Fetch),
             ),
             (
                 BuiltinIcon::ArrowDownToLine,
+                "Pull",
                 "Pull remote changes",
                 Some(Operation::Pull),
             ),
             (
                 BuiltinIcon::ArrowUpFromLine,
+                "Push",
                 "Push or publish this branch",
                 Some(Operation::Push),
             ),
-            (BuiltinIcon::RefreshCw, "Refresh repository status", None),
+            (
+                BuiltinIcon::RefreshCw,
+                "Refresh",
+                "Refresh repository status",
+                None,
+            ),
         ] {
-            ui.add_enabled_ui(operation.is_none() || enabled, |ui| {
-                ui.spacing_mut().button_padding = egui::vec2(3.0, 3.0);
-                let response = context.frame(ui).icon_button_sized(icon, 16.0);
-                context.frame(ui).tooltip(&response, tip);
-                if response.clicked() {
-                    if let Some(operation) = operation {
-                        *action = Some(Action::Operation(operation));
-                    } else {
-                        session.invalidate();
-                    }
+            let response = ui.add_enabled(operation.is_none() || enabled, tool(icon, name));
+            context.frame(ui).tooltip(&response, tip);
+            if response.clicked() {
+                if let Some(operation) = operation {
+                    *action = Some(Action::Operation(operation));
+                } else {
+                    session.invalidate();
                 }
-            });
+            }
         }
     });
     if let Some(view) = &view {
         if !view.status.writable && !view.status.root.is_empty() {
-            ui.weak("Open the repository root to change Git state.");
-            if host.open_folder.is_some() && ui.small_button("Open repository root").clicked() {
+            ui.add(Text::new("Open the repository root to change Git state.").muted());
+            if host.open_folder.is_some()
+                && ui
+                    .add(Button::new("Open repository root").small())
+                    .clicked()
+            {
                 *action = Some(Action::OpenRoot);
             }
         }
         if view.status.upstream.is_some() && (view.status.ahead > 0 || view.status.behind > 0) {
-            ui.weak(format!(
-                "{} ahead · {} behind",
-                view.status.ahead, view.status.behind
-            ));
+            ui.add(
+                Text::new(format!(
+                    "{} ahead · {} behind",
+                    view.status.ahead, view.status.behind
+                ))
+                .muted(),
+            );
         }
         if view.status.operation != RepositoryOperation::None {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(format!("{:?} in progress", view.status.operation));
+            bedtime_ui::Row::new().wrap().show(ui, |ui| {
+                ui.add(Text::new(format!(
+                    "{:?} in progress",
+                    view.status.operation
+                )));
                 if view.status.operation != RepositoryOperation::Merge
-                    && ui
-                        .add_enabled(enabled, egui::Button::new("Continue"))
-                        .clicked()
+                    && ui.add_enabled(enabled, Button::new("Continue")).clicked()
                 {
                     *action = Some(Action::Operation(Operation::Continue));
                 }
                 if ui
-                    .add_enabled(enabled, egui::Button::new("Abort operation…"))
+                    .add_enabled(enabled, Button::new("Abort operation…").danger())
                     .clicked()
                 {
                     session.confirmation = Some(Operation::Abort);
@@ -555,18 +548,20 @@ fn draw_header(
             .id_salt("git-error")
             .max_height(110.0)
             .show(ui, |ui| {
-                ui.colored_label(bedtime_ui::theme::color(context.theme.palette.error), error);
+                ui.add(Text::new(error).tone(Tone::Error));
             });
-        ui.horizontal_wrapped(|ui| {
+        bedtime_ui::Row::new().wrap().show(ui, |ui| {
             for (label, operation) in session.remedies.clone() {
-                if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                if ui.add_enabled(enabled, Button::new(label)).clicked() {
                     *action = Some(Action::Operation(operation));
                 }
             }
-            if ui.small_button("Dismiss").clicked() {
+            if ui.add(Button::new("Dismiss").small()).clicked() {
                 session.dismiss();
             }
-            if host.open_terminal.is_some() && ui.small_button("Open Git terminal").clicked() {
+            if host.open_terminal.is_some()
+                && ui.add(Button::new("Open Git terminal").small()).clicked()
+            {
                 *action = Some(Action::Terminal);
             }
         });
@@ -584,35 +579,35 @@ fn draw_header(
             Operation::Resolve { path, .. } => format!("Delete {path} and stage its deletion?"),
             _ => "Abort the current Git operation and restore its previous tracked state?".into(),
         };
-        ui.label(message);
-        ui.horizontal(|ui| {
+        ui.add(Text::new(message));
+        bedtime_ui::Row::new().show(ui, |ui| {
             if ui
-                .button(match &operation {
+                .add(Button::new(match &operation {
                     Operation::Discard { .. } if untracked => "Delete file",
                     Operation::Discard { .. } => "Discard changes",
                     Operation::Resolve { .. } => "Delete file",
                     _ => "Abort operation",
-                })
+                }))
                 .clicked()
             {
                 *action = Some(Action::Confirm);
             }
-            if ui.button("Keep changes").clicked() {
+            if ui.add(Button::new("Keep changes")).clicked() {
                 session.confirmation = None;
             }
         });
     }
     if !session.output.is_empty() {
-        ui.collapsing("Git output", |ui| {
+        Section::new("Git output").show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .id_salt("git-output")
                 .max_height(60.0)
                 .show(ui, |ui| {
-                    ui.label(&session.output);
+                    ui.add(Text::new(&session.output));
                 });
         });
     }
-    ui.separator();
+    ui.add(Separator::new());
 }
 
 /// The panel's width from which two lanes sit side by side.
@@ -774,7 +769,7 @@ fn draw_staged(
     layout: RowLayout,
 ) {
     if view.staged_rows.is_empty() {
-        ui.weak("Nothing staged");
+        ui.add(Text::new("Nothing staged").muted());
         return;
     }
     let height = layout.row_height(ui, context);
@@ -1149,39 +1144,20 @@ fn draw_row(
                         ui.add_space((*depth as f32 * 16.0).min((width - 90.0).max(0.0)));
                         // A chip already shows the status letter.
                         if layout.control != Control::Chip {
-                            ui.colored_label(bedtime_ui::theme::color(ink), code.to_string());
-                        }
-                        let label = entry.path.rsplit('/').next().unwrap();
-                        let font = egui::TextStyle::Body.resolve(ui.style());
-                        let mut text = egui::text::LayoutJob::default();
-                        text.append(
-                            label,
-                            0.0,
-                            egui::TextFormat {
-                                font_id: font.clone(),
-                                color: ui.visuals().text_color(),
-                                ..Default::default()
-                            },
-                        );
-                        if let Some((directory, _)) = entry.path.rsplit_once('/') {
-                            text.append(
-                                &format!("  {directory}"),
-                                0.0,
-                                egui::TextFormat {
-                                    font_id: font,
-                                    color: ui.visuals().weak_text_color(),
-                                    ..Default::default()
-                                },
+                            ui.add(
+                                Text::new(code.to_string()).color(bedtime_ui::theme::color(ink)),
                             );
                         }
-                        ui.add_sized(
-                            [(ui.available_width() - trailing).max(1.0), height],
-                            egui::Button::selectable(
-                                panel.selected.as_deref() == Some(&entry.path),
-                                text,
-                            )
-                            .right_text(())
-                            .truncate(),
+                        let (directory, label) = match entry.path.rsplit_once('/') {
+                            Some((directory, label)) => (directory, label),
+                            None => ("", entry.path.as_str()),
+                        };
+                        ui.add(
+                            ListRow::new(label)
+                                .detail(directory)
+                                .width((ui.available_width() - trailing).max(1.0))
+                                .height(height)
+                                .selected(panel.selected.as_deref() == Some(&entry.path)),
                         )
                     };
                     bedtime_ui::tree::tooltip(
@@ -1215,47 +1191,40 @@ fn draw_row(
                             ("Open unstaged diff", DiffSide::Unstaged),
                             ("Open staged diff", DiffSide::Staged),
                         ] {
-                            if ui.button(label).clicked() {
+                            if ui.add(MenuItem::new(label)).clicked() {
                                 *action = Some(Action::Diff(entry.path.clone(), side, true));
-                                ui.close();
                             }
                         }
-                        if ui.button("Open file").clicked() {
+                        if ui.add(MenuItem::new("Open file")).clicked() {
                             *action = Some(Action::Open(entry.path.clone()));
-                            ui.close();
                         }
-                        ui.separator();
+                        ui.add(Separator::new().space(Space::Xs));
                         if entry.conflicted {
                             for (label, choice) in [
                                 ("Use current file", ConflictChoice::Current),
                                 ("Use incoming file", ConflictChoice::Incoming),
                                 ("Delete file…", ConflictChoice::Delete),
                             ] {
-                                if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
+                                if ui.add_enabled(enabled, MenuItem::new(label)).clicked() {
                                     *action = Some(Action::Operation(Operation::Resolve {
                                         path: entry.path.clone(),
                                         choice,
                                     }));
-                                    ui.close();
                                 }
                             }
                             if ui
-                                .add_enabled(
-                                    enabled,
-                                    egui::Button::new("Save and stage resolution"),
-                                )
+                                .add_enabled(enabled, MenuItem::new("Save and stage resolution"))
                                 .clicked()
                             {
                                 *action = Some(Action::Operation(Operation::Stage {
                                     paths: vec![entry.path.clone()],
                                 }));
-                                ui.close();
                             }
                         } else {
                             if ui
                                 .add_enabled(
                                     enabled && stage != Staging::Staged,
-                                    egui::Button::new(if stage == Staging::Partial {
+                                    MenuItem::new(if stage == Staging::Partial {
                                         "Stage remaining changes"
                                     } else {
                                         "Stage file"
@@ -1266,19 +1235,17 @@ fn draw_row(
                                 *action = Some(Action::Operation(Operation::Stage {
                                     paths: vec![entry.path.clone()],
                                 }));
-                                ui.close();
                             }
                             if ui
                                 .add_enabled(
                                     enabled && stage != Staging::Unstaged,
-                                    egui::Button::new("Unstage file"),
+                                    MenuItem::new("Unstage file"),
                                 )
                                 .clicked()
                             {
                                 *action = Some(Action::Operation(Operation::Unstage {
                                     paths: vec![entry.path.clone()],
                                 }));
-                                ui.close();
                             }
                             // An untracked folder is another repository.
                             let untracked = entry.index_status == '?';
@@ -1287,16 +1254,16 @@ fn draw_row(
                                     enabled
                                         && !matches!(entry.worktree_status, ' ' | '.')
                                         && !entry.path.ends_with('/'),
-                                    egui::Button::new(if untracked {
+                                    MenuItem::new(if untracked {
                                         "Delete untracked file…"
                                     } else {
                                         "Discard file changes…"
-                                    }),
+                                    })
+                                    .danger(),
                                 )
                                 .clicked()
                             {
                                 *action = Some(Action::Discard(entry.path.clone()));
-                                ui.close();
                             }
                         }
                     });

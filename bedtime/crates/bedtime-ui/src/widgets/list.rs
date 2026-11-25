@@ -18,6 +18,9 @@ pub struct ListRow {
     italic: bool,
     strikethrough: bool,
     size: Size,
+    detail: String,
+    height: Option<f32>,
+    width: Option<f32>,
 }
 
 impl ListRow {
@@ -32,7 +35,26 @@ impl ListRow {
             italic: false,
             strikethrough: false,
             size: Size::default(),
+            detail: String::new(),
+            height: None,
+            width: None,
         }
+    }
+
+    /// Muted text right after its text (where a file is), cut short with it.
+    pub fn detail(mut self, detail: impl Into<String>) -> Self {
+        self.detail = detail.into();
+        self
+    }
+    /// This wide, in points (all the width there is, unless set).
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+    /// This tall, in points, to line up with rows drawn another way.
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
     }
 
     /// The chosen one.
@@ -81,13 +103,14 @@ impl egui::Widget for ListRow {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
         let services = ambient::services(ui.ctx());
         let font_size = self.size.font(ui);
-        let height = self.size.height(ui);
+        let height = self.height.unwrap_or(self.size.height(ui));
         let padding = self.size.padding(ui).x;
         let gap = (font_size * 0.4).round();
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), height),
-            egui::Sense::click(),
-        );
+        let width = self
+            .width
+            .unwrap_or_else(|| super::fill_width(ui, font_size * 12.0));
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
         let enabled = ui.is_enabled();
         response.widget_info(|| {
             egui::WidgetInfo::selected(
@@ -201,6 +224,17 @@ impl egui::Widget for ListRow {
                 ..Default::default()
             },
         );
+        if !self.detail.is_empty() {
+            job.append(
+                &format!("  {}", self.detail),
+                0.0,
+                egui::TextFormat {
+                    font_id: egui::FontId::proportional(font_size),
+                    color: theme::color(p.muted),
+                    ..Default::default()
+                },
+            );
+        }
         job.wrap = egui::text::TextWrapping {
             max_width: (right - left).max(0.0),
             max_rows: 1,
@@ -232,6 +266,7 @@ pub struct MenuItem {
     shortcut: String,
     danger: bool,
     checked: Option<bool>,
+    keep_open: bool,
 }
 
 impl MenuItem {
@@ -242,6 +277,7 @@ impl MenuItem {
             shortcut: String::new(),
             danger: false,
             checked: None,
+            keep_open: false,
         }
     }
     /// An icon before the text.
@@ -258,6 +294,12 @@ impl MenuItem {
     /// it when it's on. A click still only tells you; the change is yours.
     pub fn checked(mut self, checked: bool) -> Self {
         self.checked = Some(checked);
+        self
+    }
+    /// The menu stays open when it's clicked (options to flip, more than one
+    /// at a visit).
+    pub fn keep_open(mut self) -> Self {
+        self.keep_open = true;
         self
     }
     /// It destroys something: in the error colour.
@@ -316,7 +358,7 @@ impl egui::Widget for MenuItem {
             }
             None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &self.text),
         });
-        if response.clicked() {
+        if response.clicked() && !self.keep_open {
             ui.close();
         }
         if !ui.is_rect_visible(rect) {
@@ -409,5 +451,68 @@ impl Submenu {
     pub fn show(self, ui: &mut egui::Ui, items: impl FnOnce(&mut egui::Ui)) -> egui::Response {
         // The item, its arrow and how it opens are egui's menu's own.
         ui.menu_button(self.text, items).response
+    }
+}
+
+/// A button that opens a menu under it.
+///
+/// ```ignore
+/// MenuButton::new(Button::new("main").dropdown()).show(ui, |ui| {
+///     if ui.add(MenuItem::new("develop")).clicked() { … }
+/// });
+/// ```
+///
+/// The button is any `Button` (an icon alone, for a toolbar); the menu holds
+/// `MenuItem`s, or anything else.
+#[must_use = "a menu button does nothing until it's shown"]
+pub struct MenuButton {
+    button: super::Button,
+    keep_open: bool,
+    min_width: f32,
+}
+
+impl MenuButton {
+    pub fn new(button: super::Button) -> Self {
+        Self {
+            button,
+            keep_open: false,
+            min_width: 0.0,
+        }
+    }
+
+    /// The menu closes on a click outside it, not on one inside (it holds a
+    /// field, or options that stay to be flipped).
+    pub fn keep_open(mut self) -> Self {
+        self.keep_open = true;
+        self
+    }
+    /// The menu is at least this wide, in points.
+    pub fn min_width(mut self, width: f32) -> Self {
+        self.min_width = width;
+        self
+    }
+
+    /// The button, and its menu while it's open. Returns the button's response.
+    pub fn show(self, ui: &mut egui::Ui, items: impl FnOnce(&mut egui::Ui)) -> egui::Response {
+        let response = ui.add(self.button);
+        let behavior = if self.keep_open {
+            egui::PopupCloseBehavior::CloseOnClickOutside
+        } else {
+            egui::PopupCloseBehavior::CloseOnClick
+        };
+        let min_width = self.min_width;
+        // Its items and anything else in it are full size: not a menu's
+        // compact style, which is for menus of plain items.
+        egui::Popup::menu(&response)
+            .style(|_: &mut egui::Style| {})
+            .gap(Space::Xs.px(ui))
+            .close_behavior(behavior)
+            .show(|ui| {
+                if min_width > 0.0 {
+                    ui.set_min_width(min_width);
+                }
+                items(ui);
+            });
+        response
     }
 }

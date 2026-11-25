@@ -74,7 +74,7 @@ impl<N: Numeric> egui::Widget for Slider<'_, N> {
         let knob = (height * 0.3).round();
         let available = ui.available_width();
         let width = if self.fill_width {
-            available
+            super::fill_width(ui, ui.spacing().slider_width)
         } else {
             self.width
                 .unwrap_or(ui.spacing().slider_width)
