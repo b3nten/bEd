@@ -14,9 +14,9 @@ use crate::{
 };
 use bedtime_ui::{
     BuiltinIcon, Button, Checkbox, CodeView, ListRow, MenuItem, Row, Segmented, Select, Separator,
-    Size, Space, Spinner, Text, TextArea, TextField, Tone, UiContext,
+    Size, Space, Spinner, Text, TextArea, TextField, Tone, UiContext, ViewUi,
     data::{DataTree, Value},
-    egui,
+    draw, egui,
     hex::HexViewer,
     image::{Decoded, ImageView},
     theme,
@@ -70,7 +70,7 @@ pub struct HttpClientSystems;
 
 /// The HTTP client panel. Which request it shows is saved with it.
 #[bedtime_ui::panel]
-#[derive(Reflect, Default)]
+#[derive(Reflect, Default, Clone, PartialEq)]
 #[reflect(Component, Default, Persist)]
 #[require(HttpClientView, Editing)]
 pub struct HttpClientPanel {
@@ -362,7 +362,14 @@ fn collect_responses(mut exchanges: ResMut<Exchanges>) {
 impl Panel for HttpClientPanel {
     const LABEL: &'static str = "HTTP Client";
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        draw(ui, world, context, panel);
+        draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |view: &mut HttpClientView| view,
+            http_client,
+        );
     }
 }
 
@@ -377,23 +384,32 @@ struct Draw<'a> {
     intents: &'a mut Vec<Intent>,
 }
 
-fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-    let focused = world
-        .get::<PanelPresentation>(panel)
-        .is_some_and(|presentation| presentation.focused);
-    let Some(mut shown) = world.entity_mut(panel).take::<HttpClientPanel>() else {
+/// The panel, drawn: a system that reads the requests, the exchanges and
+/// which request the panel shows, with the panel's view (its tabs and what
+/// it has made of the response) lent to it. What's edited and asked for is
+/// done when the draw is.
+fn http_client(
+    ViewUi {
+        ui,
+        entity: panel,
+        view,
+        context,
+    }: ViewUi<HttpClientView>,
+    panels: Query<(&HttpClientPanel, Option<&PanelPresentation>)>,
+    exchanges: Res<Exchanges>,
+    mut commands: Commands,
+) {
+    let Ok((saved, presentation)) = panels.get(panel) else {
         return;
     };
-    let Some(mut view) = world.entity_mut(panel).take::<HttpClientView>() else {
-        world.entity_mut(panel).insert(shown);
-        return;
-    };
-    let Some(mut collection) = crate::requests::collection(world, panel).cloned() else {
-        world.entity_mut(panel).insert((shown, view));
+    let focused = presentation.is_some_and(|presentation| presentation.focused);
+    let Some(mut collection) = crate::requests::collection(draw::world(ui), panel).cloned() else {
         ui.centered_and_justified(|ui| ui.add(Spinner::new()));
         return;
     };
-    let exchanges = world.resource::<Exchanges>();
+    let exchanges = &*exchanges;
+    let context = &context;
+    let mut shown = saved.clone();
     let mut intents = Vec::new();
 
     // A request deleted elsewhere (or none chosen yet): show the first.
@@ -417,7 +433,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         collection: &mut collection,
         exchanges,
         shown: &mut shown,
-        view: &mut view,
+        view,
         intents: &mut intents,
     };
     let margin = egui::Margin::symmetric(8, 6);
@@ -456,14 +472,21 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             }
         });
 
-    world.entity_mut(panel).insert((shown, view));
-    if let Err(error) = edit(world, panel, &collection, "Edit Request", true) {
-        warn!("The requests couldn't be changed: {error}");
-    }
-    world
-        .resource_mut::<Intents>()
-        .0
-        .extend(intents.into_iter().map(|intent| (panel, intent)));
+    let changed = (shown != *saved).then_some(shown);
+    commands.queue(move |world: &mut World| {
+        if let Some(shown) = changed
+            && let Some(mut saved) = world.get_mut::<HttpClientPanel>(panel)
+        {
+            *saved = shown;
+        }
+        if let Err(error) = edit(world, panel, &collection, "Edit Request", true) {
+            warn!("The requests couldn't be changed: {error}");
+        }
+        world
+            .resource_mut::<Intents>()
+            .0
+            .extend(intents.into_iter().map(|intent| (panel, intent)));
+    });
 }
 
 fn sidebar(ui: &mut egui::Ui, d: &mut Draw) {
