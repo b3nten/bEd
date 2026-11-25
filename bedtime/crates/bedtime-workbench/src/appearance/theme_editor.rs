@@ -5,7 +5,8 @@ use super::{AppearanceSettings, ColorTheme, ShippedThemes};
 use crate::BedtimeWorldExt as _;
 use crate::{ActionInvocation, ActionResult, Handler, Panel, persistence::ReflectPersist};
 use bedtime_ui::{
-    BuiltinIcon, UiContext, egui,
+    BuiltinIcon, Button, ColorField, Row, Segmented, Select, Separator, Space, Table, Text,
+    TextField, TextRole, UiContext, egui,
     theme::{Appearance, Palette, Rgba, Theme, ThemeFolder},
 };
 use bevy::prelude::*;
@@ -91,7 +92,7 @@ impl Panel for ThemeEditorPanel {
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
         if !world.contains_resource::<ThemeFolder>() {
-            ui.weak("There's no themes folder.");
+            ui.add(Text::new("There's no themes folder.").muted());
             return;
         }
         let active = world.resource::<AppearanceSettings>().theme.clone();
@@ -119,10 +120,9 @@ impl Panel for ThemeEditorPanel {
             .inner_margin(egui::Margin::symmetric(14, 12))
             .show(ui, |ui| {
                 request = state.header(ui, context, &id, &choices, shipped.is_some(), differs);
-                ui.add_space(4.0);
-                ui.separator();
+                ui.add(Separator::new());
                 let Some(draft) = &mut state.draft else {
-                    ui.weak(format!("There's no readable theme named \"{id}\"."));
+                    ui.add(Text::new(format!("There's no readable theme named \"{id}\".")).muted());
                     return;
                 };
                 let changed = egui::ScrollArea::vertical()
@@ -189,77 +189,78 @@ impl EditorState {
             .draft
             .as_ref()
             .map_or_else(|| id.to_owned(), |draft| draft.theme.name.clone());
-        ui.horizontal(|ui| {
-            egui::ComboBox::from_id_salt("theme-editor-theme")
-                .width(220.0)
-                .selected_text(shown)
-                .show_ui(ui, |ui| {
-                    for (choice, name) in choices {
-                        if ui.selectable_label(choice == id, name).clicked() && choice != id {
-                            request = Some(Request::Edit(choice.clone()));
-                        }
-                    }
-                });
+        Row::new().show(ui, |ui| {
+            // A theme that can't be read still shows as what was asked for.
+            let ids: Vec<String> = choices.iter().map(|(id, _)| id.clone()).collect();
+            let mut chosen = id.to_owned();
+            let themes = Select::with(&mut chosen, &ids, |id| {
+                choices
+                    .iter()
+                    .find(|(choice, _)| choice == id)
+                    .map_or_else(|| id.clone(), |(_, name)| name.clone())
+            })
+            .placeholder(shown)
+            .width(220.0);
+            let themes = if ids.len() > 12 {
+                themes.searchable()
+            } else {
+                themes
+            };
+            if ui.add(themes).changed() {
+                request = Some(Request::Edit(chosen));
+            }
             let Some(draft) = &self.draft else {
                 return;
             };
-            let mut frame = context.frame(ui);
-            let copy = frame.icon_button_sized(BuiltinIcon::Plus, 14.0);
-            copy.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Duplicate theme")
-            });
-            frame.tooltip(&copy, "Duplicate this theme under a new name");
+            let small = |icon, label: &str| Button::icon_only(icon, label).small().ghost();
+            let copy = ui.add(small(BuiltinIcon::Plus, "Duplicate theme"));
+            context
+                .frame(ui)
+                .tooltip(&copy, "Duplicate this theme under a new name");
             if copy.clicked() {
                 self.copy_name = Some(format!("{} Copy", draft.theme.name));
                 self.confirming_delete = false;
             }
             if shipped {
-                ui.add_enabled_ui(differs, |ui| {
-                    let mut frame = context.frame(ui);
-                    let reset = frame.icon_button_sized(BuiltinIcon::RotateCcw, 14.0);
-                    reset.widget_info(|| {
-                        egui::WidgetInfo::labeled(egui::WidgetType::Button, differs, "Reset theme")
-                    });
-                    frame.tooltip(
-                        &reset,
-                        if differs {
-                            "Reset this theme to the colors it shipped with"
-                        } else {
-                            "This theme is as it shipped"
-                        },
-                    );
-                    if reset.clicked() {
-                        request = Some(Request::Reset);
-                    }
-                });
+                let reset = ui.add_enabled(differs, small(BuiltinIcon::RotateCcw, "Reset theme"));
+                context.frame(ui).tooltip(
+                    &reset,
+                    if differs {
+                        "Reset this theme to the colors it shipped with"
+                    } else {
+                        "This theme is as it shipped"
+                    },
+                );
+                if reset.clicked() {
+                    request = Some(Request::Reset);
+                }
             } else {
-                let mut frame = context.frame(ui);
-                let delete = frame.icon_button_sized(BuiltinIcon::Trash, 14.0);
-                delete.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Delete theme")
-                });
-                frame.tooltip(&delete, "Delete this theme");
+                let delete = ui.add(small(BuiltinIcon::Trash, "Delete theme"));
+                context.frame(ui).tooltip(&delete, "Delete this theme");
                 if delete.clicked() {
                     self.confirming_delete = true;
                     self.copy_name = None;
                 }
             }
-            ui.weak(if draft.unsaved_since.is_some() {
-                "Saving…"
-            } else {
-                "Saved"
-            });
+            ui.add(
+                Text::new(if draft.unsaved_since.is_some() {
+                    "Saving…"
+                } else {
+                    "Saved"
+                })
+                .muted(),
+            );
         });
 
         if let Some(name) = &mut self.copy_name {
             let mut create = false;
             let mut cancel = false;
-            ui.horizontal(|ui| {
-                ui.label("New theme");
-                let field = ui.add(egui::TextEdit::singleline(name).desired_width(200.0));
+            Row::new().show(ui, |ui| {
+                ui.add(Text::new("New theme"));
+                let field = ui.add(TextField::new(name).width(200.0));
                 let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                create = ui.button("Create").clicked() || entered;
-                cancel = ui.button("Cancel").clicked();
+                create = ui.add(Button::new("Create").primary()).clicked() || entered;
+                cancel = ui.add(Button::new("Cancel")).clicked();
             });
             if create && !name.trim().is_empty() {
                 request = Some(Request::Copy(name.trim().to_owned()));
@@ -269,17 +270,13 @@ impl EditorState {
             }
         }
         if self.confirming_delete {
-            ui.horizontal(|ui| {
-                ui.weak("Delete this theme's file?");
-                let error = bedtime_ui::theme::color(context.theme.palette.error);
-                if ui
-                    .button(egui::RichText::new("Delete").color(error))
-                    .clicked()
-                {
+            Row::new().show(ui, |ui| {
+                ui.add(Text::new("Delete this theme's file?").muted());
+                if ui.add(Button::new("Delete").danger()).clicked() {
                     request = Some(Request::Delete);
                     self.confirming_delete = false;
                 }
-                if ui.button("Cancel").clicked() {
+                if ui.add(Button::new("Cancel")).clicked() {
                     self.confirming_delete = false;
                 }
             });
@@ -288,10 +285,9 @@ impl EditorState {
         let Some(draft) = &mut self.draft else {
             return request;
         };
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.label("Name");
-            let field = ui.add(egui::TextEdit::singleline(&mut self.name).desired_width(200.0));
+        Row::new().show(ui, |ui| {
+            ui.add(Text::new("Name"));
+            let field = ui.add(TextField::new(&mut self.name).width(200.0));
             if field.lost_focus() {
                 let name = self.name.trim();
                 if name.is_empty() {
@@ -300,20 +296,25 @@ impl EditorState {
                     request = Some(Request::Rename(name.to_owned()));
                 }
             }
-            ui.add_space(12.0);
             let before = draft.theme.appearance;
-            ui.selectable_value(&mut draft.theme.appearance, Appearance::Dark, "Dark");
-            ui.selectable_value(&mut draft.theme.appearance, Appearance::Light, "Light");
+            ui.add(Segmented::with(
+                &mut draft.theme.appearance,
+                &[Appearance::Dark, Appearance::Light],
+                |appearance| format!("{appearance:?}"),
+            ));
             if draft.theme.appearance != before {
                 draft.unsaved_since = Some(Instant::now());
             }
         });
         let file = format!("{id}.ron");
-        ui.weak(if shipped {
-            format!("{file}, a shipped theme")
-        } else {
-            file
-        });
+        ui.add(
+            Text::new(if shipped {
+                format!("{file}, a shipped theme")
+            } else {
+                file
+            })
+            .muted(),
+        );
         request
     }
 }
@@ -555,129 +556,46 @@ const TERMINAL: [&str; 8] = [
 /// The preview and every color; whether any changed.
 fn colors(ui: &mut egui::Ui, context: &UiContext<'_>, theme: &mut Theme) -> bool {
     let mut changed = false;
-    ui.add_space(6.0);
+    ui.add_space(Space::Xs.px(ui));
     preview(ui, context, theme);
     let palette = &mut theme.palette;
     for (title, fields) in [("Interface", INTERFACE), ("Syntax", SYNTAX)] {
         section(ui, title);
-        egui::Grid::new(title)
-            .num_columns(3)
-            .spacing([12.0, 4.0])
-            .show(ui, |ui| {
+        Table::new(title)
+            .columns(2)
+            .gap(Space::Md)
+            .show(ui, |table| {
                 for (label, field) in fields {
-                    ui.label(*label);
-                    changed |= color_edit(ui, (title, *label), field(palette));
-                    ui.end_row();
+                    table.row(|ui| {
+                        ui.add(Text::new(*label));
+                        changed |= ui.add(ColorField::new(field(palette))).changed();
+                    });
                 }
             });
     }
     section(ui, "Terminal");
-    egui::Grid::new("terminal")
-        .num_columns(5)
-        .spacing([12.0, 4.0])
-        .show(ui, |ui| {
-            ui.label("");
-            ui.weak("Normal");
-            ui.label("");
-            ui.weak("Bright");
-            ui.end_row();
+    Table::new("terminal")
+        .headers(["", "Normal", "Bright"])
+        .gap(Space::Md)
+        .show(ui, |table| {
             for (i, label) in TERMINAL.iter().enumerate() {
-                ui.label(*label);
-                changed |= color_edit(ui, ("terminal", i), &mut palette.terminal[i]);
-                changed |= color_edit(ui, ("terminal", i + 8), &mut palette.terminal[i + 8]);
-                ui.end_row();
+                table.row(|ui| {
+                    ui.add(Text::new(*label));
+                    changed |= ui.add(ColorField::new(&mut palette.terminal[i])).changed();
+                    changed |= ui
+                        .add(ColorField::new(&mut palette.terminal[i + 8]))
+                        .changed();
+                });
             }
         });
-    ui.add_space(12.0);
+    ui.add_space(Space::Md.px(ui));
     changed
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
-    ui.add_space(14.0);
-    ui.heading(title);
-    ui.add_space(2.0);
-}
-
-/// A swatch that opens a picker, and the color in hex; two grid cells.
-fn color_edit(
-    ui: &mut egui::Ui,
-    key: impl std::hash::Hash + std::fmt::Debug,
-    color: &mut Rgba,
-) -> bool {
-    let mut changed = false;
-    let [r, g, b, a] = color.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
-    let mut picked = egui::Color32::from_rgba_unmultiplied(r, g, b, a);
-    let id = ui.id().with(("color", &key));
-    let swatch = ui
-        .push_id(id, |ui| {
-            egui::widgets::color_picker::color_edit_button_srgba(
-                ui,
-                &mut picked,
-                egui::color_picker::Alpha::OnlyBlend,
-            )
-        })
-        .inner;
-    if swatch.changed() {
-        *color = picked.to_srgba_unmultiplied().map(|v| v as f32 / 255.0);
-        changed = true;
-    }
-    // Typed text is kept while the field has focus; otherwise it shows the color.
-    let text_id = id.with("hex");
-    let mut text = ui
-        .data(|data| data.get_temp::<String>(text_id))
-        .unwrap_or_else(|| to_hex(color));
-    let field = ui.add(
-        egui::TextEdit::singleline(&mut text)
-            .font(egui::TextStyle::Monospace)
-            .desired_width(90.0),
-    );
-    if field.changed()
-        && let Some(typed) = from_hex(&text)
-        && typed != *color
-    {
-        *color = typed;
-        changed = true;
-    }
-    let focused = field.has_focus();
-    ui.data_mut(|data| {
-        if focused {
-            data.insert_temp(text_id, text);
-        } else {
-            data.remove::<String>(text_id);
-        }
-    });
-    changed
-}
-
-/// `#rrggbb`, or `#rrggbbaa` when not opaque, as theme files write colors.
-fn to_hex(color: &Rgba) -> String {
-    let [r, g, b, a] = color.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8);
-    if a == 255 {
-        format!("#{r:02x}{g:02x}{b:02x}")
-    } else {
-        format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
-    }
-}
-
-/// A typed color: six or eight hex digits, with or without `#`.
-fn from_hex(text: &str) -> Option<Rgba> {
-    let text = text.trim();
-    let digits = text.strip_prefix('#').unwrap_or(text);
-    if !matches!(digits.len(), 6 | 8) || !digits.is_ascii() {
-        return None;
-    }
-    let channel = |i: usize| {
-        digits
-            .get(i..i + 2)
-            .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-            .map(|v| v as f32 / 255.0)
-    };
-    Some([
-        channel(0)?,
-        channel(2)?,
-        channel(4)?,
-        if digits.len() == 8 { channel(6)? } else { 1.0 },
-    ])
+    ui.add_space(Space::Lg.px(ui));
+    ui.add(Text::new(title).role(TextRole::Heading));
+    ui.add_space(Space::Xs.px(ui) / 2.0);
 }
 
 /// A small window drawn in the theme: a panel of code with a selected line,
@@ -831,15 +749,6 @@ mod tests {
         assert_eq!(slug("Tokyo Night Copy"), "tokyo-night-copy");
         assert_eq!(slug("  Rosé  Pine!! "), "rosé-pine");
         assert_eq!(slug("***"), "theme");
-    }
-
-    #[test]
-    fn hex_colors_round_trip() {
-        let color = from_hex("#7aa2f7").unwrap();
-        assert_eq!(to_hex(&color), "#7aa2f7");
-        assert_eq!(to_hex(&from_hex("28345780").unwrap()), "#28345780");
-        assert!(from_hex("#12345").is_none());
-        assert!(from_hex("#zzzzzz").is_none());
     }
 
     #[test]

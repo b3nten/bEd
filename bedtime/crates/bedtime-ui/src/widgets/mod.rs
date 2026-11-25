@@ -3,6 +3,7 @@
 mod breadcrumbs;
 mod button;
 mod checkbox;
+mod color_field;
 mod edit;
 mod list;
 mod number_field;
@@ -20,6 +21,7 @@ mod text_field;
 pub use breadcrumbs::Breadcrumbs;
 pub use button::{Button, Variant};
 pub use checkbox::{Checkbox, Toggle};
+pub use color_field::{ColorField, from_hex, to_hex};
 pub use edit::UiEdit;
 pub use list::{ListRow, MenuItem, Submenu};
 pub use number_field::NumberField;

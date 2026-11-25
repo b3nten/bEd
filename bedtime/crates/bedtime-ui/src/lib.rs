@@ -39,9 +39,9 @@ pub mod prelude {
     pub use crate::draw::{self, PanelUi, ViewUi};
     pub use crate::tokens::{Radius, Size, Space, TextRole, Tone};
     pub use crate::widgets::{
-        Breadcrumbs, Button, Checkbox, Column, ListRow, MenuItem, NumberField, Row, Section,
-        Segmented, Select, Separator, Slider, Spinner, Submenu, Table, TableRows, Text, TextArea,
-        TextField, Toggle, UiEdit, Variant,
+        Breadcrumbs, Button, Checkbox, ColorField, Column, ListRow, MenuItem, NumberField, Row,
+        Section, Segmented, Select, Separator, Slider, Spinner, Submenu, Table, TableRows, Text,
+        TextArea, TextField, Toggle, UiEdit, Variant,
     };
     pub use egui::{self, Response, Ui, Widget};
 }
@@ -66,9 +66,9 @@ pub use theme::{Metrics, Theme};
 pub use tokens::{Radius, Size, Space, TextRole, Tone};
 pub use viewport::{UiViewport, free_layer, viewport_image};
 pub use widgets::{
-    Breadcrumbs, Button, Checkbox, Column, ListRow, MenuItem, NumberField, Row, Section, Segmented,
-    Select, Separator, Slider, Spinner, Submenu, Table, TableRows, Text, TextArea, TextField,
-    Toggle, UiEdit, Variant,
+    Breadcrumbs, Button, Checkbox, ColorField, Column, ListRow, MenuItem, NumberField, Row,
+    Section, Segmented, Select, Separator, Slider, Spinner, Submenu, Table, TableRows, Text,
+    TextArea, TextField, Toggle, UiEdit, Variant,
 };
 
 /// While this resource exists, each frame's AccessKit tree (every widget's

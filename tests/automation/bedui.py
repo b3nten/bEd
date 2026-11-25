@@ -6,7 +6,7 @@ import tempfile
 from bed import Bed
 
 STORIES = ["Tokens", "Button", "Text", "Checkbox and Toggle", "Text Field", "Select", "Segmented",
-           "Slider", "Text Area", "List Row and Menu", "Breadcrumbs", "Table", "Spinner",
+           "Slider", "Color Field", "Text Area", "List Row and Menu", "Breadcrumbs", "Table", "Spinner",
            "Section and Separator", "Row and Column"]
 
 

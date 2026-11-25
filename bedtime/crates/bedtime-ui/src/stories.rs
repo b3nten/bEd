@@ -58,6 +58,11 @@ pub fn builtin() -> Vec<Story> {
         },
         Story {
             group: "Components",
+            name: "Color Field",
+            draw: color_field,
+        },
+        Story {
+            group: "Components",
             name: "Text Area",
             draw: text_area,
         },
@@ -565,6 +570,41 @@ fn slider(ui: &mut egui::Ui, knobs: &mut Knobs) {
             });
         },
     );
+}
+
+fn color_field(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let size = knobs.choice("Size", &[Size::Md, Size::Sm, Size::Lg]);
+    let initial = || {
+        let palette = &Theme::dark().palette;
+        [palette.accent, palette.error, palette.selection]
+    };
+    stateful(ui, "color-field", initial, |ui, colors| {
+        Column::new().gap(Space::Xl).show(ui, |ui| {
+            section(ui, "Click the swatch to pick, or type the hex", |ui| {
+                Table::new("colors").columns(2).show(ui, |table| {
+                    for (name, color) in ["Accent", "Error", "Selection"]
+                        .iter()
+                        .zip(colors.iter_mut())
+                    {
+                        table.row(|ui| {
+                            ui.add(Text::new(*name));
+                            ui.add(ColorField::new(color).size(size));
+                        });
+                    }
+                });
+            });
+            section(ui, "What they are", |ui| {
+                Row::new().show(ui, |ui| {
+                    for color in colors.iter() {
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(64.0, 32.0), egui::Sense::hover());
+                        ui.painter()
+                            .rect_filled(rect, Radius::Md.px(ui), theme::color(*color));
+                    }
+                });
+            });
+        });
+    });
 }
 
 fn text_area(ui: &mut egui::Ui, knobs: &mut Knobs) {

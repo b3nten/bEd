@@ -628,3 +628,57 @@ fn a_number_field_does_not_round_a_value_by_showing_it() {
     });
     assert_eq!(value, 0.123456, "shown as 0.12, kept as it was");
 }
+
+#[test]
+fn hex_colours_round_trip() {
+    use bedtime_ui::widgets::{from_hex, to_hex};
+    let color = from_hex("#7aa2f7").unwrap();
+    assert_eq!(to_hex(&color), "#7aa2f7");
+    assert_eq!(to_hex(&from_hex("28345780").unwrap()), "#28345780");
+    assert!(from_hex("#12345").is_none());
+    assert!(from_hex("#zzzzzz").is_none());
+}
+
+#[test]
+fn a_colour_field_follows_typed_hex_and_only_then_changes() {
+    let ctx = egui::Context::default();
+    let mut color = from_rgb(0x7a, 0xa2, 0xf7);
+    let mut changes = 0;
+    let mut rect = egui::Rect::NOTHING;
+    passes(&ctx, None, |ui| {
+        rect = ui.add(ColorField::new(&mut color)).rect
+    });
+    assert!(
+        rect.width() > 96.0,
+        "room for the swatch and the hex: {}",
+        rect.width()
+    );
+    // Click into the hex (the right part), select it all, type another.
+    passes(
+        &ctx,
+        Some(rect.right_center() - egui::vec2(20.0, 0.0)),
+        |ui| {
+            changes += usize::from(ui.add(ColorField::new(&mut color)).changed());
+        },
+    );
+    assert_eq!(changes, 0, "shown and clicked, it's the same colour");
+    let select_all = egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    typed(
+        &ctx,
+        vec![select_all, egui::Event::Text("#ff0000".into())],
+        |ui| {
+            changes += usize::from(ui.add(ColorField::new(&mut color)).changed());
+        },
+    );
+    assert_eq!((color, changes), (from_rgb(0xff, 0, 0), 1));
+}
+
+fn from_rgb(r: u8, g: u8, b: u8) -> [f32; 4] {
+    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+}
