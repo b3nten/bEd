@@ -5,6 +5,7 @@ use super::{
     symbols::{self, Category},
 };
 use crate::syntax::{AnalysisStatus, DocumentSyntax, Observation, ObservationKey};
+use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, UiContext, egui, tree};
 use bedtime_ui::{Button, MenuButton, MenuItem, Separator, Size, Space, Text, TextField};
 use bedtime_workbench::{BedtimeWorldExt, DocumentReference, PanelPresentation};
@@ -348,8 +349,9 @@ fn toolbar(
                     }
 
                     if !state.filter.is_empty() {
-                        let clear = ui.add(tool(BuiltinIcon::Close, "Clear the filter"));
-                        context.frame(ui).tooltip(&clear, "Clear the filter");
+                        let clear = ui
+                            .add(tool(BuiltinIcon::Close, "Clear the filter"))
+                            .tip("Clear the filter");
                         if clear.clicked() {
                             state.filter.clear();
                         }

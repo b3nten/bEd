@@ -9,6 +9,7 @@
 use crate::BedtimeWorldExt as _;
 use crate::settings::{Setting, Settings, SettingsError};
 use bedtime_persistence::StoreId;
+use bedtime_ui::Tip;
 use bedtime_ui::{
     BuiltinIcon, Button, NumberField, Row, Segmented, Select, Space, Text, TextField, TextRole,
     Toggle, UiContext, egui,
@@ -450,7 +451,7 @@ pub fn row<S: Setting>(
         |ui| marks.overridden(ui, context),
         |ui| edit(ui, &mut value),
         |ui| {
-            reset = set_here && marks.reset(ui, context);
+            reset = set_here && marks.reset(ui);
             if let Some(note) = note {
                 ui.add(Text::new(note).muted());
             }
@@ -505,7 +506,7 @@ impl Marks {
     /// A button that clears the layer's value (back to the default, or to the
     /// layer below's). Show it only when the layer holds a value. Returns
     /// whether it was clicked.
-    pub fn reset(&self, ui: &mut egui::Ui, context: &UiContext<'_>) -> bool {
+    pub fn reset(&self, ui: &mut egui::Ui) -> bool {
         let hint = match &self.below {
             Some(below) => format!("Use the {} value", below.to_lowercase()),
             None => "Reset to default".to_owned(),
@@ -513,8 +514,7 @@ impl Marks {
         let reset = Button::icon_only(BuiltinIcon::RotateCcw, "Reset")
             .small()
             .ghost();
-        let response = ui.add(reset);
-        context.frame(ui).tooltip(&response, hint);
+        let response = ui.add(reset).tip(hint);
         response.clicked()
     }
 }

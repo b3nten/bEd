@@ -8,6 +8,7 @@
 //! haven't changed since they were searched. The results follow unsaved edits.
 use crate::engine::{FileMatches, MAX_MATCHES, Match, Matcher, OpenFiles, SearchQuery, Summary};
 use bedtime_document::{BufferEdit, TextBuffer};
+use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
 use bedtime_ui::{Button, MenuItem, Row, Separator, Space, Spinner, Text, Toggle};
 #[cfg(feature = "persistence")]
@@ -1525,11 +1526,8 @@ fn status(
         }
         let skipped = state.summary.as_ref().map_or(0, |s| s.skipped);
         if skipped > 0 {
-            let label = ui.add(Text::new(format!("· {} skipped", number(skipped))).muted());
-            context.frame(ui).tooltip(
-                &label,
-                "Files over 16 MiB, and files that aren't UTF-8, aren't searched.",
-            );
+            ui.add(Text::new(format!("· {} skipped", number(skipped))).muted())
+                .tip("Files over 16 MiB, and files that aren't UTF-8, aren't searched.");
         }
         // Not for searching again what's shown: that's as quiet as it can be.
         if state.task.is_some() && state.fresh.is_none() {

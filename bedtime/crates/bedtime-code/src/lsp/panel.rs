@@ -7,7 +7,7 @@ use super::{
 };
 use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, egui, theme};
 use bedtime_ui::{
-    Button, MenuItem, Row, Section, Space, Table, Text, TextArea, TextField, Toggle, Tone,
+    Button, MenuItem, Row, Section, Space, Table, Text, TextArea, TextField, Tip, Toggle, Tone,
 };
 use bedtime_workbench::BedtimeWorldExt as _;
 use bedtime_workbench::PanelsAppExt as _;
@@ -392,47 +392,48 @@ fn server_card(
                     inner.ui.cursor().min,
                     egui::vec2(inner.ui.available_width(), 26.0),
                 ))
-                .layout(egui::Layout::left_to_right(egui::Align::Center));
-            inner.scope(header, |mut row| {
-                let (dot, _) = row
+                .layout(egui::Layout::right_to_left(egui::Align::Center));
+            // The buttons first, from the right; the name has what's left
+            // and is cut short to fit it.
+            inner.scope(header, |row| {
+                let chevron = if expanded {
+                    BuiltinIcon::ChevronDown
+                } else {
+                    BuiltinIcon::ChevronRight
+                };
+                let toggle = row
                     .ui
-                    .allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
-                row.ui.painter().circle_filled(dot.center(), 4.0, light);
-                let title = row.ui.add(Text::new(&entry.name).strong().clickable());
-                if title.clicked() {
+                    .add(Button::icon_only(chevron, "Configure").ghost())
+                    .tip("Configure");
+                if toggle.clicked() {
                     panel.expanded = (!expanded).then(|| entry.name.clone());
                 }
-                menu_targets.push(title);
-                if !entry.languages.is_empty() {
-                    row.ui.add(Text::new(entry.languages.join(", ")).muted());
-                }
-                let right =
-                    egui::UiBuilder::new().layout(egui::Layout::right_to_left(egui::Align::Center));
-                row.scope(right, |buttons| {
-                    let chevron = if expanded {
-                        BuiltinIcon::ChevronDown
-                    } else {
-                        BuiltinIcon::ChevronRight
-                    };
-                    let toggle = buttons
+                if let Some((server, ..)) = running {
+                    let restart = row
                         .ui
-                        .add(Button::icon_only(chevron, "Configure").ghost());
-                    buttons.tooltip(&toggle, "Configure");
-                    if toggle.clicked() {
+                        .add(Button::icon_only(BuiltinIcon::RotateCcw, "Restart").ghost())
+                        .tip("Restart");
+                    if restart.clicked() {
+                        asked.push(Asked::Restart(*server));
+                    }
+                }
+                let mut enabled = entry.enabled;
+                if row.ui.add(Toggle::new(&mut enabled, "")).changed() {
+                    asked.push(Asked::Enable(entry.name.clone(), enabled));
+                }
+                let left = egui::Layout::left_to_right(egui::Align::Center);
+                row.ui.with_layout(left, |ui| {
+                    let (dot, _) =
+                        ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+                    ui.painter().circle_filled(dot.center(), 4.0, light);
+                    let title = ui.add(Text::new(&entry.name).strong().clickable().truncate());
+                    if title.clicked() {
                         panel.expanded = (!expanded).then(|| entry.name.clone());
                     }
-                    if let Some((server, ..)) = running {
-                        let restart = buttons
-                            .ui
-                            .add(Button::icon_only(BuiltinIcon::RotateCcw, "Restart").ghost());
-                        buttons.tooltip(&restart, "Restart");
-                        if restart.clicked() {
-                            asked.push(Asked::Restart(*server));
-                        }
-                    }
-                    let mut enabled = entry.enabled;
-                    if buttons.ui.add(Toggle::new(&mut enabled, "")).changed() {
-                        asked.push(Asked::Enable(entry.name.clone(), enabled));
+                    menu_targets.push(title);
+                    // The languages only when there's room for some of them.
+                    if !entry.languages.is_empty() && ui.available_width() > 40.0 {
+                        ui.add(Text::new(entry.languages.join(", ")).muted().truncate());
                     }
                 });
             });

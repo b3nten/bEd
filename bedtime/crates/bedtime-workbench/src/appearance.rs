@@ -15,6 +15,7 @@ use crate::settings::{
 };
 use crate::*;
 use bedtime_persistence::StoreId;
+use bedtime_ui::Tip;
 use bedtime_ui::{
     BuiltinIcon, Button, Metrics, MotionPolicy, Select, Text, UiContext, egui,
     fonts::DEFAULT_FAMILY,
@@ -294,28 +295,25 @@ fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, laye
             });
         },
         |ui| {
-            reset = set_here && marks.reset(ui, context);
+            reset = set_here && marks.reset(ui);
             if editor {
-                let button = ui.add(
-                    Button::icon_only(BuiltinIcon::Sliders, "Edit theme")
-                        .small()
-                        .ghost(),
-                );
-                context.frame(ui).tooltip(
-                    &button,
-                    "Edit this theme's colors, or make your own from it",
-                );
+                let button = ui
+                    .add(
+                        Button::icon_only(BuiltinIcon::Sliders, "Edit theme")
+                            .small()
+                            .ghost(),
+                    )
+                    .tip("Edit this theme's colors, or make your own from it");
                 edit = button.clicked();
             }
             if folder.is_some() {
-                let button = ui.add(
-                    Button::icon_only(BuiltinIcon::FolderOpen, "Open themes folder")
-                        .small()
-                        .ghost(),
-                );
-                context
-                    .frame(ui)
-                    .tooltip(&button, "Open the themes folder to edit or add themes");
+                let button = ui
+                    .add(
+                        Button::icon_only(BuiltinIcon::FolderOpen, "Open themes folder")
+                            .small()
+                            .ghost(),
+                    )
+                    .tip("Open the themes folder to edit or add themes");
                 open_folder = button.clicked();
             }
             if !found {

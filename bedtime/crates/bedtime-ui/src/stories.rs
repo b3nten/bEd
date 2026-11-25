@@ -554,6 +554,18 @@ fn slider(ui: &mut egui::Ui, knobs: &mut Knobs) {
                         );
                     });
                 });
+                section(ui, "Vertical: low at the bottom", |ui| {
+                    Row::new().show(ui, |ui| {
+                        ui.add(
+                            Slider::new(&mut values.0, 0.0..=1.0)
+                                .label("Volume")
+                                .vertical()
+                                .width(120.0),
+                        )
+                        .tip("Volume");
+                        ui.add(Text::new(format!("{:.0}%", values.0 * 100.0)));
+                    });
+                });
                 section(ui, "Logarithmic (0.25 to 64)", |ui| {
                     Row::new().show(ui, |ui| {
                         ui.add(
@@ -780,6 +792,18 @@ fn breadcrumbs(ui: &mut egui::Ui, knobs: &mut Knobs) {
                     if *at + 1 < path.len() && ui.add(Button::new("Back down").small()).clicked() {
                         *at = path.len() - 1;
                     }
+                });
+                section(ui, "With icons, and a menu on each (show_with)", |ui| {
+                    let tint = theme::color(Theme::of(ui).palette.accent);
+                    let _ = Breadcrumbs::new(["cats.rs", "impl Cat", "meow"])
+                        .size(size)
+                        .icon(1, BuiltinIcon::Box, tint)
+                        .icon(2, BuiltinIcon::SymbolFunction, tint)
+                        .show_with(ui, |_, index, crumb| {
+                            egui::Popup::menu(crumb).show(|ui| {
+                                ui.add(MenuItem::new(format!("Beside number {index}")));
+                            });
+                        });
                 });
                 section(ui, "Too narrow: the first ones go", |ui| {
                     ui.scope(|ui| {

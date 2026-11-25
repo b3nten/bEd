@@ -1,6 +1,7 @@
 //! Drawing TODOs: the toolbar (filter, layout, refresh, options) and the rows.
 //! Opening files comes back as `Intent`s, done by `apply` after drawing.
 use super::{Row, Scan, TodoLayout, TodoPanel, TodoSort, TodoState, scan::TAGS};
+use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme, tree};
 use bedtime_ui::{
     Button, MenuButton, MenuItem, Separator, Size, Space, Spinner, Text, TextField, Tone,
@@ -139,10 +140,10 @@ fn toolbar(
                     ui.spacing_mut().item_spacing.x = Space::Xs.px(ui);
                     let tool = |icon, name: &str| Button::icon_only(icon, name).small().ghost();
 
-                    let options = MenuButton::new(tool(BuiltinIcon::Sliders, "TODO options"))
+                    MenuButton::new(tool(BuiltinIcon::Sliders, "TODO options"))
                         .keep_open()
-                        .show(ui, |ui| options_menu(ui, shown, state));
-                    context.frame(ui).tooltip(&options, "TODO options");
+                        .show(ui, |ui| options_menu(ui, shown, state))
+                        .tip("TODO options");
 
                     let tree_on = shown.layout == TodoLayout::Tree;
                     let layout = ui.add(tool(BuiltinIcon::Folder, "Tree").selected(tree_on));
@@ -163,8 +164,9 @@ fn toolbar(
                     if scanning {
                         ui.add(Spinner::new().size(Size::Sm));
                     } else {
-                        let refresh = ui.add(tool(BuiltinIcon::RefreshCw, "Refresh"));
-                        context.frame(ui).tooltip(&refresh, "Find TODOs again");
+                        let refresh = ui
+                            .add(tool(BuiltinIcon::RefreshCw, "Refresh"))
+                            .tip("Find TODOs again");
                         if refresh.clicked() {
                             state.refresh();
                         }

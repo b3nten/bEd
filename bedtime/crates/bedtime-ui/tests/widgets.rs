@@ -735,3 +735,64 @@ fn what_fills_its_width_does_not_stretch_a_popup_being_measured() {
         "sized to its content: {width}"
     );
 }
+
+#[test]
+fn a_vertical_slider_stands_up_with_its_low_end_at_the_bottom() {
+    let ctx = egui::Context::default();
+    let mut value = 0.5_f32;
+    let mut rect = egui::Rect::NOTHING;
+    passes(&ctx, None, |ui| {
+        rect = ui
+            .add(Slider::new(&mut value, 0.0..=1.0).vertical().width(200.0))
+            .rect;
+    });
+    assert!(rect.height() > rect.width(), "taller than wide: {rect:?}");
+    assert_eq!(rect.height(), 200.0);
+    for (at, low) in [
+        (rect.center_bottom() - egui::vec2(0.0, 1.0), true),
+        (rect.center_top() + egui::vec2(0.0, 1.0), false),
+    ] {
+        passes(&ctx, Some(at), |ui| {
+            ui.add(Slider::new(&mut value, 0.0..=1.0).vertical().width(200.0));
+        });
+        assert_eq!(value, if low { 0.0 } else { 1.0 });
+    }
+}
+
+#[test]
+fn breadcrumbs_hand_each_one_over_and_make_room_for_icons() {
+    let names = ["cats.rs", "impl Cat", "meow"];
+    let (mut plain, mut with_icon) = (0.0, 0.0);
+    let mut seen = Vec::new();
+    pass(|ui| {
+        seen.clear();
+        let before = ui.cursor().left();
+        let _ = Breadcrumbs::new(names).show_with(ui, |_, index, crumb| {
+            seen.push((index, crumb.rect.width()));
+        });
+        plain = ui.min_rect().right() - before;
+    });
+    assert_eq!(
+        seen.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
+        [0, 1, 2]
+    );
+    pass(|ui| {
+        let before = ui.cursor().left();
+        let _ = Breadcrumbs::new(names)
+            .icon(1, bedtime_ui::BuiltinIcon::Box, egui::Color32::WHITE)
+            .show(ui);
+        with_icon = ui.min_rect().right() - before;
+    });
+    assert!(
+        with_icon > plain,
+        "an icon takes room: {with_icon} > {plain}"
+    );
+}
+
+#[test]
+fn a_tip_leaves_the_response_as_it_was() {
+    pass(|ui| {
+        let response = ui.add(Button::new("Save")).tip("Save the file");
+        assert!(response.rect.width() > 0.0);
+    });
+}

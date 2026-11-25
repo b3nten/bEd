@@ -4,6 +4,7 @@ use crate::BedtimeWorldExt as _;
 use crate::PanelsAppExt as _;
 use crate::workspaces::{RecentWorkspaces, Workspace, available, delete};
 use crate::{ErrorDialog, Panel, persistence::ReflectPersist};
+use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, Button, Space, Text, UiContext, egui};
 use bevy::prelude::*;
 use std::{
@@ -271,10 +272,9 @@ impl Row<'_> {
                 let delete = Button::icon_only(BuiltinIcon::Trash, format!("Delete {name}"))
                     .small()
                     .ghost();
-                let button = ui.add(delete);
-                context
-                    .frame(ui)
-                    .tooltip(&button, "Delete this workspace's saved layout and settings");
+                let button = ui
+                    .add(delete)
+                    .tip("Delete this workspace's saved layout and settings");
                 if button.clicked() {
                     result = Some(RowAction::AskToDelete);
                 }

@@ -10,6 +10,7 @@ use bedtime_code::{EditorComparison, EditorPanel, editor::diff::Comparison};
 use bedtime_document::{
     DocumentSource, MemorySource, SourceError, SourceId, SourceLoad, SourceVersion, TextBuffer,
 };
+use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, Button, Space, Spinner, Text, Tone, UiContext, egui, theme};
 use bedtime_workbench::BedtimeWorldExt as _;
 #[cfg(feature = "persistence")]
@@ -816,12 +817,13 @@ fn draw_detail(
                     },
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                    let close = ui.add(
-                        Button::icon_only(BuiltinIcon::Close, "Close details")
-                            .small()
-                            .ghost(),
-                    );
-                    context.frame(ui).tooltip(&close, "Close details");
+                    let close = ui
+                        .add(
+                            Button::icon_only(BuiltinIcon::Close, "Close details")
+                                .small()
+                                .ghost(),
+                        )
+                        .tip("Close details");
                     if close.clicked() {
                         *asked = Some(Asked::Select(None));
                     }
@@ -1292,7 +1294,7 @@ impl Panel for CommitDiffPanel {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.add(Text::new(history::short(&diff.commit)).muted());
                     if comparing {
-                        change = super::diff::change_buttons(ui, context);
+                        change = super::diff::change_buttons(ui);
                     }
                 });
             });

@@ -9,6 +9,7 @@
 //!
 //! Drawing reads the notes and returns what was asked (`Intent`s); `apply`
 //! makes them changes to the document, right after drawing.
+use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
 use bedtime_ui::{Button, MenuItem, Row, Separator, Size, Space, Spinner, Text, TextField};
 use bedtime_workbench::PanelsAppExt as _;
@@ -545,7 +546,7 @@ impl Panel for NotesPanel {
                 Some(note) => editor(ui, context, panel, note, hidden, &mut view, &mut intents),
                 None => {
                     if hidden {
-                        list_toggle(ui, context, true, &mut intents);
+                        list_toggle(ui, true, &mut intents);
                         ui.add_space(6.0);
                     }
                     ui.add(Text::new("No notes in this workspace yet.").muted());
@@ -570,10 +571,11 @@ fn sidebar(
     intents: &mut Vec<Intent>,
 ) {
     Row::new().show(ui, |ui| {
-        list_toggle(ui, context, false, intents);
+        list_toggle(ui, false, intents);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let new = ui.add(Button::icon_only(BuiltinIcon::Plus, "New Note").ghost());
-            context.frame(ui).tooltip(&new, "New Note");
+            let new = ui
+                .add(Button::icon_only(BuiltinIcon::Plus, "New Note").ghost())
+                .tip("New Note");
             if new.clicked() {
                 intents.push(Intent::New);
             }
@@ -654,19 +656,15 @@ fn sidebar(
 
 /// The button that hides the list (in its header) or shows it again (beside
 /// the note's title).
-fn list_toggle(
-    ui: &mut egui::Ui,
-    context: &UiContext<'_>,
-    hidden: bool,
-    intents: &mut Vec<Intent>,
-) {
+fn list_toggle(ui: &mut egui::Ui, hidden: bool, intents: &mut Vec<Intent>) {
     let label = if hidden {
         "Show Note List"
     } else {
         "Hide Note List"
     };
-    let button = ui.add(Button::icon_only(BuiltinIcon::PanelLeft, label).ghost());
-    context.frame(ui).tooltip(&button, label);
+    let button = ui
+        .add(Button::icon_only(BuiltinIcon::PanelLeft, label).ghost())
+        .tip(label);
     if button.clicked() {
         intents.push(Intent::HideList(!hidden));
     }
@@ -727,9 +725,10 @@ fn editor(
     let title_field = ui
         .horizontal(|ui| {
             if list_hidden {
-                list_toggle(ui, context, true, intents);
-                let new = ui.add(Button::icon_only(BuiltinIcon::Plus, "New Note").ghost());
-                context.frame(ui).tooltip(&new, "New Note");
+                list_toggle(ui, true, intents);
+                let new = ui
+                    .add(Button::icon_only(BuiltinIcon::Plus, "New Note").ghost())
+                    .tip("New Note");
                 if new.clicked() {
                     intents.push(Intent::New);
                 }

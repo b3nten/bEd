@@ -8,7 +8,8 @@ use std::ops::RangeInclusive;
 /// ui.add(Slider::new(&mut zoom, 0.25..=64.0).logarithmic().label("Time zoom"));
 /// ```
 ///
-/// The arrow keys move it while it has the keyboard.
+/// The arrow keys move it while it has the keyboard. `.vertical()` stands
+/// it up, its low end at the bottom.
 #[must_use = "a slider does nothing until it's added to a Ui"]
 pub struct Slider<'a, N: Numeric> {
     value: &'a mut N,
@@ -19,6 +20,7 @@ pub struct Slider<'a, N: Numeric> {
     size: Size,
     width: Option<f32>,
     fill_width: bool,
+    vertical: bool,
 }
 
 impl<'a, N: Numeric> Slider<'a, N> {
@@ -32,6 +34,7 @@ impl<'a, N: Numeric> Slider<'a, N> {
             size: Size::default(),
             width: None,
             fill_width: false,
+            vertical: false,
         }
     }
 
@@ -55,7 +58,12 @@ impl<'a, N: Numeric> Slider<'a, N> {
         self.size = size;
         self
     }
-    /// This wide, in points (egui's slider width, unless set).
+    /// Standing up: the low end at the bottom, and `width` is how tall.
+    pub fn vertical(mut self) -> Self {
+        self.vertical = true;
+        self
+    }
+    /// This long, in points (egui's slider width, unless set).
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
         self
@@ -72,8 +80,15 @@ impl<N: Numeric> egui::Widget for Slider<'_, N> {
         let services = ambient::services(ui.ctx());
         let height = self.size.height(ui);
         let knob = (height * 0.3).round();
-        let available = ui.available_width();
-        let width = if self.fill_width {
+        let vertical = self.vertical;
+        // Standing up, it's as long as it's told: a row is only as tall as
+        // what's in it, so there's no height to fit.
+        let available = if vertical {
+            f32::INFINITY
+        } else {
+            ui.available_width()
+        };
+        let width = if self.fill_width && !vertical {
             super::fill_width(ui, ui.spacing().slider_width)
         } else {
             self.width
@@ -81,8 +96,12 @@ impl<N: Numeric> egui::Widget for Slider<'_, N> {
                 .min(available)
         }
         .max(knob * 4.0);
-        let (rect, mut response) =
-            ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click_and_drag());
+        let size = if vertical {
+            egui::vec2(height, width)
+        } else {
+            egui::vec2(width, height)
+        };
+        let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
 
         let (low, high) = (self.range.start().to_f64(), self.range.end().to_f64());
         let logarithmic = self.logarithmic && low > 0.0 && high > low;
@@ -113,10 +132,18 @@ impl<N: Numeric> egui::Widget for Slider<'_, N> {
 
         let before = self.value.to_f64();
         let mut value = before;
-        let track = rect.shrink2(egui::vec2(knob, 0.0));
+        let track = if vertical {
+            rect.shrink2(egui::vec2(0.0, knob))
+        } else {
+            rect.shrink2(egui::vec2(knob, 0.0))
+        };
         if let Some(pointer) = response.interact_pointer_pos() {
-            value =
-                at(f64::from((pointer.x - track.left()) / track.width().max(1.0)).clamp(0.0, 1.0));
+            let fraction = if vertical {
+                (track.bottom() - pointer.y) / track.height().max(1.0)
+            } else {
+                (pointer.x - track.left()) / track.width().max(1.0)
+            };
+            value = at(f64::from(fraction).clamp(0.0, 1.0));
         }
         if response.has_focus() {
             let (back, forward) = ui.input(|input| {
@@ -163,16 +190,29 @@ impl<N: Numeric> egui::Widget for Slider<'_, N> {
         );
         let p = &services.theme.palette;
         let thickness = (height * 0.16).round().max(3.0);
-        let rail =
-            egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width() - knob, thickness));
-        let x = track.left() + along(value) as f32 * track.width();
+        let rail = egui::Rect::from_center_size(
+            rect.center(),
+            if vertical {
+                egui::vec2(thickness, rect.height() - knob)
+            } else {
+                egui::vec2(rect.width() - knob, thickness)
+            },
+        );
+        let fraction = along(value) as f32;
         let painter = ui.painter();
         let rail_color = theme::distinct(p.border, p.panel_background, p.text);
         painter.rect_filled(rail, thickness / 2.0, theme::color(rail_color));
         let mut filled = rail;
-        filled.max.x = x;
+        let center = if vertical {
+            let y = track.bottom() - fraction * track.height();
+            filled.min.y = y;
+            egui::pos2(rect.center().x, y)
+        } else {
+            let x = track.left() + fraction * track.width();
+            filled.max.x = x;
+            egui::pos2(x, rect.center().y)
+        };
         painter.rect_filled(filled, thickness / 2.0, theme::color(p.accent));
-        let center = egui::pos2(x, rect.center().y);
         if response.has_focus() {
             painter.circle_stroke(
                 center,

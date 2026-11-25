@@ -4,6 +4,7 @@
 use super::{AppearanceSettings, ColorTheme, ShippedThemes};
 use crate::BedtimeWorldExt as _;
 use crate::{ActionInvocation, ActionResult, Handler, Panel, persistence::ReflectPersist};
+use bedtime_ui::Tip;
 use bedtime_ui::{
     BuiltinIcon, Button, ColorField, Row, Segmented, Select, Separator, Space, Table, Text,
     TextField, TextRole, UiContext, egui,
@@ -119,7 +120,7 @@ impl Panel for ThemeEditorPanel {
         egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(14, 12))
             .show(ui, |ui| {
-                request = state.header(ui, context, &id, &choices, shipped.is_some(), differs);
+                request = state.header(ui, &id, &choices, shipped.is_some(), differs);
                 ui.add(Separator::new());
                 let Some(draft) = &mut state.draft else {
                     ui.add(Text::new(format!("There's no readable theme named \"{id}\".")).muted());
@@ -178,7 +179,6 @@ impl EditorState {
     fn header(
         &mut self,
         ui: &mut egui::Ui,
-        context: &UiContext<'_>,
         id: &str,
         choices: &[(String, String)],
         shipped: bool,
@@ -213,30 +213,28 @@ impl EditorState {
                 return;
             };
             let small = |icon, label: &str| Button::icon_only(icon, label).small().ghost();
-            let copy = ui.add(small(BuiltinIcon::Plus, "Duplicate theme"));
-            context
-                .frame(ui)
-                .tooltip(&copy, "Duplicate this theme under a new name");
+            let copy = ui
+                .add(small(BuiltinIcon::Plus, "Duplicate theme"))
+                .tip("Duplicate this theme under a new name");
             if copy.clicked() {
                 self.copy_name = Some(format!("{} Copy", draft.theme.name));
                 self.confirming_delete = false;
             }
             if shipped {
-                let reset = ui.add_enabled(differs, small(BuiltinIcon::RotateCcw, "Reset theme"));
-                context.frame(ui).tooltip(
-                    &reset,
-                    if differs {
+                let reset = ui
+                    .add_enabled(differs, small(BuiltinIcon::RotateCcw, "Reset theme"))
+                    .tip(if differs {
                         "Reset this theme to the colors it shipped with"
                     } else {
                         "This theme is as it shipped"
-                    },
-                );
+                    });
                 if reset.clicked() {
                     request = Some(Request::Reset);
                 }
             } else {
-                let delete = ui.add(small(BuiltinIcon::Trash, "Delete theme"));
-                context.frame(ui).tooltip(&delete, "Delete this theme");
+                let delete = ui
+                    .add(small(BuiltinIcon::Trash, "Delete theme"))
+                    .tip("Delete this theme");
                 if delete.clicked() {
                     self.confirming_delete = true;
                     self.copy_name = None;

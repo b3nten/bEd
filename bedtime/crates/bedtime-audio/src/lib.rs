@@ -4,7 +4,7 @@
 //! Space plays and pauses, Left and Right skip five seconds. The output
 //! device opens the first time something plays.
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
-use bedtime_ui::{MenuItem, Separator, Space};
+use bedtime_ui::{MenuItem, Separator, Slider, Space};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -396,8 +396,8 @@ fn draw(
             egui::Popup::menu(&volume)
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
-                    let slider = egui::Slider::new(&mut audio.volume, 0.0..=1.0)
-                        .show_value(false)
+                    let slider = Slider::new(&mut audio.volume, 0.0..=1.0)
+                        .label("Volume")
                         .vertical();
                     if ui.add(slider).changed()
                         && let Some(player) = &audio.player

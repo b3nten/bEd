@@ -7,7 +7,7 @@ use bedtime_document::DocumentModel;
 use bedtime_filesystem::{ByteModel, FileModel};
 use bedtime_ui::{BuiltinIcon, Floating, UiFrame, theme};
 #[cfg(target_os = "macos")]
-use bedtime_ui::{Checkbox, MenuItem, Separator, Space};
+use bedtime_ui::{Checkbox, MenuItem, Separator, Slider, Space};
 use bedtime_ui::{UiContext, egui};
 #[cfg(target_os = "macos")]
 use bedtime_workbench::ViewersAppExt;
@@ -466,8 +466,8 @@ fn draw(
                 .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
                 .show(|ui| {
                     ui.add(
-                        egui::Slider::new(&mut settings.volume, 0.0..=1.0)
-                            .show_value(false)
+                        Slider::new(&mut settings.volume, 0.0..=1.0)
+                            .label("Volume")
                             .vertical(),
                     );
                     ui.add(Checkbox::new(&mut settings.muted, "Mute"));

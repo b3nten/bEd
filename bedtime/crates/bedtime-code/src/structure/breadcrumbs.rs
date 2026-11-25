@@ -8,7 +8,7 @@ use crate::{
     editor::EditorPanel,
     syntax::{DocumentSyntax, Observation},
 };
-use bedtime_ui::{Button, MenuItem, Text, UiContext, egui};
+use bedtime_ui::{Breadcrumbs, MenuItem, UiContext, egui};
 use bedtime_workbench::{BedtimeWorldExt, DocumentReference};
 use bevy::prelude::*;
 use std::sync::Arc;
@@ -68,73 +68,70 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     strip.set_clip_rect(rect.intersect(ui.clip_rect()));
-    egui::ScrollArea::horizontal()
-        .id_salt((panel, "breadcrumbs"))
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .stick_to_right(true)
-        .show(&mut strip, |ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            ui.add(Text::caption(&title).muted());
-            let Some(trail) = trail else {
-                return;
-            };
-            let outline = &trail.observation.outline;
-            for &index in &trail.path {
-                ui.add(Text::caption("›").muted());
-                let node = &outline[index];
-                let category = Category::of(&node.kind);
-                let side = (context.metrics.font_size - 1.0).clamp(10.0, 15.0);
-                let mut theme = context.theme.clone();
-                theme.palette.text = category.ink(&palette.syntax);
-                let mut frame = context.frame(ui);
-                frame.theme = &theme;
-                frame.icon(
-                    category.icon(),
-                    side,
-                    bedtime_ui::theme::color(category.ink(&palette.syntax)),
-                );
-                let crumb = ui.add(Button::new(&node.label).small().ghost());
-                egui::Popup::menu(&crumb)
-                    .align(egui::RectAlign::TOP_START)
-                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                    .show(|ui| {
-                        ui.set_min_width(180.0);
-                        egui::ScrollArea::vertical()
-                            .max_height(360.0)
-                            .show(ui, |ui| {
-                                for sibling in outline
-                                    .iter()
-                                    .enumerate()
-                                    .filter(|(_, other)| other.parent == node.parent)
+    let mut names = vec![title];
+    let mut crumbs = Breadcrumbs::new(Vec::<String>::new());
+    if let Some(trail) = &trail {
+        let outline = &trail.observation.outline;
+        for (at, &index) in trail.path.iter().enumerate() {
+            let node = &outline[index];
+            let category = Category::of(&node.kind);
+            names.push(node.label.clone());
+            crumbs = crumbs.icon(
+                at + 1,
+                category.icon(),
+                bedtime_ui::theme::color(category.ink(&palette.syntax)),
+            );
+        }
+    }
+    let crumbs = crumbs.names(names).plain(0);
+    // Each one opens a menu of what's beside it; the file's name does nothing.
+    crumbs.show_with(&mut strip, |ui, at, crumb| {
+        let Some(trail) = trail.as_ref().filter(|_| at > 0) else {
+            return;
+        };
+        let outline = &trail.observation.outline;
+        let index = trail.path[at - 1];
+        let node = &outline[index];
+        egui::Popup::menu(crumb)
+            .align(egui::RectAlign::TOP_START)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                ui.set_min_width(180.0);
+                egui::ScrollArea::vertical()
+                    .max_height(360.0)
+                    .show(ui, |ui| {
+                        for sibling in outline
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, other)| other.parent == node.parent)
+                        {
+                            let label = sibling.1.label.as_str();
+                            let response = ui.add(MenuItem::new(label).checked(sibling.0 == index));
+                            if sibling.0 == index && response.rect.is_positive() {
+                                // Open at the current one.
+                                if ui
+                                    .ctx()
+                                    .memory(|m| m.data.get_temp::<bool>(crumb.id.with("opened")))
+                                    != Some(true)
                                 {
-                                    let label = sibling.1.label.as_str();
-                                    let response =
-                                        ui.add(MenuItem::new(label).checked(sibling.0 == index));
-                                    if sibling.0 == index && response.rect.is_positive() {
-                                        // Open at the current one.
-                                        if ui.ctx().memory(|m| {
-                                            m.data.get_temp::<bool>(crumb.id.with("opened"))
-                                        }) != Some(true)
-                                        {
-                                            response.scroll_to_me(Some(egui::Align::Center));
-                                            ui.ctx().memory_mut(|m| {
-                                                m.data.insert_temp(crumb.id.with("opened"), true)
-                                            });
-                                        }
-                                    }
-                                    if response.clicked() {
-                                        chosen = Some((trail.observation.key, sibling.1.id));
-                                        ui.close();
-                                    }
+                                    response.scroll_to_me(Some(egui::Align::Center));
+                                    ui.ctx().memory_mut(|m| {
+                                        m.data.insert_temp(crumb.id.with("opened"), true)
+                                    });
                                 }
-                            });
+                            }
+                            if response.clicked() {
+                                chosen = Some((trail.observation.key, sibling.1.id));
+                                ui.close();
+                            }
+                        }
                     });
-                if !egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&crumb)) {
-                    ui.ctx()
-                        .memory_mut(|m| m.data.remove::<bool>(crumb.id.with("opened")));
-                }
-            }
-        });
+            });
+        if !egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(crumb)) {
+            ui.ctx()
+                .memory_mut(|m| m.data.remove::<bool>(crumb.id.with("opened")));
+        }
+    });
     if let Some((key, item)) = chosen {
         super::reveal_entry_as(world, panel, key, item, Reveal::Focus);
     }

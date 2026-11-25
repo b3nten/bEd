@@ -9,6 +9,7 @@
 //! programs make to the database show within a second.
 use bedtime_document::DocumentModel;
 use bedtime_filesystem::{ByteModel, FileModel};
+use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, CodeView, UiContext, egui, theme, tree};
 use bedtime_ui::{Button, Row, Segmented, Space, Spinner, Table, Text, TextArea, TextField, Tone};
 #[cfg(feature = "persistence")]
@@ -390,7 +391,7 @@ impl Panel for SqlitePanel {
                             (None, None) if page.keys.is_some() => Footer::ReadOnly,
                             (None, None) => Footer::Fixed,
                         };
-                        pressed = pages(ui, context, page, browse, state, changes.error.as_deref());
+                        pressed = pages(ui, page, browse, state, changes.error.as_deref());
                     });
             }
             egui::CentralPanel::default()
@@ -767,7 +768,6 @@ enum Footer {
 /// page before and after.
 fn pages(
     ui: &mut egui::Ui,
-    context: &UiContext<'_>,
     page: &Page,
     browse: &mut Browse,
     state: Footer,
@@ -827,8 +827,7 @@ fn pages(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let mut turn = |ui: &mut egui::Ui, icon, to: Option<u64>, what: &str| {
                 ui.add_enabled_ui(to.is_some(), |ui| {
-                    let response = ui.add(Button::icon_only(icon, what).ghost());
-                    context.frame(ui).tooltip(&response, what);
+                    let response = ui.add(Button::icon_only(icon, what).ghost()).tip(what);
                     if let (true, Some(to)) = (response.clicked(), to) {
                         browse.page = to;
                     }

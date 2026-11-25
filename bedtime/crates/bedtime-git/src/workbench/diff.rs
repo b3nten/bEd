@@ -13,6 +13,7 @@ use bedtime_code::{
 use bedtime_document::{
     DocumentSource, MemorySource, SourceError, SourceId, SourceLoad, SourceVersion, TextBuffer,
 };
+use bedtime_ui::Tip;
 use bedtime_ui::{
     BuiltinIcon, Button, Segmented, Separator, Size, Spinner, Text, Tone, UiContext, egui,
 };
@@ -618,15 +619,14 @@ impl StageGuard {
 
 /// Previous / Next Change buttons, for a right-to-left bar (Next is
 /// added first, so it ends up on the right). Returns which was clicked.
-pub(super) fn change_buttons(ui: &mut egui::Ui, context: &UiContext<'_>) -> Option<bool> {
+pub(super) fn change_buttons(ui: &mut egui::Ui) -> Option<bool> {
     ui.add(Separator::new());
     let mut clicked = None;
     for (forward, icon, label) in [
         (true, BuiltinIcon::ChevronDown, "Next Change"),
         (false, BuiltinIcon::ChevronUp, "Previous Change"),
     ] {
-        let button = ui.add(Button::icon_only(icon, label).ghost());
-        context.frame(ui).tooltip(&button, label);
+        let button = ui.add(Button::icon_only(icon, label).ghost()).tip(label);
         if button.clicked() {
             clicked = Some(forward);
         }
@@ -678,7 +678,7 @@ impl Panel for DiffPanel {
                         if ui.add(sides).changed() {
                             asked = Some(Asked::Side(side));
                         }
-                        if comparing && let Some(forward) = change_buttons(ui, context) {
+                        if comparing && let Some(forward) = change_buttons(ui) {
                             asked = Some(Asked::Change(forward));
                         }
                     });

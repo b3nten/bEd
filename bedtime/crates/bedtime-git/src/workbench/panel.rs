@@ -1,6 +1,7 @@
 mod tree;
 use super::*;
 use crate::{ConflictChoice, RepositoryOperation};
+use bedtime_ui::Tip;
 use bedtime_ui::{
     BuiltinIcon, Button, ListRow, MenuButton, MenuItem, Section, Separator, Size, Space, Text,
     TextArea, TextField, Tone, UiContext, egui,
@@ -492,8 +493,9 @@ fn draw_header(
                 None,
             ),
         ] {
-            let response = ui.add_enabled(operation.is_none() || enabled, tool(icon, name));
-            context.frame(ui).tooltip(&response, tip);
+            let response = ui
+                .add_enabled(operation.is_none() || enabled, tool(icon, name))
+                .tip(tip);
             if response.clicked() {
                 if let Some(operation) = operation {
                     *action = Some(Action::Operation(operation));

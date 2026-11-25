@@ -350,7 +350,7 @@ pub fn keybindings_section(
                 }
             },
             |ui| {
-                reset = set_here && marks.reset(ui, context);
+                reset = set_here && marks.reset(ui);
                 if let Some(note) = shared {
                     ui.add(Text::new(note).muted());
                 }

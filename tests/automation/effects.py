@@ -27,7 +27,7 @@ with Bed() as bed:
     assert bed.exists("Scanlines"), "the sliders show once on"
     bed.screenshot("effects-on")
     # Showing a slider mustn't change its setting (egui rounds what it shows).
-    assert len(bed.find_all("rotate-ccw")) == 1, "only the toggle was set"
+    assert len(bed.find_all("Reset")) == 1, "only the toggle was set"
     saved = (bed.config / "global" / "settings.ron")
     bed.wait(80)
     assert "bloom" not in saved.read_text(), saved.read_text()

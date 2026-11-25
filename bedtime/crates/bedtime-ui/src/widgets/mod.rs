@@ -17,6 +17,7 @@ mod table;
 mod text;
 mod text_area;
 mod text_field;
+mod tip;
 
 pub use breadcrumbs::Breadcrumbs;
 pub use button::{Button, Variant};
@@ -35,6 +36,7 @@ pub use table::{Table, TableRows};
 pub use text::Text;
 pub use text_area::TextArea;
 pub use text_field::TextField;
+pub use tip::Tip;
 
 /// The width a widget that fills its space takes: all there is, except while
 /// what it's in is being measured (a menu, a popup), when taking it all
