@@ -6,7 +6,10 @@ use crate::{
     refresh_columns, refresh_rows,
 };
 use bedtime_filesystem::{EntryKind, operations::Operation};
-use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
+use bedtime_ui::{
+    Breadcrumbs, BuiltinIcon, MenuItem, Segmented, Select, Separator, Size, Space, Submenu, Text,
+    Tone, UiContext, egui, theme::color, tree,
+};
 use bedtime_workbench::{
     BedtimeWorldExt, Notification, Panel, PanelPresentation, PathOptions, ViewerId,
 };
@@ -217,8 +220,10 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             egui::Frame::NONE
                 .inner_margin(14)
                 .show(ui, |ui| match problem {
-                    Some(Err(error)) => ui.label(format!("The folder can't be shown: {error}")),
-                    _ => ui.weak("No folder is open."),
+                    Some(Err(error)) => {
+                        ui.add(Text::new(format!("The folder can't be shown: {error}")))
+                    }
+                    _ => ui.add(Text::new("No folder is open.").muted()),
                 });
             return;
         }
@@ -283,7 +288,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(8, 4))
             .show(&mut body_ui, |ui| {
-                ui.weak("Not watching for changes")
+                ui.add(Text::new("Not watching for changes").muted())
                     .on_hover_text(error.to_owned());
             });
     }
@@ -312,15 +317,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
             &mut intents,
         ),
     }
-    footer(
-        ui,
-        context,
-        footer_rect,
-        &shown,
-        showing,
-        &mut view,
-        &mut intents,
-    );
+    footer(ui, footer_rect, &shown, showing, &mut view, &mut intents);
     ui.advance_cursor_after_rect(whole);
     world.entity_mut(panel).insert(view);
     // Applied in `Update`: opening can close panels the layout is drawing.
@@ -508,9 +505,9 @@ fn draw_tree(
             });
             if tree::rested(ui.ctx(), &response) {
                 let details = details(world.resource::<Folders>(), view, &row.path);
-                context.frame(ui).tooltip_ui(&response, |frame| {
-                    describe(frame, context, row, details.as_ref())
-                });
+                context
+                    .frame(ui)
+                    .tooltip_ui(&response, |frame| describe(frame, row, details.as_ref()));
             }
             // egui counts a click on another row just before as part of a
             // triple click.
@@ -677,14 +674,12 @@ pub(crate) fn details(
 /// dimmed or red.
 pub(crate) fn describe(
     frame: bedtime_ui::UiFrame<'_>,
-    context: &UiContext<'_>,
     row: &Row,
     metadata: Option<&bedtime_filesystem::Metadata>,
 ) {
-    let palette = &context.theme.palette;
     let ui = frame.ui;
     ui.spacing_mut().item_spacing.y = 3.0;
-    ui.label(egui::RichText::new(&row.name).strong());
+    ui.add(Text::new(&row.name).strong());
     let mut kind = match row.kind {
         EntryKind::Directory => "Folder".to_owned(),
         EntryKind::Symlink => "Symbolic link".to_owned(),
@@ -693,19 +688,18 @@ pub(crate) fn describe(
     if let Some(metadata) = metadata.filter(|m| m.kind == EntryKind::File) {
         kind = format!("{kind} · {}", size(metadata.len));
     }
-    ui.label(kind);
-    let muted = color(palette.muted);
+    ui.add(Text::new(kind));
     if let Some(modified) = metadata.and_then(|m| m.modified) {
-        ui.colored_label(muted, format!("Modified {}", ago(modified)));
+        ui.add(Text::new(format!("Modified {}", ago(modified))).muted());
     }
     if row.hidden {
-        ui.colored_label(muted, "Hidden");
+        ui.add(Text::new("Hidden").muted());
     }
     if row.ignored {
-        ui.colored_label(muted, "Ignored by Git");
+        ui.add(Text::new("Ignored by Git").muted());
     }
     if let Some(error) = &row.error {
-        ui.colored_label(color(palette.error), error);
+        ui.add(Text::new(error).tone(Tone::Error));
     }
 }
 
@@ -785,7 +779,7 @@ pub(crate) fn menu(
 ) {
     let root = row.depth == 0;
     if row.kind != EntryKind::Directory {
-        if ui.button("Open").clicked() {
+        if ui.add(MenuItem::new("Open")).clicked() {
             intents.push(Intent::Open {
                 path: row.path.clone(),
                 preview: false,
@@ -793,9 +787,9 @@ pub(crate) fn menu(
             });
         }
         if !viewers.is_empty() {
-            ui.menu_button("Open With", |ui| {
+            Submenu::new("Open With").show(ui, |ui| {
                 for &(viewer, label) in viewers {
-                    if ui.button(label).clicked() {
+                    if ui.add(MenuItem::new(label)).clicked() {
                         intents.push(Intent::Open {
                             path: row.path.clone(),
                             preview: false,
@@ -805,59 +799,53 @@ pub(crate) fn menu(
                 }
             });
         }
-        ui.separator();
+        ui.add(Separator::new().space(Space::Xs));
     }
     let folder = folder_of(row);
-    if ui.button("New File…").clicked() {
+    if ui.add(MenuItem::new("New File…")).clicked() {
         *naming = Some(Naming::new(NameKind::NewFile(folder.clone())));
     }
-    if ui.button("New Folder…").clicked() {
+    if ui.add(MenuItem::new("New Folder…")).clicked() {
         *naming = Some(Naming::new(NameKind::NewFolder(folder.clone())));
     }
-    ui.separator();
-    if ui
-        .add_enabled(!root, egui::Button::new("Rename…"))
-        .clicked()
-    {
+    ui.add(Separator::new().space(Space::Xs));
+    if ui.add_enabled(!root, MenuItem::new("Rename…")).clicked() {
         *naming = Some(Naming::new(NameKind::Rename(row.path.clone())));
     }
-    if ui
-        .add_enabled(!root, egui::Button::new("Duplicate"))
-        .clicked()
-    {
+    if ui.add_enabled(!root, MenuItem::new("Duplicate")).clicked() {
         intents.push(Intent::Operation(Operation::Duplicate {
             sources: vec![row.path.clone()],
         }));
     }
     if ui
-        .add_enabled(!root, egui::Button::new("Move to Trash"))
+        .add_enabled(!root, MenuItem::new("Move to Trash").danger())
         .clicked()
     {
         intents.push(Intent::Operation(Operation::Trash {
             sources: vec![row.path.clone()],
         }));
     }
-    ui.separator();
-    if ui.add_enabled(!root, egui::Button::new("Copy")).clicked() {
+    ui.add(Separator::new().space(Space::Xs));
+    if ui.add_enabled(!root, MenuItem::new("Copy")).clicked() {
         intents.push(Intent::Copy {
             paths: vec![row.path.clone()],
             cut: false,
         });
     }
-    if ui.add_enabled(!root, egui::Button::new("Cut")).clicked() {
+    if ui.add_enabled(!root, MenuItem::new("Cut")).clicked() {
         intents.push(Intent::Copy {
             paths: vec![row.path.clone()],
             cut: true,
         });
     }
-    if ui.button("Paste").clicked() {
+    if ui.add(MenuItem::new("Paste")).clicked() {
         intents.push(Intent::Paste(folder));
     }
-    ui.separator();
-    if ui.button("Copy Path").clicked() {
+    ui.add(Separator::new().space(Space::Xs));
+    if ui.add(MenuItem::new("Copy Path")).clicked() {
         ui.ctx().copy_text(row.path.display().to_string());
     }
-    if ui.button("Refresh").clicked() {
+    if ui.add(MenuItem::new("Refresh")).clicked() {
         intents.push(Intent::Refresh);
     }
 }
@@ -869,17 +857,17 @@ pub(crate) fn folder_menu(
     naming: &mut Option<Naming>,
     intents: &mut Vec<Intent>,
 ) {
-    if ui.button("New File…").clicked() {
+    if ui.add(MenuItem::new("New File…")).clicked() {
         *naming = Some(Naming::new(NameKind::NewFile(folder.to_owned())));
     }
-    if ui.button("New Folder…").clicked() {
+    if ui.add(MenuItem::new("New Folder…")).clicked() {
         *naming = Some(Naming::new(NameKind::NewFolder(folder.to_owned())));
     }
-    if ui.button("Paste").clicked() {
+    if ui.add(MenuItem::new("Paste")).clicked() {
         intents.push(Intent::Paste(folder.to_owned()));
     }
-    ui.separator();
-    if ui.button("Refresh").clicked() {
+    ui.add(Separator::new().space(Space::Xs));
+    if ui.add(MenuItem::new("Refresh")).clicked() {
         intents.push(Intent::Refresh);
     }
 }
@@ -892,22 +880,22 @@ pub(crate) fn filter_menu(
     mode: ViewMode,
     intents: &mut Vec<Intent>,
 ) {
-    ui.separator();
-    let mut hidden = filter.hidden;
-    if ui.checkbox(&mut hidden, "Show Hidden Files").clicked() {
+    ui.add(Separator::new().space(Space::Xs));
+    let hidden = MenuItem::new("Show Hidden Files").checked(filter.hidden);
+    if ui.add(hidden).clicked() {
         intents.push(Intent::ToggleHidden);
-        ui.close();
     }
-    let mut ignored = filter.ignored;
-    if ui.checkbox(&mut ignored, "Show Ignored Files").clicked() {
+    let ignored = MenuItem::new("Show Ignored Files").checked(filter.ignored);
+    if ui.add(ignored).clicked() {
         intents.push(Intent::ToggleIgnored);
-        ui.close();
     }
-    ui.menu_button("View As", |ui| {
+    Submenu::new("View As").show(ui, |ui| {
         for (choice, label) in MODES {
-            if ui.radio(mode == choice, label).clicked() {
+            if ui
+                .add(MenuItem::new(label).checked(mode == choice))
+                .clicked()
+            {
                 intents.push(Intent::SetMode(choice));
-                ui.close();
             }
         }
     });
@@ -924,7 +912,6 @@ const MODES: [(ViewMode, &str); 3] = [
 /// selects itself when clicked), and the view mode.
 fn footer(
     ui: &mut egui::Ui,
-    context: &UiContext<'_>,
     rect: egui::Rect,
     shown: &Shown<'_>,
     showing: Showing,
@@ -940,21 +927,10 @@ fn footer(
     ui.set_clip_rect(rect.intersect(ui.clip_rect()));
     let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
     let line = ui.painter().clone();
-    let palette = &context.theme.palette;
-    let small = (context.metrics.font_size - 1.0).max(10.0);
 
     // The mode: a segmented switch (Tree, Columns, Auto), or in a narrow
-    // panel a menu of them.
-    let font = egui::FontId::proportional(small);
-    let width = |ui: &egui::Ui, text: &str| {
-        ui.fonts_mut(|fonts| {
-            fonts
-                .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE)
-                .size()
-                .x
-        }) + 4.0
-    };
-    let tip = |choice: ViewMode| match choice {
+    // panel a select of them.
+    let tip = |choice: &ViewMode| match choice {
         ViewMode::Tree => "Always show a tree".to_owned(),
         ViewMode::Columns => "Always show columns".to_owned(),
         ViewMode::Auto => format!(
@@ -965,50 +941,32 @@ fn footer(
             }
         ),
     };
-    let segmented: f32 = MODES
-        .iter()
-        .map(|(_, label)| width(&ui, label) + 14.0)
-        .sum();
-    let switch = if rect.width() >= segmented + 80.0 {
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.spacing_mut().button_padding = egui::vec2(6.0, 1.0);
-            for (choice, label) in MODES.into_iter().rev() {
-                let on = shown.mode == choice;
-                let response = ui
-                    .selectable_label(on, egui::RichText::new(label).size(small))
-                    .on_hover_text(tip(choice));
-                if response.clicked() && !on {
-                    intents.push(Intent::SetMode(choice));
-                }
-            }
-        })
-        .response
+    let modes = MODES.map(|(mode, _)| mode);
+    let label = |mode: &ViewMode| {
+        MODES
+            .iter()
+            .find(|(choice, _)| choice == mode)
+            .map_or("", |(_, label)| label)
+            .to_owned()
+    };
+    let mut mode = shown.mode;
+    // Wide enough for the switch and some of the breadcrumb beside it.
+    let wide = rect.width() >= Size::Sm.font(&ui) * 24.0;
+    let switch = if wide {
+        ui.add(
+            Segmented::with(&mut mode, &modes, label)
+                .size(Size::Sm)
+                .hover(tip),
+        )
         .rect
     } else {
-        let (_, label) = MODES
-            .into_iter()
-            .find(|(choice, _)| *choice == shown.mode)
-            .unwrap_or(MODES[2]);
-        ui.spacing_mut().button_padding = egui::vec2(4.0, 1.0);
-        let menu = ui.menu_button(
-            egui::RichText::new(format!("{label} ▾")).size(small),
-            |ui| {
-                for (choice, label) in MODES {
-                    let response = ui
-                        .radio(shown.mode == choice, label)
-                        .on_hover_text(tip(choice));
-                    if response.clicked() {
-                        if shown.mode != choice {
-                            intents.push(Intent::SetMode(choice));
-                        }
-                        ui.close();
-                    }
-                }
-            },
-        );
-        menu.response.on_hover_text("How files show").rect
+        ui.add(Select::with(&mut mode, &modes, label).size(Size::Sm))
+            .on_hover_text("How files show")
+            .rect
     };
+    if mode != shown.mode {
+        intents.push(Intent::SetMode(mode));
+    }
     // The breadcrumb gets what's left of the switch.
     let crumbs_rect = egui::Rect::from_min_max(
         egui::pos2(rect.left() + 6.0, rect.top()),
@@ -1035,20 +993,6 @@ fn footer(
             segments.push((part.as_os_str().to_string_lossy().into_owned(), at.clone()));
         }
     }
-    // What doesn't fit goes, from the root down.
-    let separator = width(&ui, " › ");
-    let room = crumbs_rect.width();
-    let mut needed: f32 = segments
-        .iter()
-        .map(|(name, _)| width(&ui, name) + separator)
-        .sum();
-    let mut skipped = false;
-    while needed > room && segments.len() > 1 {
-        needed -= width(&ui, &segments[0].0) + separator;
-        segments.remove(0);
-        skipped = true;
-    }
-    let muted = color(palette.muted);
     let mut crumbs = ui.new_child(
         egui::UiBuilder::new()
             .id_salt("crumbs")
@@ -1056,27 +1000,11 @@ fn footer(
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     crumbs.set_clip_rect(crumbs_rect.intersect(ui.clip_rect()));
-    crumbs.spacing_mut().item_spacing.x = 0.0;
-    crumbs.spacing_mut().button_padding = egui::vec2(2.0, 1.0);
-    if skipped {
-        crumbs.label(egui::RichText::new("… › ").size(small).color(muted));
-    }
-    let last = segments.len() - 1;
-    for (index, (name, path)) in segments.into_iter().enumerate() {
-        let ink = if index == last {
-            color(palette.text)
-        } else {
-            muted
-        };
-        let response = crumbs
-            .add(egui::Button::new(egui::RichText::new(name).size(small).color(ink)).frame(false));
-        if response.clicked() {
-            view.selected = Some(path.clone());
-            view.reveal = Some(path);
-        }
-        if index < last {
-            crumbs.label(egui::RichText::new(" › ").size(small).color(muted));
-        }
+    let names = segments.iter().map(|(name, _)| name.as_str());
+    if let Some(index) = Breadcrumbs::new(names).show(&mut crumbs) {
+        let path = segments.swap_remove(index).1;
+        view.selected = Some(path.clone());
+        view.reveal = Some(path);
     }
     line.hline(rect.x_range(), rect.top() + 0.5, stroke);
 }

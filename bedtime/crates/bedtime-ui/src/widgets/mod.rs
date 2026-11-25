@@ -1,5 +1,6 @@
 //! Components: widgets drawn from the theme and the tokens, added to any
 //! `egui::Ui` (`ui.add(Button::new("Save").primary())`).
+mod breadcrumbs;
 mod button;
 mod checkbox;
 mod edit;
@@ -15,10 +16,11 @@ mod text;
 mod text_area;
 mod text_field;
 
+pub use breadcrumbs::Breadcrumbs;
 pub use button::{Button, Variant};
 pub use checkbox::{Checkbox, Toggle};
 pub use edit::UiEdit;
-pub use list::{ListRow, MenuItem};
+pub use list::{ListRow, MenuItem, Submenu};
 pub use section::{Section, Separator};
 pub use segmented::Segmented;
 pub use select::Select;

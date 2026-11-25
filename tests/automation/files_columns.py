@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory() as folder:
         # the root), and the mode is a menu.
         root_row = min(bed.find_all(root.name), key=lambda widget: widget["rect"][0])
         assert item(bed, "src")["rect"][0] > root_row["rect"][0], "not a tree"
-        assert bed.exists("Auto ▾"), "the narrow footer has no mode menu"
+        assert bed.exists("Auto", role="ComboBox"), "the narrow footer has no mode menu"
         bed.screenshot("files-columns-side")
 
         # Moved under the editor, it's wide: columns, the root's entries

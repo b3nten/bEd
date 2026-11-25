@@ -497,3 +497,61 @@ fn a_table_that_knows_its_columns_gives_the_last_the_width_left() {
         cell.width()
     );
 }
+
+#[test]
+fn breadcrumbs_drop_the_first_when_narrow_and_say_which_was_clicked() {
+    let names = ["bed", "bedtime", "crates", "bedtime-ui", "src"];
+    let ctx = egui::Context::default();
+    let (mut wide, mut narrow) = (0.0, 0.0);
+    passes(&ctx, None, |ui| {
+        let before = ui.cursor().left();
+        Row::new().show(ui, |ui| {
+            let _ = Breadcrumbs::new(names).show(ui);
+            wide = ui.min_rect().right() - before;
+        });
+        ui.scope(|ui| {
+            ui.set_max_width(wide / 2.0);
+            Row::new().show(ui, |ui| {
+                let _ = Breadcrumbs::new(names).show(ui);
+                narrow = ui.min_rect().right() - before;
+            });
+        });
+    });
+    assert!(
+        narrow <= wide / 2.0 + 1.0,
+        "they fit the room: {narrow} of {wide}"
+    );
+
+    // The last one is at the right end.
+    use std::cell::Cell;
+    let (clicked, end) = (Cell::new(None), Cell::new(egui::Pos2::ZERO));
+    let ctx = egui::Context::default();
+    let draw = |ui: &mut Ui| {
+        Row::new().show(ui, |ui| {
+            clicked.set(clicked.get().or(Breadcrumbs::new(names).show(ui)));
+            end.set(ui.min_rect().right_center() - egui::vec2(4.0, 0.0));
+        });
+    };
+    passes(&ctx, None, draw);
+    assert_eq!(clicked.get(), None);
+    passes(&ctx, Some(end.get()), draw);
+    assert_eq!(clicked.get(), Some(names.len() - 1));
+}
+
+#[test]
+fn a_separator_takes_no_length_while_its_container_is_measured() {
+    // A menu is as wide as its widest item, not as wide as there's room.
+    let ctx = egui::Context::default();
+    let mut width = 0.0;
+    passes(&ctx, None, |ui| {
+        egui::Area::new(egui::Id::new("menu"))
+            .sizing_pass(true)
+            .show(ui.ctx(), |ui| {
+                let _ = ui.add(MenuItem::new("Copy"));
+                ui.add(Separator::new());
+                let _ = ui.add(MenuItem::new("Show Ignored Files").checked(true));
+                width = ui.min_rect().width();
+            });
+    });
+    assert!(width > 0.0 && width < 400.0, "sized to its items: {width}");
+}

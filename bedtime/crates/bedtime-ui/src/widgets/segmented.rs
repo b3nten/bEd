@@ -14,6 +14,7 @@ pub struct Segmented<'a, T> {
     value: &'a mut T,
     options: &'a [T],
     labels: Vec<String>,
+    hover: Vec<String>,
     size: Size,
 }
 
@@ -32,12 +33,19 @@ impl<'a, T: PartialEq + Clone> Segmented<'a, T> {
             value,
             options,
             labels: options.iter().map(label).collect(),
+            hover: Vec::new(),
             size: Size::default(),
         }
     }
 
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
+        self
+    }
+
+    /// What each option says when it's pointed at.
+    pub fn hover(mut self, text: impl Fn(&T) -> String) -> Self {
+        self.hover = self.options.iter().map(text).collect();
         self
     }
 }
@@ -72,7 +80,10 @@ impl<T: PartialEq + Clone> egui::Widget for Segmented<'_, T> {
         let mut clicked = None;
 
         let mut segment = |ui: &mut egui::Ui, index: usize, rect: egui::Rect, id: egui::Id| {
-            let response = ui.interact(rect, id, egui::Sense::click());
+            let mut response = ui.interact(rect, id, egui::Sense::click());
+            if let Some(text) = self.hover.get(index).filter(|text| !text.is_empty()) {
+                response = response.on_hover_text(text);
+            }
             let selected = chosen == Some(index);
             response.widget_info(|| {
                 egui::WidgetInfo::selected(

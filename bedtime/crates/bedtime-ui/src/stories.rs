@@ -68,6 +68,11 @@ pub fn builtin() -> Vec<Story> {
         },
         Story {
             group: "Components",
+            name: "Breadcrumbs",
+            draw: breadcrumbs,
+        },
+        Story {
+            group: "Components",
             name: "Table",
             draw: table,
         },
@@ -656,6 +661,48 @@ fn lists(ui: &mut egui::Ui, _: &mut Knobs) {
                             ui.add(MenuItem::new("Save").icon(BuiltinIcon::Save).shortcut("⌘S"));
                         ui.add(Separator::new().space(Space::Xs));
                         let _ = ui.add(MenuItem::new("Delete…").icon(BuiltinIcon::Trash).danger());
+                    });
+                });
+                section(ui, "Checked items (a tick when on)", |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.set_width(220.0);
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        let _ = ui.add(MenuItem::new("Show Hidden Files").checked(false));
+                        let _ = ui.add(MenuItem::new("Show Ignored Files").checked(true));
+                    });
+                });
+            });
+        },
+    );
+}
+
+fn breadcrumbs(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let size = knobs.choice("Size", &[Size::Sm, Size::Md, Size::Lg]);
+    let path = ["bed", "bedtime", "crates", "bedtime-ui", "src", "widgets"];
+    stateful(
+        ui,
+        "breadcrumbs",
+        || path.len() - 1,
+        |ui, at| {
+            Column::new().gap(Space::Xl).show(ui, |ui| {
+                section(ui, "With the controls (click one to go there)", |ui| {
+                    if let Some(index) = Breadcrumbs::new(path[..=*at].iter().copied())
+                        .size(size)
+                        .show(ui)
+                    {
+                        *at = index;
+                    }
+                    if *at + 1 < path.len() && ui.add(Button::new("Back down").small()).clicked() {
+                        *at = path.len() - 1;
+                    }
+                });
+                section(ui, "Too narrow: the first ones go", |ui| {
+                    ui.scope(|ui| {
+                        ui.set_max_width(220.0);
+                        outlined(ui, |ui| {
+                            ui.set_width(220.0);
+                            let _ = Breadcrumbs::new(path).size(size).show(ui);
+                        });
                     });
                 });
             });

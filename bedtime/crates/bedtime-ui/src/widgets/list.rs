@@ -231,6 +231,7 @@ pub struct MenuItem {
     icon: Option<IconSource>,
     shortcut: String,
     danger: bool,
+    checked: Option<bool>,
 }
 
 impl MenuItem {
@@ -240,6 +241,7 @@ impl MenuItem {
             icon: None,
             shortcut: String::new(),
             danger: false,
+            checked: None,
         }
     }
     /// An icon before the text.
@@ -250,6 +252,12 @@ impl MenuItem {
     /// Its keys, shown at its end.
     pub fn shortcut(mut self, shortcut: impl Into<String>) -> Self {
         self.shortcut = shortcut.into();
+        self
+    }
+    /// Something that's on or off, or one of several chosen: a tick before
+    /// it when it's on. A click still only tells you; the change is yours.
+    pub fn checked(mut self, checked: bool) -> Self {
+        self.checked = Some(checked);
         self
     }
     /// It destroys something: in the error colour.
@@ -264,7 +272,9 @@ impl egui::Widget for MenuItem {
         let services = ambient::services(ui.ctx());
         let font_size = Size::Md.font(ui);
         let height = Size::Md.height(ui);
-        let padding = Size::Md.padding(ui).x.max(Space::Sm.px(ui));
+        // A menu's own padding, so items line up with its submenus' (which
+        // are egui's).
+        let padding = ui.spacing().button_padding.x;
         let gap = (font_size * 0.4).round();
         let p = &services.theme.palette;
         let ink = theme::color(if self.danger { p.error } else { p.text });
@@ -279,7 +289,7 @@ impl egui::Widget for MenuItem {
                 theme::color(p.muted),
             )
         });
-        let icon = if self.icon.is_some() {
+        let icon = if self.icon.is_some() || self.checked.is_some() {
             font_size + gap
         } else {
             0.0
@@ -290,13 +300,21 @@ impl egui::Widget for MenuItem {
             + keys
                 .as_ref()
                 .map_or(0.0, |keys| Space::Lg.px(ui) + keys.size().x);
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(wanted.max(ui.available_width()), height),
-            egui::Sense::click(),
-        );
+        // As wide as the menu, which is as wide as its widest item: while
+        // the menu is being measured, only what this item needs.
+        let width = if ui.is_sizing_pass() {
+            wanted
+        } else {
+            wanted.max(ui.available_width())
+        };
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
         let enabled = ui.is_enabled();
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &self.text)
+        response.widget_info(|| match self.checked {
+            Some(checked) => {
+                egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, checked, &self.text)
+            }
+            None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &self.text),
         });
         if response.clicked() {
             ui.close();
@@ -337,6 +355,21 @@ impl egui::Widget for MenuItem {
             }
             left += icon;
         }
+        if self.icon.is_none() && self.checked.is_some() {
+            if self.checked == Some(true) {
+                let side = font_size;
+                let square = egui::Rect::from_min_size(
+                    egui::pos2(left, rect.center().y - side / 2.0),
+                    egui::Vec2::splat(side),
+                );
+                let at = |x: f32, y: f32| square.min + egui::vec2(x, y) * side;
+                painter.line(
+                    vec![at(0.18, 0.52), at(0.4, 0.74), at(0.82, 0.28)],
+                    egui::Stroke::new((side / 9.0).max(1.5), ink),
+                );
+            }
+            left += icon;
+        }
         painter.galley(
             egui::pos2(left, rect.center().y - text.size().y / 2.0),
             text,
@@ -353,5 +386,28 @@ impl egui::Widget for MenuItem {
             );
         }
         response
+    }
+}
+
+/// A menu inside a menu: an item that opens more items beside it.
+///
+/// ```ignore
+/// Submenu::new("Open With").show(ui, |ui| {
+///     if ui.add(MenuItem::new("Hex Viewer")).clicked() { … }
+/// });
+/// ```
+#[must_use = "a submenu does nothing until it's shown"]
+pub struct Submenu {
+    text: String,
+}
+
+impl Submenu {
+    pub fn new(text: impl Into<String>) -> Self {
+        Self { text: text.into() }
+    }
+
+    pub fn show(self, ui: &mut egui::Ui, items: impl FnOnce(&mut egui::Ui)) -> egui::Response {
+        // The item, its arrow and how it opens are egui's menu's own.
+        ui.menu_button(self.text, items).response
     }
 }

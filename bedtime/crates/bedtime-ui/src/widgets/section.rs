@@ -135,10 +135,14 @@ impl egui::Widget for Separator {
         let border = theme::color(Theme::of(ui).palette.border);
         let space = self.space.px(ui).max(1.0);
         let across = !ui.layout().main_dir().is_horizontal();
-        let size = if across {
-            egui::vec2(ui.available_width(), space)
-        } else {
-            egui::vec2(space, ui.available_size_before_wrap().y)
+        // While what it's in is being measured (a menu), it takes no length
+        // of its own: it's as long as the rest makes room for.
+        let measuring = ui.is_sizing_pass();
+        let size = match (across, measuring) {
+            (true, false) => egui::vec2(ui.available_width(), space),
+            (true, true) => egui::vec2(0.0, space),
+            (false, false) => egui::vec2(space, ui.available_size_before_wrap().y),
+            (false, true) => egui::vec2(space, 0.0),
         };
         let (rect, response) = ui.allocate_at_least(size, egui::Sense::hover());
         if ui.is_rect_visible(rect) {

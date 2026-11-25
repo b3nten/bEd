@@ -8,7 +8,7 @@ use crate::view::{
 };
 use crate::{COLUMN_WIDTH, Column, ExplorerView, Folders, Row, file_icon};
 use bedtime_filesystem::EntryKind;
-use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
+use bedtime_ui::{BuiltinIcon, Text, Tone, UiContext, egui, theme::color, tree};
 use bedtime_workbench::BedtimeWorldExt;
 use bevy::prelude::*;
 use std::path::Path;
@@ -139,18 +139,17 @@ fn draw_column(
         filter_menu(ui, shown.filter, shown.mode, intents);
     });
     if column.rows.is_empty() {
-        let palette = &context.theme.palette;
         egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(10, 6))
             .show(ui, |ui| match &column.error {
                 Some(error) => {
-                    ui.colored_label(color(palette.error), error);
+                    ui.add(Text::new(error).tone(Tone::Error));
                 }
                 None if column.loading => {
-                    ui.weak("Reading…");
+                    ui.add(Text::new("Reading…").muted());
                 }
                 None => {
-                    ui.weak("Empty");
+                    ui.add(Text::new("Empty").muted());
                 }
             });
         return;
@@ -230,9 +229,9 @@ fn interact(
     });
     if tree::rested(ui.ctx(), response) {
         let details = details(world.resource::<Folders>(), view, &row.path);
-        context.frame(ui).tooltip_ui(response, |frame| {
-            describe(frame, context, row, details.as_ref())
-        });
+        context
+            .frame(ui)
+            .tooltip_ui(response, |frame| describe(frame, row, details.as_ref()));
     }
     if response.double_clicked() || response.triple_clicked() {
         if row.kind != EntryKind::Directory {
