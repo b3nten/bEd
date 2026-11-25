@@ -11,6 +11,7 @@
 //! typed); the rows are the caller's, so sorting and every change are asked
 //! of it.
 use crate::db::{Input, Value};
+use bedtime_ui::{MenuItem, Separator, Space};
 use bedtime_ui::{UiContext, egui, theme};
 
 const MIN_WIDTH: f32 = 48.0;
@@ -371,28 +372,28 @@ impl Grid {
                     }
                     response.context_menu(|ui| {
                         if let Some(from) = &cell.edit {
-                            if ui.button("Edit").clicked() {
+                            if ui.add(MenuItem::new("Edit")).clicked() {
                                 self.start_editing(index, column, from.clone(), None);
                             }
-                            if ui.button("Set to NULL").clicked() {
+                            if ui.add(MenuItem::new("Set to NULL")).clicked() {
                                 asked.push(Asked::Set {
                                     row: index,
                                     column,
                                     input: Input::Null,
                                 });
                             }
-                            ui.separator();
+                            ui.add(Separator::new().space(Space::Xs));
                         }
-                        if ui.button("Copy").clicked() {
+                        if ui.add(MenuItem::new("Copy")).clicked() {
                             ui.ctx().copy_text(cell.text.clone());
                         }
                         if let Some(values) = rows.rows.get(index) {
-                            if ui.button("Copy Row").clicked() {
+                            if ui.add(MenuItem::new("Copy Row")).clicked() {
                                 ui.ctx().copy_text(row_text(values));
                             }
                             if rows.editable.is_some() {
-                                ui.separator();
-                                if ui.button("Delete Row").clicked() {
+                                ui.add(Separator::new().space(Space::Xs));
+                                if ui.add(MenuItem::new("Delete Row").danger()).clicked() {
                                     asked.push(Asked::Delete { row: index });
                                 }
                             }
@@ -491,17 +492,17 @@ impl Grid {
                     }));
                 }
                 response.context_menu(|ui| {
-                    if ui.button("Sort Ascending").clicked() {
+                    if ui.add(MenuItem::new("Sort Ascending")).clicked() {
                         asked.push(Asked::Sort(Some((column, false))));
                     }
-                    if ui.button("Sort Descending").clicked() {
+                    if ui.add(MenuItem::new("Sort Descending")).clicked() {
                         asked.push(Asked::Sort(Some((column, true))));
                     }
-                    if rows.sort.is_some() && ui.button("Don't Sort").clicked() {
+                    if rows.sort.is_some() && ui.add(MenuItem::new("Don't Sort")).clicked() {
                         asked.push(Asked::Sort(None));
                     }
-                    ui.separator();
-                    if ui.button("Copy Name").clicked() {
+                    ui.add(Separator::new().space(Space::Xs));
+                    if ui.add(MenuItem::new("Copy Name")).clicked() {
                         ui.ctx().copy_text(name.clone());
                     }
                 });

@@ -149,10 +149,10 @@ with tempfile.TemporaryDirectory() as folder:
               "reading is selected")
         press(bed, "Data", lambda: bed.exists("Rows 1–1,000 of 2,500"), "the first page shows")
         assert bed.exists("Page 1 of 3") and bed.exists("sensor 1")
-        press(bed, "chevron-right", lambda: bed.exists("Rows 1,001–2,000 of 2,500"),
+        press(bed, "Next Page", lambda: bed.exists("Rows 1,001–2,000 of 2,500"),
               "the second page shows")
         assert bed.exists("sensor 1001") and bed.exists("Page 2 of 3")
-        press(bed, "chevron-left", lambda: bed.exists("Page 1 of 3"), "back to the first page")
+        press(bed, "Previous Page", lambda: bed.exists("Page 1 of 3"), "back to the first page")
 
         # Clicking a column's name sorts by it: SQLite sorts every row, not the page.
         level = lambda: bed.find("level", role="Button")

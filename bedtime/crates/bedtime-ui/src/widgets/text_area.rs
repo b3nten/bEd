@@ -16,7 +16,9 @@ pub struct TextArea<'a> {
     rows: usize,
     width: Option<f32>,
     fill_width: bool,
+    fill_height: bool,
     invalid: bool,
+    id: Option<egui::Id>,
 }
 
 impl<'a> TextArea<'a> {
@@ -28,7 +30,9 @@ impl<'a> TextArea<'a> {
             rows: 4,
             width: None,
             fill_width: false,
+            fill_height: false,
             invalid: false,
+            id: None,
         }
     }
 
@@ -58,6 +62,17 @@ impl<'a> TextArea<'a> {
         self.fill_width = true;
         self
     }
+    /// At least as tall as the space it's in.
+    pub fn fill_height(mut self) -> Self {
+        self.fill_height = true;
+        self
+    }
+    /// The id of its text, to ask after its focus from elsewhere
+    /// (`memory.has_focus(id)`).
+    pub fn id(mut self, id: egui::Id) -> Self {
+        self.id = Some(id);
+        self
+    }
     /// What's in it is wrong: outlined in the error colour.
     pub fn invalid(mut self, invalid: bool) -> Self {
         self.invalid = invalid;
@@ -79,7 +94,16 @@ impl egui::Widget for TextArea<'_> {
                 .unwrap_or(ui.spacing().text_edit_width)
                 .min(available)
         };
-        let id = ui.next_auto_id().with("text-area");
+        let id = self
+            .id
+            .unwrap_or_else(|| ui.next_auto_id().with("text-area"));
+        let margin_y = padding.y + 2.0;
+        let min_height = if self.fill_height {
+            // The space, less the padding and the border around it.
+            (ui.available_height() - 2.0 * margin_y - 2.0).max(0.0)
+        } else {
+            0.0
+        };
         let focused = ui.memory(|memory| memory.has_focus(id));
         let hovered = ui
             .ctx()
@@ -100,12 +124,11 @@ impl egui::Widget for TextArea<'_> {
             .color(theme::color(p.muted));
         let frame = egui::Frame::NONE
             .fill(theme::color(p.panel_background))
-            .stroke(egui::Stroke::new(emphasis, theme::color(border)))
+            // Always one point, so focus doesn't move what's around it; the
+            // emphasis is painted inside it, below.
+            .stroke(egui::Stroke::new(1.0, theme::color(border)))
             .corner_radius(Radius::Md.px(ui))
-            .inner_margin(egui::Margin::symmetric(
-                padding.x as i8,
-                padding.y as i8 + 2,
-            ));
+            .inner_margin(egui::Margin::symmetric(padding.x as i8, margin_y as i8));
         let shown = frame.show(ui, |ui| {
             egui::TextEdit::multiline(&mut *self.text)
                 .id(id)
@@ -116,6 +139,7 @@ impl egui::Widget for TextArea<'_> {
                 .text_color(theme::color(p.text))
                 .hint_text(hint)
                 .desired_rows(self.rows)
+                .min_size(egui::vec2(0.0, min_height))
                 .desired_width(width - 2.0 * padding.x)
                 .show(ui)
                 .response
@@ -124,6 +148,14 @@ impl egui::Widget for TextArea<'_> {
         // The whole box is the control, not only the text inside it.
         let mut response = shown.inner;
         response.rect = shown.response.rect;
+        if emphasis > 1.0 {
+            ui.painter().rect_stroke(
+                response.rect,
+                Radius::Md.px(ui),
+                egui::Stroke::new(emphasis, theme::color(border)),
+                egui::StrokeKind::Inside,
+            );
+        }
         if !self.label.is_empty() {
             let enabled = ui.is_enabled();
             response.widget_info(|| {

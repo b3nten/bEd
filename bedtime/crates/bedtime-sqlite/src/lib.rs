@@ -10,6 +10,7 @@
 use bedtime_document::DocumentModel;
 use bedtime_filesystem::{ByteModel, FileModel};
 use bedtime_ui::{BuiltinIcon, CodeView, UiContext, egui, theme, tree};
+use bedtime_ui::{Button, Row, Segmented, Space, Spinner, Table, Text, TextArea, TextField, Tone};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -298,13 +299,15 @@ impl Panel for SqlitePanel {
         } = &mut sqlite.state;
         let schema = match schema {
             None => {
-                ui.centered_and_justified(|ui| ui.spinner());
+                ui.centered_and_justified(|ui| ui.add(Spinner::new()));
                 return;
             }
             Some(Err(error)) => {
-                egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
-                    ui.label(format!("This database can't be read: {error}"));
-                });
+                egui::Frame::NONE
+                    .inner_margin(Space::Lg.px(ui))
+                    .show(ui, |ui| {
+                        ui.add(Text::new(format!("This database can't be read: {error}")));
+                    });
                 return;
             }
             Some(Ok(schema)) => schema,
@@ -322,10 +325,12 @@ impl Panel for SqlitePanel {
             .resizable(false)
             .frame(egui::Frame::NONE.inner_margin(margin))
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut sqlite.mode, Mode::Data, "Data");
-                    ui.selectable_value(&mut sqlite.mode, Mode::Structure, "Structure");
-                    ui.selectable_value(&mut sqlite.mode, Mode::Query, "Query");
+                Row::new().show(ui, |ui| {
+                    ui.add(Segmented::with(
+                        &mut sqlite.mode,
+                        &[Mode::Data, Mode::Structure, Mode::Query],
+                        |mode| format!("{mode:?}"),
+                    ));
                     if sqlite.mode == Mode::Data {
                         filter(ui, panel, filter_text, browse);
                     }
@@ -341,9 +346,11 @@ impl Panel for SqlitePanel {
             .and_then(|name| schema.object(name))
         else {
             // An empty database: Query can make its first table.
-            egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
-                ui.weak("This database has no tables.");
-            });
+            egui::Frame::NONE
+                .inner_margin(Space::Lg.px(ui))
+                .show(ui, |ui| {
+                    ui.add(Text::new("This database has no tables.").muted());
+                });
             return;
         };
         if sqlite.mode == Mode::Data {
@@ -390,15 +397,17 @@ impl Panel for SqlitePanel {
                 .frame(egui::Frame::NONE)
                 .show(ui, |ui| match read {
                     None => {
-                        ui.centered_and_justified(|ui| ui.spinner());
+                        ui.centered_and_justified(|ui| ui.add(Spinner::new()));
                     }
                     Some(Err(error)) => {
-                        egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
-                            ui.colored_label(
-                                theme::color(context.theme.palette.error),
-                                format!("These rows can't be read: {error}"),
-                            );
-                        });
+                        egui::Frame::NONE
+                            .inner_margin(Space::Lg.px(ui))
+                            .show(ui, |ui| {
+                                ui.add(
+                                    Text::new(format!("These rows can't be read: {error}"))
+                                        .tone(Tone::Error),
+                                );
+                            });
                     }
                     Some(Ok(page)) => {
                         let sort = browse.sort.as_ref().and_then(|sort| {
@@ -573,7 +582,7 @@ fn query_view(
                     ..default()
                 }))
                 .show(ui, |ui| {
-                    ui.horizontal(|ui| run_bar(ui, context, query));
+                    Row::new().show(ui, |ui| run_bar(ui, context, query));
                 });
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
@@ -582,17 +591,14 @@ fn query_view(
                         .id_salt(id.with("scroll"))
                         .auto_shrink(false)
                         .show(ui, |ui| {
-                            let response = ui.add_sized(
-                                ui.available_size(),
-                                egui::TextEdit::multiline(text)
+                            ui.add(
+                                TextArea::new(text)
                                     .id(edit)
-                                    .code_editor()
-                                    .hint_text("SQL to run: one statement, or several")
-                                    .desired_width(f32::INFINITY),
+                                    .label("SQL")
+                                    .hint("SQL to run: one statement, or several")
+                                    .fill_width()
+                                    .fill_height(),
                             );
-                            response.widget_info(|| {
-                                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "SQL")
-                            });
                         });
                 });
         });
@@ -636,17 +642,17 @@ fn query_view(
 /// Under the SQL: Run (or Cancel while it runs), and what the last run came to.
 fn run_bar(ui: &mut egui::Ui, context: &UiContext<'_>, query: &mut Query) {
     if query.running.is_some() {
-        if ui.button("Cancel").clicked()
+        if ui.add(Button::new("Cancel")).clicked()
             && let Some(interrupt) = &query.interrupt
         {
             interrupt.interrupt();
         }
-        ui.spinner();
-        ui.weak("Running");
+        ui.add(Spinner::new());
+        ui.add(Text::new("Running").muted());
         return;
     }
-    let mut frame = context.frame(ui);
-    let run = frame.primary_button("Run");
+    let run = ui.add(Button::new("Run").primary());
+    let frame = context.frame(ui);
     let key = if cfg!(target_os = "macos") {
         "Cmd+Enter"
     } else {
@@ -664,10 +670,10 @@ fn run_bar(ui: &mut egui::Ui, context: &UiContext<'_>, query: &mut Query) {
             } else {
                 format!("{:.2} s", outcome.seconds)
             };
-            ui.weak(format!("{} · {time}", outcome.summary()));
+            ui.add(Text::new(format!("{} · {time}", outcome.summary())).muted());
         }
         Some(Err(error)) => {
-            ui.colored_label(theme::color(context.theme.palette.error), error);
+            ui.add(Text::new(error).tone(Tone::Error));
         }
     }
 }
@@ -722,13 +728,12 @@ fn update_query(world: &mut World, panel: Entity) {
 /// The filter: an SQL condition, applied with Enter.
 fn filter(ui: &mut egui::Ui, panel: Entity, text: &mut String, browse: &mut Browse) {
     let response = ui.add(
-        egui::TextEdit::singleline(text)
+        TextField::new(text)
             .id(egui::Id::new((panel, "sqlite-filter")))
-            .hint_text("Filter: an SQL condition")
-            .desired_width(f32::INFINITY),
+            .label("Filter rows")
+            .hint("Filter: an SQL condition")
+            .fill_width(),
     );
-    response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Filter rows"));
     let (enter, escape) = ui.input(|i| {
         (
             i.key_pressed(egui::Key::Enter),
@@ -769,49 +774,52 @@ fn pages(
     error: Option<&str>,
 ) -> Option<Pressed> {
     let mut pressed = None;
-    ui.horizontal(|ui| {
+    Row::new().show(ui, |ui| {
         let first = page.first_row();
-        ui.weak(match (page.total, page.rows.len() as u64) {
-            (0, _) => "No rows".to_owned(),
-            (1, _) => "1 row".to_owned(),
-            (total, shown) if shown == total => format!("{} rows", db::grouped(total)),
-            (total, shown) => format!(
-                "Rows {}–{} of {}",
-                db::grouped(first + 1),
-                db::grouped(first + shown),
-                db::grouped(total)
-            ),
-        });
+        ui.add(
+            Text::new(match (page.total, page.rows.len() as u64) {
+                (0, _) => "No rows".to_owned(),
+                (1, _) => "1 row".to_owned(),
+                (total, shown) if shown == total => format!("{} rows", db::grouped(total)),
+                (total, shown) => format!(
+                    "Rows {}–{} of {}",
+                    db::grouped(first + 1),
+                    db::grouped(first + shown),
+                    db::grouped(total)
+                ),
+            })
+            .muted(),
+        );
         match state {
             Footer::Fixed => {}
             Footer::ReadOnly => {
-                ui.weak("· Read-only");
+                ui.add(Text::new("· Read-only").muted());
             }
             Footer::CanAdd => {
-                if ui.button("Add Row").clicked() {
+                if ui.add(Button::new("Add Row")).clicked() {
                     pressed = Some(Pressed::AddRow);
                 }
             }
             Footer::Making => {
-                if context.frame(ui).primary_button("Insert Row").clicked() {
+                if ui.add(Button::new("Insert Row").primary()).clicked() {
                     pressed = Some(Pressed::InsertRow);
                 }
-                if ui.button("Discard").clicked() {
+                if ui.add(Button::new("Discard")).clicked() {
                     pressed = Some(Pressed::Discard);
                 }
             }
             Footer::Deleting(number) => {
-                ui.label(format!("Delete row {}?", db::grouped(number)));
-                if ui.button("Delete").clicked() {
+                ui.add(Text::new(format!("Delete row {}?", db::grouped(number))));
+                if ui.add(Button::new("Delete").danger()).clicked() {
                     pressed = Some(Pressed::Delete);
                 }
-                if ui.button("Keep").clicked() {
+                if ui.add(Button::new("Keep")).clicked() {
                     pressed = Some(Pressed::KeepRow);
                 }
             }
         }
         if let Some(error) = error {
-            ui.colored_label(theme::color(context.theme.palette.error), error);
+            ui.add(Text::new(error).tone(Tone::Error));
         }
         if page.pages() == 1 {
             return;
@@ -819,9 +827,8 @@ fn pages(
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let mut turn = |ui: &mut egui::Ui, icon, to: Option<u64>, what: &str| {
                 ui.add_enabled_ui(to.is_some(), |ui| {
-                    let mut frame = context.frame(ui);
-                    let response = frame.icon_button(icon);
-                    frame.tooltip(&response, what);
+                    let response = ui.add(Button::icon_only(icon, what).ghost());
+                    context.frame(ui).tooltip(&response, what);
                     if let (true, Some(to)) = (response.clicked(), to) {
                         browse.page = to;
                     }
@@ -829,11 +836,14 @@ fn pages(
             };
             let next = (page.page + 1 < page.pages()).then_some(page.page + 1);
             turn(ui, BuiltinIcon::ChevronRight, next, "Next Page");
-            ui.weak(format!(
-                "Page {} of {}",
-                db::grouped(page.page + 1),
-                db::grouped(page.pages())
-            ));
+            ui.add(
+                Text::new(format!(
+                    "Page {} of {}",
+                    db::grouped(page.page + 1),
+                    db::grouped(page.pages())
+                ))
+                .muted(),
+            );
             turn(
                 ui,
                 BuiltinIcon::ChevronLeft,
@@ -1107,10 +1117,10 @@ fn sidebar(
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             if schema.objects.is_empty() {
-                ui.horizontal(|ui| {
+                Row::new().show(ui, |ui| {
                     ui.set_height(height);
-                    ui.add_space(tree::INSET + 6.0);
-                    ui.weak("No tables");
+                    ui.add_space(tree::INSET + Space::Xs.px(ui));
+                    ui.add(Text::new("No tables").muted());
                 });
             }
             for (kind, heading) in [(Kind::Table, "Tables"), (Kind::View, "Views")] {
@@ -1122,10 +1132,10 @@ fn sidebar(
                 if objects.peek().is_none() {
                     continue;
                 }
-                ui.horizontal(|ui| {
+                Row::new().show(ui, |ui| {
                     ui.set_height(height);
-                    ui.add_space(tree::INSET + 6.0);
-                    ui.weak(heading);
+                    ui.add_space(tree::INSET + Space::Xs.px(ui));
+                    ui.add(Text::new(heading).muted());
                 });
                 for object in objects {
                     let (rect, _) = ui.allocate_exact_size(
@@ -1164,8 +1174,8 @@ fn sidebar(
 
 /// A table's or view's columns, indexes and triggers.
 fn structure(ui: &mut egui::Ui, panel: Entity, object: &Object, read_only: bool) {
-    ui.horizontal(|ui| {
-        ui.strong(&object.name);
+    Row::new().show(ui, |ui| {
+        ui.add(Text::new(&object.name).strong());
         let kind = match object.kind {
             Kind::Table => "Table",
             Kind::View => "View",
@@ -1174,56 +1184,48 @@ fn structure(ui: &mut egui::Ui, panel: Entity, object: &Object, read_only: bool)
             1 => "1 column".to_owned(),
             count => format!("{count} columns"),
         };
-        ui.weak(format!("{kind}, {columns}"));
+        ui.add(Text::new(format!("{kind}, {columns}")).muted());
         if read_only {
-            ui.weak("· Read-only");
+            ui.add(Text::new("· Read-only").muted());
         }
     });
-    ui.add_space(6.0);
-    egui::Grid::new((panel, "sqlite-columns"))
-        .num_columns(3)
-        .spacing([20.0, 6.0])
-        .show(ui, |ui| {
-            ui.weak("Column");
-            ui.weak("Type");
-            ui.weak("Constraints");
-            ui.end_row();
+    ui.add_space(Space::Xs.px(ui));
+    Table::new((panel, "sqlite-columns"))
+        .headers(["Column", "Type", "Constraints"])
+        .show(ui, |table| {
             for column in &object.columns {
-                ui.label(&column.name);
-                ui.label(&column.declared);
-                ui.label(column.constraints(&object.foreign_keys));
-                ui.end_row();
+                table.row(|ui| {
+                    ui.add(Text::new(&column.name));
+                    ui.add(Text::new(&column.declared));
+                    ui.add(Text::new(column.constraints(&object.foreign_keys)));
+                });
             }
         });
     if !object.indexes.is_empty() {
-        ui.add_space(12.0);
-        egui::Grid::new((panel, "sqlite-indexes"))
-            .num_columns(3)
-            .spacing([20.0, 6.0])
-            .show(ui, |ui| {
-                ui.weak("Index");
-                ui.weak("Columns");
-                ui.weak("");
-                ui.end_row();
+        ui.add_space(Space::Md.px(ui));
+        Table::new((panel, "sqlite-indexes"))
+            .headers(["Index", "Columns", ""])
+            .show(ui, |table| {
                 for index in &object.indexes {
-                    ui.label(&index.name);
-                    ui.label(index.columns.join(", "));
-                    ui.label(match (index.unique, index.automatic) {
-                        (true, true) => "unique, from a constraint",
-                        (true, false) => "unique",
-                        (false, true) => "from a constraint",
-                        (false, false) => "",
+                    table.row(|ui| {
+                        ui.add(Text::new(&index.name));
+                        ui.add(Text::new(index.columns.join(", ")));
+                        ui.add(Text::new(match (index.unique, index.automatic) {
+                            (true, true) => "unique, from a constraint",
+                            (true, false) => "unique",
+                            (false, true) => "from a constraint",
+                            (false, false) => "",
+                        }));
                     });
-                    ui.end_row();
                 }
             });
     }
     if !object.triggers.is_empty() {
-        ui.add_space(12.0);
-        ui.weak("Triggers");
-        ui.add_space(4.0);
+        ui.add_space(Space::Md.px(ui));
+        ui.add(Text::new("Triggers").muted());
+        ui.add_space(Space::Xs.px(ui));
         for trigger in &object.triggers {
-            ui.label(trigger);
+            ui.add(Text::new(trigger));
         }
     }
 }

@@ -14,7 +14,7 @@ use crate::{
 };
 use bedtime_ui::{
     BuiltinIcon, Button, Checkbox, CodeView, ListRow, MenuItem, Row, Segmented, Select, Separator,
-    Size, Space, Spinner, Text, TextArea, TextField, Tone, UiContext, ViewUi,
+    Size, Space, Spinner, Table, Text, TextArea, TextField, Tone, UiContext, ViewUi,
     data::{DataTree, Value},
     draw, egui,
     hex::HexViewer,
@@ -868,15 +868,15 @@ fn response(ui: &mut egui::Ui, d: &mut Draw, received: &Received) {
                 .id_salt("response-headers")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    egui::Grid::new("response-headers")
-                        .num_columns(2)
-                        .striped(true)
-                        .spacing([16.0, 4.0])
-                        .show(ui, |ui| {
+                    Table::new("response-headers")
+                        .columns(2)
+                        .striped()
+                        .show(ui, |table| {
                             for (name, value) in &response.headers {
-                                ui.add(Text::new(name).strong());
-                                ui.add(Text::new(value).wrap());
-                                ui.end_row();
+                                table.row(|ui| {
+                                    ui.add(Text::new(name).strong());
+                                    ui.add(Text::new(value).wrap());
+                                });
                             }
                         });
                 });

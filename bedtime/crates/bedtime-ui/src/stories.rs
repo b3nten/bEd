@@ -68,6 +68,11 @@ pub fn builtin() -> Vec<Story> {
         },
         Story {
             group: "Components",
+            name: "Table",
+            draw: table,
+        },
+        Story {
+            group: "Components",
             name: "Spinner",
             draw: spinner,
         },
@@ -656,6 +661,55 @@ fn lists(ui: &mut egui::Ui, _: &mut Knobs) {
             });
         },
     );
+}
+
+fn table(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let striped = knobs.toggle("Striped", false);
+    let gap = knobs.choice("Gap", &[Space::Lg, Space::Sm, Space::Md, Space::Xl]);
+    let columns = [
+        ("id", "INTEGER", "primary key"),
+        ("title", "VARCHAR(80)", "not null, default 'Untitled'"),
+        ("artist_id", "INTEGER", "references artist(id)"),
+        ("year", "INTEGER", ""),
+    ];
+    Column::new().gap(Space::Xl).show(ui, |ui| {
+        section(ui, "With the controls", |ui| {
+            let mut table = Table::new("columns")
+                .headers(["Column", "Type", "Constraints"])
+                .gap(gap);
+            if striped {
+                table = table.striped();
+            }
+            table.show(ui, |table| {
+                for (name, declared, constraints) in columns {
+                    table.row(|ui| {
+                        ui.add(Text::new(name));
+                        ui.add(Text::new(declared));
+                        ui.add(Text::new(constraints));
+                    });
+                }
+            });
+        });
+        section(
+            ui,
+            "Without headings, striped, with other things in its cells",
+            |ui| {
+                Table::new("headers").striped().show(ui, |table| {
+                    for (name, value, tone) in [
+                        ("content-type", "application/json", Tone::Neutral),
+                        ("x-status", "ok", Tone::Success),
+                        ("x-warning", "deprecated", Tone::Warning),
+                    ] {
+                        table.row(|ui| {
+                            ui.add(Text::new(name).strong());
+                            ui.add(Text::new(value).tone(tone));
+                            ui.add(Button::new("Copy").small().ghost());
+                        });
+                    }
+                });
+            },
+        );
+    });
 }
 
 fn spinner(ui: &mut egui::Ui, _: &mut Knobs) {

@@ -24,6 +24,7 @@ pub struct TextField<'a> {
     focus: bool,
     plain: bool,
     muted: bool,
+    id: Option<egui::Id>,
 }
 
 impl<'a> TextField<'a> {
@@ -42,6 +43,7 @@ impl<'a> TextField<'a> {
             focus: false,
             plain: false,
             muted: false,
+            id: None,
         }
     }
 
@@ -101,6 +103,12 @@ impl<'a> TextField<'a> {
         self.muted = muted;
         self
     }
+    /// The id of its text, to ask after its focus from elsewhere
+    /// (`memory.has_focus(id)`).
+    pub fn id(mut self, id: egui::Id) -> Self {
+        self.id = Some(id);
+        self
+    }
     /// Take the keyboard now (a field that's just appeared, say).
     pub fn focus(mut self, focus: bool) -> Self {
         self.focus = focus;
@@ -124,7 +132,7 @@ impl egui::Widget for TextField<'_> {
         }
         .max(height * 2.0);
         let (rect, frame) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
-        let id = frame.id.with("edit");
+        let id = self.id.unwrap_or(frame.id.with("edit"));
         if self.focus {
             ui.memory_mut(|memory| memory.request_focus(id));
         }

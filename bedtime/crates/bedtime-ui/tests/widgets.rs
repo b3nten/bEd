@@ -430,3 +430,70 @@ fn a_text_area_starts_as_tall_as_its_rows() {
         assert!((wide - ui.available_width()).abs() < 1.0);
     });
 }
+
+#[test]
+fn a_table_lines_its_cells_up_in_columns() {
+    pass(|ui| {
+        let mut lefts: Vec<[f32; 2]> = Vec::new();
+        let mut tops = Vec::new();
+        Table::new("columns")
+            .headers(["Column", "Type"])
+            .show(ui, |table| {
+                for (name, declared) in [("id", "INTEGER"), ("a_longer_name", "TEXT")] {
+                    table.row(|ui| {
+                        let first = ui.add(Text::new(name)).rect;
+                        let second = ui.add(Text::new(declared)).rect;
+                        lefts.push([first.left(), second.left()]);
+                        tops.push(first.top());
+                    });
+                }
+            });
+        assert_eq!(
+            lefts[0], lefts[1],
+            "each column starts where it does in every row"
+        );
+        assert!(lefts[0][1] > lefts[0][0]);
+        assert!(tops[1] > tops[0], "rows are one under another");
+    });
+}
+
+#[test]
+fn a_text_area_fills_the_height_when_asked() {
+    pass(|ui| {
+        let mut text = String::new();
+        ui.scope(|ui| {
+            ui.set_max_height(300.0);
+            let available = ui.available_height();
+            let area = ui.add(TextArea::new(&mut text).rows(1).fill_height()).rect;
+            assert!(
+                (area.height() - available).abs() < 2.0,
+                "{} of {available}",
+                area.height()
+            );
+        });
+    });
+}
+
+#[test]
+fn a_table_that_knows_its_columns_gives_the_last_the_width_left() {
+    // A grid sizes its columns from the frame before: draw a few.
+    let ctx = egui::Context::default();
+    let long = "a value long enough that it has to wrap ".repeat(8);
+    let mut cell = egui::Rect::NOTHING;
+    passes(&ctx, None, |ui| {
+        ui.scope(|ui| {
+            ui.set_max_width(400.0);
+            Table::new("headers").columns(2).show(ui, |table| {
+                table.row(|ui| {
+                    ui.add(Text::new("server").strong());
+                    cell = ui.add(Text::new(&long).wrap()).rect;
+                });
+            });
+        });
+    });
+    assert!(
+        cell.width() > 200.0,
+        "wrapped in the room left: {}",
+        cell.width()
+    );
+}
