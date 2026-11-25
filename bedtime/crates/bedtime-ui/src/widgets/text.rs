@@ -20,6 +20,7 @@ pub struct Text {
     strikethrough: bool,
     wrap: bool,
     clickable: bool,
+    selectable: bool,
 }
 
 impl Text {
@@ -36,6 +37,7 @@ impl Text {
             strikethrough: false,
             wrap: false,
             clickable: false,
+            selectable: false,
         }
     }
     pub fn caption(text: impl Into<String>) -> Self {
@@ -87,6 +89,12 @@ impl Text {
         self.wrap = true;
         self
     }
+    /// Its text can be selected and copied, even where labels otherwise
+    /// can't be: something worth taking away, like a signature.
+    pub fn selectable(mut self) -> Self {
+        self.selectable = true;
+        self
+    }
     /// It can be clicked (`response.clicked()`): a name that goes somewhere.
     pub fn clickable(mut self) -> Self {
         self.clickable = true;
@@ -130,6 +138,9 @@ impl egui::Widget for Text {
             label = label.truncate();
         } else if self.wrap {
             label = label.wrap();
+        }
+        if self.selectable {
+            label = label.selectable(true);
         }
         if self.clickable {
             label = label.sense(egui::Sense::click());

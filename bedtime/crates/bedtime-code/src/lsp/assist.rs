@@ -425,13 +425,7 @@ pub(crate) fn draw(
                             )
                             .show(ui, |ui| {
                                 if !item.detail.is_empty() {
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(&item.detail).monospace(),
-                                        )
-                                        .wrap()
-                                        .selectable(true),
-                                    );
+                                    ui.add(Text::new(&item.detail).wrap().selectable());
                                 }
                                 if let Some(documentation) = &mut state.documentation {
                                     documentation.show(ui, context);

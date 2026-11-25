@@ -25,6 +25,8 @@ pub struct TextField<'a> {
     plain: bool,
     muted: bool,
     id: Option<egui::Id>,
+    char_limit: usize,
+    event_filter: Option<egui::EventFilter>,
 }
 
 impl<'a> TextField<'a> {
@@ -44,7 +46,21 @@ impl<'a> TextField<'a> {
             plain: false,
             muted: false,
             id: None,
+            char_limit: usize::MAX,
+            event_filter: None,
         }
+    }
+
+    /// The most characters it takes.
+    pub fn char_limit(mut self, limit: usize) -> Self {
+        self.char_limit = limit;
+        self
+    }
+    /// The keys it keeps while it has the keyboard, which would otherwise
+    /// move focus or be left for something else (Escape, the arrows, Tab).
+    pub fn event_filter(mut self, filter: egui::EventFilter) -> Self {
+        self.event_filter = Some(filter);
+        self
     }
 
     /// Shown while it's empty.
@@ -210,7 +226,11 @@ impl egui::Widget for TextField<'_> {
                 .max_rect(inner)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
-        let output = egui::TextEdit::singleline(&mut *self.text)
+        let mut edit = egui::TextEdit::singleline(&mut *self.text).char_limit(self.char_limit);
+        if let Some(filter) = self.event_filter {
+            edit = edit.event_filter(filter);
+        }
+        let output = edit
             .id(id)
             .frame(egui::Frame::NONE)
             .margin(0.0)

@@ -44,7 +44,7 @@ mod text {
 pub use document::*;
 pub use text::{BufferEdit, TextBuffer};
 mod panel;
-use bedtime_ui::{MotionPolicy, egui};
+use bedtime_ui::{Button, MotionPolicy, Row, Spinner, Text, egui};
 use bevy::prelude::Component;
 #[cfg(feature = "persistence")]
 pub use panel::{
@@ -560,8 +560,8 @@ impl EditorView {
             .as_ref()
             .is_some_and(|c| c.revision != snapshot.revision)
         {
-            ui.label("The document changed during text composition.");
-            if ui.button("Discard composition").clicked() {
+            ui.add(Text::new("The document changed during text composition."));
+            if ui.add(Button::new("Discard composition")).clicked() {
                 self.cancel_composition(session, id);
             } else {
                 return Err(EditorError(
@@ -612,18 +612,18 @@ impl EditorView {
             }
         }
         if self.indent_job.is_some() {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Preparing indentation…");
-                if ui.button("Cancel indentation").clicked() {
+            Row::new().show(ui, |ui| {
+                ui.add(Spinner::new());
+                ui.add(Text::new("Preparing indentation…"));
+                if ui.add(Button::new("Cancel indentation")).clicked() {
                     self.indent_job = None;
                 }
             });
         }
         if let Some(message) = self.edit_message.clone() {
-            ui.horizontal_wrapped(|ui| {
-                ui.weak(message);
-                if ui.button("Dismiss").clicked() {
+            Row::new().wrap().show(ui, |ui| {
+                ui.add(Text::new(message).muted());
+                if ui.add(Button::new("Dismiss")).clicked() {
                     self.edit_message = None;
                 }
             });
@@ -1361,7 +1361,7 @@ impl EditorView {
                                         for action in &self.diff.actions {
                                             let response = controls.add_enabled(
                                                 action.enabled,
-                                                egui::Button::new(&action.label).small(),
+                                                Button::new(&action.label).small(),
                                             );
                                             diff_controls.push((action.id, chunk, response.rect));
                                             if response.clicked() {

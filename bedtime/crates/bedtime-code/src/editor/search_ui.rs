@@ -1,4 +1,5 @@
 use crate::editor::*;
+use bedtime_ui::{Checkbox, TextField};
 
 impl EditorView {
     pub fn open_search(&mut self, replace: bool) {
@@ -85,19 +86,21 @@ impl EditorView {
         let enabled = !self.settings.read_only
             && !self.is_composing()
             && self.search.replacement_job.is_none();
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Find");
+        // Escape closes Find and the arrows move in the text, not the focus.
+        let keys = egui::EventFilter {
+            escape: true,
+            horizontal_arrows: true,
+            ..Default::default()
+        };
+        Row::new().wrap().show(ui, |ui| {
+            ui.add(Text::new("Find"));
             let response = ui.add(
-                egui::TextEdit::singleline(&mut self.search.query.text)
+                TextField::new(&mut self.search.query.text)
                     .id(id.with("find"))
-                    .desired_width(180.0)
-                    .hint_text("Find text")
+                    .width(180.0)
+                    .hint("Find text")
                     .char_limit(4096)
-                    .event_filter(egui::EventFilter {
-                        escape: true,
-                        horizontal_arrows: true,
-                        ..Default::default()
-                    }),
+                    .event_filter(keys),
             );
             query_changed |= response.changed();
             if self.search.focus {
@@ -115,52 +118,54 @@ impl EditorView {
                 self.search.navigation = Some(false);
             }
             query_changed |= ui
-                .checkbox(&mut self.search.query.match_case, "Match case")
+                .add(Checkbox::new(
+                    &mut self.search.query.match_case,
+                    "Match case",
+                ))
                 .changed();
             query_changed |= ui
-                .checkbox(&mut self.search.query.whole_word, "Whole word")
+                .add(Checkbox::new(
+                    &mut self.search.query.whole_word,
+                    "Whole word",
+                ))
                 .changed();
-            if ui.button("Previous").clicked() {
+            if ui.add(Button::new("Previous")).clicked() {
                 self.search.navigation = Some(false);
             }
-            if ui.button("Next").clicked() {
+            if ui.add(Button::new("Next")).clicked() {
                 self.search.navigation = Some(true);
             }
-            ui.checkbox(&mut self.search.replace, "Replace");
-            close = ui.button("Close find").clicked();
+            ui.add(Checkbox::new(&mut self.search.replace, "Replace"));
+            close = ui.add(Button::new("Close find")).clicked();
             if let Some(result) = &self.search.results {
-                ui.weak(format!("{} matches", result.count));
+                ui.add(Text::new(format!("{} matches", result.count)).muted());
             }
             if self.search.job.is_some() {
-                ui.spinner();
+                ui.add(Spinner::new());
             }
         });
         if self.search.replace {
-            ui.horizontal_wrapped(|ui| {
-                ui.label("With");
+            Row::new().wrap().show(ui, |ui| {
+                ui.add(Text::new("With"));
                 ui.add(
-                    egui::TextEdit::singleline(&mut self.search.replacement)
+                    TextField::new(&mut self.search.replacement)
                         .id(id.with("replace"))
-                        .desired_width(180.0)
-                        .hint_text("Replacement")
-                        .event_filter(egui::EventFilter {
-                            escape: true,
-                            horizontal_arrows: true,
-                            ..Default::default()
-                        }),
+                        .width(180.0)
+                        .hint("Replacement")
+                        .event_filter(keys),
                 );
                 replace_one = ui
-                    .add_enabled(enabled, egui::Button::new("Replace next"))
+                    .add_enabled(enabled, Button::new("Replace next"))
                     .clicked();
                 replace_all = ui
                     .add_enabled(
                         enabled && !self.search.query.text.is_empty(),
-                        egui::Button::new("Replace all"),
+                        Button::new("Replace all"),
                     )
                     .clicked();
                 if self.search.replacement_job.is_some() {
-                    ui.spinner();
-                    if ui.button("Cancel replace").clicked() {
+                    ui.add(Spinner::new());
+                    if ui.add(Button::new("Cancel replace")).clicked() {
                         self.search.replacement_job = None;
                         self.search.message = Some("Replacement cancelled".into());
                     }
@@ -289,7 +294,7 @@ impl EditorView {
             }
         }
         if let Some(message) = &self.search.message {
-            ui.weak(message);
+            ui.add(Text::new(message).muted());
         }
         if snapshot.revision != starting_revision {
             // A Find action may have queued a reveal before this replacement

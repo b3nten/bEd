@@ -8,7 +8,7 @@ use crate::{
     editor::EditorPanel,
     syntax::{DocumentSyntax, Observation},
 };
-use bedtime_ui::{UiContext, egui};
+use bedtime_ui::{Button, MenuItem, Text, UiContext, egui};
 use bedtime_workbench::{BedtimeWorldExt, DocumentReference};
 use bevy::prelude::*;
 use std::sync::Arc;
@@ -74,16 +74,13 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
         .stick_to_right(true)
         .show(&mut strip, |ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            ui.spacing_mut().button_padding = egui::vec2(4.0, 1.0);
-            let small = egui::FontId::proportional((context.metrics.font_size - 1.0).max(9.0));
-            let muted = bedtime_ui::theme::color(palette.muted);
-            ui.label(egui::RichText::new(&title).font(small.clone()).color(muted));
+            ui.add(Text::caption(&title).muted());
             let Some(trail) = trail else {
                 return;
             };
             let outline = &trail.observation.outline;
             for &index in &trail.path {
-                ui.label(egui::RichText::new("›").font(small.clone()).color(muted));
+                ui.add(Text::caption("›").muted());
                 let node = &outline[index];
                 let category = Category::of(&node.kind);
                 let side = (context.metrics.font_size - 1.0).clamp(10.0, 15.0);
@@ -96,10 +93,7 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
                     side,
                     bedtime_ui::theme::color(category.ink(&palette.syntax)),
                 );
-                let crumb = ui.add(
-                    egui::Button::new(egui::RichText::new(&node.label).font(small.clone()))
-                        .frame_when_inactive(false),
-                );
+                let crumb = ui.add(Button::new(&node.label).small().ghost());
                 egui::Popup::menu(&crumb)
                     .align(egui::RectAlign::TOP_START)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -114,7 +108,8 @@ pub(crate) fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>
                                     .filter(|(_, other)| other.parent == node.parent)
                                 {
                                     let label = sibling.1.label.as_str();
-                                    let response = ui.selectable_label(sibling.0 == index, label);
+                                    let response =
+                                        ui.add(MenuItem::new(label).checked(sibling.0 == index));
                                     if sibling.0 == index && response.rect.is_positive() {
                                         // Open at the current one.
                                         if ui.ctx().memory(|m| {
