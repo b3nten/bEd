@@ -10,6 +10,75 @@ The components are shown, with controls to try them, in the playground:
 cargo run -p bedui
 ```
 
+## Components
+
+Everything a panel is made of is a component: a plain `egui::Widget` with a
+builder, added with `ui.add(…)`. They take their theme, motion and icons from
+the `Ui`, and their sizes from its style, so they follow the zoom.
+
+```rust,ignore
+use bedtime_ui::prelude::*;
+
+Row::new().gap(Space::Sm).show(ui, |ui| {
+    ui.add(TextField::new(&mut name).hint("Name").fill_width());
+    if ui.add(Button::new("Save").primary()).tip("Save the file").clicked() {
+        save();
+    }
+});
+```
+
+- **Text:** `Text` (`caption`, `title`, `heading`; `.muted`, `.tone`, `.wrap`,
+  `.truncate`, `.selectable`, `.unselectable`), `Link`.
+- **Buttons:** `Button` (`primary`, `ghost`, `danger`; `.small`, `.large`;
+  `.icon`, `icon_only`; `.selected`), `Segmented`, `MenuButton`.
+- **Fields:** `TextField`, `TextArea`, `NumberField`, `ColorField`, `Select`,
+  `Slider` (`.vertical`, `.logarithmic`), `Checkbox`, `Toggle`.
+- **Lists and menus:** `ListRow`, `MenuItem` (`.shortcut`, `.checked`,
+  `.keep_open`, `.highlighted`), `Submenu`, `Table`, `Breadcrumbs`.
+- **Layout:** `Row`, `Column`, `Section`, `Separator`, and the tokens `Space`,
+  `Size`, `Radius`, `Tone`, `TextRole`.
+- **Feedback:** `Spinner`, and `Tip` (`.tip("…")` on any `Response`).
+
+The playground shows each one with controls to try it, in both themes:
+`cargo run -p bedui`. A widget is named, for scripts and screen readers, by
+its label; an icon-only button by the name it's given.
+
+## Drawing a panel with a system
+
+A panel's draw can be an ordinary read-only Bevy system (`draw` module): what
+it reads is in its parameters, and what it changes is queued and made when the
+draw is done. The compiler checks that it's read-only, which is what lets
+widgets read the world while it runs (`draw::world(ui)`) and queue their own
+changes (`draw::queue(ui, …)`).
+
+```rust,ignore
+impl Panel for Counter {
+    const LABEL: &'static str = "Counter";
+    fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+        draw::with_system(ui, world, context, panel, counter);
+    }
+}
+
+fn counter(PanelUi { ui, entity, state, .. }: PanelUi<Counter>, step: Res<Step>) {
+    ui.add(Text::heading(state.count.to_string()));
+    if ui.add(Button::new("Add")).clicked() {
+        let by = step.0;
+        draw::update(ui, entity, move |counter: &mut Counter| counter.count += by);
+    }
+}
+```
+
+- `with_system`: the panel's state is read (`PanelUi`), changes are queued.
+- `with_view`: a part of the panel that only drawing changes (what's selected,
+  hovered, typed) is lent to the system as `&mut` (`ViewUi`); the rest is read.
+- `with_lent`: the same for anything the caller took out of the world (a
+  resource and the panel together), with a closure that puts it back.
+- `with_world`: for a draw that still has `&mut World`, to use widgets that
+  read the world.
+
+What's lent is back in the world before queued changes are made, so a queued
+change to it is kept. A system can take `world: &World` beside `Commands`.
+
 ## Host integration
 
 Install Bevy's window, Winit, input, asset and renderer plugins before `UiPlugin`.
@@ -25,11 +94,10 @@ let view = register_view(world, window, draw_form);
 world.entity_mut(view).insert(FormState::default());
 
 fn draw_form(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
-    let mut frame = context.frame(ui);
     let mut form = world.get_mut::<FormState>(context.view).unwrap();
-    frame.ui.heading("My form");
-    frame.text_edit(egui::TextEdit::singleline(&mut form.name));
-    frame.ui.checkbox(&mut form.enabled, "Enabled");
+    ui.add(Text::heading("My form"));
+    ui.add(TextField::new(&mut form.name).label("Name"));
+    ui.add(Checkbox::new(&mut form.enabled, "Enabled"));
 }
 ```
 
@@ -154,10 +222,11 @@ Bedfont. Which families to offer is the host's choice. Layout and panel configur
 belongs to `layouts::LayoutSurface`, independently of `Theme`.
 The core has no layout configuration components (`layouts` adds them); ordinary egui widgets and layout
 remain available directly.
-`UiFrame` adds text edits, icons, tooltips, an
-animated toggle and `primary_button`. The primary button scopes accent colors
-over egui's inactive, hovered and active visuals, preserving native click/focus
-and disabled behavior without restyling adjacent widgets.
+Controls come from the component library (see Components): `Button`,
+`Toggle`, `TextField` and the rest read the theme and motion from the `Ui`
+they're added to, so they need no frame or context in hand. `UiFrame` keeps
+what does need the surface: icons drawn in the layout, `icon_ink_button`
+(titlebar tools) and `tooltip_ui`.
 Popup, menu and tooltip backgrounds scale outward from their source using bEd's
 96% → 100% cubic ease-out and a matching fade, with the surface's motion
 duration. The chosen placement supplies the pivot, including when a popup
@@ -322,7 +391,9 @@ selection as hex, text or its offset. `hex::HexView` is the bare view.
 `Floating` positions rounded control bars at corners or edge centers. Bars
 show on hover or while a menu is open, and fade otherwise; `shown(true)`
 forces visibility. Controls: `UiFrame::floating_button`, `floating_toggle`
-(accent underline when enabled) and `floating_label`.
+(it looks chosen while on) and `floating_label`. The buttons are ghost icon
+`Button`s, named by their tooltip without its key hint ("Fit (Double-Click)"
+is "Fit").
 
 ```rust,ignore
 Floating::new(id, rect, egui::Align2::CENTER_BOTTOM).show(&mut frame, |f| {
@@ -534,7 +605,7 @@ impl bedtime_ui::layouts::Panel for Notes {
     fn draw(ui: &mut egui::Ui, world: &mut World,
             context: &bedtime_ui::UiContext<'_>, panel: Entity) {
         let mut notes = world.get_mut::<Notes>(panel).unwrap();
-        context.frame(ui).text_edit(egui::TextEdit::singleline(&mut notes.text));
+        ui.add(TextField::new(&mut notes.text).fill_width());
     }
 }
 commands.spawn((Notes { text: "Draft".into() }, Place::focused()));
@@ -672,9 +743,9 @@ world.entity_mut(window).insert((
 ));
 
 fn draw_titlebar(ui: &mut egui::Ui, _: &mut World, context: &bedtime_ui::UiContext<'_>) {
-    let mut frame = context.frame(ui);
-    frame.ui.label("My application");
-    if frame.icon_button(bedtime_ui::BuiltinIcon::Plus).clicked() {
+    ui.add(Text::new("My application"));
+    let add = Button::icon_only(bedtime_ui::BuiltinIcon::Plus, "New").ghost();
+    if ui.add(add).tip("New").clicked() {
         // Submit the application's operation.
     }
 }
@@ -1019,13 +1090,10 @@ when allocating application controls directly.
 `rainbow_ink` supplies bEd's RGB sine cycle for editor carets/active line numbers
 and selected tree labels. `paint_chevron` and `animate_expansion` share filled
 right/down disclosure triangles and reversible 160 ms `ease` timing.
-`icon_button` animates its background and ink through hover, focus and press;
-with `visuals.button_frame = false` its resting background is transparent.
 `icon_ink_button` draws no background: hovering brightens the icon and pressing
-tints it (titlebar tools).
-`icon_button_sized` fixes the artwork's point size independently of the font;
-egui button padding still supplies the hit rectangle.
-Callers attach descriptive tooltips through the existing themed tooltip helper.
+tints it (titlebar tools); its artwork is a fixed point size and egui's button
+padding supplies the hit rectangle. Other icon buttons are
+`Button::icon_only(icon, name)`. Tooltips are `.tip("…")` on any response.
 All respect `MotionPolicy.enabled`.
 
 Hyperlinks and editor modifier-hover underlines use the live theme accent.
