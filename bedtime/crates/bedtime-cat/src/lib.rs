@@ -76,10 +76,22 @@ fn color_row(
     layer: bedtime_workbench::persistence::StoreId,
 ) {
     row::<CatColor>(ui, world, context, layer, None, |ui, chosen| {
-        let mut color = parse_color(chosen).unwrap_or(GREY);
-        let changed = ui.color_edit_button_srgb(&mut color).changed();
+        let [r, g, b] = parse_color(chosen).unwrap_or(GREY);
+        let mut color = [
+            f32::from(r) / 255.0,
+            f32::from(g) / 255.0,
+            f32::from(b) / 255.0,
+            1.0,
+        ];
+        let changed = ui.add(bedtime_ui::ColorField::new(&mut color)).changed();
         if changed {
-            *chosen = format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]);
+            let byte = |part: f32| (part.clamp(0.0, 1.0) * 255.0).round() as u8;
+            *chosen = format!(
+                "#{:02x}{:02x}{:02x}",
+                byte(color[0]),
+                byte(color[1]),
+                byte(color[2])
+            );
         }
         changed
     });

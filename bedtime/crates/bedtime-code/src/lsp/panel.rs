@@ -576,7 +576,7 @@ fn not_installed(ui: &mut egui::Ui, entry: &ServerEntry) {
         ui.add(Text::new(&entry.name));
         ui.add(Text::new(entry.languages.join(", ")).muted());
         if let Some(known) = entry.known {
-            ui.hyperlink_to("Get it", known.home);
+            ui.add(bedtime_ui::Link::new("Get it", known.home));
         }
     });
 }

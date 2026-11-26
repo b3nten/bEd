@@ -33,7 +33,7 @@ pub use slider::Slider;
 pub use spinner::Spinner;
 pub use stack::{Column, Row};
 pub use table::{Table, TableRows};
-pub use text::Text;
+pub use text::{Link, Text};
 pub use text_area::TextArea;
 pub use text_field::TextField;
 pub use tip::Tip;

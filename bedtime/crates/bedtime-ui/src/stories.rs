@@ -952,6 +952,12 @@ fn text(ui: &mut egui::Ui, knobs: &mut Knobs) {
             }
             ui.add(text);
         });
+        section(ui, "A link, and text that can't be selected", |ui| {
+            Row::new().show(ui, |ui| {
+                ui.add(Link::new("egui", "https://www.egui.rs"));
+                ui.add(Text::new("100%").muted().unselectable());
+            });
+        });
         section(ui, "Roles", |ui| {
             for role in TextRole::ALL {
                 ui.add(Text::new(format!("{role:?}: {sample}")).role(role));

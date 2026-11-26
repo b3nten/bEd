@@ -133,11 +133,7 @@ impl UiFrame<'_> {
 
     /// Small, quiet text in a floating bar ("100%", "0:12 / 1:30").
     pub fn floating_label(&mut self, text: impl Into<String>) -> egui::Response {
-        let font = egui::FontId::monospace(self.metrics.font_size * 0.85);
-        let ink = theme::color(self.theme.palette.muted);
-        self.ui.add(
-            egui::Label::new(egui::RichText::new(text.into()).font(font).color(ink))
-                .selectable(false),
-        )
+        self.ui
+            .add(crate::Text::caption(text).muted().unselectable())
     }
 }

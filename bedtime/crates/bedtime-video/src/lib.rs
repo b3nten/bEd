@@ -325,7 +325,7 @@ fn draw(
             ui.ctx().request_repaint();
             ui.put(
                 egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(24.0)),
-                egui::Spinner::new(),
+                bedtime_ui::Spinner::new().size(bedtime_ui::Size::Lg),
             );
             return;
         }

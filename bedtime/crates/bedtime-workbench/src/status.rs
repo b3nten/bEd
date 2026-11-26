@@ -925,12 +925,7 @@ fn draw(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, content: egui
         let spare = (content.right() - left) - panel_width - updates_width - gap * 2.0;
         if spare >= width + gap * 4.0 {
             let at = row(content.right() - width, width);
-            ui.put(
-                at,
-                egui::Label::new(egui::RichText::new(name).color(color))
-                    .truncate()
-                    .selectable(false),
-            );
+            ui.put(at, Text::new(name).color(color).truncate().unselectable());
             right = at.left() - gap * 2.0;
         }
     }

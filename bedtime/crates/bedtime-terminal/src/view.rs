@@ -1201,7 +1201,7 @@ impl TerminalView {
                     egui::PopupAnchor::Pointer,
                 )
                 .show(|ui| {
-                    ui.label(egui::RichText::new(text).monospace());
+                    ui.add(bedtime_ui::Text::new(text));
                 });
             }
         }

@@ -20,7 +20,7 @@ pub struct Text {
     strikethrough: bool,
     wrap: bool,
     clickable: bool,
-    selectable: bool,
+    selectable: Option<bool>,
 }
 
 impl Text {
@@ -37,7 +37,7 @@ impl Text {
             strikethrough: false,
             wrap: false,
             clickable: false,
-            selectable: false,
+            selectable: None,
         }
     }
     pub fn caption(text: impl Into<String>) -> Self {
@@ -92,7 +92,13 @@ impl Text {
     /// Its text can be selected and copied, even where labels otherwise
     /// can't be: something worth taking away, like a signature.
     pub fn selectable(mut self) -> Self {
-        self.selectable = true;
+        self.selectable = Some(true);
+        self
+    }
+    /// Its text can't be selected, even where labels otherwise can: text
+    /// that's part of the chrome (a status bar's, a toolbar's).
+    pub fn unselectable(mut self) -> Self {
+        self.selectable = Some(false);
         self
     }
     /// It can be clicked (`response.clicked()`): a name that goes somewhere.
@@ -139,12 +145,48 @@ impl egui::Widget for Text {
         } else if self.wrap {
             label = label.wrap();
         }
-        if self.selectable {
-            label = label.selectable(true);
+        if let Some(selectable) = self.selectable {
+            label = label.selectable(selectable);
         }
         if self.clickable {
             label = label.sense(egui::Sense::click());
         }
         ui.add(label)
+    }
+}
+
+/// Text that opens an address in the browser when it's clicked.
+///
+/// ```ignore
+/// ui.add(Link::new("Get it", "https://rust-analyzer.github.io"));
+/// ```
+#[must_use = "a link does nothing until it's added to a Ui"]
+pub struct Link {
+    text: String,
+    url: String,
+    role: TextRole,
+}
+
+impl Link {
+    pub fn new(text: impl Into<String>, url: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            url: url.into(),
+            role: TextRole::Body,
+        }
+    }
+    pub fn role(mut self, role: TextRole) -> Self {
+        self.role = role;
+        self
+    }
+}
+
+impl egui::Widget for Link {
+    fn ui(self, ui: &mut egui::Ui) -> egui::Response {
+        let theme = Theme::of(ui);
+        let text = egui::RichText::new(self.text)
+            .font(egui::FontId::proportional(self.role.size(ui)))
+            .color(theme::color(theme.palette.accent));
+        ui.add(egui::Hyperlink::from_label_and_url(text, self.url))
     }
 }
