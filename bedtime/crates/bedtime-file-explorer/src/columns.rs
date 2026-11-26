@@ -15,7 +15,7 @@ use std::path::Path;
 
 pub(crate) fn draw(
     ui: &mut egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &UiContext<'_>,
     shown: &Shown<'_>,
     view: &mut ExplorerView,
@@ -118,7 +118,7 @@ pub(crate) fn draw(
 #[allow(clippy::too_many_arguments)]
 fn draw_column(
     ui: &mut egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &UiContext<'_>,
     shown: &Shown<'_>,
     view: &mut ExplorerView,
@@ -200,7 +200,7 @@ fn draw_column(
 #[allow(clippy::too_many_arguments)]
 fn interact(
     ui: &mut egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &UiContext<'_>,
     view: &mut ExplorerView,
     row: &Row,

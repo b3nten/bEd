@@ -19,7 +19,14 @@ use std::path::{Path, PathBuf};
 impl Panel for FileExplorer {
     const LABEL: &'static str = "Files";
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        draw(ui, world, context, panel);
+        bedtime_ui::draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |view: &mut ExplorerView| view,
+            explorer,
+        );
     }
 }
 
@@ -213,7 +220,20 @@ pub(crate) fn folder_of(row: &Row) -> PathBuf {
     }
 }
 
-fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+/// The panel, drawn: a system that reads the folders, with the panel's view
+/// (its rows, selection and what's being named) lent to it. What's asked
+/// for is applied in `Update`.
+fn explorer(
+    bedtime_ui::ViewUi {
+        ui,
+        entity: panel,
+        view,
+        context,
+    }: bedtime_ui::ViewUi<ExplorerView>,
+    world: &World,
+    mut commands: Commands,
+) {
+    let context = &context;
     let root = match world.resource::<Folders>().root() {
         Some(Ok(root)) => root.to_owned(),
         problem => {
@@ -227,9 +247,6 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
                 });
             return;
         }
-    };
-    let Some(mut view) = world.entity_mut(panel).take::<ExplorerView>() else {
-        return;
     };
     let defaults = world
         .get_resource::<FileExplorerDefaults>()
@@ -262,10 +279,10 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
     match showing {
         Showing::Tree => {
             if let Some(tree) = world.get::<FileExplorer>(panel) {
-                refresh_rows(&root, tree, world.resource::<Folders>(), filter, &mut view);
+                refresh_rows(&root, tree, world.resource::<Folders>(), filter, view);
             }
         }
-        Showing::Columns => refresh_columns(&root, world.resource::<Folders>(), filter, &mut view),
+        Showing::Columns => refresh_columns(&root, world.resource::<Folders>(), filter, view),
     }
     let ctx = ui.ctx().clone();
     let focused = world
@@ -300,31 +317,22 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         keys,
     };
     match showing {
-        Showing::Tree => draw_tree(
-            &mut body_ui,
-            world,
-            context,
-            &shown,
-            &mut view,
-            &mut intents,
-        ),
-        Showing::Columns => crate::columns::draw(
-            &mut body_ui,
-            world,
-            context,
-            &shown,
-            &mut view,
-            &mut intents,
-        ),
+        Showing::Tree => draw_tree(&mut body_ui, world, context, &shown, view, &mut intents),
+        Showing::Columns => {
+            crate::columns::draw(&mut body_ui, world, context, &shown, view, &mut intents)
+        }
     }
-    footer(ui, footer_rect, &shown, showing, &mut view, &mut intents);
+    footer(ui, footer_rect, &shown, showing, view, &mut intents);
     ui.advance_cursor_after_rect(whole);
-    world.entity_mut(panel).insert(view);
     // Applied in `Update`: opening can close panels the layout is drawing.
-    world
-        .resource_mut::<Intents>()
-        .0
-        .extend(intents.into_iter().map(|intent| (panel, intent)));
+    if !intents.is_empty() {
+        commands.queue(move |world: &mut World| {
+            world
+                .resource_mut::<Intents>()
+                .0
+                .extend(intents.into_iter().map(|intent| (panel, intent)));
+        });
+    }
 }
 
 /// What both views draw from.
@@ -353,7 +361,7 @@ pub(crate) fn selected_row(view: &ExplorerView) -> Option<Row> {
 
 fn draw_tree(
     ui: &mut egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &UiContext<'_>,
     shown: &Shown<'_>,
     view: &mut ExplorerView,
