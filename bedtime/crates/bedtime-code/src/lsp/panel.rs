@@ -5,7 +5,7 @@ use super::{
     InstalledServers, ServerCatalog, ServerEntry, ServerSettings, ServerStatus, config::resolve,
     restart, server_states,
 };
-use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, egui, theme};
+use bedtime_ui::{BuiltinIcon, UiContext, UiFrame, ViewUi, draw, egui, theme};
 use bedtime_ui::{
     Button, MenuItem, Row, Section, Space, Table, Text, TextArea, TextField, Tip, Toggle, Tone,
 };
@@ -134,67 +134,79 @@ impl Panel for LanguageServersPanel {
     const LABEL: &'static str = "Language Servers";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let mut asked = Vec::new();
-        egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
-            let Some(layer) = layer_tabs(ui, world, |_, label| label.to_owned()) else {
-                return;
-            };
-            // The first layer is everywhere's (global); later ones override it.
-            let note = if world.bedtime().settings().layers().next() == Some(layer) {
-                "Changes here apply to every workspace."
-            } else {
-                "Changes here apply to this workspace, over the global ones."
-            };
-            ui.add(Text::caption(note).muted().wrap());
-            ui.add_space(Space::Xs.px(ui));
-            let entries = resolve(layers(world, Some(layer)).iter());
-            let states = server_states(world);
-            let Some(mut panel_state) = world
-                .get_mut::<LanguageServersPanel>(panel)
-                .map(|mut panel| std::mem::take(&mut panel.state))
-            else {
-                return;
-            };
-            let installed = world.resource::<InstalledServers>();
-            let (missing, shown): (Vec<&ServerEntry>, Vec<&ServerEntry>) =
-                entries.iter().partition(|entry| {
-                    entry.known.is_some() && matches!(installed.program(&entry.program), Some(None))
-                });
-            let frame = context.frame(ui);
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(frame.ui, |ui| {
-                    let mut frame = context.frame(ui);
-                    for entry in &shown {
-                        let found = installed.program(&entry.program);
-                        server_card(
-                            &mut frame,
-                            entry,
-                            found,
-                            &states,
-                            &mut panel_state,
-                            &mut asked,
-                        );
-                    }
-                    add_server(frame.ui, &mut panel_state, &mut asked);
-                    frame.ui.add_space(Space::Md.px(frame.ui));
-                    Section::new(format!("Not installed ({})", missing.len()))
-                        .id("not-installed")
-                        .show(frame.ui, |ui| {
-                            for entry in &missing {
-                                not_installed(ui, entry);
-                            }
-                            if ui.add(Button::new("Look Again")).clicked() {
-                                asked.push(Asked::LookAgain);
-                            }
-                        });
-                });
-            if let Some(mut panel) = world.get_mut::<LanguageServersPanel>(panel) {
-                panel.state = panel_state;
-            }
-            apply(world, layer, panel, std::mem::take(&mut asked));
-        });
+        draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |panel: &mut LanguageServersPanel| &mut panel.state,
+            language_servers,
+        );
     }
+}
+
+/// The panel, drawn: a system that reads the settings, the servers running
+/// and the ones installed, with the panel's state (what's expanded and being
+/// typed) lent to it. What's asked for is done when the draw is.
+fn language_servers(
+    ViewUi {
+        ui,
+        entity: panel,
+        view: panel_state,
+        context,
+    }: ViewUi<PanelState>,
+    installed: Res<InstalledServers>,
+    servers: Query<(Entity, &crate::lsp::LanguageServer)>,
+    world: &World,
+    mut commands: Commands,
+) {
+    let context = &context;
+    let mut asked = Vec::new();
+    egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
+        let Some(layer) = layer_tabs(ui, world, |_, label| label.to_owned()) else {
+            return;
+        };
+        // The first layer is everywhere's (global); later ones override it.
+        let note = if world.bedtime().settings().layers().next() == Some(layer) {
+            "Changes here apply to every workspace."
+        } else {
+            "Changes here apply to this workspace, over the global ones."
+        };
+        ui.add(Text::caption(note).muted().wrap());
+        ui.add_space(Space::Xs.px(ui));
+        let entries = resolve(layers(world, Some(layer)).iter());
+        let states = server_states(&servers);
+        let (missing, shown): (Vec<&ServerEntry>, Vec<&ServerEntry>) =
+            entries.iter().partition(|entry| {
+                entry.known.is_some() && matches!(installed.program(&entry.program), Some(None))
+            });
+        let frame = context.frame(ui);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(frame.ui, |ui| {
+                let mut frame = context.frame(ui);
+                for entry in &shown {
+                    let found = installed.program(&entry.program);
+                    server_card(&mut frame, entry, found, &states, panel_state, &mut asked);
+                }
+                add_server(frame.ui, panel_state, &mut asked);
+                frame.ui.add_space(Space::Md.px(frame.ui));
+                Section::new(format!("Not installed ({})", missing.len()))
+                    .id("not-installed")
+                    .show(frame.ui, |ui| {
+                        for entry in &missing {
+                            not_installed(ui, entry);
+                        }
+                        if ui.add(Button::new("Look Again")).clicked() {
+                            asked.push(Asked::LookAgain);
+                        }
+                    });
+            });
+        if !asked.is_empty() {
+            let asked = std::mem::take(&mut asked);
+            commands.queue(move |world: &mut World| apply(world, layer, panel, asked));
+        }
+    });
 }
 
 fn apply(world: &mut World, layer: StoreId, panel: Entity, asked: Vec<Asked>) {

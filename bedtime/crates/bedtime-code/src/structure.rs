@@ -10,7 +10,7 @@ use crate::{
     syntax::{AnalysisStatus, DocumentSyntax, Observation, ObservationKey},
 };
 use bedtime_document::TextBuffer;
-use bedtime_ui::{UiContext, egui};
+use bedtime_ui::{UiContext, ViewUi, draw, egui};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{BedtimeWorldExt, DocumentReference, Panel};
@@ -354,14 +354,44 @@ impl Panel for StructurePanel {
     const LABEL: &'static str = "Structure";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let Some(mut state) = world.entity_mut(panel).take::<Self>() else {
+        draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |state: &mut StructurePanel| state,
+            structure,
+        );
+    }
+}
+
+/// The panel, drawn: a system that reads the world, with the panel (all of
+/// it is its own state) lent to it. What's asked for (revealing, peeking,
+/// focusing the editor) is done when the draw is.
+fn structure(
+    ViewUi {
+        ui,
+        entity: panel,
+        view: state,
+        context,
+    }: ViewUi<StructurePanel>,
+    world: &World,
+    mut commands: Commands,
+) {
+    state.refresh(world);
+    let intents = view::draw(ui, world, &context, panel, state);
+    if intents.list.is_empty() {
+        return;
+    }
+    commands.queue(move |world: &mut World| {
+        // Out of the world while it's changed, as what's asked for changes
+        // both.
+        let Some(mut state) = world.entity_mut(panel).take::<StructurePanel>() else {
             return;
         };
-        state.refresh(world);
-        let intents = view::draw(ui, world, context, panel, &mut state);
         view::apply(world, &mut state, intents);
         world.entity_mut(panel).insert(state);
-    }
+    });
 }
 
 #[cfg(test)]

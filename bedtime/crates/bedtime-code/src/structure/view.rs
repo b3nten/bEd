@@ -130,7 +130,7 @@ pub(super) fn arrange(
 
 pub(super) fn draw(
     ui: &mut egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &UiContext<'_>,
     panel: Entity,
     state: &mut StructurePanel,

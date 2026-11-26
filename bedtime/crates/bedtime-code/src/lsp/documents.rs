@@ -338,10 +338,11 @@ pub fn restart(world: &mut World, server: Entity) -> Result<(), String> {
 
 /// Each running server's state, by its name in the catalog: the server,
 /// its status, and how many documents it has.
-pub fn server_states(world: &mut World) -> HashMap<String, (Entity, ServerStatus, usize)> {
-    world
-        .query::<(Entity, &LanguageServer)>()
-        .iter(world)
+pub fn server_states(
+    servers: &Query<(Entity, &LanguageServer)>,
+) -> HashMap<String, (Entity, ServerStatus, usize)> {
+    servers
+        .iter()
         .map(|(entity, server)| {
             (
                 server.launch.config.name.clone(),
