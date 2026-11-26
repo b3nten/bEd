@@ -1,6 +1,6 @@
 """Web browser: a new panel is blank; an address typed in its field loads,
 and the page's title shows in the tab; Back returns to the page
-before. The page is drawn in the panel by default, and by the system's web
+before. The address bar hides and shows again, and the panel remembers. The page is drawn in the panel by default, and by the system's web
 view over it with `web.draw_pages` off.
 
 The web view is a native view: the automation's clicks and keys don't reach
@@ -47,6 +47,13 @@ def until(bed, check, what, seconds=30):
     raise AssertionError(f"never: {what}; showing {[s for s in shown if s]}")
 
 
+def hidden(bed):
+    """Whether the web panel's address bar is hidden, as the panel has it."""
+    panel = "bedtime_web::WebPanel"
+    rows = bed.call("world.query", {"data": {"components": [panel]}})
+    return rows[0]["components"][panel]["address_bar_hidden"]
+
+
 def go(bed, address):
     bed.click(bed.find(role="TextInput"))
     bed.key("Primary+A")
@@ -76,6 +83,19 @@ for name, settings in [("web", {}), ("web_overlay", {"web.draw_pages": False})]:
         until(bed, lambda: bed.exists("first page"), "Back returns to the first page")
         bed.click("Forward")
         until(bed, lambda: bed.exists("second page"), "Forward goes on to the second")
+
+        # The address bar hides (its keys, with the panel focused) and shows
+        # again (the action), and the panel remembers which.
+        bed.key("Primary+Shift+U")
+        until(bed, lambda: not bed.exists("Back"), "the keys hide the address bar")
+        assert not any(w["role"] == "TextInput" for w in bed.widgets()), "its field goes too"
+        assert hidden(bed) is True, "the panel remembers it's hidden"
+        bed.wait(30)
+        bed.screenshot(name + "_bar_hidden")
+        bed.invoke("web.toggle_address_bar")
+        until(bed, lambda: bed.exists("Back"), "the action shows it again")
+        assert hidden(bed) is False
+        assert bed.exists("second page"), "the page is still there"
         assert not bed.status()["errors"]
 
 # From a terminal: `+web` takes anything as an address; `+open` takes what is

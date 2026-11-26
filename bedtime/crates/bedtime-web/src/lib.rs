@@ -4,6 +4,11 @@
 //! pointer is over it. The page's title is the tab's, and its address is
 //! saved with the panel.
 //!
+//! The address bar can be hidden, leaving the page the whole panel
+//! (`WebPanel::address_bar_hidden`, saved with the panel): Toggle Address
+//! Bar does it for the focused panel, and so does an item at the end of the
+//! page's own right-click menu.
+//!
 //! The web view is a native view, not part of the app's picture. By default
 //! (`DrawWebPages`) it's kept see-through over the panel, taking the mouse
 //! and keyboard, while the panel draws snapshots of it taken one after
@@ -85,6 +90,7 @@ pub fn open_url(world: &mut World, url: &str, from: Option<Entity>) -> Result<En
     world.bedtime_mut().open_panel_at(
         WebPanel {
             url: url.to_string(),
+            ..default()
         },
         from.map_or(Placement::Focused, Placement::From),
     )
@@ -126,13 +132,29 @@ impl Default for WebOptions {
     }
 }
 
-/// A web page. Its address is saved with the panel; a new panel is blank.
+/// A web page. Its address is saved with the panel, and whether its address
+/// bar is hidden; a new panel is blank, with the bar showing.
 #[bedtime_ui::panel]
 #[derive(Reflect, Default)]
 #[reflect(Component, Default, Persist)]
 #[cfg_attr(target_os = "macos", require(view::WebBar))]
 pub struct WebPanel {
     pub url: String,
+    /// The address bar isn't shown: the page has the whole panel.
+    #[reflect(default)]
+    pub address_bar_hidden: bool,
+}
+
+/// Hide the focused web panel's address bar, or show it again.
+pub struct ToggleAddressBar;
+impl bedtime_workbench::Action for ToggleAddressBar {
+    const KEY: &'static str = "web.toggle_address_bar";
+    const LABEL: &'static str = "Toggle Address Bar";
+    const DEFAULT_KEYS: &'static [bedtime_workbench::KeyChord] =
+        &[bedtime_workbench::KeyChord::new(
+            bedtime_workbench::Modifiers::PRIMARY.union(bedtime_workbench::Modifiers::SHIFT),
+            bevy::input::keyboard::KeyCode::KeyU,
+        )];
 }
 
 impl Panel for WebPanel {

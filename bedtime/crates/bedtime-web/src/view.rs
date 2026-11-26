@@ -33,9 +33,23 @@ use wry::{
 };
 
 pub fn install(app: &mut App) {
+    use bedtime_workbench::{ActionAppExt, Handler};
     app.add_panel::<WebPanel>()
         .insert_non_send(Views::default())
-        .add_systems(First, follow_panels);
+        .add_systems(First, follow_panels)
+        .add_action_handler::<crate::ToggleAddressBar>(
+            Handler::new(|world, invocation| {
+                let mut web = invocation
+                    .entity
+                    .and_then(|panel| world.get_mut::<WebPanel>(panel))
+                    .ok_or("No web panel is focused")?;
+                web.address_bar_hidden = !web.address_bar_hidden;
+                Ok(())
+            })
+            .available_when(|world, panel| {
+                panel.is_some_and(|panel| world.get::<WebPanel>(panel).is_some())
+            }),
+        );
 }
 
 /// What a web panel keeps while it's open, besides its web view.
@@ -82,6 +96,12 @@ struct View {
     /// many snapshots in a row haven't.
     pixels: Vec<u8>,
     unchanged: u32,
+}
+
+impl Drop for View {
+    fn drop(&mut self) {
+        native::forget_menu_item(&self.webview);
+    }
 }
 
 /// Wakes the app at the times it's given: a thread that sleeps until the
@@ -178,7 +198,10 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel
     let panel_focused = world
         .get::<PanelPresentation>(panel)
         .is_some_and(|presentation| presentation.focused);
-    let Some(saved_url) = world.get::<WebPanel>(panel).map(|web| web.url.clone()) else {
+    let Some((saved_url, bar_hidden)) = world
+        .get::<WebPanel>(panel)
+        .map(|web| (web.url.clone(), web.address_bar_hidden))
+    else {
         return;
     };
     let Some(mut bar) = world
@@ -206,7 +229,12 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel
     // squares off the top).
     let all = ui.available_rect_before_wrap();
     ui.allocate_rect(all, egui::Sense::hover());
-    let bar_height = ui.spacing().interact_size.y + 8.0;
+    // Hidden, the page has the whole panel.
+    let bar_height = if bar_hidden {
+        0.0
+    } else {
+        ui.spacing().interact_size.y + 8.0
+    };
     let (rect, below) = all.split_top_bottom_at_y((all.max.y - bar_height).max(all.min.y));
 
     let was_editing = bar.editing;
@@ -215,11 +243,15 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel
         bar.address
             .clone_from(if hover.is_empty() { &url } else { &hover });
     }
-    let go = ui
-        .scope_builder(egui::UiBuilder::new().max_rect(below), |ui| {
+    let go = if bar_hidden {
+        bar.editing = false;
+        None
+    } else {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(below), |ui| {
             address_bar(ui, &mut bar, loading)
         })
-        .inner;
+        .inner
+    };
     // An address it was sent to (`open_url`), once its web view exists.
     let sent = view
         .is_some()
@@ -368,6 +400,15 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
+        }
+
+        // The page's own menu ends with hiding (or showing) the address
+        // bar: it's told which, and says when that was chosen.
+        if native::menu_chose_toggle(&view.webview, bar_hidden)
+            && let Some(mut web) = world.get_mut::<WebPanel>(panel)
+        {
+            web.address_bar_hidden = !bar_hidden;
+            ui.ctx().request_repaint();
         }
 
         // The web view keeps its own history.
@@ -581,6 +622,8 @@ fn create(world: &mut World, surface: Entity, bounds: [i32; 4], url: &str) -> Re
         })
         .build_as_child(&window)
         .map_err(|error| error.to_string())?;
+    let menu_wake = waker.clone();
+    native::add_menu_item(&webview, move || menu_wake.wake());
     Ok(View {
         webview,
         alarm: Alarm::new(waker.clone()),
