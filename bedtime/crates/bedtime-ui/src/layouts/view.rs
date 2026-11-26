@@ -5,6 +5,7 @@ use super::{
     geometry, *, {GeometrySnapshot, plan_tab_geometry},
 };
 use crate::Tip;
+use crate::{MenuItem, Text};
 use crate::{
     UiContext, UiDraw, UiFrame,
     egui::{self, CursorIcon, Key, PointerButton},
@@ -1309,7 +1310,7 @@ fn draw(
             }
             if !state.suppress_context && settings.panel_closure {
                 response.context_menu(|ui| {
-                    if ui.button("Close area").clicked() {
+                    if ui.add(MenuItem::new("Close area")).clicked() {
                         edits.push(LayoutEdit::CloseArea(group.entity));
                         ui.close();
                     }
@@ -1603,11 +1604,10 @@ fn draw(
                             .map(|i| group.tabs[i].entity)
                             .collect();
                         if ui
-                            .add_enabled(!tabs.is_empty(), egui::Button::new(label))
+                            .add_enabled(!tabs.is_empty(), MenuItem::new(label))
                             .clicked()
                         {
                             edits.push(LayoutEdit::ClosePanels(tabs));
-                            ui.close();
                         }
                     }
                 });
@@ -1703,7 +1703,9 @@ fn draw(
                                 }
                                 show_zoom(content_frame.ui, world, &context, panel, er(content));
                             } else {
-                                content_frame.ui.weak("This panel has no content renderer.");
+                                content_frame
+                                    .ui
+                                    .add(Text::new("This panel has no content renderer.").muted());
                             }
                         },
                     );

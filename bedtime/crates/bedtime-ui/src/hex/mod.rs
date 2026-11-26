@@ -3,6 +3,7 @@
 //! label and a menu copying the selection as hex, text or its offset
 //! (`HexViewer`). Only the rows on screen are drawn.
 use crate::{Floating, UiContext, egui, theme};
+use crate::{MenuItem, Separator, Space};
 
 mod view;
 pub use view::{
@@ -249,25 +250,25 @@ fn draw_bar(
 fn menu(ui: &mut egui::Ui, hex: &mut HexViewer, bytes: &[u8]) {
     let len = bytes.len() as u64;
     let selection = hex.view.selection(len);
-    if ui.button("Copy as Hex").clicked() {
+    if ui.add(MenuItem::new("Copy as Hex")).clicked() {
         ui.ctx().copy_text(copy_hex(bytes, selection.clone()));
     }
-    if ui.button("Copy as Text").clicked() {
+    if ui.add(MenuItem::new("Copy as Text")).clicked() {
         let range = selection.start as usize..selection.end as usize;
         ui.ctx()
             .copy_text(String::from_utf8_lossy(&bytes[range]).into_owned());
     }
-    if ui.button("Copy Offset").clicked() {
+    if ui.add(MenuItem::new("Copy Offset")).clicked() {
         ui.ctx().copy_text(format!("0x{:X}", selection.start));
     }
-    ui.separator();
-    if ui.button("Select All").clicked() {
+    ui.add(Separator::new().space(Space::Xs));
+    if ui.add(MenuItem::new("Select All")).clicked() {
         hex.view.select_all(len);
     }
-    if ui.button("Find…").clicked() {
+    if ui.add(MenuItem::new("Find…")).clicked() {
         open_bar(hex, Mode::Find);
     }
-    if ui.button("Go to Offset…").clicked() {
+    if ui.add(MenuItem::new("Go to Offset…")).clicked() {
         open_bar(hex, Mode::GoTo);
     }
 }

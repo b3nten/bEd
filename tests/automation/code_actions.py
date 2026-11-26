@@ -91,8 +91,20 @@ with tempfile.TemporaryDirectory() as folder:
             bed.key("ArrowDown")
         for _ in range(12):
             bed.key("ArrowRight")
-        bed.key("Shift+F12")
-        until(bed, lambda: bed.exists(contains="references to helper"), "references are listed")
+        # rust-analyzer says it's ready before it starts loading the Cargo
+        # project, and declines requests while it loads ("is loading the
+        # project"): ask again until it answers.
+        def references():
+            if bed.exists(contains="references to helper"):
+                return True
+            bed.key("Shift+F12")
+            for _ in range(30):
+                if bed.exists(contains="references to helper"):
+                    return True
+                bed.wait(10)
+            return False
+
+        until(bed, references, "references are listed", seconds=120)
         assert bed.exists(contains="pub fn helper"), "the definition's line is listed"
         bed.screenshot("code-actions-references")
 

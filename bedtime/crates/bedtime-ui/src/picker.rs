@@ -7,6 +7,7 @@
 //! filtering, labels, painting); `Picker::show` draws them and says what
 //! happened. It doesn't touch the world, so what choosing does is the
 //! caller's.
+use crate::Text;
 use crate::UiContext;
 use bevy_egui::egui;
 
@@ -204,16 +205,13 @@ impl Picker {
         state.scroll |= moved;
         let mut chosen = enter.then_some(state.selected).filter(|_| count > 0);
         let row_height = crate::tree::row_height(context);
-        let field_width = ui.available_width();
         let field = ui.add(
-            egui::TextEdit::singleline(&mut state.query)
+            crate::TextField::new(&mut state.query)
                 .id(self.id)
-                .hint_text(self.hint.as_str())
-                .desired_width(field_width),
+                .hint(self.hint.as_str())
+                .label(self.hint.as_str())
+                .fill_width(),
         );
-        field.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, &self.hint)
-        });
         if !state.focused {
             field.request_focus();
             state.focused = true;
@@ -222,7 +220,7 @@ impl Picker {
         ui.add_space(4.0);
         let count = rows.len();
         if count == 0 {
-            ui.weak(self.empty.as_str());
+            ui.add(Text::new(self.empty.as_str()).muted());
         } else {
             ui.spacing_mut().item_spacing.y = 0.0;
             // As tall as its rows (up to `max_rows`), whatever room the

@@ -3,6 +3,7 @@
 //! rest of the window is disabled while one shows.
 use super::LayoutSurface;
 use crate::egui;
+use crate::{Button, Text};
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
@@ -210,27 +211,22 @@ pub(crate) fn draw(ctx: &egui::Context, world: &mut World, surface: Entity) -> b
     let response = egui::Modal::new(id).show(ctx, |ui| {
         let width = (ctx.content_rect().width() - 48.0).clamp(0.0, 460.0);
         ui.set_width(width);
-        ui.heading(&dialog.title);
-        ui.add(egui::Label::new(&dialog.message).wrap());
+        ui.add(Text::heading(&dialog.title));
+        ui.add(Text::new(&dialog.message).wrap());
         if let Some(details) = &dialog.details {
-            egui::CollapsingHeader::new("Technical details")
-                .id_salt(presentation)
-                .default_open(false)
+            crate::Section::new("Technical details")
+                .id(("details", presentation))
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .max_height(200.0)
                         .show(ui, |ui| {
-                            ui.add(
-                                egui::Label::new(egui::RichText::new(details).monospace())
-                                    .selectable(true)
-                                    .wrap(),
-                            );
+                            ui.add(Text::new(details).selectable().wrap());
                         });
                 });
         }
         ui.add_space(8.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.button("OK").clicked()
+            ui.add(Button::new("OK")).clicked()
         })
         .inner
     });

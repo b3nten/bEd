@@ -2,6 +2,7 @@
 //! Arrays and tables show their size; scalars their value, coloured by kind.
 //! Right-click copies a value (as JSON) or its path, or opens or closes all.
 use super::{Key, Kind, Value, path_text};
+use crate::{MenuItem, Separator, Space, Text};
 use crate::{UiContext, egui, theme, theme::SyntaxPalette};
 use std::{collections::HashSet, sync::Arc};
 
@@ -161,10 +162,10 @@ fn draw(ui: &mut egui::Ui, context: &UiContext<'_>, tree: &mut DataTree) -> bool
     if rows.is_empty() {
         // A document that's a single scalar, or an empty container.
         egui::Frame::NONE.inner_margin(14).show(ui, |ui| {
-            ui.label(match &*value {
+            ui.add(Text::new(match &*value {
                 Value::Scalar(..) => value.summary(),
                 _ => format!("Empty ({})", value.summary()),
-            });
+            }));
         });
     } else {
         egui::ScrollArea::both()
@@ -193,17 +194,17 @@ fn draw(ui: &mut egui::Ui, context: &UiContext<'_>, tree: &mut DataTree) -> bool
                         });
                     }
                     response.context_menu(|ui| {
-                        if ui.button("Copy Value").clicked() {
+                        if ui.add(MenuItem::new("Copy Value")).clicked() {
                             ui.ctx().copy_text(item.to_json());
                         }
-                        if ui.button("Copy Path").clicked() {
+                        if ui.add(MenuItem::new("Copy Path")).clicked() {
                             ui.ctx().copy_text(row.path.clone());
                         }
-                        ui.separator();
-                        if ui.button("Expand All").clicked() {
+                        ui.add(Separator::new().space(Space::Xs));
+                        if ui.add(MenuItem::new("Expand All")).clicked() {
                             command = Some(Command::ExpandAll);
                         }
-                        if ui.button("Collapse All").clicked() {
+                        if ui.add(MenuItem::new("Collapse All")).clicked() {
                             command = Some(Command::CollapseAll);
                         }
                     });

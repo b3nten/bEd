@@ -1,5 +1,6 @@
 //! Tree rows shared by Files, Git and Structure. Callers own rows, identity,
 //! viewport culling and actions; this module never reads a filesystem.
+use crate::Text;
 use crate::{BuiltinIcon, MotionPolicy, UiContext, egui};
 
 pub const INSET: f32 = 8.0;
@@ -212,7 +213,7 @@ pub fn tooltip(
 ) {
     let text = text.into();
     tooltip_ui(ui, context, response, |frame| {
-        frame.ui.label(text);
+        frame.ui.add(Text::new(text));
     });
 }
 

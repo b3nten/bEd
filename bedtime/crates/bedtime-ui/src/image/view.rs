@@ -5,6 +5,7 @@
 //! smoothing).
 use super::{Decoded, ImageTransform};
 use crate::{BuiltinIcon, Floating, UiContext, egui, theme};
+use crate::{MenuItem, Separator, Space, Submenu};
 use bevy::prelude::Reflect;
 use std::sync::Arc;
 
@@ -325,41 +326,50 @@ impl ImageView {
     }
 
     fn menu(&mut self, ui: &mut egui::Ui, animated: bool, asked: &mut Asked) {
-        if ui.button("Fit").clicked() {
+        if ui.add(MenuItem::new("Fit")).clicked() {
             asked.fit = true;
         }
-        if ui.button("Actual Size").clicked() {
+        if ui.add(MenuItem::new("Actual Size")).clicked() {
             asked.actual = true;
         }
-        if ui.button("Zoom In").clicked() {
+        if ui.add(MenuItem::new("Zoom In")).clicked() {
             asked.zoom = Some(true);
         }
-        if ui.button("Zoom Out").clicked() {
+        if ui.add(MenuItem::new("Zoom Out")).clicked() {
             asked.zoom = Some(false);
         }
         if animated {
-            ui.separator();
+            ui.add(Separator::new().space(Space::Xs));
             let label = if self.paused { "Play" } else { "Pause" };
-            if ui.button(label).clicked() {
+            if ui.add(MenuItem::new(label)).clicked() {
                 asked.toggle_play = true;
             }
         }
-        ui.separator();
-        ui.menu_button("Background", |ui| {
+        ui.add(Separator::new().space(Space::Xs));
+        Submenu::new("Background").show(ui, |ui| {
             for (backdrop, label) in [
                 (Backdrop::Checkerboard, "Checkerboard"),
                 (Backdrop::Dark, "Dark"),
                 (Backdrop::Light, "Light"),
                 (Backdrop::Panel, "None"),
             ] {
-                if ui.radio(self.backdrop == backdrop, label).clicked() {
+                if ui
+                    .add(
+                        MenuItem::new(label)
+                            .checked(self.backdrop == backdrop)
+                            .keep_open(),
+                    )
+                    .clicked()
+                {
                     self.backdrop = backdrop;
                 }
             }
         });
-        let mut smooth = self.smooth;
-        if ui.checkbox(&mut smooth, "Smooth When Zoomed In").clicked() {
-            self.smooth = smooth;
+        let smooth = MenuItem::new("Smooth When Zoomed In")
+            .checked(self.smooth)
+            .keep_open();
+        if ui.add(smooth).clicked() {
+            self.smooth = !self.smooth;
         }
     }
 }
