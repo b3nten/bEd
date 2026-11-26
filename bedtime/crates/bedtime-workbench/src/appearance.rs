@@ -239,7 +239,7 @@ fn theme_choices(folder: Option<&ThemeFolder>) -> Vec<(String, String)> {
 
 /// The Theme row of the settings panel: the themes, a button to edit one in
 /// the Theme Editor (when it's installed), and one to open the folder.
-fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
+fn theme_row(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, layer: StoreId) {
     let settings = world.bedtime().settings();
     let chosen = settings.get_at::<ColorTheme>(layer);
     let set_here = settings.get_in::<ColorTheme>(layer).is_some();
@@ -332,51 +332,57 @@ fn theme_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, laye
             }
         },
     );
-    if value != chosen {
-        let result = world
-            .bedtime_mut()
-            .settings_mut()
-            .set::<ColorTheme>(layer, value);
-        world
-            .bedtime_mut()
-            .notify_failure("Couldn't change the theme", result);
+    // What was asked for is done when the panel has drawn.
+    if value == chosen && !reset && !edit && !open_folder {
+        return;
     }
-    if reset {
-        let result = world
-            .bedtime_mut()
-            .settings_mut()
-            .clear::<ColorTheme>(layer);
-        world
-            .bedtime_mut()
-            .notify_failure("Couldn't reset the theme", result);
-    }
-    if edit {
-        // From the panel this row is in (the focused one: it was clicked).
-        let from = world
-            .bedtime()
-            .layouts()
-            .active()
-            .and_then(|layout| world.bedtime().layouts().focused_panel(layout))
-            .map_or(Placement::Focused, Placement::From);
-        let result = theme_editor::open(world, Some(chosen.clone()), from);
-        world
-            .bedtime_mut()
-            .notify_failure("Couldn't open the Theme Editor", result);
-    }
-    if open_folder && let Some(folder) = folder {
-        let opener = if cfg!(target_os = "macos") {
-            "open"
-        } else if cfg!(windows) {
-            "explorer"
-        } else {
-            "xdg-open"
-        };
-        let result = std::fs::create_dir_all(&folder)
-            .and_then(|()| std::process::Command::new(opener).arg(&folder).spawn());
-        world
-            .bedtime_mut()
-            .notify_failure(&format!("Couldn't open {}", folder.display()), result);
-    }
+    bedtime_ui::draw::queue(ui, move |world: &mut World| {
+        if value != chosen {
+            let result = world
+                .bedtime_mut()
+                .settings_mut()
+                .set::<ColorTheme>(layer, value);
+            world
+                .bedtime_mut()
+                .notify_failure("Couldn't change the theme", result);
+        }
+        if reset {
+            let result = world
+                .bedtime_mut()
+                .settings_mut()
+                .clear::<ColorTheme>(layer);
+            world
+                .bedtime_mut()
+                .notify_failure("Couldn't reset the theme", result);
+        }
+        if edit {
+            // From the panel this row is in (the focused one: it was clicked).
+            let from = world
+                .bedtime()
+                .layouts()
+                .active()
+                .and_then(|layout| world.bedtime().layouts().focused_panel(layout))
+                .map_or(Placement::Focused, Placement::From);
+            let result = theme_editor::open(world, Some(chosen.clone()), from);
+            world
+                .bedtime_mut()
+                .notify_failure("Couldn't open the Theme Editor", result);
+        }
+        if open_folder && let Some(folder) = folder {
+            let opener = if cfg!(target_os = "macos") {
+                "open"
+            } else if cfg!(windows) {
+                "explorer"
+            } else {
+                "xdg-open"
+            };
+            let result = std::fs::create_dir_all(&folder)
+                .and_then(|()| std::process::Command::new(opener).arg(&folder).spawn());
+            world
+                .bedtime_mut()
+                .notify_failure(&format!("Couldn't open {}", folder.display()), result);
+        }
+    });
 }
 
 /// Puts the chosen theme and sizes on each surface: when the appearance or
@@ -448,7 +454,7 @@ fn font_choices(_: &World, chosen: &Option<String>) -> (Vec<String>, Option<Stri
 }
 
 /// Bedfont and the installed monospaced families.
-fn font_family_row(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
+fn font_family_row(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, layer: StoreId) {
     let chosen = world.bedtime().settings().get_at::<FontFamily>(layer);
     let (families, note) = font_choices(world, &chosen);
     row::<FontFamily>(ui, world, context, layer, note, |ui, family| {

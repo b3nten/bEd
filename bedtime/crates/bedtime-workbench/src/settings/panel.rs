@@ -41,7 +41,19 @@ pub struct SettingsPanel;
 impl Panel for SettingsPanel {
     const LABEL: &'static str = "Settings";
 
-    fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, _: Entity) {
+    fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
+        bedtime_ui::draw::with_system(ui, world, context, panel, settings_panel);
+    }
+}
+
+/// The panel, drawn: a system that reads the settings. What a row changes
+/// is queued by the row, and made when the draw is done.
+fn settings_panel(
+    bedtime_ui::PanelUi { ui, context, .. }: bedtime_ui::PanelUi<SettingsPanel>,
+    world: &World,
+) {
+    let context = &context;
+    {
         egui::Frame::NONE
             .inner_margin(bedtime_ui::Space::Lg.px(ui))
             .show(ui, |ui| {

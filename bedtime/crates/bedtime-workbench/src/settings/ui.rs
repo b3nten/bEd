@@ -24,10 +24,14 @@ pub const CONTROL_WIDTH: f32 = 240.0;
 
 /// Draws a whole row for the layer being edited, for settings that need more
 /// than an editor (extra buttons, a note).
-pub type RowFn = fn(&mut egui::Ui, &mut World, &UiContext<'_>, StoreId);
+///
+/// It reads the world; what it changes it queues (`draw::queue(ui, …)`), to
+/// be done when the panel has drawn. So rows are drawn where the world is
+/// shared: a panel drawn by a system, or inside `draw::with_world`.
+pub type RowFn = fn(&mut egui::Ui, &World, &UiContext<'_>, StoreId);
 
 type EditFn<V> = dyn Fn(&mut egui::Ui, &UiContext<'_>, &mut V) -> bool + Send + Sync;
-type DrawRow = Arc<dyn Fn(&mut egui::Ui, &mut World, &UiContext<'_>, StoreId) + Send + Sync>;
+type DrawRow = Arc<dyn Fn(&mut egui::Ui, &World, &UiContext<'_>, StoreId) + Send + Sync>;
 
 /// How a setting is edited.
 pub enum SettingUi<V> {
@@ -232,13 +236,7 @@ impl SettingRow {
     }
 
     /// Draw its row for `layer`.
-    pub fn draw(
-        &self,
-        ui: &mut egui::Ui,
-        world: &mut World,
-        context: &UiContext<'_>,
-        layer: StoreId,
-    ) {
+    pub fn draw(&self, ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, layer: StoreId) {
         (self.draw.clone())(ui, world, context, layer)
     }
 }
@@ -303,14 +301,14 @@ pub(crate) fn register<S: Setting>(app: &mut App) {
     let draw: DrawRow = match S::ui().or_else(S::inferred_ui) {
         Some(SettingUi::Row(row)) => Arc::new(row),
         Some(SettingUi::Editor(edit)) => Arc::new(
-            move |ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer| {
+            move |ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, layer| {
                 self::row::<S>(ui, world, context, layer, None, |ui, value| {
                     edit(ui, context, value)
                 })
             },
         ),
         None => Arc::new(
-            |ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer| {
+            |ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, layer| {
                 self::row::<S>(ui, world, context, layer, None, |ui, _| {
                     ui.add(Text::new("Edit in the settings file").muted());
                     false
@@ -361,7 +359,7 @@ pub fn layer_tabs(
 }
 
 /// Every section with a row shown for `layer`, in order.
-pub fn sections(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, layer: StoreId) {
+pub fn sections(ui: &mut egui::Ui, world: &World, context: &UiContext<'_>, layer: StoreId) {
     let Some(registry) = world.get_resource::<SettingsUi>() else {
         return;
     };
@@ -430,9 +428,11 @@ pub fn columns<R>(
 /// Setting `S`'s row for `layer`, showing the layer's own value (what it is
 /// without the layers above). `edit` draws the control and returns whether it
 /// changed the value; `note` follows the row (why a value isn't used, say).
+///
+/// A change (or a reset) is queued, and made when the panel has drawn.
 pub fn row<S: Setting>(
     ui: &mut egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &UiContext<'_>,
     layer: StoreId,
     note: Option<String>,
@@ -457,11 +457,21 @@ pub fn row<S: Setting>(
             }
         },
     );
-    if changed && let Err(error) = world.bedtime_mut().settings_mut().set::<S>(layer, value) {
-        world.write_message(SettingsError(format!("Couldn't change {label}: {error}")));
+    if changed {
+        let label = label.clone().into_owned();
+        bedtime_ui::draw::queue(ui, move |world: &mut World| {
+            if let Err(error) = world.bedtime_mut().settings_mut().set::<S>(layer, value) {
+                world.write_message(SettingsError(format!("Couldn't change {label}: {error}")));
+            }
+        });
     }
-    if reset && let Err(error) = world.bedtime_mut().settings_mut().clear::<S>(layer) {
-        world.write_message(SettingsError(format!("Couldn't reset {label}: {error}")));
+    if reset {
+        let label = label.into_owned();
+        bedtime_ui::draw::queue(ui, move |world: &mut World| {
+            if let Err(error) = world.bedtime_mut().settings_mut().clear::<S>(layer) {
+                world.write_message(SettingsError(format!("Couldn't reset {label}: {error}")));
+            }
+        });
     }
 }
 

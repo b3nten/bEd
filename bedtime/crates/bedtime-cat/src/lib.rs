@@ -71,7 +71,7 @@ fn parse_color(hex: &str) -> Option<[u8; 3]> {
 
 fn color_row(
     ui: &mut egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &UiContext<'_>,
     layer: bedtime_workbench::persistence::StoreId,
 ) {

@@ -121,7 +121,7 @@ impl Plugin for BackdropPlugin {
 
 fn backdrop_row(
     ui: &mut bedtime::ui::egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &bedtime::ui::UiContext<'_>,
     layer: bedtime::workbench::persistence::StoreId,
 ) {

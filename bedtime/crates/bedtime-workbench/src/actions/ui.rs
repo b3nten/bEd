@@ -280,10 +280,11 @@ fn conflicts_with_text(key: egui::Key, modifiers: Modifiers) -> bool {
 
 /// The Keyboard Shortcuts section of a settings panel: every registered action
 /// and its keys in `layer`. Click an action's keys, then press the new ones.
+/// Changes are queued (`draw::queue`): draw it where the world is shared.
 #[cfg(feature = "persistence")]
 pub fn keybindings_section(
     ui: &mut egui::Ui,
-    world: &mut World,
+    world: &World,
     context: &UiContext<'_>,
     layer: StoreId,
 ) {
@@ -320,12 +321,15 @@ pub fn keybindings_section(
                         .clicked();
                     match pressed_chord(world) {
                         Some(Ok(chord)) => {
-                            let result = world.bedtime_mut().actions_mut().set_keys_in(
-                                &command,
-                                layer,
-                                Some(vec![chord]),
-                            );
-                            report(world, &format!("Couldn't change {label}'s keys"), result);
+                            let command = command.clone();
+                            bedtime_ui::draw::queue(ui, move |world: &mut World| {
+                                let result = world.bedtime_mut().actions_mut().set_keys_in(
+                                    &command,
+                                    layer,
+                                    Some(vec![chord]),
+                                );
+                                report(world, &format!("Couldn't change {label}'s keys"), result);
+                            });
                             recording = None;
                         }
                         Some(Err(())) => recording = None,
@@ -357,11 +361,14 @@ pub fn keybindings_section(
             },
         );
         if reset {
-            let result = world
-                .bedtime_mut()
-                .actions_mut()
-                .set_keys_in(&command, layer, None);
-            report(world, &format!("Couldn't reset {label}'s keys"), result);
+            let command = command.clone();
+            bedtime_ui::draw::queue(ui, move |world: &mut World| {
+                let result = world
+                    .bedtime_mut()
+                    .actions_mut()
+                    .set_keys_in(&command, layer, None);
+                report(world, &format!("Couldn't reset {label}'s keys"), result);
+            });
         }
     }
     ui.data_mut(|data| match recording {
