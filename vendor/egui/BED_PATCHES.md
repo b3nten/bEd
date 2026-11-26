@@ -109,7 +109,7 @@ From the repository root:
 cargo test -p egui --offline
 cargo test -p bedtime-ui2 -p bedtime-workbench2 --offline
 cargo check -p bed2 --all-targets --offline
-cargo run -p bedtime-ui2 --example gallery --offline -- --smoke-dir target/egui-vendor-gallery-smoke
+python3 tools/bed.py run tests/automation/bedui.py
 ```
 
 The added regression tests live in `src/widget_animation/tests.rs`. They verify
@@ -120,8 +120,10 @@ at natural and expanded widths.
 `src/containers/popup_tests.rs` checks popup pivots, easing, clip transforms,
 stable input geometry, reopening, interaction and reduced motion. UI2 also
 checks that opening tooltips keep identical glyph positions, bounds, layout
-jobs and texture coordinates while opacity changes. The gallery smoke captures opening,
-late and settled menus/tooltips at a deterministic 60 Hz.
+jobs and texture coordinates while opacity changes. (The gallery example and its
+smoke run, which captured opening, late and settled menus and tooltips at a
+deterministic 60 Hz, were retired on 2026-11-25; the `bedui` playground script
+screenshots every component instead, without that frame-by-frame capture.)
 
 When upgrading, compare against the recorded upstream package, reapply only the
 changes described here, update provenance and run these checks. Keep

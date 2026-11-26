@@ -10,7 +10,7 @@
 use bedtime_document::DocumentModel;
 use bedtime_filesystem::{ByteModel, FileModel};
 use bedtime_ui::Tip;
-use bedtime_ui::{BuiltinIcon, CodeView, UiContext, egui, theme, tree};
+use bedtime_ui::{BuiltinIcon, CodeView, UiContext, ViewUi, draw, egui, theme, tree};
 use bedtime_ui::{Button, Row, Segmented, Space, Spinner, Table, Text, TextArea, TextField, Tone};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -265,291 +265,308 @@ impl Panel for SqlitePanel {
         update(world, panel, &file, ui.input(|input| input.time));
         update_changes(world, panel);
         update_page(world, panel);
-        let focused = world
-            .get::<PanelPresentation>(panel)
-            .is_some_and(|presentation| presentation.focused);
-        let Some(mut sqlite) = world.get_mut::<SqlitePanel>(panel) else {
-            return;
-        };
-        let sqlite = &mut *sqlite;
-        // Come back for a check's answer, and for the next check.
-        ui.ctx().request_repaint_after(
-            if sqlite.state.checking.is_some()
-                || sqlite.state.paging.is_some()
-                || sqlite.state.query.running.is_some()
-                || sqlite.state.changes.writing.is_some()
-                || !sqlite.state.changes.edits.is_empty()
-            {
-                Duration::from_millis(16)
-            } else {
-                Duration::from_secs_f64(CHECK_EVERY)
-            },
+        draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |panel: &mut SqlitePanel| panel,
+            sqlite,
         );
-        let State {
-            schema,
-            statement,
-            read_only,
-            browse,
-            filter_text,
-            page,
-            page_for,
-            grid,
-            query,
-            changes,
-            ..
-        } = &mut sqlite.state;
-        let schema = match schema {
-            None => {
-                ui.centered_and_justified(|ui| ui.add(Spinner::new()));
-                return;
-            }
-            Some(Err(error)) => {
-                egui::Frame::NONE
-                    .inner_margin(Space::Lg.px(ui))
-                    .show(ui, |ui| {
-                        ui.add(Text::new(format!("This database can't be read: {error}")));
-                    });
-                return;
-            }
-            Some(Ok(schema)) => schema,
-        };
-        let margin = egui::Margin::symmetric(8, 6);
-        egui::Panel::left(egui::Id::new((panel, "sqlite-objects")))
-            .resizable(true)
-            .default_size(180.0)
-            .size_range(100.0..=420.0)
-            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 6)))
-            .show(ui, |ui| {
-                sidebar(ui, context, panel, schema, &mut sqlite.selected)
-            });
-        egui::Panel::top(egui::Id::new((panel, "sqlite-bar")))
-            .resizable(false)
-            .frame(egui::Frame::NONE.inner_margin(margin))
-            .show(ui, |ui| {
-                Row::new().show(ui, |ui| {
-                    ui.add(Segmented::with(
-                        &mut sqlite.mode,
-                        &[Mode::Data, Mode::Structure, Mode::Query],
-                        |mode| format!("{mode:?}"),
-                    ));
-                    if sqlite.mode == Mode::Data {
-                        filter(ui, panel, filter_text, browse);
-                    }
-                });
-            });
-        if sqlite.mode == Mode::Query {
-            query_view(ui, context, panel, &mut sqlite.query, query, focused);
+    }
+}
+
+/// The panel, drawn once the world has caught up with it (`Panel::draw`
+/// reads the file's answers first): a system with the panel, all of it its
+/// own state, lent to it. Nothing of the world changes while it draws.
+fn sqlite(
+    ViewUi {
+        ui,
+        entity: panel,
+        view: sqlite,
+        context,
+    }: ViewUi<SqlitePanel>,
+    presentations: bevy::ecs::system::Query<&PanelPresentation>,
+) {
+    let context = &context;
+    let focused = presentations
+        .get(panel)
+        .is_ok_and(|presentation| presentation.focused);
+    // Come back for a check's answer, and for the next check.
+    ui.ctx().request_repaint_after(
+        if sqlite.state.checking.is_some()
+            || sqlite.state.paging.is_some()
+            || sqlite.state.query.running.is_some()
+            || sqlite.state.changes.writing.is_some()
+            || !sqlite.state.changes.edits.is_empty()
+        {
+            Duration::from_millis(16)
+        } else {
+            Duration::from_secs_f64(CHECK_EVERY)
+        },
+    );
+    let State {
+        schema,
+        statement,
+        read_only,
+        browse,
+        filter_text,
+        page,
+        page_for,
+        grid,
+        query,
+        changes,
+        ..
+    } = &mut sqlite.state;
+    let schema = match schema {
+        None => {
+            ui.centered_and_justified(|ui| ui.add(Spinner::new()));
             return;
         }
-        let Some(object) = sqlite
-            .selected
-            .as_deref()
-            .and_then(|name| schema.object(name))
-        else {
-            // An empty database: Query can make its first table.
+        Some(Err(error)) => {
             egui::Frame::NONE
                 .inner_margin(Space::Lg.px(ui))
                 .show(ui, |ui| {
-                    ui.add(Text::new("This database has no tables.").muted());
+                    ui.add(Text::new(format!("This database can't be read: {error}")));
                 });
             return;
+        }
+        Some(Ok(schema)) => schema,
+    };
+    let margin = egui::Margin::symmetric(8, 6);
+    egui::Panel::left(egui::Id::new((panel, "sqlite-objects")))
+        .resizable(true)
+        .default_size(180.0)
+        .size_range(100.0..=420.0)
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(0, 6)))
+        .show(ui, |ui| {
+            sidebar(ui, context, panel, schema, &mut sqlite.selected)
+        });
+    egui::Panel::top(egui::Id::new((panel, "sqlite-bar")))
+        .resizable(false)
+        .frame(egui::Frame::NONE.inner_margin(margin))
+        .show(ui, |ui| {
+            Row::new().show(ui, |ui| {
+                ui.add(Segmented::with(
+                    &mut sqlite.mode,
+                    &[Mode::Data, Mode::Structure, Mode::Query],
+                    |mode| format!("{mode:?}"),
+                ));
+                if sqlite.mode == Mode::Data {
+                    filter(ui, panel, filter_text, browse);
+                }
+            });
+        });
+    if sqlite.mode == Mode::Query {
+        query_view(ui, context, panel, &mut sqlite.query, query, focused);
+        return;
+    }
+    let Some(object) = sqlite
+        .selected
+        .as_deref()
+        .and_then(|name| schema.object(name))
+    else {
+        // An empty database: Query can make its first table.
+        egui::Frame::NONE
+            .inner_margin(Space::Lg.px(ui))
+            .show(ui, |ui| {
+                ui.add(Text::new("This database has no tables.").muted());
+            });
+        return;
+    };
+    if sqlite.mode == Mode::Data {
+        // The rows read for this table; another's don't show under its name.
+        let read = page
+            .as_ref()
+            .filter(|_| page_for.as_ref().is_some_and(|at| at.table == object.name));
+        // Which columns can be changed: a table's (not a view's), in a
+        // file that can be written, but for those worked out from others.
+        let editable: Option<Vec<bool>> = match read {
+            Some(Ok(page)) if !*read_only && page.keys.is_some() => Some(
+                page.columns
+                    .iter()
+                    .map(|name| object.column(name).is_some_and(|column| !column.generated))
+                    .collect(),
+            ),
+            _ => None,
         };
-        if sqlite.mode == Mode::Data {
-            // The rows read for this table; another's don't show under its name.
-            let read = page
-                .as_ref()
-                .filter(|_| page_for.as_ref().is_some_and(|at| at.table == object.name));
-            // Which columns can be changed: a table's (not a view's), in a
-            // file that can be written, but for those worked out from others.
-            let editable: Option<Vec<bool>> = match read {
-                Some(Ok(page)) if !*read_only && page.keys.is_some() => Some(
-                    page.columns
-                        .iter()
-                        .map(|name| object.column(name).is_some_and(|column| !column.generated))
-                        .collect(),
-                ),
-                _ => None,
-            };
-            if editable.is_none()
-                || changes.draft.as_ref().is_some_and(|draft| {
-                    read.and_then(|read| read.as_ref().ok())
-                        .is_some_and(|page| draft.len() != page.columns.len())
-                })
-            {
-                changes.draft = None;
-            }
-            let mut pressed = None;
-            if let Some(Ok(page)) = read {
-                egui::Panel::bottom(egui::Id::new((panel, "sqlite-pages")))
-                    .resizable(false)
-                    .frame(egui::Frame::NONE.inner_margin(margin))
-                    .show(ui, |ui| {
-                        let state = match (&changes.draft, &changes.deleting) {
-                            (Some(_), _) => Footer::Making,
-                            (None, Some((_, number))) => Footer::Deleting(*number),
-                            (None, None) if editable.is_some() => Footer::CanAdd,
-                            (None, None) if page.keys.is_some() => Footer::ReadOnly,
-                            (None, None) => Footer::Fixed,
-                        };
-                        pressed = pages(ui, page, browse, state, changes.error.as_deref());
-                    });
-            }
-            egui::CentralPanel::default()
-                .frame(egui::Frame::NONE)
-                .show(ui, |ui| match read {
-                    None => {
-                        ui.centered_and_justified(|ui| ui.add(Spinner::new()));
-                    }
-                    Some(Err(error)) => {
-                        egui::Frame::NONE
-                            .inner_margin(Space::Lg.px(ui))
-                            .show(ui, |ui| {
-                                ui.add(
-                                    Text::new(format!("These rows can't be read: {error}"))
-                                        .tone(Tone::Error),
-                                );
-                            });
-                    }
-                    Some(Ok(page)) => {
-                        let sort = browse.sort.as_ref().and_then(|sort| {
-                            let column = page.columns.iter().position(|c| *c == sort.column)?;
-                            Some((column, sort.descending))
-                        });
-                        let rows = grid::Rows {
-                            columns: &page.columns,
-                            rows: &page.rows,
-                            first_row: page.first_row(),
-                            sort,
-                            editable: editable.as_deref(),
-                            draft: changes.draft.as_deref(),
-                        };
-                        let id = egui::Id::new((panel, "sqlite-grid"));
-                        let asked = grid.show(ui, context, id, &rows, focused);
-                        let declared = |column: &str| {
-                            object
-                                .column(column)
-                                .map(|column| column.declared.clone())
-                                .unwrap_or_default()
-                        };
-                        for asked in asked {
-                            match asked {
-                                grid::Asked::Sort(sort) => {
-                                    browse.sort = sort.map(|(column, descending)| Sort {
-                                        column: page.columns[column].clone(),
-                                        descending,
-                                    });
-                                    browse.page = 0;
-                                }
-                                // The row being made: kept until it's inserted.
-                                grid::Asked::Set { row, column, input }
-                                    if row >= page.rows.len() =>
-                                {
-                                    if let Some(given) = changes
-                                        .draft
-                                        .as_mut()
-                                        .and_then(|draft| draft.get_mut(column))
-                                    {
-                                        *given = Some(input);
-                                    }
-                                }
-                                grid::Asked::Set { row, column, input } => {
-                                    if let Some(row) = page.keys.as_ref().and_then(|k| k.row(row)) {
-                                        changes.error = None;
-                                        changes.edits.push_back(Edit::Set {
-                                            table: object.name.clone(),
-                                            row,
-                                            declared: declared(&page.columns[column]),
-                                            column: page.columns[column].clone(),
-                                            input,
-                                        });
-                                    }
-                                }
-                                grid::Asked::Delete { row } => {
-                                    if let Some(key) = page.keys.as_ref().and_then(|k| k.row(row)) {
-                                        let number = page.first_row() + row as u64 + 1;
-                                        changes.deleting = Some((key, number));
-                                    }
-                                }
-                            }
-                        }
-                        // After the grid: what was being typed in the new
-                        // row is kept before the row is inserted.
-                        match pressed {
-                            Some(Pressed::AddRow) => {
-                                changes.error = None;
-                                changes.draft = Some(vec![None; page.columns.len()]);
-                                let first = editable
-                                    .as_ref()
-                                    .and_then(|can| can.iter().position(|can| *can))
-                                    .unwrap_or(0);
-                                grid.select(page.rows.len(), first);
-                            }
-                            Some(Pressed::InsertRow) if !changes.inserting => {
-                                if let Some(draft) = &changes.draft {
-                                    changes.error = None;
-                                    changes.inserting = true;
-                                    changes.edits.push_back(Edit::Insert {
-                                        table: object.name.clone(),
-                                        values: draft
-                                            .iter()
-                                            .zip(&page.columns)
-                                            .filter_map(|(given, column)| {
-                                                let input = given.clone()?;
-                                                Some((column.clone(), declared(column), input))
-                                            })
-                                            .collect(),
-                                    });
-                                }
-                            }
-                            Some(Pressed::InsertRow) => {}
-                            Some(Pressed::Discard) => {
-                                changes.draft = None;
-                                changes.error = None;
-                                grid.stop_editing();
-                            }
-                            Some(Pressed::Delete) => {
-                                if let Some((row, _)) = changes.deleting.take() {
-                                    changes.error = None;
-                                    changes.edits.push_back(Edit::Delete {
-                                        table: object.name.clone(),
-                                        row,
-                                    });
-                                }
-                            }
-                            Some(Pressed::KeepRow) => changes.deleting = None,
-                            None => {}
-                        }
-                    }
-                });
-            return;
-        }
-        if statement.as_ref().is_none_or(|(sql, _)| *sql != object.sql) {
-            *statement = Some((
-                object.sql.clone(),
-                CodeView::new(object.sql.clone()).language("sql"),
-            ));
-        }
-        if let Some((sql, view)) = statement
-            && !sql.is_empty()
+        if editable.is_none()
+            || changes.draft.as_ref().is_some_and(|draft| {
+                read.and_then(|read| read.as_ref().ok())
+                    .is_some_and(|page| draft.len() != page.columns.len())
+            })
         {
-            egui::Panel::bottom(egui::Id::new((panel, "sqlite-statement")))
-                .resizable(true)
-                .default_size(150.0)
-                .min_size(48.0)
+            changes.draft = None;
+        }
+        let mut pressed = None;
+        if let Some(Ok(page)) = read {
+            egui::Panel::bottom(egui::Id::new((panel, "sqlite-pages")))
+                .resizable(false)
                 .frame(egui::Frame::NONE.inner_margin(margin))
                 .show(ui, |ui| {
-                    ui.push_id((panel, "statement"), |ui| view.show(ui, context));
+                    let state = match (&changes.draft, &changes.deleting) {
+                        (Some(_), _) => Footer::Making,
+                        (None, Some((_, number))) => Footer::Deleting(*number),
+                        (None, None) if editable.is_some() => Footer::CanAdd,
+                        (None, None) if page.keys.is_some() => Footer::ReadOnly,
+                        (None, None) => Footer::Fixed,
+                    };
+                    pressed = pages(ui, page, browse, state, changes.error.as_deref());
                 });
         }
         egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(ui, |ui| match read {
+                None => {
+                    ui.centered_and_justified(|ui| ui.add(Spinner::new()));
+                }
+                Some(Err(error)) => {
+                    egui::Frame::NONE
+                        .inner_margin(Space::Lg.px(ui))
+                        .show(ui, |ui| {
+                            ui.add(
+                                Text::new(format!("These rows can't be read: {error}"))
+                                    .tone(Tone::Error),
+                            );
+                        });
+                }
+                Some(Ok(page)) => {
+                    let sort = browse.sort.as_ref().and_then(|sort| {
+                        let column = page.columns.iter().position(|c| *c == sort.column)?;
+                        Some((column, sort.descending))
+                    });
+                    let rows = grid::Rows {
+                        columns: &page.columns,
+                        rows: &page.rows,
+                        first_row: page.first_row(),
+                        sort,
+                        editable: editable.as_deref(),
+                        draft: changes.draft.as_deref(),
+                    };
+                    let id = egui::Id::new((panel, "sqlite-grid"));
+                    let asked = grid.show(ui, context, id, &rows, focused);
+                    let declared = |column: &str| {
+                        object
+                            .column(column)
+                            .map(|column| column.declared.clone())
+                            .unwrap_or_default()
+                    };
+                    for asked in asked {
+                        match asked {
+                            grid::Asked::Sort(sort) => {
+                                browse.sort = sort.map(|(column, descending)| Sort {
+                                    column: page.columns[column].clone(),
+                                    descending,
+                                });
+                                browse.page = 0;
+                            }
+                            // The row being made: kept until it's inserted.
+                            grid::Asked::Set { row, column, input } if row >= page.rows.len() => {
+                                if let Some(given) = changes
+                                    .draft
+                                    .as_mut()
+                                    .and_then(|draft| draft.get_mut(column))
+                                {
+                                    *given = Some(input);
+                                }
+                            }
+                            grid::Asked::Set { row, column, input } => {
+                                if let Some(row) = page.keys.as_ref().and_then(|k| k.row(row)) {
+                                    changes.error = None;
+                                    changes.edits.push_back(Edit::Set {
+                                        table: object.name.clone(),
+                                        row,
+                                        declared: declared(&page.columns[column]),
+                                        column: page.columns[column].clone(),
+                                        input,
+                                    });
+                                }
+                            }
+                            grid::Asked::Delete { row } => {
+                                if let Some(key) = page.keys.as_ref().and_then(|k| k.row(row)) {
+                                    let number = page.first_row() + row as u64 + 1;
+                                    changes.deleting = Some((key, number));
+                                }
+                            }
+                        }
+                    }
+                    // After the grid: what was being typed in the new
+                    // row is kept before the row is inserted.
+                    match pressed {
+                        Some(Pressed::AddRow) => {
+                            changes.error = None;
+                            changes.draft = Some(vec![None; page.columns.len()]);
+                            let first = editable
+                                .as_ref()
+                                .and_then(|can| can.iter().position(|can| *can))
+                                .unwrap_or(0);
+                            grid.select(page.rows.len(), first);
+                        }
+                        Some(Pressed::InsertRow) if !changes.inserting => {
+                            if let Some(draft) = &changes.draft {
+                                changes.error = None;
+                                changes.inserting = true;
+                                changes.edits.push_back(Edit::Insert {
+                                    table: object.name.clone(),
+                                    values: draft
+                                        .iter()
+                                        .zip(&page.columns)
+                                        .filter_map(|(given, column)| {
+                                            let input = given.clone()?;
+                                            Some((column.clone(), declared(column), input))
+                                        })
+                                        .collect(),
+                                });
+                            }
+                        }
+                        Some(Pressed::InsertRow) => {}
+                        Some(Pressed::Discard) => {
+                            changes.draft = None;
+                            changes.error = None;
+                            grid.stop_editing();
+                        }
+                        Some(Pressed::Delete) => {
+                            if let Some((row, _)) = changes.deleting.take() {
+                                changes.error = None;
+                                changes.edits.push_back(Edit::Delete {
+                                    table: object.name.clone(),
+                                    row,
+                                });
+                            }
+                        }
+                        Some(Pressed::KeepRow) => changes.deleting = None,
+                        None => {}
+                    }
+                }
+            });
+        return;
+    }
+    if statement.as_ref().is_none_or(|(sql, _)| *sql != object.sql) {
+        *statement = Some((
+            object.sql.clone(),
+            CodeView::new(object.sql.clone()).language("sql"),
+        ));
+    }
+    if let Some((sql, view)) = statement
+        && !sql.is_empty()
+    {
+        egui::Panel::bottom(egui::Id::new((panel, "sqlite-statement")))
+            .resizable(true)
+            .default_size(150.0)
+            .min_size(48.0)
             .frame(egui::Frame::NONE.inner_margin(margin))
             .show(ui, |ui| {
-                egui::ScrollArea::both()
-                    .auto_shrink(false)
-                    .id_salt((panel, "structure"))
-                    .show(ui, |ui| structure(ui, panel, object, *read_only));
+                ui.push_id((panel, "statement"), |ui| view.show(ui, context));
             });
     }
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.inner_margin(margin))
+        .show(ui, |ui| {
+            egui::ScrollArea::both()
+                .auto_shrink(false)
+                .id_salt((panel, "structure"))
+                .show(ui, |ui| structure(ui, panel, object, *read_only));
+        });
 }
 
 /// Query: SQL to type and run, and under it the rows that gave.

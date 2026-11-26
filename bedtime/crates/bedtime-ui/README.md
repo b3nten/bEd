@@ -4,8 +4,10 @@ Bed themes, icons, motion and composable drawing functions on upstream
 `bevy_egui` and [vendored egui](../../../vendor/egui/BED_PATCHES.md). Applications install their own Bevy window, renderer, camera and event
 loop. UI has no workbench dependency.
 
+The components are shown, with controls to try them, in the playground:
+
 ```sh
-cargo run -p bedtime-ui --example gallery
+cargo run -p bedui
 ```
 
 ## Host integration
@@ -996,12 +998,12 @@ standalone core remains renderer-independent.
 
 ```sh
 cargo test -p bedtime-ui
-cargo run -p bedtime-ui --example gallery -- --smoke-dir target/ui2-egui-smoke
+python3 tools/bed.py run tests/automation/bedui.py
 ```
 
-The gallery fixture uses observed widget rectangles to exercise native-shaped
-Bevy input, theme selection, dropdowns, overlays, resizing, icon replacement and
-stable raster reuse. The gallery smoke uses a memory clipboard.
+The script drives the playground (`src/bedui`): every story is drawn in the
+dark and light themes with a screenshot of each, and the dropdowns, checkboxes
+and bound widgets are clicked through.
 
 For desktop translucency, set Bevy's `Window.transparent = true` and
 `composite_alpha_mode = CompositeAlphaMode::PostMultiplied` on macOS. The theme's

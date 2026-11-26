@@ -9,7 +9,7 @@
 use crate::engine::{FileMatches, MAX_MATCHES, Match, Matcher, OpenFiles, SearchQuery, Summary};
 use bedtime_document::{BufferEdit, TextBuffer};
 use bedtime_ui::Tip;
-use bedtime_ui::{BuiltinIcon, UiContext, egui, theme::color, tree};
+use bedtime_ui::{BuiltinIcon, UiContext, ViewUi, draw, egui, theme::color, tree};
 use bedtime_ui::{Button, MenuItem, Row, Separator, Space, Spinner, Text, Toggle};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -95,7 +95,7 @@ impl Action for PreviousResult {
 /// The search panel. Its query, replacement, earlier queries and which rows
 /// show are saved with it.
 #[bedtime_ui::panel]
-#[derive(Reflect, Default)]
+#[derive(Reflect, Default, Clone, PartialEq)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
 #[require(SearchState)]
@@ -1013,21 +1013,42 @@ fn number(n: usize) -> String {
 impl Panel for SearchPanel {
     const LABEL: &'static str = "Search Workspace";
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        draw(ui, world, context, panel);
+        draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |state: &mut SearchState| state,
+            search_panel,
+        );
     }
 }
 
-fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-    let root = world.get_resource::<Root>().map(|root| root.0.clone());
-    let focused = world
-        .get::<PanelPresentation>(panel)
-        .is_some_and(|presentation| presentation.focused);
+/// The panel, drawn: a system that reads the workspace's root, which files
+/// are open and the panel's saved query, with the search's results and work
+/// lent to it. A changed query and what's asked for are done when the draw
+/// is.
+fn search_panel(
+    ViewUi {
+        ui,
+        entity: panel,
+        view: state,
+        context,
+    }: ViewUi<SearchState>,
+    panels: Query<(&SearchPanel, Option<&PanelPresentation>)>,
+    root: Option<Res<Root>>,
+    world: &World,
+    mut commands: Commands,
+) {
+    let Ok((saved, presentation)) = panels.get(panel) else {
+        return;
+    };
+    let context = &context;
+    let root = root.map(|root| root.0.clone());
+    let focused = presentation.is_some_and(|presentation| presentation.focused);
     // Replace All's question says how many files are changed on disk: those
     // that aren't open.
-    let confirming = world
-        .get::<SearchState>(panel)
-        .is_some_and(|state| state.confirming);
-    let open: HashSet<PathBuf> = if confirming {
+    let open: HashSet<PathBuf> = if state.confirming {
         let workbench = world.bedtime();
         workbench
             .document_ids()
@@ -1037,13 +1058,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
     } else {
         HashSet::new()
     };
-    let Some(mut search) = world.entity_mut(panel).take::<SearchPanel>() else {
-        return;
-    };
-    let Some(mut state) = world.entity_mut(panel).take::<SearchState>() else {
-        world.entity_mut(panel).insert(search);
-        return;
-    };
+    let mut search = saved.clone();
     let mut intents = Vec::new();
     let id = egui::Id::new((panel, "search"));
     // Searching waits for typing to settle, and results stream in: come back.
@@ -1059,12 +1074,12 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
     egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
-            fields(ui, context, id, &mut search, &mut state, focused);
-            status(ui, context, &mut state, &open, &mut intents);
+            fields(ui, context, id, &mut search, state, focused);
+            status(ui, context, state, &open, &mut intents);
         });
     ui.add(Separator::new());
     if focused && !ui.ctx().egui_wants_keyboard_input() {
-        result_keys(ui, &mut state, &mut intents);
+        result_keys(ui, state, &mut intents);
     }
     results(
         ui,
@@ -1072,7 +1087,7 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         panel,
         root.as_deref(),
         &search,
-        &mut state,
+        state,
         &mut intents,
     );
     // A query that was used is one to come back to.
@@ -1083,11 +1098,20 @@ fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: En
         search.remember();
         state.recalled = None;
     }
-    world.entity_mut(panel).insert((search, state));
-    world
-        .resource_mut::<Intents>()
-        .0
-        .extend(intents.into_iter().map(|intent| (panel, intent)));
+    let changed = (search != *saved).then_some(search);
+    if changed.is_some() || !intents.is_empty() {
+        commands.queue(move |world: &mut World| {
+            if let Some(search) = changed
+                && let Some(mut saved) = world.get_mut::<SearchPanel>(panel)
+            {
+                *saved = search;
+            }
+            world
+                .resource_mut::<Intents>()
+                .0
+                .extend(intents.into_iter().map(|intent| (panel, intent)));
+        });
+    }
 }
 
 /// The keys of the results, while the panel has the focus and no field does:

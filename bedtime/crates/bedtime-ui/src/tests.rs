@@ -160,165 +160,6 @@ fn terminal_colors_are_named_and_only_named() {
 }
 
 #[test]
-fn primary_buttons_resolve_hover_and_press_colors_without_restyling_other_widgets() {
-    for theme in [Theme::dark(), Theme::light()] {
-        let ctx = egui::Context::default();
-        ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
-        theme.apply(&crate::Metrics::default(), &ctx);
-        ctx.global_style_mut(|s| s.animation_time = 0.0);
-        let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
-        let mut target = egui::pos2(-100.0, -100.0);
-        let mut fills = Vec::new();
-        for step in 0..5 {
-            let mut raw = egui::RawInput::default();
-            raw.events.push(egui::Event::PointerMoved(target));
-            if step == 2 || step == 3 {
-                raw.events.push(egui::Event::PointerButton {
-                    pos: target,
-                    button: egui::PointerButton::Primary,
-                    pressed: step == 2,
-                    modifiers: egui::Modifiers::NONE,
-                });
-            }
-            let mut output = ctx.run_ui(raw, |ui| {
-                let mut frame = UiFrame {
-                    view: Entity::PLACEHOLDER,
-                    surface: Entity::PLACEHOLDER,
-                    ui,
-                    theme: &theme,
-                    metrics: &crate::Metrics::default(),
-                    motion: default(),
-                    icons: &icons,
-                };
-                let response = frame.primary_button("Primary action");
-                target = response.rect.center();
-                assert_eq!(response.clicked(), step == 3);
-                if step == 3 {
-                    frame
-                        .ui
-                        .ctx()
-                        .memory_mut(|m| m.surrender_focus(response.id));
-                }
-                assert_eq!(
-                    frame.ui.visuals().widgets.inactive.weak_bg_fill,
-                    theme::color(theme.palette.surface)
-                );
-                let _ = frame.ui.button("Secondary action");
-            });
-            let fill = output
-                .shapes
-                .iter()
-                .find_map(|shape| match &shape.shape {
-                    egui::Shape::Rect(rect) if rect.rect.contains(target) => Some(rect.fill),
-                    _ => None,
-                })
-                .expect("Painted primary button");
-            fills.push(fill);
-            output.textures_delta.clear();
-        }
-        assert_eq!(fills[0], theme::color(theme.palette.accent));
-        assert_ne!(fills[0], fills[1], "Hover must be visible");
-        assert_ne!(fills[1], fills[2], "Press must be visible");
-        assert_eq!(
-            fills[4], fills[1],
-            "Hover returns after the click loses focus"
-        );
-    }
-}
-
-#[test]
-fn custom_control_colors_fade_through_hover_press_and_release() {
-    let ctx = egui::Context::default();
-    let theme = Theme::dark();
-    theme.apply(&crate::Metrics::default(), &ctx);
-    let icons = Mutex::new(icon_cache::IconCache::default());
-    let render = |time, pointer, button: Option<bool>, enabled| {
-        ctx.global_style_mut(|s| {
-            s.animation_time = if enabled {
-                MotionPolicy::default().seconds
-            } else {
-                0.0
-            }
-        });
-        let mut events = vec![egui::Event::PointerMoved(pointer)];
-        if let Some(pressed) = button {
-            events.push(egui::Event::PointerButton {
-                pos: pointer,
-                button: egui::PointerButton::Primary,
-                pressed,
-                modifiers: default(),
-            });
-        }
-        let mut rect = egui::Rect::NOTHING;
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                time: Some(time),
-                events,
-                ..default()
-            },
-            |ui| {
-                let mut frame = UiFrame {
-                    view: Entity::PLACEHOLDER,
-                    surface: Entity::PLACEHOLDER,
-                    ui,
-                    theme: &theme,
-                    metrics: &crate::Metrics::default(),
-                    motion: MotionPolicy {
-                        enabled,
-                        ..default()
-                    },
-                    icons: &icons,
-                };
-                let response = frame.icon_button(BuiltinIcon::Sun);
-                rect = response.rect;
-                ctx.memory_mut(|m| m.surrender_focus(response.id));
-            },
-        );
-        let fill = output
-            .shapes
-            .iter()
-            .find_map(|s| match &s.shape {
-                egui::Shape::Rect(r) if r.rect.contains(rect.center()) => Some(r.fill),
-                _ => None,
-            })
-            .unwrap();
-        output.textures_delta.clear();
-        (rect.center(), fill)
-    };
-    let outside = egui::pos2(-100.0, -100.0);
-    let (inside, idle) = render(0.0, outside, None, true);
-    render(0.02, inside, None, true);
-    let (_, hover_mid) = render(0.10, inside, None, true);
-    let (_, hover) = render(0.30, inside, None, true);
-    assert_ne!(hover_mid, idle);
-    assert_ne!(
-        hover_mid, hover,
-        "Hover color must pass through an intermediate shade"
-    );
-    render(0.32, inside, Some(true), true);
-    let (_, press_mid) = render(0.40, inside, None, true);
-    let (_, press) = render(0.60, inside, None, true);
-    assert_ne!(press_mid, hover);
-    assert_ne!(press_mid, press);
-    render(0.62, inside, Some(false), true);
-    render(0.64, inside, None, true);
-    let (_, release_mid) = render(0.72, inside, None, true);
-    assert_ne!(release_mid, press);
-    assert_ne!(release_mid, hover);
-    assert_eq!(render(0.90, inside, None, true).1, hover);
-    render(0.92, outside, None, true);
-    let (_, exit_mid) = render(1.00, outside, None, true);
-    assert_ne!(exit_mid, hover);
-    assert_ne!(exit_mid, idle);
-    assert_eq!(render(1.20, outside, None, true).1, idle);
-    assert_eq!(
-        render(1.22, inside, None, false).1,
-        hover,
-        "Reduced motion settles immediately"
-    );
-}
-
-#[test]
 fn scroll_track_clears_rounded_corners_without_insetting_content() {
     let ctx = egui::Context::default();
     let theme = Theme::dark();
@@ -507,7 +348,11 @@ fn tooltip_contents_fade_at_their_final_size_and_pixel_grid() {
                     motion: default(),
                     icons: &icons,
                 };
-                shown = frame.tooltip(&response, "Popup text");
+                shown = frame
+                    .tooltip_ui(&response, |frame| {
+                        frame.ui.label("Popup text");
+                    })
+                    .is_some();
             },
         );
         output.textures_delta.clear();
@@ -612,51 +457,4 @@ fn dropdown_clears_its_anchor_and_long_lists_still_scroll() {
         "Hiding the scrollbar must preserve wheel scrolling"
     );
     assert!(egui::Popup::is_id_open(&ctx, popup));
-}
-
-#[test]
-fn clicking_a_toggle_flips_it_and_reports_a_change() {
-    let ctx = egui::Context::default();
-    ctx.options_mut(|o| o.max_passes = std::num::NonZeroUsize::new(1).unwrap());
-    let icons = std::sync::Mutex::new(icon_cache::IconCache::default());
-    let theme = Theme::dark();
-    let mut on = false;
-    let mut changes = 0;
-    // Draws a frame; returns the toggle's rect.
-    let mut frame = |events: Vec<egui::Event>| {
-        let mut rect = egui::Rect::NOTHING;
-        let input = egui::RawInput {
-            events,
-            ..default()
-        };
-        let mut output = ctx.run_ui(input, |ui| {
-            let context = UiContext {
-                view: Entity::PLACEHOLDER,
-                surface: Entity::PLACEHOLDER,
-                theme: &theme,
-                metrics: &crate::Metrics::default(),
-                motion: default(),
-                icons: &icons,
-            };
-            let response = context.frame(ui).toggle(&mut on, "Blur");
-            rect = response.rect;
-            changes += usize::from(response.changed());
-        });
-        output.textures_delta.clear();
-        rect
-    };
-    let rect = frame(vec![]);
-    let pos = rect.left_center() + egui::vec2(12.0, 0.0);
-    let button = |pressed| egui::Event::PointerButton {
-        pos,
-        button: egui::PointerButton::Primary,
-        pressed,
-        modifiers: default(),
-    };
-    frame(vec![egui::Event::PointerMoved(pos)]);
-    frame(vec![button(true)]);
-    frame(vec![button(false)]);
-    drop(frame);
-    assert!(on);
-    assert_eq!(changes, 1);
 }

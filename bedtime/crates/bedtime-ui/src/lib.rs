@@ -15,7 +15,6 @@ pub mod draw;
 mod embedded;
 mod floating;
 pub mod fonts;
-pub mod gallery;
 pub mod hex;
 mod icon_cache;
 pub mod icons;
@@ -417,10 +416,6 @@ impl<'services> UiFrame<'services> {
             .inner
     }
 
-    pub fn text_edit(&mut self, edit: egui::TextEdit<'_>) -> egui::text_edit::TextEditOutput {
-        edit.show(self.ui)
-    }
-
     /// An icon in the layout, `side` points square, drawn in `tint`. Hover it
     /// for a tooltip; it isn't a button.
     pub fn icon(
@@ -456,33 +451,6 @@ impl<'services> UiFrame<'services> {
         }
     }
 
-    /// An accent button using egui's normal hover, press and focus interaction.
-    pub fn primary_button(&mut self, text: impl Into<egui::WidgetText>) -> egui::Response {
-        let p = &self.theme.palette;
-        let mut ink = p.panel_background;
-        ink[3] = 1.0;
-        self.ui
-            .scope(|ui| {
-                let visuals = &mut ui.style_mut().visuals;
-                visuals.override_text_color = Some(theme::color(ink));
-                for (widget, fill) in [
-                    (&mut visuals.widgets.inactive, p.accent),
-                    (
-                        &mut visuals.widgets.hovered,
-                        theme::mix(p.accent, p.text, 0.2),
-                    ),
-                    (&mut visuals.widgets.active, theme::mix(p.accent, ink, 0.2)),
-                ] {
-                    widget.bg_fill = theme::color(fill);
-                    widget.weak_bg_fill = theme::color(fill);
-                    widget.bg_stroke = egui::Stroke::NONE;
-                    widget.fg_stroke = egui::Stroke::new(1.0, theme::color(ink));
-                }
-                ui.button(text)
-            })
-            .inner
-    }
-
     /// Fade a state with this surface's cubic timing and reduced-motion policy.
     /// Retargeting starts at the displayed value; the initial state is settled.
     pub fn animate_bool(&self, id: egui::Id, target: bool) -> f32 {
@@ -504,27 +472,10 @@ impl<'services> UiFrame<'services> {
         )
     }
 
-    pub fn icon_button(&mut self, icon: impl Into<IconSource>) -> egui::Response {
-        self.icon_button_sized(icon, self.metrics.font_size)
-    }
-
-    /// Fixed artwork size in points; button padding still comes from egui spacing.
-    pub fn icon_button_sized(&mut self, icon: impl Into<IconSource>, side: f32) -> egui::Response {
-        self.icon_button_with(icon.into(), side, true)
-    }
-
     /// An icon button with no background: hovering brightens the icon,
     /// pressing tints it (titlebar tools).
     pub fn icon_ink_button(&mut self, icon: impl Into<IconSource>, side: f32) -> egui::Response {
-        self.icon_button_with(icon.into(), side, false)
-    }
-
-    fn icon_button_with(
-        &mut self,
-        icon: IconSource,
-        side: f32,
-        background: bool,
-    ) -> egui::Response {
+        let icon = icon.into();
         let size = egui::vec2(side, side);
         let pixels = (side * self.ui.ctx().pixels_per_point()).ceil().max(1.0) as u32;
         let texture = self.icons.lock().unwrap().texture(&icon, pixels);
@@ -548,24 +499,11 @@ impl<'services> UiFrame<'services> {
             response.id.with("icon-press"),
             response.is_pointer_button_down_on(),
         );
-        let fill = theme::color(theme::mix(
-            theme::mix(p.background, p.border, t * 0.65),
-            p.text,
-            pressed * 0.18,
-        ));
         let ink = theme::color(theme::mix(
             theme::mix(p.muted, p.text, t),
             p.accent,
             pressed * 0.4,
         ));
-        let fill = if self.ui.visuals().button_frame {
-            fill
-        } else {
-            fill.gamma_multiply(t.max(pressed))
-        };
-        if background {
-            self.ui.painter().rect_filled(rect, 4.0, fill);
-        }
         if let Some(texture) = texture {
             self.ui.painter().image(
                 texture,
@@ -575,87 +513,6 @@ impl<'services> UiFrame<'services> {
             );
         }
         response
-    }
-
-    pub fn toggle(&mut self, value: &mut bool, label: &str) -> egui::Response {
-        // A control's height, with a track a little inside it.
-        let height = theme::control_height(&self.metrics);
-        let track_size = egui::vec2(height * 1.6, height - 6.0);
-        let knob = track_size.y / 2.0 - 3.0;
-        let font = egui::FontId::proportional(self.metrics.font_size);
-        let text =
-            self.ui
-                .painter()
-                .layout_no_wrap(label.into(), font.clone(), egui::Color32::WHITE);
-        let gap = if label.is_empty() { 0.0 } else { 10.0 };
-        let (rect, response) = self.ui.allocate_exact_size(
-            egui::vec2(track_size.x + gap + text.size().x, height),
-            egui::Sense::click(),
-        );
-        let mut response = response;
-        if response.clicked() {
-            *value = !*value;
-            response.mark_changed();
-        }
-        let enabled = self.ui.is_enabled();
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, *value, label)
-        });
-        let t = motion::scalar(
-            self.ui.ctx(),
-            response.id.with("toggle-motion"),
-            if *value { 1.0 } else { 0.0 },
-            if *value { 1.0 } else { 0.0 },
-            self.motion,
-        );
-        let track = egui::Rect::from_min_size(
-            egui::pos2(rect.min.x, rect.center().y - track_size.y / 2.0),
-            track_size,
-        );
-        let p = &self.theme.palette;
-        let base = if *value { p.accent } else { p.border };
-        let fill =
-            if response.is_pointer_button_down_on() || response.has_focus() || response.clicked() {
-                theme::mix(base, p.panel_background, 0.18)
-            } else if response.hovered() || response.highlighted() {
-                theme::mix(base, p.text, 0.12)
-            } else {
-                base
-            };
-        let fill = self.ui.ctx().animate_color_with_time(
-            response.id.with("toggle-fill"),
-            theme::color(fill),
-            self.ui.style().animation_time,
-        );
-        self.ui
-            .painter()
-            .rect_filled(track, track_size.y / 2.0, fill);
-        let travel = track_size.x - track_size.y;
-        self.ui.painter().circle_filled(
-            egui::pos2(
-                track.min.x + track_size.y / 2.0 + t * travel,
-                track.center().y,
-            ),
-            knob,
-            theme::color(self.theme.palette.text),
-        );
-        self.ui.painter().text(
-            egui::pos2(track.max.x + gap, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            label,
-            font,
-            theme::color(self.theme.palette.text),
-        );
-        response
-    }
-
-    /// Returns whether the tooltip was shown this frame.
-    pub fn tooltip(&self, response: &egui::Response, text: impl Into<String>) -> bool {
-        let text = text.into();
-        self.tooltip_ui(response, |frame| {
-            frame.ui.label(text);
-        })
-        .is_some()
     }
 
     /// Themed tooltip content with the same view identity and motion policy.
