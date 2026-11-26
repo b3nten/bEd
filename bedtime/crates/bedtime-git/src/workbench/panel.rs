@@ -58,215 +58,30 @@ enum Action {
 impl Panel for GitPanel {
     const LABEL: &'static str = "Git";
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let Some(mut session) = world.remove_resource::<GitSession>() else {
+        let Some(session) = world.remove_resource::<GitSession>() else {
             ui.add(Text::new("Loading repository…").muted());
             return;
         };
-        let mut state = world.entity_mut(panel).take::<Self>().unwrap();
-        let mut action = None;
-        let bounds = ui
-            .available_rect_before_wrap()
-            .shrink2(egui::vec2(12.0, 10.0));
-        let height = ui.text_style_height(&egui::TextStyle::Body);
-        let footer_height = (height * 8.5).min(bounds.height() * 0.52);
-        let footer = egui::Rect::from_min_max(
-            egui::pos2(bounds.min.x, bounds.max.y - footer_height),
-            bounds.max,
-        );
-        let header_rect =
-            egui::Rect::from_min_max(bounds.min, egui::pos2(bounds.max.x, footer.min.y - 4.0));
-        let mut header = ui.new_child(egui::UiBuilder::new().max_rect(header_rect));
-        header.set_clip_rect(header_rect);
-        let host = world.get_resource::<GitHost>().copied().unwrap_or_default();
-        draw_header(&mut header, &mut session, host, &mut action);
-        let list_rect = egui::Rect::from_min_max(
-            egui::pos2(bounds.min.x, header.cursor().min.y + 4.0),
-            header_rect.max,
-        );
-        state.rendered_rows = 0;
-        let enabled = session.accepts() && accepts_user_actions(world);
-        if list_rect.height() > 0.0
-            && let Some(view) = session.view.clone()
-        {
-            // Two lists: side by side when there's the width, else stacked.
-            let lanes = view.options.staging == StagingStyle::Lanes
-                && !(view.rows.is_empty() && view.staged_rows.is_empty());
-            let beside = lanes && list_rect.width() >= LANES_WIDTH;
-            let (main, staged) = if !lanes {
-                (list_rect, None)
-            } else if beside {
-                let (left, right) = list_rect.split_left_right_at_fraction(0.5);
-                ui.painter().vline(
-                    left.right(),
-                    list_rect.y_range(),
-                    ui.visuals().widgets.noninteractive.bg_stroke,
-                );
-                (
-                    left.shrink2(egui::vec2(6.0, 0.0)),
-                    Some(right.shrink2(egui::vec2(6.0, 0.0))),
-                )
-            } else {
-                let (top, bottom) = list_rect.split_top_bottom_at_fraction(0.55);
-                ui.painter().hline(
-                    list_rect.x_range(),
-                    top.bottom(),
-                    ui.visuals().widgets.noninteractive.bg_stroke,
-                );
-                (
-                    top.shrink2(egui::vec2(0.0, 4.0)),
-                    Some(bottom.shrink2(egui::vec2(0.0, 4.0))),
-                )
-            };
-            let mut list = ui.new_child(egui::UiBuilder::new().max_rect(main));
-            list.set_clip_rect(main);
-            draw_changes(
-                &mut list,
-                context,
-                panel,
-                &view,
-                &session.collapsed,
-                &mut state,
-                enabled,
-                &mut action,
-                RowLayout::changes(view.options, beside),
-            );
-            if let Some(staged) = staged {
-                let mut lane = ui.new_child(egui::UiBuilder::new().max_rect(staged));
-                lane.set_clip_rect(staged);
-                draw_staged(
-                    &mut lane,
-                    context,
-                    panel,
-                    &view,
-                    &mut state,
-                    enabled,
-                    &mut action,
-                    RowLayout::staged(beside),
-                );
-            }
-        }
-        let mut composer = ui.new_child(egui::UiBuilder::new().max_rect(footer));
-        composer.set_clip_rect(footer);
-        composer.add(Separator::new());
-        let view = session.view.clone();
-        let count = view.as_ref().map_or(0, |v| v.staged_count);
-        bedtime_ui::Row::new().show(&mut composer, |ui| {
-            ui.add(Text::new("Commit message"));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add(Text::new(format!("{count} staged")).muted());
-            });
-        });
-        let suggestion = view.as_ref().and_then(|v| v.suggested_message.clone());
-        let amend = session.commit_mode == CommitMode::Amend;
-        let hint = if amend {
-            "Keep the last commit's message, or write a new one…".into()
-        } else {
-            suggestion
-                .clone()
-                .unwrap_or_else(|| "Describe your changes…".into())
+        let state = world.entity_mut(panel).take::<Self>().unwrap();
+        // The session and the panel are out of the world while it draws, and
+        // the session stays out until what was asked for is done.
+        let lent = Lent {
+            session,
+            state,
+            action: None,
         };
-        // An empty draft commits with the suggested message, when there is
-        // one; amending with it keeps the last commit's message.
-        let message = if !session.draft.trim().is_empty() {
-            session.draft.clone()
-        } else if amend {
-            String::new()
-        } else {
-            suggestion.unwrap_or_default()
-        };
-        let button_height = Size::Lg.height(&composer);
-        let spacing = composer.spacing().item_spacing.y;
-        let progress = session.progress();
-        // Leave room below the message for the commit row (and progress row).
-        let mut reserved = spacing + button_height.max(composer.spacing().interact_size.y);
-        if progress.is_some() {
-            reserved += spacing + composer.spacing().interact_size.y;
-        }
-        let input_height = (composer.available_height() - reserved).max(height);
-        // The message takes the room that's left above the commit row.
-        composer.allocate_ui(egui::vec2(composer.available_width(), input_height), |ui| {
-            ui.add(
-                TextArea::new(&mut session.draft)
-                    .id(egui::Id::new(("git-commit", panel)))
-                    .hint(hint)
-                    .rows(1)
-                    .fill_width()
-                    .fill_height(),
-            );
-        });
-        let can_commit = session.accepts()
-            && (amend || !message.trim().is_empty())
-            && view.as_ref().is_some_and(|v| {
-                !v.has_conflicts
-                    && match session.commit_mode {
-                        CommitMode::Amend => {
-                            v.status.head.is_some()
-                                && v.status.operation == RepositoryOperation::None
-                        }
-                        CommitMode::Commit | CommitMode::Signoff => count > 0,
-                    }
-            });
-        let accepts_actions = accepts_user_actions(world);
-        bedtime_ui::Row::new()
-            .gap(Space::Xs)
-            .show(&mut composer, |ui| {
-                let mode = Button::icon_only(BuiltinIcon::ChevronDown, "Commit action").large();
-                let width =
-                    (ui.available_width() - mode.width_in(ui) - ui.spacing().item_spacing.x)
-                        .max(1.0);
-                let label = match session.commit_mode {
-                    CommitMode::Commit => "Commit Staged",
-                    CommitMode::Amend => "Amend Commit",
-                    CommitMode::Signoff => "Commit with Signoff",
-                };
-                let response = ui.add_enabled(
-                    can_commit && accepts_actions,
-                    Button::new(label).large().width(width),
-                );
-                if response.clicked() {
-                    action = Some(Action::Operation(Operation::Commit {
-                        message: message.clone(),
-                        mode: session.commit_mode,
-                    }));
-                }
-                ui.add_enabled_ui(accepts_actions && session.pending.is_none(), |ui| {
-                    MenuButton::new(mode)
-                    .show(ui, |ui| {
-                        for (mode, label, tooltip) in [
-                            (
-                                CommitMode::Commit,
-                                "Commit",
-                                "Commit staged changes as a new commit",
-                            ),
-                            (
-                                CommitMode::Amend,
-                                "Amend",
-                                "Replace the last commit using this message and the current index",
-                            ),
-                            (
-                                CommitMode::Signoff,
-                                "Signoff",
-                                "Add a Signed-off-by trailer using your Git identity",
-                            ),
-                        ] {
-                            let item = MenuItem::new(label).checked(session.commit_mode == mode);
-                            if ui.add(item).on_hover_text(tooltip).clicked() {
-                                session.commit_mode = mode;
-                            }
-                        }
-                    })
-                    .on_hover_text("Commit action");
-                });
-            });
-        if let Some(progress) = progress {
-            bedtime_ui::Row::new().show(&mut composer, |ui| {
-                ui.add(Text::new(progress).muted());
-                if ui.add(Button::new("Cancel").small()).clicked() {
-                    action = Some(Action::Cancel);
-                }
-            });
-        }
-        world.entity_mut(panel).insert(state);
+        let (mut session, action) = bedtime_ui::draw::with_lent(
+            ui,
+            world,
+            context,
+            panel,
+            lent,
+            git_panel,
+            |world, lent| {
+                world.entity_mut(panel).insert(lent.state);
+                (lent.session, lent.action)
+            },
+        );
         if let Some(action) = action {
             let result = if accepts_user_actions(world) {
                 match action {
@@ -354,6 +169,237 @@ impl Panel for GitPanel {
         }
         world.insert_resource(session);
     }
+}
+
+/// What the Git panel's draw is lent: the session and the panel, both out
+/// of the world for it, and what it asked for.
+struct Lent {
+    session: GitSession,
+    state: GitPanel,
+    action: Option<Action>,
+}
+
+/// The panel, drawn: a system that reads the world, with the session and
+/// the panel's state lent to it. What's asked for is done after, by
+/// `Panel::draw`.
+fn git_panel(
+    bedtime_ui::ViewUi {
+        ui,
+        entity: panel,
+        view,
+        context,
+    }: bedtime_ui::ViewUi<Lent>,
+    host: Option<Res<GitHost>>,
+    world: &World,
+) {
+    let context = &context;
+    let Lent {
+        session,
+        state,
+        action: asked,
+    } = view;
+    let mut action = None;
+    let bounds = ui
+        .available_rect_before_wrap()
+        .shrink2(egui::vec2(12.0, 10.0));
+    let height = ui.text_style_height(&egui::TextStyle::Body);
+    let footer_height = (height * 8.5).min(bounds.height() * 0.52);
+    let footer = egui::Rect::from_min_max(
+        egui::pos2(bounds.min.x, bounds.max.y - footer_height),
+        bounds.max,
+    );
+    let header_rect =
+        egui::Rect::from_min_max(bounds.min, egui::pos2(bounds.max.x, footer.min.y - 4.0));
+    let mut header = ui.new_child(egui::UiBuilder::new().max_rect(header_rect));
+    header.set_clip_rect(header_rect);
+    let host = host.as_deref().copied().unwrap_or_default();
+    draw_header(&mut header, session, host, &mut action);
+    let list_rect = egui::Rect::from_min_max(
+        egui::pos2(bounds.min.x, header.cursor().min.y + 4.0),
+        header_rect.max,
+    );
+    state.rendered_rows = 0;
+    let enabled = session.accepts() && accepts_user_actions(world);
+    if list_rect.height() > 0.0
+        && let Some(view) = session.view.clone()
+    {
+        // Two lists: side by side when there's the width, else stacked.
+        let lanes = view.options.staging == StagingStyle::Lanes
+            && !(view.rows.is_empty() && view.staged_rows.is_empty());
+        let beside = lanes && list_rect.width() >= LANES_WIDTH;
+        let (main, staged) = if !lanes {
+            (list_rect, None)
+        } else if beside {
+            let (left, right) = list_rect.split_left_right_at_fraction(0.5);
+            ui.painter().vline(
+                left.right(),
+                list_rect.y_range(),
+                ui.visuals().widgets.noninteractive.bg_stroke,
+            );
+            (
+                left.shrink2(egui::vec2(6.0, 0.0)),
+                Some(right.shrink2(egui::vec2(6.0, 0.0))),
+            )
+        } else {
+            let (top, bottom) = list_rect.split_top_bottom_at_fraction(0.55);
+            ui.painter().hline(
+                list_rect.x_range(),
+                top.bottom(),
+                ui.visuals().widgets.noninteractive.bg_stroke,
+            );
+            (
+                top.shrink2(egui::vec2(0.0, 4.0)),
+                Some(bottom.shrink2(egui::vec2(0.0, 4.0))),
+            )
+        };
+        let mut list = ui.new_child(egui::UiBuilder::new().max_rect(main));
+        list.set_clip_rect(main);
+        draw_changes(
+            &mut list,
+            context,
+            panel,
+            &view,
+            &session.collapsed,
+            state,
+            enabled,
+            &mut action,
+            RowLayout::changes(view.options, beside),
+        );
+        if let Some(staged) = staged {
+            let mut lane = ui.new_child(egui::UiBuilder::new().max_rect(staged));
+            lane.set_clip_rect(staged);
+            draw_staged(
+                &mut lane,
+                context,
+                panel,
+                &view,
+                state,
+                enabled,
+                &mut action,
+                RowLayout::staged(beside),
+            );
+        }
+    }
+    let mut composer = ui.new_child(egui::UiBuilder::new().max_rect(footer));
+    composer.set_clip_rect(footer);
+    composer.add(Separator::new());
+    let view = session.view.clone();
+    let count = view.as_ref().map_or(0, |v| v.staged_count);
+    bedtime_ui::Row::new().show(&mut composer, |ui| {
+        ui.add(Text::new("Commit message"));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add(Text::new(format!("{count} staged")).muted());
+        });
+    });
+    let suggestion = view.as_ref().and_then(|v| v.suggested_message.clone());
+    let amend = session.commit_mode == CommitMode::Amend;
+    let hint = if amend {
+        "Keep the last commit's message, or write a new one…".into()
+    } else {
+        suggestion
+            .clone()
+            .unwrap_or_else(|| "Describe your changes…".into())
+    };
+    // An empty draft commits with the suggested message, when there is
+    // one; amending with it keeps the last commit's message.
+    let message = if !session.draft.trim().is_empty() {
+        session.draft.clone()
+    } else if amend {
+        String::new()
+    } else {
+        suggestion.unwrap_or_default()
+    };
+    let button_height = Size::Lg.height(&composer);
+    let spacing = composer.spacing().item_spacing.y;
+    let progress = session.progress();
+    // Leave room below the message for the commit row (and progress row).
+    let mut reserved = spacing + button_height.max(composer.spacing().interact_size.y);
+    if progress.is_some() {
+        reserved += spacing + composer.spacing().interact_size.y;
+    }
+    let input_height = (composer.available_height() - reserved).max(height);
+    // The message takes the room that's left above the commit row.
+    composer.allocate_ui(egui::vec2(composer.available_width(), input_height), |ui| {
+        ui.add(
+            TextArea::new(&mut session.draft)
+                .id(egui::Id::new(("git-commit", panel)))
+                .hint(hint)
+                .rows(1)
+                .fill_width()
+                .fill_height(),
+        );
+    });
+    let can_commit = session.accepts()
+        && (amend || !message.trim().is_empty())
+        && view.as_ref().is_some_and(|v| {
+            !v.has_conflicts
+                && match session.commit_mode {
+                    CommitMode::Amend => {
+                        v.status.head.is_some() && v.status.operation == RepositoryOperation::None
+                    }
+                    CommitMode::Commit | CommitMode::Signoff => count > 0,
+                }
+        });
+    let accepts_actions = accepts_user_actions(world);
+    bedtime_ui::Row::new()
+        .gap(Space::Xs)
+        .show(&mut composer, |ui| {
+            let mode = Button::icon_only(BuiltinIcon::ChevronDown, "Commit action").large();
+            let width =
+                (ui.available_width() - mode.width_in(ui) - ui.spacing().item_spacing.x).max(1.0);
+            let label = match session.commit_mode {
+                CommitMode::Commit => "Commit Staged",
+                CommitMode::Amend => "Amend Commit",
+                CommitMode::Signoff => "Commit with Signoff",
+            };
+            let response = ui.add_enabled(
+                can_commit && accepts_actions,
+                Button::new(label).large().width(width),
+            );
+            if response.clicked() {
+                action = Some(Action::Operation(Operation::Commit {
+                    message: message.clone(),
+                    mode: session.commit_mode,
+                }));
+            }
+            ui.add_enabled_ui(accepts_actions && session.pending.is_none(), |ui| {
+                MenuButton::new(mode)
+                    .show(ui, |ui| {
+                        for (mode, label, tooltip) in [
+                            (
+                                CommitMode::Commit,
+                                "Commit",
+                                "Commit staged changes as a new commit",
+                            ),
+                            (
+                                CommitMode::Amend,
+                                "Amend",
+                                "Replace the last commit using this message and the current index",
+                            ),
+                            (
+                                CommitMode::Signoff,
+                                "Signoff",
+                                "Add a Signed-off-by trailer using your Git identity",
+                            ),
+                        ] {
+                            let item = MenuItem::new(label).checked(session.commit_mode == mode);
+                            if ui.add(item).on_hover_text(tooltip).clicked() {
+                                session.commit_mode = mode;
+                            }
+                        }
+                    })
+                    .on_hover_text("Commit action");
+            });
+        });
+    if let Some(progress) = progress {
+        bedtime_ui::Row::new().show(&mut composer, |ui| {
+            ui.add(Text::new(progress).muted());
+            if ui.add(Button::new("Cancel").small()).clicked() {
+                action = Some(Action::Cancel);
+            }
+        });
+    }
+    *asked = action;
 }
 
 fn draw_header(

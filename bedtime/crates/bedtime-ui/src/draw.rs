@@ -261,12 +261,41 @@ pub fn with_view<P, V, M, S>(
     S: IntoSystem<ViewUi<'static, V>, (), M> + 'static,
     S::System: ReadOnlySystem,
 {
-    let Some(mut lent) = world
+    let Some(lent) = world
         .get_mut::<P>(panel)
         .map(|mut state| std::mem::take(view(&mut state)))
     else {
         return;
     };
+    with_lent(ui, world, context, panel, lent, system, |world, lent| {
+        if let Some(mut state) = world.get_mut::<P>(panel) {
+            *view(&mut state) = lent;
+        }
+    });
+}
+
+/// Draw `panel` with `system`, lending it `lent`: anything the caller took
+/// out of the world for the draw (a resource and the panel's state together,
+/// say), which the system has as `&mut` while the world is shared.
+///
+/// `restore` puts it back, and can keep something of it for the caller (what
+/// the draw asked for): that's what's returned. It runs before what was
+/// queued is applied, so a queued change to what was lent is made to the
+/// real thing and kept. `with_view` is this for a part of the panel itself.
+pub fn with_lent<V, R, M, S>(
+    ui: &mut egui::Ui,
+    world: &mut World,
+    context: &UiContext<'_>,
+    panel: Entity,
+    mut lent: V,
+    system: S,
+    restore: impl FnOnce(&mut World, V) -> R,
+) -> R
+where
+    V: 'static,
+    S: IntoSystem<ViewUi<'static, V>, (), M> + 'static,
+    S::System: ReadOnlySystem,
+{
     let mut system = take_system(world, system);
     let result = {
         let world: &World = world;
@@ -279,12 +308,9 @@ pub fn with_view<P, V, M, S>(
         };
         system.run_readonly(input, world)
     };
-    // Back where it was before what was queued is done, so a queued change
-    // to the view itself is made to the real one and kept.
-    if let Some(mut state) = world.get_mut::<P>(panel) {
-        *view(&mut state) = lent;
-    }
+    let kept = restore(world, lent);
     finish::<_, S>(world, system, Some(result));
+    kept
 }
 
 #[cfg(test)]

@@ -917,114 +917,136 @@ impl Panel for HistoryPanel {
     const LABEL: &'static str = "History";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let status = world
-            .get_resource::<GitSession>()
-            .and_then(|session| session.view.as_ref().map(|view| view.status.clone()));
-        let focused = world
-            .get::<PanelPresentation>(panel)
-            .is_some_and(|presentation| presentation.focused);
-        let Some(mut state) = world.entity_mut(panel).take::<Self>() else {
-            return;
-        };
-        let view = &mut state.view;
-        let bounds = ui.available_rect_before_wrap();
-        let says = |ui: &mut egui::Ui, draw: &dyn Fn(&mut egui::Ui)| {
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(12, 10))
-                .show(ui, |ui| draw(ui));
-        };
-        let mut asked = None;
-        match (&status, view.loaded.clone()) {
-            (Some(status), _) if status.root.is_empty() => {
-                says(ui, &|ui| {
-                    ui.add(Text::new("This folder isn't in a Git repository.").muted());
-                });
-            }
-            (_, None) => match &view.error {
-                Some(error) => says(ui, &|ui| {
-                    ui.add(Text::new(error).tone(Tone::Error));
-                }),
-                None => says(ui, &|ui| {
-                    ui.add(Text::new("Reading history…").muted());
-                }),
-            },
-            (_, Some(loaded)) if loaded.commits.is_empty() => {
-                says(ui, &|ui| {
-                    ui.add(Text::new("No commits yet"));
-                    ui.add(Text::new("The first commit will show here.").muted());
-                });
-            }
-            (_, Some(loaded)) => {
-                let commit = view
-                    .selected
-                    .as_ref()
-                    .and_then(|hash| loaded.commits.iter().find(|commit| commit.hash == *hash));
-                // The details: beside the list when there's the width, else under it.
-                let (list, detail) = match commit {
-                    None => (bounds, None),
-                    Some(_) if bounds.width() >= BESIDE_WIDTH => {
-                        let width = (bounds.width() * 0.42).clamp(300.0, 480.0);
-                        let (left, right) = bounds.split_left_right_at_x(bounds.right() - width);
-                        ui.painter().vline(
-                            left.right(),
-                            bounds.y_range(),
-                            ui.visuals().widgets.noninteractive.bg_stroke,
-                        );
-                        (left, Some(right))
-                    }
-                    Some(_) => {
-                        let (top, bottom) = bounds.split_top_bottom_at_fraction(0.45);
-                        ui.painter().hline(
-                            bounds.x_range(),
-                            top.bottom(),
-                            ui.visuals().widgets.noninteractive.bg_stroke,
-                        );
-                        (top, Some(bottom.shrink2(egui::vec2(0.0, 1.0))))
-                    }
-                };
-                draw_list(ui, context, panel, list, &loaded, view, focused, &mut asked);
-                if let (Some(commit), Some(rect)) = (commit, detail) {
-                    draw_detail(ui, context, panel, rect, commit, view, &mut asked);
+        bedtime_ui::draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |panel: &mut HistoryPanel| &mut panel.view,
+            history_panel,
+        );
+    }
+}
+
+/// The panel, drawn: a system that reads the repository's status, with the
+/// panel's view (the commits read, what's selected) lent to it. Opening a
+/// file's changes is done when the draw is.
+fn history_panel(
+    bedtime_ui::ViewUi {
+        ui,
+        entity: panel,
+        view,
+        context,
+    }: bedtime_ui::ViewUi<View>,
+    session: Option<Res<GitSession>>,
+    presentations: Query<&PanelPresentation>,
+    mut commands: Commands,
+) {
+    let context = &context;
+    let status = session
+        .as_ref()
+        .and_then(|session| session.view.as_ref().map(|view| view.status.clone()));
+    let focused = presentations
+        .get(panel)
+        .is_ok_and(|presentation| presentation.focused);
+    let bounds = ui.available_rect_before_wrap();
+    let says = |ui: &mut egui::Ui, draw: &dyn Fn(&mut egui::Ui)| {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| draw(ui));
+    };
+    let mut asked = None;
+    match (&status, view.loaded.clone()) {
+        (Some(status), _) if status.root.is_empty() => {
+            says(ui, &|ui| {
+                ui.add(Text::new("This folder isn't in a Git repository.").muted());
+            });
+        }
+        (_, None) => match &view.error {
+            Some(error) => says(ui, &|ui| {
+                ui.add(Text::new(error).tone(Tone::Error));
+            }),
+            None => says(ui, &|ui| {
+                ui.add(Text::new("Reading history…").muted());
+            }),
+        },
+        (_, Some(loaded)) if loaded.commits.is_empty() => {
+            says(ui, &|ui| {
+                ui.add(Text::new("No commits yet"));
+                ui.add(Text::new("The first commit will show here.").muted());
+            });
+        }
+        (_, Some(loaded)) => {
+            let commit = view
+                .selected
+                .as_ref()
+                .and_then(|hash| loaded.commits.iter().find(|commit| commit.hash == *hash));
+            // The details: beside the list when there's the width, else under it.
+            let (list, detail) = match commit {
+                None => (bounds, None),
+                Some(_) if bounds.width() >= BESIDE_WIDTH => {
+                    let width = (bounds.width() * 0.42).clamp(300.0, 480.0);
+                    let (left, right) = bounds.split_left_right_at_x(bounds.right() - width);
+                    ui.painter().vline(
+                        left.right(),
+                        bounds.y_range(),
+                        ui.visuals().widgets.noninteractive.bg_stroke,
+                    );
+                    (left, Some(right))
                 }
+                Some(_) => {
+                    let (top, bottom) = bounds.split_top_bottom_at_fraction(0.45);
+                    ui.painter().hline(
+                        bounds.x_range(),
+                        top.bottom(),
+                        ui.visuals().widgets.noninteractive.bg_stroke,
+                    );
+                    (top, Some(bottom.shrink2(egui::vec2(0.0, 1.0))))
+                }
+            };
+            draw_list(ui, context, panel, list, &loaded, view, focused, &mut asked);
+            if let (Some(commit), Some(rect)) = (commit, detail) {
+                draw_detail(ui, context, panel, rect, commit, view, &mut asked);
             }
         }
-        let mut open = None;
-        match asked {
-            None => {}
-            Some(Asked::Select(hash)) => {
-                view.selected = hash;
-                view.file = None;
-            }
-            Some(Asked::Open(file, pin)) => {
-                view.file = Some(file.path.clone());
-                let commit = view.selected.as_ref().and_then(|hash| {
-                    let loaded = view.loaded.as_ref()?;
-                    loaded.commits.iter().find(|commit| commit.hash == *hash)
-                });
-                if let (Some(commit), Some(status)) = (commit, &status) {
-                    open = Some((
-                        CommitDiffPanel {
-                            root: PathBuf::from(&status.root),
-                            commit: commit.hash.clone(),
-                            parent: commit.parents.first().cloned(),
-                            added: file.status == 'A',
-                            deleted: file.status == 'D',
-                            path: file.path,
-                            old_path: file.old_path,
-                            ..default()
-                        },
-                        pin,
-                    ));
-                }
+    }
+    let mut open = None;
+    match asked {
+        None => {}
+        Some(Asked::Select(hash)) => {
+            view.selected = hash;
+            view.file = None;
+        }
+        Some(Asked::Open(file, pin)) => {
+            view.file = Some(file.path.clone());
+            let commit = view.selected.as_ref().and_then(|hash| {
+                let loaded = view.loaded.as_ref()?;
+                loaded.commits.iter().find(|commit| commit.hash == *hash)
+            });
+            if let (Some(commit), Some(status)) = (commit, &status) {
+                open = Some((
+                    CommitDiffPanel {
+                        root: PathBuf::from(&status.root),
+                        commit: commit.hash.clone(),
+                        parent: commit.parents.first().cloned(),
+                        added: file.status == 'A',
+                        deleted: file.status == 'D',
+                        path: file.path,
+                        old_path: file.old_path,
+                        ..default()
+                    },
+                    pin,
+                ));
             }
         }
-        world.entity_mut(panel).insert(state);
-        if let Some((diff, pin)) = open {
+    }
+    if let Some((diff, pin)) = open {
+        commands.queue(move |world: &mut World| {
             let result = open_diff(world, panel, diff, pin);
             world
                 .bedtime_mut()
                 .notify_failure("Git History", result.map(|_| ()));
-        }
+        });
     }
 }
 
