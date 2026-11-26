@@ -246,6 +246,8 @@ pub fn with_system<P, M, S>(
 /// and put back after, so the system has it as `&mut` while the world, the
 /// panel included, is shared. For a panel whose drawing changes a lot of
 /// state that is only its own; what belongs to the world is still queued.
+/// What's queued is applied once the view is back, so it can change the
+/// view too.
 pub fn with_view<P, V, M, S>(
     ui: &mut egui::Ui,
     world: &mut World,
@@ -277,11 +279,12 @@ pub fn with_view<P, V, M, S>(
         };
         system.run_readonly(input, world)
     };
-    finish::<_, S>(world, system, Some(result));
-    // Back where it was, unless what was queued closed the panel.
+    // Back where it was before what was queued is done, so a queued change
+    // to the view itself is made to the real one and kept.
     if let Some(mut state) = world.get_mut::<P>(panel) {
         *view(&mut state) = lent;
     }
+    finish::<_, S>(world, system, Some(result));
 }
 
 #[cfg(test)]
@@ -436,6 +439,8 @@ mod tests {
         hovered: Option<usize>,
         draws: u32,
         close: bool,
+        /// Changed by what the draw queued.
+        queued: u32,
     }
 
     fn graph(
@@ -452,6 +457,12 @@ mod tests {
         view.hovered = Some(step.0 as usize);
         assert_eq!(graphs.get(entity).unwrap().view.draws, 0);
         ui.add(StepButton);
+        // A queued change to the view: made to the one that's back.
+        commands.queue(move |world: &mut World| {
+            if let Some(mut graph) = world.get_mut::<Graph>(entity) {
+                graph.view.queued += 1;
+            }
+        });
         if view.close {
             commands.entity(entity).despawn();
         }
@@ -488,6 +499,7 @@ mod tests {
         draw(&mut world);
         let view = &world.get::<Graph>(panel).unwrap().view;
         assert_eq!((view.draws, view.hovered), (2, Some(5)));
+        assert_eq!(view.queued, 2, "queued changes to the view are kept");
         assert_eq!(
             world.resource::<Sent>().0.len(),
             2,

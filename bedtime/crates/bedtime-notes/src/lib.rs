@@ -10,7 +10,7 @@
 //! Drawing reads the notes and returns what was asked (`Intent`s); `apply`
 //! makes them changes to the document, right after drawing.
 use bedtime_ui::Tip;
-use bedtime_ui::{BuiltinIcon, UiContext, egui, theme};
+use bedtime_ui::{BuiltinIcon, UiContext, ViewUi, draw, egui, theme};
 use bedtime_ui::{Button, MenuItem, Row, Separator, Size, Space, Spinner, Text, TextField};
 use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
@@ -498,66 +498,100 @@ impl Panel for NotesPanel {
     const LABEL: &'static str = "Notes";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let Some(mut shown) = world.entity_mut(panel).take::<NotesPanel>() else {
-            return;
-        };
-        let Some(mut view) = world.entity_mut(panel).take::<NotesView>() else {
-            world.entity_mut(panel).insert(shown);
-            return;
-        };
-        let loaded = document(world, panel).and_then(|handle| {
-            let info = world.bedtime().inspect_document(handle.id()).ok()?;
-            match info.status {
-                DocumentStatus::Ready => world.bedtime().read_document(handle).ok(),
-                DocumentStatus::Loading => {
-                    ui.centered_and_justified(|ui| ui.add(Spinner::new()));
-                    None
+        draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |view: &mut NotesView| view,
+            notes_panel,
+        );
+    }
+}
+
+/// The panel, drawn: a system that reads the notes and which one the panel
+/// shows, with the panel's view (its prompts, filter and pending focus) lent
+/// to it. What's asked for is done when the draw is.
+fn notes_panel(
+    ViewUi {
+        ui,
+        entity: panel,
+        view,
+        context,
+    }: ViewUi<NotesView>,
+    panels: Query<&NotesPanel>,
+    world: &World,
+    mut commands: Commands,
+) {
+    let Ok(saved) = panels.get(panel) else {
+        return;
+    };
+    let context = &context;
+    let loaded = document(world, panel).and_then(|handle| {
+        let info = world.bedtime().inspect_document(handle.id()).ok()?;
+        match info.status {
+            DocumentStatus::Ready => world.bedtime().read_document(handle).ok(),
+            DocumentStatus::Loading => {
+                ui.centered_and_justified(|ui| ui.add(Spinner::new()));
+                None
+            }
+            DocumentStatus::Failed(error) => {
+                ui.add(Text::new(format!("The notes can't be read: {error}")).muted());
+                None
+            }
+        }
+    });
+    let Some(notes) = loaded else {
+        return;
+    };
+    // A note deleted elsewhere (or none chosen yet): show the first.
+    let mut selected = saved.selected;
+    if selected.is_none_or(|id| notes.get(id).is_none()) {
+        selected = notes.notes.first().map(|note| note.id);
+    }
+    let shown = NotesPanel {
+        selected,
+        list_hidden: saved.list_hidden,
+    };
+    let mut intents = Vec::new();
+    let margin = egui::Margin::symmetric(8, 6);
+    let hidden = shown.list_hidden;
+    if !hidden {
+        egui::Panel::left(egui::Id::new((panel, "notes-list")))
+            .resizable(true)
+            .default_size(190.0)
+            .size_range(120.0..=420.0)
+            .frame(egui::Frame::NONE.inner_margin(margin))
+            .show(ui, |ui| {
+                sidebar(ui, context, panel, notes, &shown, view, &mut intents)
+            });
+    }
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(12, 8)))
+        .show(ui, |ui| match shown.selected.and_then(|id| notes.get(id)) {
+            Some(note) => editor(ui, context, panel, note, hidden, view, &mut intents),
+            None => {
+                if hidden {
+                    list_toggle(ui, true, &mut intents);
+                    ui.add_space(6.0);
                 }
-                DocumentStatus::Failed(error) => {
-                    ui.add(Text::new(format!("The notes can't be read: {error}")).muted());
-                    None
+                ui.add(Text::new("No notes in this workspace yet.").muted());
+                ui.add_space(6.0);
+                if ui.add(Button::new("New Note")).clicked() {
+                    intents.push(Intent::New);
                 }
             }
         });
-        let Some(notes) = loaded else {
-            world.entity_mut(panel).insert((shown, view));
-            return;
-        };
-        // A note deleted elsewhere (or none chosen yet): show the first.
-        if shown.selected.is_none_or(|id| notes.get(id).is_none()) {
-            shown.selected = notes.notes.first().map(|note| note.id);
-        }
-        let mut intents = Vec::new();
-        let margin = egui::Margin::symmetric(8, 6);
-        let hidden = shown.list_hidden;
-        if !hidden {
-            egui::Panel::left(egui::Id::new((panel, "notes-list")))
-                .resizable(true)
-                .default_size(190.0)
-                .size_range(120.0..=420.0)
-                .frame(egui::Frame::NONE.inner_margin(margin))
-                .show(ui, |ui| {
-                    sidebar(ui, context, panel, notes, &shown, &mut view, &mut intents)
-                });
-        }
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(12, 8)))
-            .show(ui, |ui| match shown.selected.and_then(|id| notes.get(id)) {
-                Some(note) => editor(ui, context, panel, note, hidden, &mut view, &mut intents),
-                None => {
-                    if hidden {
-                        list_toggle(ui, true, &mut intents);
-                        ui.add_space(6.0);
-                    }
-                    ui.add(Text::new("No notes in this workspace yet.").muted());
-                    ui.add_space(6.0);
-                    if ui.add(Button::new("New Note")).clicked() {
-                        intents.push(Intent::New);
-                    }
-                }
-            });
-        world.entity_mut(panel).insert((shown, view));
-        apply(world, panel, intents);
+    let chosen = (selected != saved.selected).then_some(selected);
+    if chosen.is_some() || !intents.is_empty() {
+        commands.queue(move |world: &mut World| {
+            if let Some(selected) = chosen
+                && let Some(mut shown) = world.get_mut::<NotesPanel>(panel)
+            {
+                shown.selected = selected;
+            }
+            apply(world, panel, intents);
+        });
     }
 }
 

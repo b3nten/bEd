@@ -5,7 +5,7 @@
 //! The workspace (`Root`) is scanned on a worker (`scan`) when the panel
 //! opens, when the root changes, after a document is saved, and when asked
 //! (the refresh button). Unsaved edits aren't seen until they're saved.
-use bedtime_ui::{UiContext, egui};
+use bedtime_ui::{UiContext, ViewUi, draw, egui};
 use bedtime_workbench::PanelsAppExt as _;
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
@@ -76,7 +76,7 @@ impl TodoSort {
 
 /// The TODOs panel. How it shows the items is saved with it.
 #[bedtime_ui::panel]
-#[derive(Reflect, Default)]
+#[derive(Reflect, Default, Clone, PartialEq)]
 #[reflect(Component, Default)]
 #[cfg_attr(feature = "persistence", reflect(Persist))]
 #[require(TodoState)]
@@ -417,16 +417,47 @@ impl Panel for TodoPanel {
     const LABEL: &'static str = "TODOs";
 
     fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>, panel: Entity) {
-        let Some(mut shown) = world.entity_mut(panel).take::<Self>() else {
-            return;
-        };
-        let Some(mut state) = world.entity_mut(panel).take::<TodoState>() else {
-            world.entity_mut(panel).insert(shown);
-            return;
-        };
-        let intents = view::draw(ui, world, context, panel, &mut shown, &mut state);
-        world.entity_mut(panel).insert((shown, state));
-        view::apply(world, panel, intents);
+        draw::with_view(
+            ui,
+            world,
+            context,
+            panel,
+            |state: &mut TodoState| state,
+            todos,
+        );
+    }
+}
+
+/// The panel, drawn: a system that reads the world and how the panel shows
+/// its items, with the panel's state (its scan, what's selected and
+/// collapsed) lent to it. Changed options and what's asked for are done when
+/// the draw is.
+fn todos(
+    ViewUi {
+        ui,
+        entity: panel,
+        view: state,
+        context,
+    }: ViewUi<TodoState>,
+    panels: Query<&TodoPanel>,
+    world: &World,
+    mut commands: Commands,
+) {
+    let Ok(saved) = panels.get(panel) else {
+        return;
+    };
+    let mut shown = saved.clone();
+    let intents = view::draw(ui, world, &context, panel, &mut shown, state);
+    let changed = (shown != *saved).then_some(shown);
+    if changed.is_some() || !intents.is_empty() {
+        commands.queue(move |world: &mut World| {
+            if let Some(shown) = changed
+                && let Some(mut panel) = world.get_mut::<TodoPanel>(panel)
+            {
+                *panel = shown;
+            }
+            view::apply(world, panel, intents);
+        });
     }
 }
 
