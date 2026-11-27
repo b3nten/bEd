@@ -12,6 +12,7 @@ mod closing;
 mod document_actions;
 #[cfg(feature = "documents")]
 mod documents;
+pub mod environment;
 mod exit;
 #[cfg(feature = "files")]
 mod formats;

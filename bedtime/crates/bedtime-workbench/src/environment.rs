@@ -1,7 +1,7 @@
-//! The environment language servers run in: the user's login shell's, read
-//! once (an app started from the Dock or Finder doesn't have the PATH a
-//! terminal has, so it couldn't find Homebrew's or Cargo's programs), and
-//! finding programs on its PATH.
+//! The environment to run the user's programs in (language servers, agents):
+//! their login shell's, read once (an app started from the Dock or Finder
+//! doesn't have the PATH a terminal has, so it couldn't find Homebrew's or
+//! Cargo's programs), and finding programs on its PATH.
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},

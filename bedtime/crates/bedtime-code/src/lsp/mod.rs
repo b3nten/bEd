@@ -4,7 +4,7 @@
 //! diagnostics in the editor and go-to-definition.
 mod activity;
 pub mod config;
-pub mod environment;
+pub use bedtime_workbench::environment;
 pub use config::{
     InstalledServers, KNOWN_SERVERS, KnownServer, ServerCatalog, ServerEntry, ServerSettings,
 };
