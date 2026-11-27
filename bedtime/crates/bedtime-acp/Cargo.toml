@@ -1,0 +1,27 @@
+[package]
+name = "bedtime-acp"
+version.workspace = true
+edition = "2024"
+publish = false
+license.workspace = true
+description = "Agent Client Protocol (ACP) chat panels for external coding agents"
+
+[features]
+default = ["persistence"]
+persistence = ["bedtime-workbench/persistence"]
+
+[dependencies]
+agent-client-protocol.workspace = true
+async-channel = "2"
+async-executor = "1"
+base64.workspace = true
+futures-lite = "2"
+ignore.workspace = true
+image.workspace = true
+bevy = { workspace = true, features = ["std"] }
+bedtime-clipboard.workspace = true
+bedtime-ui = { workspace = true, features = ["markdown", "syntax"] }
+bedtime-workbench = { workspace = true, features = ["files"] }
+bedtime-persistence.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

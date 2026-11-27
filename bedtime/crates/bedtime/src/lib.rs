@@ -21,6 +21,8 @@
 pub use bedtime_automation as automation;
 pub use bedtime_ui as ui;
 
+#[cfg(feature = "acp")]
+pub use bedtime_acp as acp;
 #[cfg(feature = "audio")]
 pub use bedtime_audio as audio;
 #[cfg(feature = "cat")]

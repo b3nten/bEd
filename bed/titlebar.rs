@@ -122,7 +122,7 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
         };
         world.bedtime_mut().notify_failure("Menu", result);
     }
-    // Right to left: terminal, search, files, git, structure.
+    // From the right: structure, git, files, search, terminal, agents.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.add_space(4.0);
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -139,6 +139,7 @@ pub fn draw(ui: &mut egui::Ui, world: &mut World, context: &UiContext<'_>) {
             PanelFactory::of::<bedtime::search::SearchPanel>(),
         );
         tool::<bedtime::terminal::TerminalPanel>(ui, world, context, BuiltinIcon::Terminal);
+        tool::<bedtime::acp::AgentsPanel>(ui, world, context, BuiltinIcon::Bot);
     });
 }
 

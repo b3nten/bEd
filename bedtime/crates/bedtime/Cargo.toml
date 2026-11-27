@@ -27,6 +27,8 @@ file_explorer = ["dep:bedtime-file-explorer", "workbench", "filesystem"]
 code = ["dep:bedtime-code", "workbench", "filesystem"]
 # Terminal panels.
 terminal = ["dep:bedtime-terminal", "workbench"]
+# Agent Client Protocol (ACP) chat panels.
+acp = ["dep:bedtime-acp", "workbench"]
 # Audio files: a player with waveform and spectrum.
 audio = ["dep:bedtime-audio", "workbench", "filesystem"]
 # A cat that lives in the window.
@@ -86,6 +88,7 @@ bedtime-document = { workspace = true, optional = true }
 bedtime-filesystem = { workspace = true, optional = true }
 bedtime-file-explorer = { workspace = true, optional = true }
 bedtime-persistence = { workspace = true, optional = true }
+bedtime-acp = { workspace = true, optional = true }
 bedtime-audio = { workspace = true, optional = true }
 bedtime-cat = { workspace = true, optional = true }
 bedtime-datatree = { workspace = true, optional = true }

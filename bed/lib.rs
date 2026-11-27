@@ -79,6 +79,7 @@ impl PluginGroup for BedPlugins {
             .add(bedtime::datatree::DataTreePlugin)
             .add(bedtime::schedules::SchedulesPlugin)
             .add(bedtime::notes::NotesPlugin)
+            .add(bedtime::acp::AcpPlugin)
             // In the status bar, last.
             .add(bedtime::frame_rate::FrameRatePlugin)
             .add(bedtime::automation::AutomationPlugin::from_env())

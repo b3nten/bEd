@@ -31,7 +31,7 @@ bedtime = { workspace = true, features = [
     "markdown", "datatree", "table", "sqlite", "diagram", "hex",
     "image", "audio", "video", "model", "font",
     "http_client", "web", "notes", "schedules", "mascots",
-    "cat", "frame_rate",
+    "cat", "frame_rate", "acp",
 ] }
 bevy_egui.workspace = true
 bevy = { workspace = true, features = ["std", "async_executor", "multi_threaded", "bevy_asset", "bevy_render", "bevy_core_pipeline", "bevy_pbr", "bevy_winit", "bevy_log", "png", "keyboard", "mouse", "x11", "wayland"] }
@@ -76,6 +76,7 @@ members = [
     "bedtime/crates/bedtime-diagram",
     "bedtime/crates/bedtime-cat",
     "bedtime/crates/bedtime-frame-rate",
+    "bedtime/crates/bedtime-acp",
 ]
 default-members = ["."]
 exclude = ["vendor/arboard", "vendor/egui", "vendor/rio-vt"]
@@ -124,6 +125,8 @@ bedtime-notes = { path = "bedtime/crates/bedtime-notes" }
 bedtime-diagram = { path = "bedtime/crates/bedtime-diagram" }
 bedtime-cat = { path = "bedtime/crates/bedtime-cat" }
 bedtime-frame-rate = { path = "bedtime/crates/bedtime-frame-rate" }
+bedtime-acp = { path = "bedtime/crates/bedtime-acp" }
+agent-client-protocol = { version = "5.6.1", features = ["process"] }
 wgpu = "=30.0.1"
 bevy = { version = "=0.20.0", default-features = false }
 egui = "=0.36.2"
