@@ -5,6 +5,7 @@ mod ambient;
 /// `#[bedtime_ui::panel]`: see [`layouts::panel`].
 pub use layouts::panel;
 mod backdrop;
+mod caret;
 mod clipping;
 pub mod code;
 mod combo_box;
@@ -49,6 +50,7 @@ pub mod tree;
 mod viewport;
 pub use backdrop::{BackdropStatus, SurfaceBackdrop, window_fill};
 use bevy::prelude::*;
+pub use caret::CaretAnimation;
 pub use code::CodeView;
 pub use combo_box::ComboBox;
 pub use component::{UiComponent, UiContext, UiDraw};

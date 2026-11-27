@@ -10,7 +10,7 @@ use crate::engine::{FileMatches, MAX_MATCHES, Match, Matcher, OpenFiles, SearchQ
 use bedtime_document::{BufferEdit, TextBuffer};
 use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, UiContext, ViewUi, draw, egui, theme::color, tree};
-use bedtime_ui::{Button, MenuItem, Row, Separator, Space, Spinner, Text, Toggle};
+use bedtime_ui::{Button, MenuItem, Row, Separator, Space, Spinner, Text, TextField, Toggle};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -1246,7 +1246,8 @@ fn button_width(ui: &egui::Ui, context: &UiContext<'_>) -> f32 {
 }
 
 /// A text field `width` wide, its text kept clear of `inset` points on the
-/// right (for the toggles drawn there).
+/// right (for the toggles drawn there). Its response's rectangle is the
+/// whole field's.
 fn field(
     ui: &mut egui::Ui,
     id: egui::Id,
@@ -1255,18 +1256,18 @@ fn field(
     width: f32,
     inset: f32,
 ) -> egui::Response {
-    ui.add(
-        egui::TextEdit::singleline(text)
-            .id(id)
-            .hint_text(hint)
-            .desired_width(width)
-            .margin(egui::Margin {
-                left: 6,
-                right: (6.0 + inset).min(127.0) as i8,
-                top: 3,
-                bottom: 3,
-            }),
-    )
+    let shown = ui.scope(|ui| {
+        ui.add(
+            TextField::new(text)
+                .id(id)
+                .hint(hint)
+                .width(width)
+                .trailing(inset),
+        )
+    });
+    let mut response = shown.inner;
+    response.rect = shown.response.rect;
+    response
 }
 
 /// A small text toggle ("Aa") drawn inside a field, with what it does on

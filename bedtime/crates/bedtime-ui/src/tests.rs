@@ -458,3 +458,53 @@ fn dropdown_clears_its_anchor_and_long_lists_still_scroll() {
     );
     assert!(egui::Popup::is_id_open(&ctx, popup));
 }
+
+#[test]
+fn a_text_edit_gets_the_shared_caret_in_place_of_eguis() {
+    let ctx = egui::Context::default();
+    let id = egui::Id::new("edit");
+    let font = egui::FontId::monospace(14.0);
+    let still = crate::MotionPolicy {
+        enabled: false,
+        ..default()
+    };
+    let mut text = "one\ntwo".to_owned();
+    let mut ink = egui::Color32::PLACEHOLDER;
+    let mut head = egui::Rect::NOTHING;
+    let mut carets = Vec::new();
+    for _ in 0..3 {
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            ui.memory_mut(|memory| memory.request_focus(id));
+            ink = ui.visuals().selection.stroke.color;
+            let egui_caret = ui.visuals().text_cursor.stroke;
+            let shown = crate::caret::text_edit(ui, id, &font, still, |ui| {
+                egui::TextEdit::multiline(&mut text).id(id).show(ui)
+            });
+            assert_eq!(ui.visuals().text_cursor.stroke, egui_caret);
+            let range = shown.cursor_range.expect("A focused edit has a cursor");
+            head = shown
+                .galley
+                .pos_from_cursor(range.primary)
+                .translate(shown.galley_pos.to_vec2());
+        });
+        carets = output
+            .shapes
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Rect(rect) if rect.fill == ink && rect.rect.width() == 2.0 => {
+                    Some(rect.rect)
+                }
+                egui::Shape::LineSegment { points, stroke }
+                    if points[0].x == points[1].x && !stroke.is_empty() =>
+                {
+                    panic!("egui painted its own caret")
+                }
+                _ => None,
+            })
+            .collect();
+        output.textures_delta.clear();
+    }
+    assert_eq!(carets.len(), 1, "One caret, in the selection's ink");
+    assert_eq!(carets[0].center().x, head.center().x);
+    assert!(carets[0].y_range().contains(head.center().y));
+}

@@ -1,5 +1,5 @@
 use super::Button;
-use crate::{BuiltinIcon, IconSource, ambient, motion, theme, tokens::*};
+use crate::{BuiltinIcon, IconSource, ambient, caret, motion, theme, tokens::*};
 
 /// A line of text to edit.
 ///
@@ -7,8 +7,8 @@ use crate::{BuiltinIcon, IconSource, ambient, motion, theme, tokens::*};
 /// ui.add(TextField::new(&mut query).hint("Search").icon(BuiltinIcon::Search).clearable());
 /// ```
 ///
-/// The editing itself (the caret, selection, clipboard, input methods) is
-/// egui's `TextEdit`; the field is its look and what's around it.
+/// The editing itself (selection, clipboard, input methods) is egui's
+/// `TextEdit`; the field is its look, the editor's caret and what's around it.
 #[must_use = "a text field does nothing until it's added to a Ui"]
 pub struct TextField<'a> {
     text: &'a mut String,
@@ -17,6 +17,9 @@ pub struct TextField<'a> {
     icon: Option<IconSource>,
     size: Size,
     width: Option<f32>,
+    height: Option<f32>,
+    trailing: f32,
+    select: Option<std::ops::Range<usize>>,
     fill_width: bool,
     clearable: bool,
     invalid: bool,
@@ -38,6 +41,9 @@ impl<'a> TextField<'a> {
             icon: None,
             size: Size::default(),
             width: None,
+            height: None,
+            trailing: 0.0,
+            select: None,
             fill_width: false,
             clearable: false,
             invalid: false,
@@ -86,6 +92,25 @@ impl<'a> TextField<'a> {
     /// This wide, in points (egui's text edit width, unless set).
     pub fn width(mut self, width: f32) -> Self {
         self.width = Some(width);
+        self
+    }
+    /// This tall, in points, rather than as tall as its size's controls (a
+    /// field that stands in a table's cell).
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = Some(height);
+        self
+    }
+    /// Keep the text clear of this many points at its end, for what's drawn
+    /// over it there.
+    pub fn trailing(mut self, points: f32) -> Self {
+        self.trailing = points;
+        self
+    }
+    /// Select these characters now (an empty range only places the caret):
+    /// with `focus`, for a field that appears with its text ready to type
+    /// over or add to.
+    pub fn select(mut self, characters: Option<std::ops::Range<usize>>) -> Self {
+        self.select = characters;
         self
     }
     /// As wide as the space it's in.
@@ -137,7 +162,7 @@ impl egui::Widget for TextField<'_> {
         let services = ambient::services(ui.ctx());
         let font_size = self.size.font(ui);
         let padding = self.size.padding(ui);
-        let height = self.size.height(ui);
+        let height = self.height.unwrap_or_else(|| self.size.height(ui));
         let available = ui.available_width();
         let width = if self.fill_width {
             super::fill_width(ui, ui.spacing().text_edit_width)
@@ -149,9 +174,6 @@ impl egui::Widget for TextField<'_> {
         .max(height * 2.0);
         let (rect, frame) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
         let id = self.id.unwrap_or(frame.id.with("edit"));
-        if self.focus {
-            ui.memory_mut(|memory| memory.request_focus(id));
-        }
         let focused = ui.memory(|memory| memory.has_focus(id));
 
         let p = &services.theme.palette;
@@ -191,6 +213,7 @@ impl egui::Widget for TextField<'_> {
         // A plain field's text starts where the field does.
         let inset = if self.plain { 0.0 } else { padding.x };
         let mut inner = rect.shrink2(egui::vec2(inset, 0.0));
+        inner.max.x -= self.trailing;
         if let Some(icon) = &self.icon {
             let side = font_size;
             let pixels = (side * ui.ctx().pixels_per_point()).ceil().max(1.0) as u32;
@@ -230,19 +253,38 @@ impl egui::Widget for TextField<'_> {
         if let Some(filter) = self.event_filter {
             edit = edit.event_filter(filter);
         }
-        let output = edit
-            .id(id)
-            .frame(egui::Frame::NONE)
-            .margin(0.0)
-            .background_color(egui::Color32::TRANSPARENT)
-            .font(egui::FontId::proportional(font_size))
-            .text_color(theme::color(if self.muted { p.muted } else { p.text }))
-            .desired_width(inner.width())
-            .hint_text(hint)
-            .password(self.password)
-            .vertical_align(egui::Align::Center)
-            .show(&mut child);
+        let font = egui::FontId::proportional(font_size);
+        let text_color = theme::color(if self.muted { p.muted } else { p.text });
+        let (password, width) = (self.password, inner.width());
+        let output = caret::text_edit(&mut child, id, &font, services.motion, |ui| {
+            edit.id(id)
+                .frame(egui::Frame::NONE)
+                .margin(0.0)
+                .background_color(egui::Color32::TRANSPARENT)
+                .font(font.clone())
+                .text_color(text_color)
+                .desired_width(width)
+                .hint_text(hint)
+                .password(password)
+                .vertical_align(egui::Align::Center)
+                .show(ui)
+        });
+        if let Some(characters) = self.select {
+            let mut state = output.state.clone();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::two(
+                    egui::text::CCursor::new(characters.start),
+                    egui::text::CCursor::new(characters.end),
+                )));
+            state.store(ui.ctx(), id);
+        }
         let mut response = output.response.response;
+        // After it's drawn: asked for before, a field in a popup's first
+        // (measuring) frame loses the keyboard again.
+        if self.focus {
+            response.request_focus();
+        }
         // Named, it's still a text field with its text: scripts and screen
         // readers get both.
         if !self.label.is_empty() {

@@ -11,7 +11,9 @@
 //! makes them changes to the document, right after drawing.
 use bedtime_ui::Tip;
 use bedtime_ui::{BuiltinIcon, UiContext, ViewUi, draw, egui, theme};
-use bedtime_ui::{Button, MenuItem, Row, Separator, Size, Space, Spinner, Text, TextField};
+use bedtime_ui::{
+    Button, MenuItem, Row, Separator, Size, Space, Spinner, Text, TextArea, TextField,
+};
 use bedtime_workbench::PanelsAppExt as _;
 use bedtime_workbench::{
     BedtimeWorldExt, ByteModel, DocumentHandle, DocumentModel, DocumentReference, DocumentStatus,
@@ -711,27 +713,19 @@ fn rename_field(ui: &mut egui::Ui, panel: Entity, view: &mut NotesView, intents:
         return;
     };
     let id = *id;
-    let field_id = egui::Id::new((panel, "notes-rename", id));
+    // It starts with the keyboard and all of it selected, to type over.
+    let starting = std::mem::take(&mut view.focus_rename);
+    let all = 0..name.chars().count();
     let response = ui.add(
-        egui::TextEdit::singleline(name)
-            .id(field_id)
-            .hint_text("Untitled")
-            .desired_width(f32::INFINITY),
+        TextField::new(name)
+            .id(egui::Id::new((panel, "notes-rename", id)))
+            .hint("Untitled")
+            .label("Name")
+            .fill_width()
+            .focus(starting)
+            .select(starting.then_some(all)),
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Name"));
-    if std::mem::take(&mut view.focus_rename) {
-        response.request_focus();
-        // All of it selected, to type over.
-        if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), field_id) {
-            let end = egui::text::CCursor::new(name.chars().count());
-            state
-                .cursor
-                .set_char_range(Some(egui::text::CCursorRange::two(
-                    egui::text::CCursor::new(0),
-                    end,
-                )));
-            state.store(ui.ctx(), field_id);
-        }
+    if starting {
         return;
     }
     if response.lost_focus() {
@@ -795,26 +789,25 @@ fn editor(
         .id_salt((panel, "notes-text-scroll", note.id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            egui::TextEdit::multiline(&mut text)
-                .id(text_id)
-                .hint_text("Write something…")
-                .font(egui::FontId::proportional(context.metrics.font_size))
-                .frame(egui::Frame::NONE)
-                .lock_focus(true)
-                .desired_width(f32::INFINITY)
-                .min_size(ui.available_size())
-                .show(ui)
+            ui.add(
+                TextArea::new(&mut text)
+                    .id(text_id)
+                    .hint("Write something…")
+                    .label("Note")
+                    .font(egui::FontId::proportional(context.metrics.font_size))
+                    .plain()
+                    .keeps_tab()
+                    .fill_width()
+                    .fill_height(),
+            )
         })
         .inner;
-    output
-        .response
-        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Note"));
     if text != note.text {
         intents.push(Intent::SetText(note.id, text));
     }
     match view.focus.take() {
         Some(Field::Title) => title_field.request_focus(),
-        Some(Field::Text) => output.response.request_focus(),
+        Some(Field::Text) => output.request_focus(),
         None => {}
     }
 }

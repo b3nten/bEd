@@ -3,7 +3,6 @@
 //! and navigation. No full-file string or galley is constructed while drawing
 //! or performing ordinary edits.
 mod background;
-mod caret;
 mod carets;
 pub(super) mod saving;
 pub use saving::FormatAndSave;
@@ -177,7 +176,7 @@ pub struct EditorView {
     observed_revision: Option<u64>,
     navigation: Option<Navigation>,
     composition: Option<Composition>,
-    caret: caret::CaretAnimation,
+    caret: bedtime_ui::CaretAnimation,
     last_edit: Option<f64>,
     preferred_column: Option<usize>,
     upstream: bool,

@@ -163,16 +163,12 @@ fn draw_bar(
                 Mode::Find => "Find bytes or text",
                 Mode::GoTo => "Go to offset",
             };
-            let edit = egui::TextEdit::singleline(&mut bar.text)
+            let edit = crate::TextField::new(&mut bar.text)
                 .id(id.with("bar-text"))
-                .hint_text(hint)
-                .desired_width(180.0)
-                .frame(egui::Frame::NONE)
-                .margin(egui::Margin::symmetric(6, 3));
+                .hint(hint)
+                .width(180.0)
+                .focus(std::mem::take(&mut bar.focus));
             let response = f.ui.add(edit);
-            if std::mem::take(&mut bar.focus) {
-                response.request_focus();
-            }
             let (enter, shift, escape) = f.ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::Enter),

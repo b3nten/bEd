@@ -353,25 +353,19 @@ fn toolbar(
                             state.filter.clear();
                         }
                     }
-                    let field = ui.add(
+                    // Typing started in the list: the caret goes at the end.
+                    let focus = std::mem::take(&mut state.focus_filter);
+                    let end = state.filter.chars().count();
+                    ui.add(
                         TextField::new(&mut state.filter)
                             .id(filter_id)
                             .hint("Filter")
                             .label("Filter")
                             .size(Size::Sm)
-                            .fill_width(),
+                            .fill_width()
+                            .focus(focus)
+                            .select(focus.then_some(end..end)),
                     );
-                    if std::mem::take(&mut state.focus_filter) {
-                        field.request_focus();
-                        // Typing started in the list: the caret goes at the end.
-                        let end = egui::text::CCursor::new(state.filter.chars().count());
-                        let mut text_state =
-                            egui::TextEdit::load_state(ui.ctx(), filter_id).unwrap_or_default();
-                        text_state
-                            .cursor
-                            .set_char_range(Some(egui::text::CCursorRange::one(end)));
-                        text_state.store(ui.ctx(), filter_id);
-                    }
                 },
             );
         });

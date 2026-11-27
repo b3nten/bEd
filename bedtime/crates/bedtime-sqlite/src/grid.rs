@@ -11,7 +11,7 @@
 //! typed); the rows are the caller's, so sorting and every change are asked
 //! of it.
 use crate::db::{Input, Value};
-use bedtime_ui::{MenuItem, Separator, Space};
+use bedtime_ui::{MenuItem, Separator, Space, TextField};
 use bedtime_ui::{UiContext, egui, theme};
 
 const MIN_WIDTH: f32 = 48.0;
@@ -620,25 +620,20 @@ impl Grid {
         let Some(editing) = self.editing.as_mut() else {
             return;
         };
-        let edit_id = id.with("edit");
+        // It starts with the keyboard and the caret after its text.
+        let starting = !std::mem::replace(&mut editing.started, true);
+        let end = editing.text.chars().count();
+        let within = cell.shrink(1.0);
         let response = ui.put(
-            cell.shrink(1.0),
-            egui::TextEdit::singleline(&mut editing.text)
-                .id(edit_id)
-                .margin(egui::Margin::symmetric(7, 4)),
+            within,
+            TextField::new(&mut editing.text)
+                .id(id.with("edit"))
+                .width(within.width())
+                .height(within.height())
+                .focus(starting)
+                .select(starting.then_some(end..end)),
         );
-        if !editing.started {
-            editing.started = true;
-            response.request_focus();
-            let end = editing.text.chars().count();
-            if let Some(mut text_state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
-                text_state
-                    .cursor
-                    .set_char_range(Some(egui::text::CCursorRange::one(
-                        egui::text::CCursor::new(end),
-                    )));
-                text_state.store(ui.ctx(), edit_id);
-            }
+        if starting {
             return;
         }
         let (enter, tab, escape) = ui.input(|i| {

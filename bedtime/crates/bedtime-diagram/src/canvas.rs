@@ -14,7 +14,7 @@ use bedtime_ui::{
     egui::{self, Color32, Pos2, Stroke, Vec2, epaint},
     theme::{Theme, color},
 };
-use bedtime_ui::{MenuItem, Row, Separator, Space, Submenu};
+use bedtime_ui::{MenuItem, Row, Separator, Space, Submenu, TextArea};
 
 /// How far the camera zooms out and in.
 pub const ZOOM: std::ops::RangeInclusive<f32> = 0.1..=8.0;
@@ -3017,24 +3017,20 @@ fn writer(
             )
         }
     };
-    let field = egui::TextEdit::multiline(&mut writing.text)
+    let field = TextArea::new(&mut writing.text)
         .id(ui.id().with("bedtime.diagram.writing"))
+        .label("Diagram text")
         .font(font)
-        .text_color(ink)
-        .frame(egui::Frame::NONE)
-        .margin(0)
-        .desired_rows(1)
-        .desired_width(rect.width())
-        .horizontal_align(align)
-        .clip_text(false);
+        .color(ink)
+        .plain()
+        .rows(1)
+        .width(rect.width())
+        .align(align)
+        .unclipped();
     let response = ui
         .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.set_clip_rect(view);
-            let response = ui.add(field);
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Diagram text")
-            });
-            response
+            ui.add(field)
         })
         .inner;
     if !writing.focused {

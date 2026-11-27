@@ -9,7 +9,7 @@
 //! and Save work as for any file. Edits change only the text they need to.
 use bedtime_document::TextBuffer;
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, egui, theme};
-use bedtime_ui::{MenuItem, Separator, Space, Spinner};
+use bedtime_ui::{MenuItem, Separator, Space, Spinner, TextField};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{
@@ -577,16 +577,12 @@ fn draw(
         .show(&mut frame, |f| {
             if state.filtering {
                 let response = f.ui.add(
-                    egui::TextEdit::singleline(&mut state.filter)
+                    TextField::new(&mut state.filter)
                         .id(id.with("filter-text"))
-                        .hint_text("Filter rows")
-                        .desired_width(180.0)
-                        .frame(egui::Frame::NONE)
-                        .margin(egui::Margin::symmetric(6, 3)),
+                        .hint("Filter rows")
+                        .width(180.0)
+                        .focus(std::mem::take(&mut state.focus_filter)),
                 );
-                if std::mem::take(&mut state.focus_filter) {
-                    response.request_focus();
-                }
                 if response.has_focus() && f.ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     state.filtering = false;
                     state.filter.clear();
@@ -671,25 +667,20 @@ fn edit_cell(
     let Some(editing) = state.editing.as_mut() else {
         return;
     };
-    let edit_id = id.with("edit");
+    // It starts with the keyboard and the caret after its text.
+    let starting = !std::mem::replace(&mut editing.started, true);
+    let end = editing.text.chars().count();
+    let within = cell.shrink(1.0);
     let response = ui.put(
-        cell.shrink(1.0),
-        egui::TextEdit::singleline(&mut editing.text)
-            .id(edit_id)
-            .margin(egui::Margin::symmetric(7, 4)),
+        within,
+        TextField::new(&mut editing.text)
+            .id(id.with("edit"))
+            .width(within.width())
+            .height(within.height())
+            .focus(starting)
+            .select(starting.then_some(end..end)),
     );
-    if !editing.started {
-        editing.started = true;
-        response.request_focus();
-        let end = editing.text.chars().count();
-        if let Some(mut text_state) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
-            text_state
-                .cursor
-                .set_char_range(Some(egui::text::CCursorRange::one(
-                    egui::text::CCursor::new(end),
-                )));
-            text_state.store(ui.ctx(), edit_id);
-        }
+    if starting {
         return;
     }
     let (enter, tab, escape) = ui.input(|i| {

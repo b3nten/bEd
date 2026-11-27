@@ -8,7 +8,7 @@ use crate::{
 use bedtime_filesystem::{EntryKind, operations::Operation};
 use bedtime_ui::{
     Breadcrumbs, BuiltinIcon, MenuItem, Segmented, Select, Separator, Size, Space, Submenu, Text,
-    Tone, UiContext, egui, theme::color, tree,
+    TextField, Tone, UiContext, egui, theme::color, tree,
 };
 use bedtime_workbench::{
     BedtimeWorldExt, Notification, Panel, PanelPresentation, PathOptions, ViewerId,
@@ -1044,28 +1044,21 @@ pub(crate) fn draw_naming(
         .constrain_to(ctx.content_rect().shrink(4.0))
         .show(ctx, |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
-                let output = egui::TextEdit::singleline(&mut naming.text)
-                    .id(id)
-                    .hint_text(label)
-                    .desired_width((whole.width() - 32.0).clamp(120.0, 320.0))
-                    .show(ui);
-                if !naming.started {
-                    naming.started = true;
-                    output.response.request_focus();
-                    // A rename selects the name without its extension.
-                    let stem = match naming.text.rfind('.') {
-                        Some(dot) if dot > 0 => naming.text[..dot].chars().count(),
-                        _ => naming.text.chars().count(),
-                    };
-                    let mut state = output.state.clone();
-                    state
-                        .cursor
-                        .set_char_range(Some(egui::text::CCursorRange::two(
-                            egui::text::CCursor::new(0),
-                            egui::text::CCursor::new(stem),
-                        )));
-                    state.store(ui.ctx(), id);
-                }
+                // It starts with the keyboard, and a rename with the name
+                // selected, without its extension.
+                let starting = !std::mem::replace(&mut naming.started, true);
+                let stem = match naming.text.rfind('.') {
+                    Some(dot) if dot > 0 => naming.text[..dot].chars().count(),
+                    _ => naming.text.chars().count(),
+                };
+                let response = ui.add(
+                    TextField::new(&mut naming.text)
+                        .id(id)
+                        .hint(label)
+                        .width((whole.width() - 32.0).clamp(120.0, 320.0))
+                        .focus(starting)
+                        .select(starting.then_some(0..stem)),
+                );
                 let (enter, escape) = ui.input(|input| {
                     (
                         input.key_pressed(egui::Key::Enter),
@@ -1074,7 +1067,7 @@ pub(crate) fn draw_naming(
                 });
                 if escape {
                     done = Some(None);
-                } else if output.response.lost_focus() {
+                } else if response.lost_focus() {
                     done = Some(enter.then(|| naming.operation()).flatten());
                 }
             });

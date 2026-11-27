@@ -4,7 +4,7 @@
 //! inspects it: filled, with its outline, points and metrics. The floating
 //! bar switches between them; the right-click menu copies.
 use bedtime_ui::{BuiltinIcon, Floating, UiContext, UiFrame, egui, theme};
-use bedtime_ui::{Button, MenuItem, Row, Spinner, Text};
+use bedtime_ui::{Button, MenuItem, Row, Spinner, Text, TextArea};
 #[cfg(feature = "persistence")]
 use bedtime_workbench::persistence::ReflectPersist;
 use bedtime_workbench::{Panel, PanelPresentation, ViewersAppExt, viewer_document};
@@ -194,12 +194,12 @@ fn preview(
     p: &theme::Palette,
 ) {
     // The sample: type to change it.
-    let edit = egui::TextEdit::multiline(&mut font.sample)
+    let edit = TextArea::new(&mut font.sample)
         .font(egui::FontId::new(48.0, family.clone()))
-        .frame(egui::Frame::NONE)
-        .desired_width(f32::INFINITY)
-        .desired_rows(1)
-        .hint_text(SAMPLE);
+        .plain()
+        .fill_width()
+        .rows(1)
+        .hint(SAMPLE);
     let response = ui.add(edit);
     response.context_menu(|ui| {
         if ui.add(Button::new("Reset Sample Text")).clicked() {

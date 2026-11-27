@@ -41,7 +41,7 @@ impl Panel for Note {
     fn draw(ui: &mut egui::Ui, world: &mut World, _: &UiContext<'_>, panel: Entity) {
         egui::Frame::NONE.inner_margin(14.0).show(ui, |ui| {
             if let Some(mut note) = world.get_mut::<Note>(panel) {
-                ui.add(egui::TextEdit::multiline(&mut note.text).desired_width(f32::INFINITY));
+                ui.add(bedtime_ui::TextArea::new(&mut note.text).fill_width());
             }
         });
     }
