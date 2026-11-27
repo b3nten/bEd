@@ -161,4 +161,5 @@ icon_catalog! {
     Pin => "pin",
     ChevronUp => "chevron-up",
     PanelLeft => "panel-left",
+    Bot => "bot",
 }
