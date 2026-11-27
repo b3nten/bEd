@@ -7,7 +7,7 @@ from bed import Bed
 
 STORIES = ["Tokens", "Button", "Text", "Checkbox and Toggle", "Text Field", "Select", "Segmented",
            "Slider", "Color Field", "Text Area", "List Row and Menu", "Breadcrumbs", "Table", "Spinner",
-           "Section and Separator", "Row and Column"]
+           "Section and Separator", "Row and Column", "Card"]
 
 
 def until(bed, check, what):
@@ -63,6 +63,15 @@ try:
 
         # Widgets bound to the world: a toggle that is a setting (both of
         # its forms follow it), and a button that is an action.
+        # It's past the end of the list: scroll to it.
+        top = lambda: bed.find("Actions and Settings")["rect"][1]
+        before = top()
+        bed.scroll(-400, at="Card")
+        bed.wait(5)
+        if top() >= before:
+            bed.scroll(400, at="Card")
+            bed.wait(5)
+        assert top() < before, "the list scrolls"
         bed.click("Actions and Settings")
         until(bed, lambda: bed.exists("Rainbow caret"), "the bound story draws")
         both = lambda on: all(w["toggled"] == str(on) for w in bed.find_all(role="CheckBox")

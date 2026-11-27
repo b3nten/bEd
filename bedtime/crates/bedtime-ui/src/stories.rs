@@ -96,6 +96,11 @@ pub fn builtin() -> Vec<Story> {
             name: "Row and Column",
             draw: stacks,
         },
+        Story {
+            group: "Layout",
+            name: "Card",
+            draw: cards,
+        },
     ]
 }
 
@@ -988,6 +993,39 @@ fn outlined(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
         .stroke(egui::Stroke::new(1.0, border))
         .corner_radius(Radius::Md.px(ui))
         .show(ui, content);
+}
+
+fn cards(ui: &mut egui::Ui, knobs: &mut Knobs) {
+    let tone = knobs.choice("Tone", &Tone::ALL);
+    let fill = knobs.toggle("Fill width", true);
+    Column::new().gap(Space::Xl).show(ui, |ui| {
+        section(ui, "Card", |ui| {
+            ui.scope(|ui| {
+                ui.set_max_width(360.0);
+                let mut card = Card::new().tone(tone);
+                if fill {
+                    card = card.fill_width();
+                }
+                card.show(ui, |ui| {
+                    ui.add(Text::title("Permission requested"));
+                    ui.add(Text::new("Run cargo test in this folder").wrap());
+                    Row::new().show(ui, |ui| {
+                        ui.add(Button::new("Allow").primary().small());
+                        ui.add(Button::new("Reject").small());
+                    });
+                });
+            });
+        });
+        section(ui, "Small, as chips in a row", |ui| {
+            Row::new().wrap().show(ui, |ui| {
+                for name in ["main.rs", "notes.md", "Clipboard (640×480)"] {
+                    Card::new().small().tone(tone).show(ui, |ui| {
+                        ui.add(Text::caption(name));
+                    });
+                }
+            });
+        });
+    });
 }
 
 fn stacks(ui: &mut egui::Ui, knobs: &mut Knobs) {

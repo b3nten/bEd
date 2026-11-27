@@ -39,9 +39,9 @@ pub mod prelude {
     pub use crate::draw::{self, PanelUi, ViewUi};
     pub use crate::tokens::{Radius, Size, Space, TextRole, Tone};
     pub use crate::widgets::{
-        Breadcrumbs, Button, Checkbox, ColorField, Column, Link, ListRow, MenuButton, MenuItem,
-        NumberField, Row, Section, Segmented, Select, Separator, Slider, Spinner, Submenu, Table,
-        TableRows, Text, TextArea, TextField, Tip, Toggle, UiEdit, Variant,
+        Breadcrumbs, Button, Card, Checkbox, ColorField, Column, Link, ListRow, MenuButton,
+        MenuItem, NumberField, Row, Section, Segmented, Select, Separator, Slider, Spinner,
+        Submenu, Table, TableRows, Text, TextArea, TextField, Tip, Toggle, UiEdit, Variant,
     };
     pub use egui::{self, Response, Ui, Widget};
 }
@@ -67,7 +67,7 @@ pub use theme::{Metrics, Theme};
 pub use tokens::{Radius, Size, Space, TextRole, Tone};
 pub use viewport::{UiViewport, free_layer, viewport_image};
 pub use widgets::{
-    Breadcrumbs, Button, Checkbox, ColorField, Column, Link, ListRow, MenuButton, MenuItem,
+    Breadcrumbs, Button, Card, Checkbox, ColorField, Column, Link, ListRow, MenuButton, MenuItem,
     NumberField, Row, Section, Segmented, Select, Separator, Slider, Spinner, Submenu, Table,
     TableRows, Text, TextArea, TextField, Tip, Toggle, UiEdit, Variant,
 };

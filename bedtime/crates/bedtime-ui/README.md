@@ -35,7 +35,8 @@ Row::new().gap(Space::Sm).show(ui, |ui| {
   `Slider` (`.vertical`, `.logarithmic`), `Checkbox`, `Toggle`.
 - **Lists and menus:** `ListRow`, `MenuItem` (`.shortcut`, `.checked`,
   `.keep_open`, `.highlighted`), `Submenu`, `Table`, `Breadcrumbs`.
-- **Layout:** `Row`, `Column`, `Section`, `Separator`, and the tokens `Space`,
+- **Layout:** `Row`, `Column`, `Card` (`.tone`, `.small`, `.fill_width`),
+  `Section`, `Separator`, and the tokens `Space`,
   `Size`, `Radius`, `Tone`, `TextRole`.
 - **Feedback:** `Spinner`, and `Tip` (`.tip("…")` on any `Response`).
 

@@ -2,6 +2,7 @@
 //! `egui::Ui` (`ui.add(Button::new("Save").primary())`).
 mod breadcrumbs;
 mod button;
+mod card;
 mod checkbox;
 mod color_field;
 mod edit;
@@ -21,6 +22,7 @@ mod tip;
 
 pub use breadcrumbs::Breadcrumbs;
 pub use button::{Button, Variant};
+pub use card::Card;
 pub use checkbox::{Checkbox, Toggle};
 pub use color_field::{ColorField, from_hex, to_hex};
 pub use edit::UiEdit;
