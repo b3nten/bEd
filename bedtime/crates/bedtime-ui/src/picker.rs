@@ -7,6 +7,10 @@
 //! filtering, labels, painting); `Picker::show` draws them and says what
 //! happened. It doesn't touch the world, so what choosing does is the
 //! caller's.
+//!
+//! A picker can also be the list alone, over a widget the query is typed in
+//! (completions above a text area): `Picker::keys` before that widget, then
+//! `Picker::show_above`.
 use crate::Text;
 use crate::UiContext;
 use bevy_egui::egui;
@@ -34,6 +38,12 @@ impl PickerState {
             selected,
             ..Self::default()
         }
+    }
+
+    /// The rows themselves changed (not the query): filter them again next
+    /// time, keeping the selection where it still fits.
+    pub fn stale(&mut self) {
+        self.filtered = None;
     }
 
     /// Filter `rows` by the query if it changed since they last were. The
@@ -82,7 +92,7 @@ pub enum PickerEvent {
 }
 
 /// A picker's look and place. `show` draws it floating, `show_inside` in a
-/// container of the caller's.
+/// container of the caller's, `show_above` as a list over another widget.
 pub struct Picker {
     id: egui::Id,
     top_center: egui::Pos2,
@@ -174,37 +184,8 @@ impl Picker {
         rows: &mut impl PickerRows,
     ) -> Option<PickerEvent> {
         state.filter(rows);
-        let count = rows.len();
-        let (down, up, page_down, page_up, enter, escape) = ui.input_mut(|input| {
-            let mut key = |key| input.consume_key(egui::Modifiers::NONE, key);
-            (
-                key(egui::Key::ArrowDown),
-                key(egui::Key::ArrowUp),
-                key(egui::Key::PageDown),
-                key(egui::Key::PageUp),
-                key(egui::Key::Enter),
-                key(egui::Key::Escape),
-            )
-        });
-        let before = state.selected;
-        if count > 0 {
-            if down {
-                state.selected = (state.selected + 1) % count;
-            }
-            if up {
-                state.selected = (state.selected + count - 1) % count;
-            }
-            if page_down {
-                state.selected = (state.selected + 10).min(count - 1);
-            }
-            if page_up {
-                state.selected = state.selected.saturating_sub(10);
-            }
-        }
-        let moved = state.selected != before;
-        state.scroll |= moved;
-        let mut chosen = enter.then_some(state.selected).filter(|_| count > 0);
-        let row_height = crate::tree::row_height(context);
+        let keys = take_keys(ui, state, rows.len(), false);
+        let mut chosen = keys.chosen;
         let field = ui.add(
             crate::TextField::new(&mut state.query)
                 .id(self.id)
@@ -218,70 +199,194 @@ impl Picker {
         }
         state.filter(rows);
         ui.add_space(4.0);
-        let count = rows.len();
-        if count == 0 {
+        if rows.is_empty() {
             ui.add(Text::new(self.empty.as_str()).muted());
         } else {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            // As tall as its rows (up to `max_rows`), whatever room the
-            // container had last frame: a modal's area remembers its size.
-            let height = row_height * count.min(self.max_rows) as f32;
-            let mut list = egui::ScrollArea::vertical()
-                .id_salt(self.id.with("list"))
-                .min_scrolled_height(height)
-                .max_height(height)
-                .auto_shrink([false, true]);
-            if std::mem::take(&mut state.scroll) {
-                // Just enough to show it.
-                let visible = row_height * count.min(self.max_rows) as f32;
-                let top = state.selected as f32 * row_height;
-                let offset = if top < state.offset {
-                    top
-                } else if top + row_height > state.offset + visible {
-                    top + row_height - visible
-                } else {
-                    state.offset
-                };
-                list = list.vertical_scroll_offset(offset);
-            }
-            let output = list.show_rows(ui, row_height, count, |ui, range| {
-                for row in range {
-                    let (rect, response) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), row_height),
-                        egui::Sense::click(),
-                    );
-                    let selected = row == state.selected;
-                    response.widget_info(|| {
-                        egui::WidgetInfo::selected(
-                            egui::WidgetType::SelectableLabel,
-                            true,
-                            selected,
-                            rows.label(row),
-                        )
-                    });
-                    if selected || response.hovered() {
-                        let fill = if selected {
-                            ui.visuals().selection.bg_fill.gamma_multiply(0.6)
-                        } else {
-                            ui.visuals().widgets.hovered.weak_bg_fill
-                        };
-                        ui.painter().rect_filled(rect, 4.0, fill);
-                    }
-                    if response.clicked() {
-                        chosen = Some(row);
-                    }
-                    rows.paint(ui, context, rect, row);
-                }
-            });
-            state.offset = output.state.offset.y;
+            self.list(ui, context, state, rows, &mut chosen);
         }
         if let Some(row) = chosen.filter(|&row| row < rows.len()) {
             Some(PickerEvent::Chosen(row))
-        } else if escape {
+        } else if keys.escape {
             Some(PickerEvent::Escaped)
         } else {
-            moved.then_some(PickerEvent::Moved(state.selected))
+            keys.moved.then_some(PickerEvent::Moved(state.selected))
         }
+    }
+
+    /// The keys of a picker whose query is typed somewhere else (a text
+    /// area the list floats over, `show_above`): the arrows and Page
+    /// Up/Down move, Enter or Tab chooses, Escape dismisses. Set
+    /// `state.query` first, and call this before that widget is added, so
+    /// the keys are the picker's and not its.
+    pub fn keys(
+        ui: &mut egui::Ui,
+        state: &mut PickerState,
+        rows: &mut impl PickerRows,
+    ) -> Option<PickerEvent> {
+        state.filter(rows);
+        if rows.is_empty() {
+            return None;
+        }
+        let keys = take_keys(ui, state, rows.len(), true);
+        if let Some(row) = keys.chosen {
+            Some(PickerEvent::Chosen(row))
+        } else if keys.escape {
+            Some(PickerEvent::Escaped)
+        } else {
+            keys.moved.then_some(PickerEvent::Moved(state.selected))
+        }
+    }
+
+    /// Draw the list alone, floating above `anchor` (the widget the query
+    /// is typed in), under the hint as a caption. It has no field and
+    /// doesn't take the focus or the keyboard (`keys` does, before the
+    /// anchor is drawn); a click on a row is `Chosen`. Nothing is drawn
+    /// when no row matches. The picker's width is the most it's given.
+    pub fn show_above(
+        self,
+        ui: &mut egui::Ui,
+        context: &UiContext<'_>,
+        anchor: egui::Rect,
+        state: &mut PickerState,
+        rows: &mut impl PickerRows,
+    ) -> Option<PickerEvent> {
+        state.filter(rows);
+        if rows.is_empty() {
+            return None;
+        }
+        // The whole popup is as wide as the anchor, its frame included.
+        let frame = egui::Frame::popup(ui.style());
+        let width = (anchor.width().min(self.width) - frame.total_margin().sum().x).max(0.0);
+        let mut chosen = None;
+        egui::Area::new(self.id.with("area"))
+            .order(egui::Order::Foreground)
+            .pivot(egui::Align2::LEFT_BOTTOM)
+            .fixed_pos(egui::pos2(anchor.left(), anchor.top() - 4.0))
+            .constrain_to(ui.ctx().content_rect().shrink(8.0))
+            .show(ui.ctx(), |ui| {
+                frame.show(ui, |ui| {
+                    ui.set_width(width);
+                    if !self.hint.is_empty() {
+                        ui.add(Text::caption(self.hint.as_str()).muted());
+                        ui.add_space(4.0);
+                    }
+                    self.list(ui, context, state, rows, &mut chosen);
+                });
+            });
+        chosen
+            .filter(|&row| row < rows.len())
+            .map(PickerEvent::Chosen)
+    }
+
+    /// The rows, scrolled to the selected one when it moved. A click on one
+    /// sets `chosen`.
+    fn list(
+        &self,
+        ui: &mut egui::Ui,
+        context: &UiContext<'_>,
+        state: &mut PickerState,
+        rows: &impl PickerRows,
+        chosen: &mut Option<usize>,
+    ) {
+        let count = rows.len();
+        let row_height = crate::tree::row_height(context);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        // As tall as its rows (up to `max_rows`), whatever room the
+        // container had last frame: a modal's area remembers its size.
+        let height = row_height * count.min(self.max_rows) as f32;
+        let mut list = egui::ScrollArea::vertical()
+            .id_salt(self.id.with("list"))
+            .min_scrolled_height(height)
+            .max_height(height)
+            .auto_shrink([false, true]);
+        if std::mem::take(&mut state.scroll) {
+            // Just enough to show it.
+            let top = state.selected as f32 * row_height;
+            let offset = if top < state.offset {
+                top
+            } else if top + row_height > state.offset + height {
+                top + row_height - height
+            } else {
+                state.offset
+            };
+            list = list.vertical_scroll_offset(offset);
+        }
+        let output = list.show_rows(ui, row_height, count, |ui, range| {
+            for row in range {
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), row_height),
+                    egui::Sense::click(),
+                );
+                let selected = row == state.selected;
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::SelectableLabel,
+                        true,
+                        selected,
+                        rows.label(row),
+                    )
+                });
+                if selected || response.hovered() {
+                    let fill = if selected {
+                        ui.visuals().selection.bg_fill.gamma_multiply(0.6)
+                    } else {
+                        ui.visuals().widgets.hovered.weak_bg_fill
+                    };
+                    ui.painter().rect_filled(rect, 4.0, fill);
+                }
+                if response.clicked() {
+                    *chosen = Some(row);
+                }
+                rows.paint(ui, context, rect, row);
+            }
+        });
+        state.offset = output.state.offset.y;
+    }
+}
+
+/// What a picker's keys did this frame.
+struct Keys {
+    /// Enter (or Tab, where it chooses) on this row.
+    chosen: Option<usize>,
+    escape: bool,
+    moved: bool,
+}
+
+/// Take the picker's keys from `ui`'s input and move the selection among
+/// `count` rows.
+fn take_keys(ui: &mut egui::Ui, state: &mut PickerState, count: usize, tab_chooses: bool) -> Keys {
+    let (down, up, page_down, page_up, enter, escape) = ui.input_mut(|input| {
+        let mut key = |key| input.consume_key(egui::Modifiers::NONE, key);
+        (
+            key(egui::Key::ArrowDown),
+            key(egui::Key::ArrowUp),
+            key(egui::Key::PageDown),
+            key(egui::Key::PageUp),
+            key(egui::Key::Enter) | (tab_chooses && key(egui::Key::Tab)),
+            key(egui::Key::Escape),
+        )
+    });
+    let before = state.selected;
+    if count > 0 {
+        if down {
+            state.selected = (state.selected + 1) % count;
+        }
+        if up {
+            state.selected = (state.selected + count - 1) % count;
+        }
+        if page_down {
+            state.selected = (state.selected + 10).min(count - 1);
+        }
+        if page_up {
+            state.selected = state.selected.saturating_sub(10);
+        }
+    }
+    let moved = state.selected != before;
+    state.scroll |= moved;
+    Keys {
+        chosen: enter.then_some(state.selected).filter(|_| count > 0),
+        escape,
+        moved,
     }
 }
 
